@@ -554,23 +554,6 @@ public record MessageFailure {
 }
 
 /// <summary>
-/// Legacy: Represents a failed message with error information.
-/// Deprecated - use MessageFailure instead for better status tracking.
-/// </summary>
-[Obsolete("Use MessageFailure instead for granular status tracking")]
-public record FailedMessage {
-  /// <summary>
-  /// Message ID that failed.
-  /// </summary>
-  public required Guid MessageId { get; init; }
-
-  /// <summary>
-  /// Error message or exception details.
-  /// </summary>
-  public required string Error { get; init; }
-}
-
-/// <summary>
 /// Shared constraint for work items that expose a MessageId and Status.
 /// Used by <see cref="OrderedStreamProcessor"/> to generically process inbox and outbox messages.
 /// </summary>

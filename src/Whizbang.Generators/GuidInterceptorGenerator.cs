@@ -115,31 +115,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       return (null, null);
     }
 
-    string? guidVersion = null;
-    string? guidSource = null;
-
-    // Check for System.Guid methods
-    if (containingType == GUID_TYPE) {
-      if (methodName == METHOD_NEW_GUID) {
-        guidVersion = "Version4";
-        guidSource = "SourceMicrosoft";
-      } else if (methodName == "CreateVersion7") {
-        guidVersion = GUID_VERSION_7;
-        guidSource = "SourceMicrosoft";
-      }
-    }
-
-    // Check for third-party methods
-    if (guidVersion is null) {
-      foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
-        if (containingType == typePattern && methodName == method) {
-          guidVersion = version;
-          guidSource = source;
-          break;
-        }
-      }
-    }
-
+    var (guidVersion, guidSource) = _resolveGuidVersionAndSource(containingType, methodName);
     if (guidVersion is null || guidSource is null) {
       return (null, null);
     }
@@ -177,6 +153,31 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         GuidSource: guidSource,
         InterceptorMethodName: interceptorName
     ), null);
+  }
+
+  /// <summary>
+  /// Resolves the GUID version and source metadata for a given containing type and method name.
+  /// Checks System.Guid methods first, then third-party library methods.
+  /// </summary>
+  private static (string? Version, string? Source) _resolveGuidVersionAndSource(string containingType, string methodName) {
+    // Check for System.Guid methods
+    if (containingType == GUID_TYPE) {
+      if (methodName == METHOD_NEW_GUID) {
+        return ("Version4", "SourceMicrosoft");
+      }
+      if (methodName == "CreateVersion7") {
+        return (GUID_VERSION_7, "SourceMicrosoft");
+      }
+    }
+
+    // Check for third-party methods
+    foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
+      if (containingType == typePattern && methodName == method) {
+        return (version, source);
+      }
+    }
+
+    return (null, null);
   }
 
   private static string? _checkSuppression(

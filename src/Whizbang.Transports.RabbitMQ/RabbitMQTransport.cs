@@ -188,17 +188,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Add envelope type for deserialization
       properties.Headers["EnvelopeType"] = envelopeTypeName;
 
-      // Add correlation ID if present
-      var correlationId = envelope.GetCorrelationId();
-      if (correlationId != null) {
-        properties.CorrelationId = correlationId.Value.Value.ToString();
-      }
-
-      // Add causation ID if present
-      var causationId = envelope.GetCausationId();
-      if (causationId != null) {
-        properties.Headers["CausationId"] = causationId.Value.Value.ToString();
-      }
+      // Add correlation and causation IDs if present
+      _setCorrelationAndCausationHeaders(envelope, properties);
 
       // Add custom metadata (convert JsonElement to RabbitMQ-compatible types)
       if (destination.Metadata != null) {
@@ -292,51 +283,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Publish each item in the batch using the same channel
       foreach (var item in items) {
         try {
-          var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
-          var envelope = item.Envelope;
-          var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
-            ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
-          var envelopeRuntimeType = envelope.GetType();
-
-          var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-            ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}.");
-          var json = JsonSerializer.Serialize(envelope, typeInfo);
-          var body = Encoding.UTF8.GetBytes(json);
-
-          var properties = new BasicProperties {
-            MessageId = envelope.MessageId.Value.ToString(),
-            ContentType = "application/json",
-            Persistent = true,
-            Headers = new Dictionary<string, object?>()
-          };
-
-          properties.Headers["EnvelopeType"] = envelopeTypeName;
-
-          var correlationId = envelope.GetCorrelationId();
-          if (correlationId != null) {
-            properties.CorrelationId = correlationId.Value.Value.ToString();
-          }
-
-          var causationId = envelope.GetCausationId();
-          if (causationId != null) {
-            properties.Headers["CausationId"] = causationId.Value.Value.ToString();
-          }
-
-          if (destination.Metadata != null) {
-            foreach (var (key, value) in destination.Metadata) {
-              properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
-            }
-          }
-
-          await channel.BasicPublishAsync(
-            exchange: exchangeName,
-            routingKey: routingKey,
-            mandatory: false,
-            basicProperties: properties,
-            body: body,
-            cancellationToken: cancellationToken
-          );
-
+          await _publishSingleBatchItemAsync(channel, item, destination, exchangeName, cancellationToken);
           results.Add(new BulkPublishItemResult { MessageId = item.MessageId, Success = true });
         } catch (Exception ex) {
           results.Add(new BulkPublishItemResult {
@@ -347,27 +294,93 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         }
       }
     } catch (AlreadyClosedException ex) {
-      // Channel/connection closed — fail all remaining items
-      var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
-      foreach (var id in failedIds) {
-        results.Add(new BulkPublishItemResult {
-          MessageId = id,
-          Success = false,
-          Error = $"AlreadyClosedException: {ex.Message}"
-        });
-      }
+      _failRemainingItems(items, results, $"AlreadyClosedException: {ex.Message}");
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
-      foreach (var id in failedIds) {
-        results.Add(new BulkPublishItemResult {
-          MessageId = id,
-          Success = false,
-          Error = $"{ex.GetType().Name}: {ex.Message}"
-        });
-      }
+      _failRemainingItems(items, results, $"{ex.GetType().Name}: {ex.Message}");
     }
 
     return results;
+  }
+
+  /// <summary>
+  /// Publishes a single item within a batch, serializing and setting message properties.
+  /// </summary>
+  private async Task _publishSingleBatchItemAsync(
+    IChannel channel,
+    BulkPublishItem item,
+    TransportDestination destination,
+    string exchangeName,
+    CancellationToken cancellationToken
+  ) {
+    var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
+    var envelope = item.Envelope;
+    var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+    var envelopeRuntimeType = envelope.GetType();
+
+    var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}.");
+    var json = JsonSerializer.Serialize(envelope, typeInfo);
+    var body = Encoding.UTF8.GetBytes(json);
+
+    var properties = new BasicProperties {
+      MessageId = envelope.MessageId.Value.ToString(),
+      ContentType = "application/json",
+      Persistent = true,
+      Headers = new Dictionary<string, object?>()
+    };
+
+    properties.Headers["EnvelopeType"] = envelopeTypeName;
+
+    _setCorrelationAndCausationHeaders(envelope, properties);
+
+    if (destination.Metadata != null) {
+      foreach (var (key, value) in destination.Metadata) {
+        properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
+      }
+    }
+
+    await channel.BasicPublishAsync(
+      exchange: exchangeName,
+      routingKey: routingKey,
+      mandatory: false,
+      basicProperties: properties,
+      body: body,
+      cancellationToken: cancellationToken
+    );
+  }
+
+  /// <summary>
+  /// Sets correlation and causation ID headers on message properties from the envelope.
+  /// </summary>
+  private static void _setCorrelationAndCausationHeaders(IMessageEnvelope envelope, BasicProperties properties) {
+    var correlationId = envelope.GetCorrelationId();
+    if (correlationId != null) {
+      properties.CorrelationId = correlationId.Value.Value.ToString();
+    }
+
+    var causationId = envelope.GetCausationId();
+    if (causationId != null) {
+      properties.Headers!["CausationId"] = causationId.Value.Value.ToString();
+    }
+  }
+
+  /// <summary>
+  /// Adds failure results for all items not yet recorded in the results list.
+  /// </summary>
+  private static void _failRemainingItems(
+    IReadOnlyList<BulkPublishItem> items,
+    List<BulkPublishItemResult> results,
+    string error
+  ) {
+    var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
+    foreach (var id in failedIds) {
+      results.Add(new BulkPublishItemResult {
+        MessageId = id,
+        Success = false,
+        Error = error
+      });
+    }
   }
 
   /// <inheritdoc />

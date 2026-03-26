@@ -142,91 +142,32 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Check for [FireDuringReplay] attribute
     var hasFireDuringReplayAttribute = _hasFireDuringReplayAttribute(classSymbol);
 
-    // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
-    var receptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
-        classSymbol, StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
+    // Try each receptor interface in order: async with response, async void, sync with response, sync void
+    var interfaceCandidates = new[] {
+      (Definition: StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION, ArgCount: 2, IsSync: false),
+      (Definition: StandardInterfaceNames.I_RECEPTOR_GENERIC_DEFINITION, ArgCount: 1, IsSync: false),
+      (Definition: StandardInterfaceNames.I_SYNC_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION, ArgCount: 2, IsSync: true),
+      (Definition: StandardInterfaceNames.I_SYNC_RECEPTOR_GENERIC_DEFINITION, ArgCount: 1, IsSync: true),
+    };
 
-    if (receptorInterface?.TypeArguments.Length == 2) {
-      // Found IReceptor<TMessage, TResponse> - regular async receptor with response
-      // Keep the full response type (including Routed<T>) for DI registration
-      // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
-      // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
-      var messageTypeSymbol = receptorInterface.TypeArguments[0];
+    foreach (var (definition, argCount, isSync) in interfaceCandidates) {
+      var found = TypeNameHelper.FindInterfaceByOriginalDefinition(classSymbol, definition);
+      if (found?.TypeArguments.Length != argCount) {
+        continue;
+      }
+
+      var messageTypeSymbol = found.TypeArguments[0];
+      // 2-arg interfaces have a response type; 1-arg are void receptors
+      var responseType = argCount == 2
+          ? found.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability)
+          : null;
+
       return new ReceptorInfo(
           ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
           MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
-          ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
+          ResponseType: responseType,
           LifecycleStages: lifecycleStages,
-          IsSync: false,
-          DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
-          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
-      );
-    }
-
-    // Look for IReceptor<TMessage> interface (1 type argument) - void receptor
-    var voidReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
-        classSymbol, StandardInterfaceNames.I_RECEPTOR_GENERIC_DEFINITION);
-
-    if (voidReceptorInterface?.TypeArguments.Length == 1) {
-      // Found IReceptor<TMessage> - void async receptor with no response
-      var messageTypeSymbol = voidReceptorInterface.TypeArguments[0];
-      return new ReceptorInfo(
-          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
-          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
-          ResponseType: null,  // Void receptor - no response type
-          LifecycleStages: lifecycleStages,
-          IsSync: false,
-          DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
-          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
-      );
-    }
-
-    // Look for ISyncReceptor<TMessage, TResponse> interface (2 type arguments) - sync receptor
-    var syncReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
-        classSymbol, StandardInterfaceNames.I_SYNC_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
-
-    if (syncReceptorInterface?.TypeArguments.Length == 2) {
-      // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
-      // Keep the full response type (including Routed<T>) for DI registration
-      // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
-      // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
-      var messageTypeSymbol = syncReceptorInterface.TypeArguments[0];
-      return new ReceptorInfo(
-          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
-          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
-          ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
-          LifecycleStages: lifecycleStages,
-          IsSync: true,
-          DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
-          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
-      );
-    }
-
-    // Look for ISyncReceptor<TMessage> interface (1 type argument) - void sync receptor
-    var voidSyncReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
-        classSymbol, StandardInterfaceNames.I_SYNC_RECEPTOR_GENERIC_DEFINITION);
-
-    if (voidSyncReceptorInterface?.TypeArguments.Length == 1) {
-      // Found ISyncReceptor<TMessage> - void sync receptor with no response
-      var messageTypeSymbol = voidSyncReceptorInterface.TypeArguments[0];
-      return new ReceptorInfo(
-          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
-          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
-          ResponseType: null,  // Void receptor - no response type
-          LifecycleStages: lifecycleStages,
-          IsSync: true,
+          IsSync: isSync,
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
@@ -967,8 +908,28 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Validate: RPC handlers (non-void receptors) must have exactly one handler per message type
-    // Multiple handlers are allowed for void receptors (event-style dispatch)
-    // Multiple handlers are also allowed for sync receptors (ISyncReceptor) which don't go through RPC path
+    _reportMultipleRpcHandlerConflicts(context, receptors);
+
+    var registrationSource = _generateRegistrationSource(compilation, receptors);
+    context.AddSource("DispatcherRegistrations.g.cs", registrationSource);
+
+    var dispatcherSource = _generateDispatcherSource(compilation, receptors);
+    context.AddSource("Dispatcher.g.cs", dispatcherSource);
+
+    var receptorRegistrySource = _generateReceptorRegistrySource(compilation, receptors);
+    context.AddSource("ReceptorRegistry.g.cs", receptorRegistrySource);
+
+    var diagnosticsSource = _generateDiagnosticsSource(compilation, receptors);
+    context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
+  }
+
+  /// <summary>
+  /// Reports WHIZ080 errors for message types with multiple async RPC (non-void) handlers.
+  /// Multiple handlers are allowed for void receptors (event-style dispatch) and sync receptors.
+  /// </summary>
+  private static void _reportMultipleRpcHandlerConflicts(
+      SourceProductionContext context,
+      ImmutableArray<ReceptorInfo> receptors) {
     var rpcReceptorsByMessage = receptors
         .Where(r => !r.IsVoid && !r.IsSync)  // Only async receptors with response are RPC
         .GroupBy(r => r.MessageType)
@@ -986,18 +947,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           handlerNames
       ));
     }
-
-    var registrationSource = _generateRegistrationSource(compilation, receptors);
-    context.AddSource("DispatcherRegistrations.g.cs", registrationSource);
-
-    var dispatcherSource = _generateDispatcherSource(compilation, receptors);
-    context.AddSource("Dispatcher.g.cs", dispatcherSource);
-
-    var receptorRegistrySource = _generateReceptorRegistrySource(compilation, receptors);
-    context.AddSource("ReceptorRegistry.g.cs", receptorRegistrySource);
-
-    var diagnosticsSource = _generateDiagnosticsSource(compilation, receptors);
-    context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
   }
 
   /// <summary>
@@ -1046,41 +995,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate registration calls using appropriate snippet
     var registrations = new StringBuilder();
     foreach (var receptor in receptors) {
-      string generatedCode;
-
-      if (receptor.IsSync) {
-        // Sync receptor
-        if (receptor.IsVoid) {
-          // Void sync receptor: ISyncReceptor<TMessage>
-          generatedCode = voidSyncRegistrationSnippet
-              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
-              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
-        } else {
-          // Regular sync receptor: ISyncReceptor<TMessage, TResponse>
-          generatedCode = syncRegistrationSnippet
-              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
-              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-              .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
-              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
-        }
-      } else {
-        // Async receptor
-        if (receptor.IsVoid) {
-          // Void receptor: IReceptor<TMessage>
-          generatedCode = voidRegistrationSnippet
-              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
-              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
-        } else {
-          // Regular receptor: IReceptor<TMessage, TResponse>
-          generatedCode = registrationSnippet
-              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
-              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-              .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
-              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
-        }
-      }
+      var generatedCode = _generateRegistrationCode(
+          receptor, registrationSnippet, voidRegistrationSnippet,
+          syncRegistrationSnippet, voidSyncRegistrationSnippet);
 
       registrations.AppendLine(TemplateUtilities.IndentCode(generatedCode, "            "));
     }
@@ -1093,6 +1010,35 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_REGISTRATIONS", registrations.ToString());
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates the registration code for a single receptor using the appropriate snippet.
+  /// Selects between async/sync and void/response variants.
+  /// </summary>
+  private static string _generateRegistrationCode(
+      ReceptorInfo receptor,
+      string registrationSnippet,
+      string voidRegistrationSnippet,
+      string syncRegistrationSnippet,
+      string voidSyncRegistrationSnippet) {
+    if (receptor.IsSync) {
+      var interfaceName = StandardInterfaceNames.I_SYNC_RECEPTOR;
+      var snippet = receptor.IsVoid ? voidSyncRegistrationSnippet : syncRegistrationSnippet;
+      var result = snippet
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, interfaceName)
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+      return receptor.IsVoid ? result : result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!);
+    } else {
+      var interfaceName = StandardInterfaceNames.I_RECEPTOR;
+      var snippet = receptor.IsVoid ? voidRegistrationSnippet : registrationSnippet;
+      var result = snippet
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, interfaceName)
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+      return receptor.IsVoid ? result : result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!);
+    }
   }
 
   /// <summary>
@@ -1340,73 +1286,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-#pragma warning disable S125 // Descriptive comments about code generation, not dead code
-    // Generate outbox cascade type-switch (for auto-cascading events to outbox)
-    // Reuse event types extracted earlier for untyped publish routing
-#pragma warning restore S125
-    var outboxCascade = new StringBuilder();
-
     // Separate concrete types from interface types
     // Concrete types use exact typeof() matching; interface types use 'is' pattern matching
     var concreteTypes = eventTypes.Where(t => !_isWhizbangInterface(t)).ToList();
     var interfaceTypes = eventTypes.Where(t => _isWhizbangInterface(t)).ToList();
 
-    // Generate concrete type cascades first (exact type matching)
-    foreach (var eventType in concreteTypes) {
-      outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
-      // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
-      outboxCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
-      outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope);");
-      outboxCascade.AppendLine(INDENT_6_CLOSE_BRACE);
-      outboxCascade.AppendLine();
-    }
+    // Generate outbox cascade type-switch (for auto-cascading events to outbox)
+    var outboxCascade = _generateCascadeTypeSwitch(concreteTypes, interfaceTypes, eventStoreOnly: false);
 
-    // Generate interface type cascades (pattern matching for any implementing type)
-    // This handles List<IEvent>, IEvent[], etc. where concrete types implement the interface
-    // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
-    foreach (var eventType in interfaceTypes) {
-      outboxCascade.AppendLine($"      if (message is {eventType}) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
-      // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
-      outboxCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
-#pragma warning disable S125 // Descriptive comment about code generation, not dead code
-      // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
-#pragma warning restore S125
-      outboxCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope);");
-      outboxCascade.AppendLine(INDENT_6_CLOSE_BRACE);
-      outboxCascade.AppendLine();
-    }
-
-#pragma warning disable S125 // Descriptive comments about code generation, not dead code
     // Generate event store only cascade type-switch (for storing events without transport)
-    // Uses eventStoreOnly: true to set destination=null, bypassing transport publishing
-#pragma warning restore S125
-    var eventStoreOnlyCascade = new StringBuilder();
-
-    // Generate concrete type cascades first (exact type matching)
-    foreach (var eventType in concreteTypes) {
-      eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
-      // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
-      eventStoreOnlyCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
-      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
-      eventStoreOnlyCascade.AppendLine(INDENT_6_CLOSE_BRACE);
-      eventStoreOnlyCascade.AppendLine();
-    }
-
-    // Generate interface type cascades (pattern matching for any implementing type)
-    // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
-    foreach (var eventType in interfaceTypes) {
-      eventStoreOnlyCascade.AppendLine($"      if (message is {eventType}) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
-      // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
-      eventStoreOnlyCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
-      // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
-      eventStoreOnlyCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
-      eventStoreOnlyCascade.AppendLine(INDENT_6_CLOSE_BRACE);
-      eventStoreOnlyCascade.AppendLine();
-    }
+    var eventStoreOnlyCascade = _generateCascadeTypeSwitch(concreteTypes, interfaceTypes, eventStoreOnly: true);
 
     // Replace template markers using regex for robustness
     // This handles variations in whitespace and formatting
@@ -1470,6 +1359,46 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode);
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates a cascade type-switch for outbox or event-store-only publishing.
+  /// Concrete types use exact typeof() matching; interface types use 'is' pattern matching.
+  /// </summary>
+  /// <param name="concreteTypes">Non-interface event types for exact type matching.</param>
+  /// <param name="interfaceTypes">Whizbang interface types (IEvent, etc.) for pattern matching.</param>
+  /// <param name="eventStoreOnly">If true, generates eventStoreOnly: true parameter.</param>
+  /// <returns>StringBuilder with the generated cascade code.</returns>
+  private static StringBuilder _generateCascadeTypeSwitch(
+      List<string> concreteTypes,
+      List<string> interfaceTypes,
+      bool eventStoreOnly) {
+    var sb = new StringBuilder();
+    var eventStoreOnlyParam = eventStoreOnly ? ", eventStoreOnly: true" : "";
+
+    // Generate concrete type cascades (exact type matching)
+    foreach (var eventType in concreteTypes) {
+      sb.AppendLine($"      if (messageType == typeof({eventType})) {{");
+      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // This ensures the same ID is used for tracking (singleton tracker) AND storage
+      sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
+      sb.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
+      sb.AppendLine(INDENT_6_CLOSE_BRACE);
+      sb.AppendLine();
+    }
+
+    // Generate interface type cascades (pattern matching for any implementing type)
+    // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
+    foreach (var eventType in interfaceTypes) {
+      sb.AppendLine($"      if (message is {eventType}) {{");
+      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
+      sb.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
+      sb.AppendLine(INDENT_6_CLOSE_BRACE);
+      sb.AppendLine();
+    }
+
+    return sb;
   }
 
   /// <summary>
