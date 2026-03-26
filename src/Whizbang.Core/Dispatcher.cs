@@ -4327,7 +4327,7 @@ public abstract partial class Dispatcher(
   }
 
   private void _ensureReceptorExists(object message, Type messageType) {
-    var invoker = GetReceptorInvoker<object>(message, messageType)
+    _ = GetReceptorInvoker<object>(message, messageType)
       ?? throw new ReceptorNotFoundException(messageType);
   }
 

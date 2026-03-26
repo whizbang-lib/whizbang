@@ -68,15 +68,16 @@ public class FluentScopeApiTests : EFCoreTestBase {
       string? organizationId = null,
       string? customerId = null,
       HashSet<SecurityPrincipalId>? principals = null) {
-    var accessor = new TestScopeContextAccessor();
-    accessor.Current = new TestScopeContext {
-      Scope = new PerspectiveScope {
-        TenantId = tenantId,
-        UserId = userId,
-        OrganizationId = organizationId,
-        CustomerId = customerId
-      },
-      SecurityPrincipals = principals ?? []
+    var accessor = new TestScopeContextAccessor {
+      Current = new TestScopeContext {
+        Scope = new PerspectiveScope {
+          TenantId = tenantId,
+          UserId = userId,
+          OrganizationId = organizationId,
+          CustomerId = customerId
+        },
+        SecurityPrincipals = principals ?? []
+      }
     };
     return accessor;
   }

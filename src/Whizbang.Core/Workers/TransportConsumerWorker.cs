@@ -426,7 +426,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     dedupSw.Stop();
     _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
-    return workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
+    return [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
   }
 
   private async Task _invokePreInboxLifecycleAsync(

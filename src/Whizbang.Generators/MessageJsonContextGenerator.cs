@@ -3081,11 +3081,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<string> _getConcretePublicDerivedTypes(
       IGrouping<string, InheritanceInfo> group,
       Compilation compilation) {
-    return group
+    return [.. group
         .Select(i => i.DerivedTypeName)
         .Distinct()
-        .Where(derivedName => _isConcretePublicType(derivedName, compilation))
-        .ToImmutableArray();
+        .Where(derivedName => _isConcretePublicType(derivedName, compilation))];
   }
 
   /// <summary>

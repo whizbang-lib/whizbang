@@ -7,6 +7,8 @@ namespace Whizbang.Core.Diagnostics;
 /// <summary>
 /// Renders the Whizbang ASCII art banner with true-color ANSI escape codes.
 /// Used by CLI tools on startup and optionally by the Whizbang host on service start.
+/// Banner data (characters + colors) is generated from canonical source files
+/// by Build-Logo.ps1 into WhizbangBanner.Generated.cs.
 /// </summary>
 /// <docs>core-concepts/diagnostics</docs>
 public static partial class WhizbangBanner {
@@ -14,6 +16,7 @@ public static partial class WhizbangBanner {
   private const int BACKGROUND_R = 45;
   private const int BACKGROUND_G = 55;
   private const int BACKGROUND_B = 72;
+  private const int BANNER_WIDTH = 84;
 
   private static readonly string _background = $"{ESC_CODE}[48;2;{BACKGROUND_R};{BACKGROUND_G};{BACKGROUND_B}m";
   private static readonly string _reset = $"{ESC_CODE}[0m";
@@ -59,20 +62,6 @@ public static partial class WhizbangBanner {
     }
   }
 
-  private static readonly string[] _plainBanner =
-  [
-      "",
-        "  Φ▌▌     ,▄▄         ▌▌H      ╒██⌐         ▓▓L",
-        "   ██W   █████    ▄▄m ▓█▄▄▌▌▄   ▄▄  ▄▄▄▄▄▄╕ ██▌▌▌▌▄_   ,▄▌▌▄▄▄⌐ ╔▄▄▄▌▌▄    ²▌▌▌▄▄▄",
-        "   ▀██  ▌██ ╟██  ▐▓▓  ▓█▓\"'▀██  ██  \"\"╠▓▓▀  ███╙\"╨██╕▄██▀╙╙▀██M ▓██▀²▀██ ┌██▀\"╙▓██",
-        "    ██▄▄██   ██▌_▓▓Ñ  ▓█H   ██  ██  _Φ▓▌    ██▌   ▄▓██▌▓▄   ██M ╫▓▌   ██ ▐██   ╓██",
-        "    ╙████     ▀██▓▀   ▓█M   ██  ██ ▐▓▓▓▓▓▓▌ ███████▌\" '▓███▀▀█M ▓█▌   ██  ╨███████",
-        "                                                                          ▓▄▄▄▄▓█▌",
-        "",
-        "                                W! - https://whizba.ng/",
-        "",
-    ];
-
   /// <summary>
   /// Writes the Whizbang ASCII art banner to the console with true-color ANSI gradient
   /// and random star decorations on a dark navy background.
@@ -95,151 +84,37 @@ public static partial class WhizbangBanner {
 
     var random = Random.Shared;
     var sb = new StringBuilder(4096);
-
-    void Seg(string text, int r, int g, int b) =>
-      _appendSegment(sb, text, r, g, b, random);
-
-    void Eol() => _appendEndOfLine(sb);
+    var colors = _colorData;
 
     sb.AppendLine();
 
-    // Background line above
-    Seg("                                                                                    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
+    for (var row = 0; row < BANNER_ROWS; row++) {
+      var line = _plainBanner[row];
+      var col = 0;
 
-    // Line 1
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("Φ", 70, 158, 174); Seg("▌", 56, 155, 181); Seg("▌     ", 57, 144, 176);
-    Seg(",▄▄", 108, 101, 131);
-    Seg("         ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▌▌", 190, 60, 105); Seg("H", 154, 100, 108);
-    Seg("      ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╒", 144, 126, 110); Seg("██", 234, 124, 16); Seg("⌐", 148, 129, 106);
-    Seg("         ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓▓", 150, 152, 154); Seg("L", 165, 167, 169);
-    Seg("                                     ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
+      // Walk columns, coalescing adjacent same-color characters into segments
+      while (col < BANNER_WIDTH) {
+        var idx = (row * BANNER_WIDTH + col) * 3;
+        var r = colors[idx];
+        var g = colors[idx + 1];
+        var b = colors[idx + 2];
 
-    // Line 2
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 19, 161, 206); Seg("W", 94, 128, 148); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("█████", 66, 52, 143);
-    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▄▄", 173, 70, 133); Seg("m ", 161, 92, 125);
-    Seg("▓█", 210, 42, 88); Seg("▄▄▌▌▄", 175, 90, 70);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▄▄", 186, 131, 66);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▄▄▄▄▄▄", 181, 146, 71); Seg("╕", 158, 138, 95);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██▌▌▌▌▄", 140, 142, 144); Seg("_", 170, 170, 170);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg(",▄▌▌▄▄▄⌐", 155, 157, 159);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╔▄▄▄▌▌▄", 155, 157, 159);
-    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("²▌▌▌▄▄▄", 150, 152, 154);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
+        // Find run of same color
+        var runStart = col;
+        while (col < BANNER_WIDTH) {
+          var nextIdx = (row * BANNER_WIDTH + col) * 3;
+          if (colors[nextIdx] != r || colors[nextIdx + 1] != g || colors[nextIdx + 2] != b) {
+            break;
+          }
+          col++;
+        }
 
-    // Line 3
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▀", 53, 142, 178); Seg("██", 24, 131, 191);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▌", 80, 89, 141); Seg("██", 45, 45, 143);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╟", 115, 84, 134); Seg("██", 121, 36, 141);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▐▓▓", 156, 90, 131);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓█▓", 208, 43, 62); Seg("\"", 160, 101, 94); Seg("'", 157, 110, 97);
-    Seg("▀██", 195, 100, 55);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 239, 130, 11);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("\"\"", 172, 143, 80); Seg("╠▓▓", 187, 165, 64); Seg("▀", 213, 157, 36);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("███", 140, 142, 144); Seg("╙", 160, 162, 164); Seg("\"", 165, 167, 169); Seg("╨██", 135, 137, 139);
-    Seg("╕", 165, 167, 169);
-    Seg("▄██▀", 138, 140, 142); Seg("╙╙", 165, 167, 169); Seg("▀██", 130, 132, 134); Seg("M", 160, 162, 164);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓██▀", 145, 147, 149); Seg("²", 165, 167, 169); Seg("▀██", 130, 132, 134);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("┌██▀", 170, 172, 174); Seg("\"", 165, 167, 169); Seg("╙▓██", 145, 147, 149);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
+        var text = line[runStart..col];
+        _appendSegment(sb, text, r, g, b, random);
+      }
 
-    // Line 4
-    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 27, 102, 180); Seg("▄▄", 97, 113, 140); Seg("██", 42, 54, 147);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██▌", 132, 56, 137); Seg("_", 132, 122, 128); Seg("▓▓", 205, 26, 137); Seg("Ñ", 181, 71, 123);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓█", 206, 44, 55); Seg("H", 165, 98, 89);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 239, 103, 12);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 239, 143, 10);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("_", 137, 131, 117); Seg("Φ▓▌", 199, 166, 52);
-    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██▌", 140, 142, 144);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▄▓██▌▓▄", 143, 145, 147);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██M", 138, 140, 142);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╫▓▌", 155, 157, 159);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 130, 132, 134);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▐██", 160, 162, 164);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╓██", 170, 172, 174);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
-
-    // Line 5
-    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╙", 99, 122, 142); Seg("████", 35, 81, 157);
-    Seg("     ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▀██▓▀", 152, 49, 137);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓█", 204, 47, 51); Seg("M", 167, 98, 87);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 239, 108, 12);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 239, 148, 10);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▐▓▓▓▓▓▓▌", 200, 180, 80);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("███████▌", 140, 142, 144); Seg("\"", 165, 167, 169);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("'", 170, 172, 174); Seg("▓███▀▀█", 143, 145, 147); Seg("M", 160, 162, 164);
-    Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓█▌", 210, 212, 214);
-    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("██", 130, 132, 134);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("╨███████", 138, 140, 142);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
-
-    // Line 6: g descender
-    Seg("                                                                          ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("▓▄▄▄▄▓█▌", 150, 152, 154);
-    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
-
-    // Background line below
-    Seg("                                                                                    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
-
-    // W! - https://whizba.ng/ tagline
-    Seg("                                ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("W! - https://whizba.ng/", 200, 210, 220);
-    Seg("                             ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Eol();
+      _appendEndOfLine(sb);
+    }
 
     sb.AppendLine();
     writer.Write(sb);
@@ -316,7 +191,6 @@ public static partial class WhizbangBanner {
     var configLine = string.Join(" | ", configParts);
 
     // Fixed width matching the logo banner
-    const int BANNER_WIDTH = 84;
     const int innerWidth = BANNER_WIDTH - 4;
 
     var titleLine = whizbangVersion != null

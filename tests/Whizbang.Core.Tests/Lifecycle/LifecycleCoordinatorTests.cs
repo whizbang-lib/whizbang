@@ -404,9 +404,9 @@ public class LifecycleCoordinatorTests {
     var envelope2 = _createEnvelope(new TestEvent(eventId, "second"));
 
     // Act
-    var tracking1 = coordinator.BeginTracking(
+    _ = coordinator.BeginTracking(
       eventId, envelope1, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
-    var tracking2 = coordinator.BeginTracking(
+    _ = coordinator.BeginTracking(
       eventId, envelope2, LifecycleStage.PostInboxAsync, MessageSource.Inbox);
 
     // Assert — TryAdd returns false for duplicate, first wins
