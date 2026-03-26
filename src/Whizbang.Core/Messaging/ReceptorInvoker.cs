@@ -155,8 +155,11 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Registry already has categorized receptors at compile time
     var receptors = _registry.GetReceptorsFor(messageType, stage);
 
+    // Resolve scope for tag processing — use security context or extracted scope from hops
+    var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
+
     if (receptors.Count == 0) {
-      await _processTagsAsync(message, messageType, stage, messageContextAccessor, cancellationToken).ConfigureAwait(false);
+      await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
       return;
     }
 
@@ -176,7 +179,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     // Process message tags after all receptors complete at the current lifecycle stage
-    await _processTagsAsync(message, messageType, stage, messageContextAccessor, cancellationToken).ConfigureAwait(false);
+    await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -369,8 +372,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     receptorActivity?.SetTag("whizbang.lifecycle.stage", ctx.Stage.ToString());
 
     try {
-      // Await perspective sync if needed
-      await _awaitPerspectiveSyncAsync(receptor, ctx.ExtractedStreamId, ctx.LifecycleContext, cancellationToken).ConfigureAwait(false);
+      // Await perspective sync if needed - returns SyncContext to set in THIS execution context
+      // (AsyncLocal values set inside child async methods don't flow back to the parent)
+      var syncContext = await _awaitPerspectiveSyncAsync(receptor, ctx.ExtractedStreamId, ctx.LifecycleContext, cancellationToken).ConfigureAwait(false);
+      if (syncContext is not null) {
+        SyncContextAccessor.CurrentContext = syncContext;
+      }
 
       // Set lifecycle context for runtime-registered receptors (IAcceptsLifecycleContext support)
       if (ctx.LifecycleContext is not null) {
@@ -402,22 +409,25 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
   /// <summary>
   /// Checks for [AwaitPerspectiveSync] attributes and awaits sync if needed.
+  /// Returns the last SyncContext so the caller can set it on the ambient AsyncLocal
+  /// (AsyncLocal values set inside child async methods don't flow back to the parent).
   /// </summary>
-  private async ValueTask _awaitPerspectiveSyncAsync(
+  private async ValueTask<SyncContext?> _awaitPerspectiveSyncAsync(
       ReceptorInfo receptor,
       Guid? extractedStreamId,
       ILifecycleContext? context,
       CancellationToken cancellationToken) {
     if (_syncAwaiter is null || receptor.SyncAttributes is not { Count: > 0 }) {
-      return;
+      return null;
     }
 
+    SyncContext? lastSyncContext = null;
     foreach (var syncAttr in receptor.SyncAttributes) {
       var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
       SyncResult syncResult;
 
       if (extractedStreamId.HasValue) {
-        syncResult = await _awaitStreamSyncAsync(syncAttr, extractedStreamId.Value, timeout, context, cancellationToken).ConfigureAwait(false);
+        (syncResult, lastSyncContext) = await _awaitStreamSyncAsync(syncAttr, extractedStreamId.Value, timeout, context, cancellationToken).ConfigureAwait(false);
       } else {
         // Fall back to scope-based sync when no stream ID extractor
         var syncOptions = syncAttr.EventTypes is { Count: > 0 }
@@ -435,12 +445,16 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
             $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
       }
     }
+
+    return lastSyncContext;
   }
 
   /// <summary>
-  /// Awaits stream-based sync and sets SyncContext for receptor access via AsyncLocal.
+  /// Awaits stream-based sync and creates SyncContext for receptor access.
+  /// Returns both the SyncResult and the SyncContext so the caller can set it
+  /// on the ambient AsyncLocal in the correct execution context.
   /// </summary>
-  private async ValueTask<SyncResult> _awaitStreamSyncAsync(
+  private async ValueTask<(SyncResult Result, SyncContext Context)> _awaitStreamSyncAsync(
       ReceptorSyncAttributeInfo syncAttr,
       Guid streamId,
       TimeSpan timeout,
@@ -456,7 +470,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
         eventIdToAwait: context?.EventId,
         cancellationToken).ConfigureAwait(false);
 
-    // Create and set SyncContext for receptor access via AsyncLocal
+    // Create SyncContext - caller sets it on AsyncLocal to ensure it flows to receptor
     var syncContext = new SyncContext {
       StreamId = streamId,
       PerspectiveType = syncAttr.PerspectiveType,
@@ -465,9 +479,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       ElapsedTime = syncResult.ElapsedTime,
       FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
     };
-    SyncContextAccessor.CurrentContext = syncContext;
 
-    return syncResult;
+    return (syncResult, syncContext);
   }
 
   /// <summary>
@@ -492,12 +505,11 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       object message,
       Type messageType,
       LifecycleStage stage,
-      IMessageContextAccessor? messageContextAccessor,
+      IScopeContext? scope,
       CancellationToken cancellationToken) {
     var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
     if (tagProcessor is not null) {
-      var scopeForTags = messageContextAccessor?.Current?.ScopeContext;
-      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, cancellationToken).ConfigureAwait(false);
     }
   }
 
