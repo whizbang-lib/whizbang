@@ -141,7 +141,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
     await worker.StopAsync(CancellationToken.None);
-    await Assert.That(true).IsTrue();
+    // No assertion needed — test verifies no exception is thrown
   }
 
   // ========================================
@@ -206,7 +206,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     // Act & Assert - should not throw
     await worker.PauseAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
-    await Assert.That(true).IsTrue();
+    // No assertion needed — test verifies no exception is thrown
   }
 
   [Test]
@@ -216,7 +216,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     await worker.ResumeAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
-    await Assert.That(true).IsTrue();
+    // No assertion needed — test verifies no exception is thrown
   }
 
   // ========================================
@@ -1074,7 +1074,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
 
     // Assert - completed without error
-    await Assert.That(true).IsTrue();
+    // No assertion needed — test verifies no exception is thrown
 
     await worker.StopAsync(CancellationToken.None);
   }
