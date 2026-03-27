@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 
 /// <summary>
 /// Tests for routed cascade behavior in LocalInvokeAsync.
-/// When a receptor returns messages, the dispatcher cascades them based on their DispatchMode:
+/// When a receptor returns messages, the dispatcher cascades them based on their DispatchModes:
 /// - Local: Invoke local receptors only
 /// - Outbox: Write to outbox only (for cross-service delivery)
 /// - Both: Invoke local AND write to outbox
@@ -26,14 +26,14 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </summary>
 /// <remarks>
 /// Per the routed cascade design:
-/// - Unwrapped messages default to DispatchMode.Outbox
-/// - Route.Local() wraps a message with DispatchMode.Local
-/// - Route.Outbox() wraps a message with DispatchMode.Outbox
-/// - Route.Both() wraps a message with DispatchMode.Both
+/// - Unwrapped messages default to DispatchModes.Outbox
+/// - Route.Local() wraps a message with DispatchModes.Local
+/// - Route.Outbox() wraps a message with DispatchModes.Outbox
+/// - Route.Both() wraps a message with DispatchModes.Both
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   #region Test Messages
 
@@ -165,7 +165,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Outbox)
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Outbox)
       .Because("Unwrapped messages should default to Outbox routing for cross-service delivery");
   }
 
@@ -183,7 +183,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   /// <summary>
@@ -200,7 +200,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   /// <summary>
@@ -217,7 +217,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Both);
   }
 
   /// <summary>
@@ -229,11 +229,11 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var evt = new RoutedTestEvent(Guid.NewGuid());
 
     // Act - Pass receptor default of Local
-    var extracted = MessageExtractor.ExtractMessagesWithRouting(evt, receptorDefault: DispatchMode.Local).ToList();
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(evt, receptorDefault: DispatchModes.Local).ToList();
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local)
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local)
       .Because("Receptor default should override system default when no wrapper is used");
   }
 
@@ -252,9 +252,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(2);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local)
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local)
       .Because("First item has Local routing");
-    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchMode.Outbox)
+    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchModes.Outbox)
       .Because("Second item has Outbox routing");
   }
 
@@ -275,8 +275,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(2);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local);
-    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local);
+    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   /// <summary>
@@ -293,7 +293,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.LocalNoPersist);
   }
 
   /// <summary>
@@ -310,7 +310,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.EventStoreOnly);
   }
 
   /// <summary>
@@ -326,9 +326,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue()
       .Because("LocalNoPersist should invoke local receptors");
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsFalse()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.EventStore)).IsFalse()
       .Because("LocalNoPersist should NOT persist to event store");
   }
 
@@ -345,9 +345,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.EventStore)).IsTrue()
       .Because("EventStoreOnly should persist to event store");
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsFalse()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.LocalDispatch)).IsFalse()
       .Because("EventStoreOnly should NOT invoke local receptors");
   }
 
@@ -364,9 +364,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue()
       .Because("Local should invoke local receptors");
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.EventStore)).IsTrue()
       .Because("Local should persist to event store");
   }
 
@@ -422,7 +422,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }
@@ -517,7 +517,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -695,7 +695,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -810,7 +810,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -997,7 +997,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -1025,11 +1025,11 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     await Assert.That(confirmation.OrderId).IsEqualTo(command.OrderId);
 
     // Assert - Routed wrappers preserve their routing modes
-    await Assert.That(routedOrderCreated.Mode).IsEqualTo(DispatchMode.Local)
+    await Assert.That(routedOrderCreated.Mode).IsEqualTo(DispatchModes.Local)
       .Because("OrderCreated stays in-process for local projections");
-    await Assert.That(routedInventoryReserved.Mode).IsEqualTo(DispatchMode.Outbox)
+    await Assert.That(routedInventoryReserved.Mode).IsEqualTo(DispatchModes.Outbox)
       .Because("InventoryReserved goes to outbox for cross-service delivery");
-    await Assert.That(routedAuditLog.Mode).IsEqualTo(DispatchMode.Both)
+    await Assert.That(routedAuditLog.Mode).IsEqualTo(DispatchModes.Both)
       .Because("AuditLog goes to both local receptors and outbox");
 
     // Assert - Local cascade should have fired for Local and Both events

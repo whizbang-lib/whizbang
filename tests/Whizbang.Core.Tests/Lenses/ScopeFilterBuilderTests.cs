@@ -22,12 +22,12 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Tenant, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Tenant, context);
 
     // Assert
     await Assert.That(filterInfo.TenantId).IsEqualTo("tenant-123");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsTrue();
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.User)).IsFalse();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Tenant)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.User)).IsFalse();
   }
 
   [Test]
@@ -42,10 +42,10 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.None, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.None, context);
 
     // Assert
-    await Assert.That(filterInfo.Filters).IsEqualTo(ScopeFilter.None);
+    await Assert.That(filterInfo.Filters).IsEqualTo(ScopeFilters.None);
     await Assert.That(filterInfo.IsEmpty).IsTrue();
   }
 
@@ -63,13 +63,13 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.User, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.User, context);
 
     // Assert
     await Assert.That(filterInfo.TenantId).IsEqualTo("tenant-123");
     await Assert.That(filterInfo.UserId).IsEqualTo("user-456");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsTrue();
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.User)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Tenant)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.User)).IsTrue();
     await Assert.That(filterInfo.UseOrLogicForUserAndPrincipal).IsFalse();
   }
 
@@ -90,7 +90,7 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.User | ScopeFilter.Principal, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.User | ScopeFilters.Principal, context);
 
     // Assert - User + Principal should use OR logic
     await Assert.That(filterInfo.UseOrLogicForUserAndPrincipal).IsTrue();
@@ -116,13 +116,13 @@ public class ScopeFilterBuilderTests {
 
     // Act
     var filterInfo = ScopeFilterBuilder.Build(
-      ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal,
+      ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal,
       context);
 
     // Assert
     // Tenant is always AND'd
     await Assert.That(filterInfo.TenantId).IsEqualTo("tenant-123");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Tenant)).IsTrue();
     // User + Principal are OR'd together
     await Assert.That(filterInfo.UseOrLogicForUserAndPrincipal).IsTrue();
     await Assert.That(filterInfo.UserId).IsEqualTo("user-456");
@@ -147,10 +147,10 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Principal, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Principal, context);
 
     // Assert
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Principal)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Principal)).IsTrue();
     await Assert.That(filterInfo.SecurityPrincipals.Count).IsEqualTo(3);
     await Assert.That(filterInfo.SecurityPrincipals).Contains(SecurityPrincipalId.Group("sales-team"));
   }
@@ -169,12 +169,12 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.Organization, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.Organization, context);
 
     // Assert
     await Assert.That(filterInfo.TenantId).IsEqualTo("tenant-123");
     await Assert.That(filterInfo.OrganizationId).IsEqualTo("org-789");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Organization)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Organization)).IsTrue();
   }
 
   // === Customer Tests ===
@@ -191,12 +191,12 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.Customer, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.Customer, context);
 
     // Assert
     await Assert.That(filterInfo.TenantId).IsEqualTo("tenant-123");
     await Assert.That(filterInfo.CustomerId).IsEqualTo("cust-999");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Customer)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Customer)).IsTrue();
   }
 
   // === Missing Scope Values ===
@@ -213,7 +213,7 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act & Assert
-    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Tenant, context))
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilters.Tenant, context))
       .Throws<InvalidOperationException>();
   }
 
@@ -229,7 +229,7 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act & Assert
-    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.User, context))
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilters.User, context))
       .Throws<InvalidOperationException>();
   }
 
@@ -245,7 +245,7 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act & Assert
-    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Principal, context))
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilters.Principal, context))
       .Throws<InvalidOperationException>();
   }
 
@@ -261,7 +261,7 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act & Assert
-    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Organization, context))
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilters.Organization, context))
       .Throws<InvalidOperationException>();
   }
 
@@ -277,7 +277,7 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act & Assert
-    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Customer, context))
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilters.Customer, context))
       .Throws<InvalidOperationException>();
   }
 
@@ -295,12 +295,12 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Organization, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Organization, context);
 
     // Assert
     await Assert.That(filterInfo.OrganizationId).IsEqualTo("org-789");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Organization)).IsTrue();
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsFalse();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Organization)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Tenant)).IsFalse();
   }
 
   // === Customer Only Tests ===
@@ -317,12 +317,12 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Customer, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.Customer, context);
 
     // Assert
     await Assert.That(filterInfo.CustomerId).IsEqualTo("cust-999");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Customer)).IsTrue();
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsFalse();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Customer)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.Tenant)).IsFalse();
   }
 
   // === User Only Tests ===
@@ -339,11 +339,11 @@ public class ScopeFilterBuilderTests {
     };
 
     // Act
-    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.User, context);
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilters.User, context);
 
     // Assert
     await Assert.That(filterInfo.UserId).IsEqualTo("user-456");
-    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.User)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilters.User)).IsTrue();
     await Assert.That(filterInfo.UseOrLogicForUserAndPrincipal).IsFalse();
   }
 
@@ -352,7 +352,7 @@ public class ScopeFilterBuilderTests {
   [Test]
   public async Task ScopeFilterInfo_IsEmpty_TrueWhenNoFiltersAsync() {
     // Arrange
-    var filterInfo = new ScopeFilterInfo { Filters = ScopeFilter.None };
+    var filterInfo = new ScopeFilterInfo { Filters = ScopeFilters.None };
 
     // Act & Assert
     await Assert.That(filterInfo.IsEmpty).IsTrue();
@@ -361,7 +361,7 @@ public class ScopeFilterBuilderTests {
   [Test]
   public async Task ScopeFilterInfo_IsEmpty_FalseWhenFiltersSetAsync() {
     // Arrange
-    var filterInfo = new ScopeFilterInfo { Filters = ScopeFilter.Tenant };
+    var filterInfo = new ScopeFilterInfo { Filters = ScopeFilters.Tenant };
 
     // Act & Assert
     await Assert.That(filterInfo.IsEmpty).IsFalse();

@@ -36,7 +36,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
@@ -72,7 +72,7 @@ public partial class DapperWorkCoordinator(
     await using var connection = new NpgsqlConnection(_connectionString);
 
     // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
-    // Notices are only generated when WorkBatchFlags.DebugMode is set in SQL function
+    // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
     connection.Notice += _onNotice;
 
     await connection.OpenAsync(cancellationToken);
@@ -299,13 +299,13 @@ public partial class DapperWorkCoordinator(
     };
   }
 
-  private static WorkBatchFlags _buildFlags(bool isNewlyStored, bool isOrphaned) {
-    var flags = WorkBatchFlags.None;
+  private static WorkBatchOptions _buildFlags(bool isNewlyStored, bool isOrphaned) {
+    var flags = WorkBatchOptions.None;
     if (isNewlyStored) {
-      flags |= WorkBatchFlags.NewlyStored;
+      flags |= WorkBatchOptions.NewlyStored;
     }
     if (isOrphaned) {
-      flags |= WorkBatchFlags.Orphaned;
+      flags |= WorkBatchOptions.Orphaned;
     }
     return flags;
   }
@@ -546,7 +546,7 @@ public partial class DapperWorkCoordinator(
 
   /// <summary>
   /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
-  /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
+  /// Notices are only generated when WorkBatchOptions.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
     if (_logger is not null) {
@@ -628,7 +628,7 @@ public partial class DapperWorkCoordinator(
   )]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage requires flat parameters matching the structured log template")]
   static partial void LogProcessingWorkBatch(ILogger logger, Guid instanceId, string serviceName, string hostName, int processId,
-    int outboxCompletions, int outboxFailures, int inboxCompletions, int inboxFailures, int newOutbox, int newInbox, WorkBatchFlags flags);
+    int outboxCompletions, int outboxFailures, int inboxCompletions, int inboxFailures, int newOutbox, int newInbox, WorkBatchOptions flags);
 
   [LoggerMessage(
     Level = LogLevel.Debug,

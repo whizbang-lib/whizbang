@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>fundamentals/identity/type-qualification</docs>
 [Flags]
-public enum TypeQualification {
+public enum TypeQualifications {
   /// <summary>
   /// No formatting applied. Use this as a base for custom combinations.
   /// </summary>

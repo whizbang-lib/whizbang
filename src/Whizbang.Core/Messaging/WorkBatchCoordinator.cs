@@ -32,36 +32,30 @@ public class WorkBatchCoordinator(
 
   /// <inheritdoc />
   public async Task ProcessAndDistributeAsync(
-    Guid instanceId,
-    List<MessageCompletion>? outboxCompletions = null,
-    List<MessageFailure>? outboxFailures = null,
-    List<MessageCompletion>? inboxCompletions = null,
-    List<MessageFailure>? inboxFailures = null,
-    List<PerspectiveCursorCompletion>? perspectiveCompletions = null,
-    List<PerspectiveCursorFailure>? perspectiveFailures = null,
+    ProcessAndDistributeContext context,
     CancellationToken ct = default
   ) {
     // Call the central SQL function (process_work_batch)
     var request = new ProcessWorkBatchRequest {
-      InstanceId = instanceId,
+      InstanceId = context.InstanceId,
       ServiceName = _instanceProvider.ServiceName,
       HostName = _instanceProvider.HostName,
       ProcessId = _instanceProvider.ProcessId,
       Metadata = null,
-      OutboxCompletions = [.. (outboxCompletions ?? [])],
-      OutboxFailures = [.. (outboxFailures ?? [])],
-      InboxCompletions = [.. (inboxCompletions ?? [])],
-      InboxFailures = [.. (inboxFailures ?? [])],
+      OutboxCompletions = [.. (context.OutboxCompletions ?? [])],
+      OutboxFailures = [.. (context.OutboxFailures ?? [])],
+      InboxCompletions = [.. (context.InboxCompletions ?? [])],
+      InboxFailures = [.. (context.InboxFailures ?? [])],
       ReceptorCompletions = [],
       ReceptorFailures = [],
-      PerspectiveCompletions = [.. (perspectiveCompletions ?? [])],
+      PerspectiveCompletions = [.. (context.PerspectiveCompletions ?? [])],
       PerspectiveEventCompletions = [],
-      PerspectiveFailures = [.. (perspectiveFailures ?? [])],
+      PerspectiveFailures = [.. (context.PerspectiveFailures ?? [])],
       NewOutboxMessages = [],
       NewInboxMessages = [],
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
-      Flags = WorkBatchFlags.None,
+      Flags = WorkBatchOptions.None,
       PartitionCount = 16,  // FUTURE: Make configurable
       LeaseSeconds = 30,    // FUTURE: Make configurable
       StaleThresholdSeconds = 300  // FUTURE: Make configurable

@@ -27,7 +27,7 @@ public class DispatcherCoverageGenericTests {
   public record GenericCommand2(Guid Id);
   public record GenericResult2(Guid Id, string Status);
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record GenericEvent([property: StreamId] Guid OrderId) : IEvent;
 
   private sealed class GenericTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
@@ -83,7 +83,7 @@ public class DispatcherCoverageGenericTests {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -326,7 +326,7 @@ public class DispatcherCoverageGenericTests {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }

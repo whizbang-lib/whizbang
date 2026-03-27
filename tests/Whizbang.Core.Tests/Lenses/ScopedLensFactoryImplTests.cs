@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tests.Lenses;
 [Category("Core")]
 [Category("Lenses")]
 public class ScopedLensFactoryImplTests {
-  // === GetLens with ScopeFilter Tests ===
+  // === GetLens with ScopeFilters Tests ===
 
   [Test]
   public async Task ScopedLensFactory_GetLens_None_ReturnsLensAsync() {
@@ -24,7 +24,7 @@ public class ScopedLensFactoryImplTests {
     var (factory, _) = _createFactory();
 
     // Act
-    var lens = factory.GetLens<ITestLensQuery>(ScopeFilter.None);
+    var lens = factory.GetLens<ITestLensQuery>(ScopeFilters.None);
 
     // Assert
     await Assert.That(lens).IsNotNull();
@@ -38,7 +38,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act
-    var lens = factory.GetLens<ITestLensQuery>(ScopeFilter.Tenant);
+    var lens = factory.GetLens<ITestLensQuery>(ScopeFilters.Tenant);
 
     // Assert
     await Assert.That(lens).IsNotNull();
@@ -54,7 +54,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act
-    var lens = factory.GetLens<ITestLensQuery>(ScopeFilter.Tenant | ScopeFilter.User);
+    var lens = factory.GetLens<ITestLensQuery>(ScopeFilters.Tenant | ScopeFilters.User);
 
     // Assert
     await Assert.That(lens.AppliedFilter!.Value.TenantId).IsEqualTo("tenant-123");
@@ -74,7 +74,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act
-    var lens = factory.GetLens<ITestLensQuery>(ScopeFilter.Tenant | ScopeFilter.Principal);
+    var lens = factory.GetLens<ITestLensQuery>(ScopeFilters.Tenant | ScopeFilters.Principal);
 
     // Assert
     await Assert.That(lens.AppliedFilter!.Value.SecurityPrincipals.Count).IsEqualTo(2);
@@ -92,7 +92,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act
-    var lens = factory.GetLens<ITestLensQuery>(ScopeFilter.Tenant, Permission.Read("orders"));
+    var lens = factory.GetLens<ITestLensQuery>(ScopeFilters.Tenant, Permission.Read("orders"));
 
     // Assert
     await Assert.That(lens).IsNotNull();
@@ -109,7 +109,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilter.Tenant, Permission.Delete("orders")))
+      ScopeFilters.Tenant, Permission.Delete("orders")))
       .Throws<AccessDeniedException>();
   }
 
@@ -124,7 +124,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act
     var lens = factory.GetLens<ITestLensQuery>(
-      ScopeFilter.Tenant,
+      ScopeFilters.Tenant,
       Permission.Read("orders"),
       Permission.Write("orders"));
 
@@ -143,7 +143,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilter.Tenant,
+      ScopeFilters.Tenant,
       Permission.Read("orders"),
       Permission.Write("orders")))
       .Throws<AccessDeniedException>();
@@ -160,7 +160,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetGlobalLens<ITestLensQuery>();
 
     // Assert
-    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.None);
+    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilters.None);
   }
 
   [Test]
@@ -174,7 +174,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetTenantLens<ITestLensQuery>();
 
     // Assert
-    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.Tenant);
+    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilters.Tenant);
     await Assert.That(lens.AppliedFilter!.Value.TenantId).IsEqualTo("tenant-123");
   }
 
@@ -189,7 +189,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetUserLens<ITestLensQuery>();
 
     // Assert
-    var expectedFilters = ScopeFilter.Tenant | ScopeFilter.User;
+    var expectedFilters = ScopeFilters.Tenant | ScopeFilters.User;
     await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
   }
 
@@ -206,7 +206,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetPrincipalLens<ITestLensQuery>();
 
     // Assert
-    var expectedFilters = ScopeFilter.Tenant | ScopeFilter.Principal;
+    var expectedFilters = ScopeFilters.Tenant | ScopeFilters.Principal;
     await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
   }
 
@@ -240,7 +240,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetOrganizationLens<ITestLensQuery>();
 
     // Assert
-    const ScopeFilter expectedFilters = ScopeFilter.Tenant | ScopeFilter.Organization;
+    const ScopeFilters expectedFilters = ScopeFilters.Tenant | ScopeFilters.Organization;
     await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
     await Assert.That(lens.AppliedFilter!.Value.OrganizationId).IsEqualTo("org-456");
   }
@@ -256,7 +256,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetCustomerLens<ITestLensQuery>();
 
     // Assert
-    const ScopeFilter expectedFilters = ScopeFilter.Tenant | ScopeFilter.Customer;
+    const ScopeFilters expectedFilters = ScopeFilters.Tenant | ScopeFilters.Customer;
     await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
     await Assert.That(lens.AppliedFilter!.Value.CustomerId).IsEqualTo("cust-789");
   }
@@ -335,7 +335,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilter.None, []))
+      ScopeFilters.None, []))
       .ThrowsExactly<ArgumentException>();
   }
 
@@ -348,7 +348,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = null; // No scope context
 
     // Act & Assert
-    await Assert.That(() => factory.GetLens<ITestLensQuery>(ScopeFilter.Tenant))
+    await Assert.That(() => factory.GetLens<ITestLensQuery>(ScopeFilters.Tenant))
       .ThrowsExactly<InvalidOperationException>();
   }
 
@@ -370,7 +370,7 @@ public class ScopedLensFactoryImplTests {
     var factory = new ScopedLensFactory(provider, accessor, lensOptions, emitter);
 
     // Act & Assert
-    await Assert.That(() => factory.GetLens<IUnregisteredLensQuery>(ScopeFilter.None))
+    await Assert.That(() => factory.GetLens<IUnregisteredLensQuery>(ScopeFilters.None))
       .ThrowsExactly<InvalidOperationException>();
   }
 
@@ -446,7 +446,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetLens<ITestLensQuery>("Global");
 
     // Assert
-    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.None);
+    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilters.None);
   }
 
   [Test]
@@ -460,7 +460,7 @@ public class ScopedLensFactoryImplTests {
     // Act
     var lens = factory.GetLens<ITestLensQuery>("Unknown");
 
-    // Assert - Unknown property maps to ScopeFilter.None
+    // Assert - Unknown property maps to ScopeFilters.None
     await Assert.That(lens).IsNotNull();
   }
 
@@ -474,7 +474,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilter.None, Permission.Read("orders")))
+      ScopeFilters.None, Permission.Read("orders")))
       .ThrowsExactly<AccessDeniedException>();
   }
 
@@ -486,7 +486,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilter.None,
+      ScopeFilters.None,
       Permission.Read("orders"),
       Permission.Write("orders")))
       .ThrowsExactly<AccessDeniedException>();
@@ -531,7 +531,7 @@ public class ScopedLensFactoryImplTests {
     var (factory, _) = _createFactoryWithEventStoreQuery();
 
     // Act
-    var query = factory.GetEventStoreQuery(ScopeFilter.None);
+    var query = factory.GetEventStoreQuery(ScopeFilters.None);
 
     // Assert
     await Assert.That(query).IsNotNull();
@@ -545,7 +545,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act
-    var query = factory.GetEventStoreQuery(ScopeFilter.Tenant);
+    var query = factory.GetEventStoreQuery(ScopeFilters.Tenant);
 
     // Assert
     await Assert.That(query).IsNotNull();
@@ -563,7 +563,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act
-    var query = factory.GetEventStoreQuery(ScopeFilter.Tenant, Permission.Read("events"));
+    var query = factory.GetEventStoreQuery(ScopeFilters.Tenant, Permission.Read("events"));
 
     // Assert
     await Assert.That(query).IsNotNull();
@@ -579,7 +579,7 @@ public class ScopedLensFactoryImplTests {
     accessor.Current = context;
 
     // Act & Assert
-    await Assert.That(() => factory.GetEventStoreQuery(ScopeFilter.Tenant, Permission.Write("events")))
+    await Assert.That(() => factory.GetEventStoreQuery(ScopeFilters.Tenant, Permission.Write("events")))
       .Throws<AccessDeniedException>();
   }
 
@@ -593,7 +593,7 @@ public class ScopedLensFactoryImplTests {
 
     // Assert
     var filterable = query as TestFilterableEventStoreQuery;
-    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.None);
+    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilters.None);
   }
 
   [Test]
@@ -608,7 +608,7 @@ public class ScopedLensFactoryImplTests {
 
     // Assert
     var filterable = query as TestFilterableEventStoreQuery;
-    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.Tenant);
+    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilters.Tenant);
   }
 
   [Test]
@@ -623,7 +623,7 @@ public class ScopedLensFactoryImplTests {
 
     // Assert
     var filterable = query as TestFilterableEventStoreQuery;
-    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.Tenant | ScopeFilter.User);
+    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilters.Tenant | ScopeFilters.User);
   }
 
   [Test]
@@ -632,7 +632,7 @@ public class ScopedLensFactoryImplTests {
     var (factory, _) = _createFactory();
 
     // Act & Assert
-    await Assert.That(() => factory.GetEventStoreQuery(ScopeFilter.None))
+    await Assert.That(() => factory.GetEventStoreQuery(ScopeFilters.None))
       .ThrowsExactly<InvalidOperationException>();
   }
 

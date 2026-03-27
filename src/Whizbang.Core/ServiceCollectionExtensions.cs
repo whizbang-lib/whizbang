@@ -105,11 +105,14 @@ public static class ServiceCollectionExtensions {
     var existingTagOptions = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
     if (existingTagOptions?.ImplementationInstance is TagOptions existing) {
       // Merge hooks from new options into existing
+      // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
       foreach (var hook in coreOptions.Tags.HookRegistrations) {
         if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
           existing.UseHookRegistration(hook);
         }
       }
+#pragma warning restore S3267
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);

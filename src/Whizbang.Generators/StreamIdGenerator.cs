@@ -79,9 +79,12 @@ public class StreamIdGenerator : IIncrementalGenerator {
     );
   }
 
+  // S3776: Complexity from sequential validation checks with early returns — already well-structured
+#pragma warning disable S3776
   private static StreamIdInfo? _extractStreamIdInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
+#pragma warning restore S3776
 
     // Predicate guarantees node is RecordDeclarationSyntax or ClassDeclarationSyntax (both inherit from TypeDeclarationSyntax)
     // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
@@ -306,12 +309,15 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates stream key extractors with assembly-specific namespace to avoid conflicts.
   /// </summary>
+  // S3776: Code generation method — complexity from template assembly + multiple type categories (events, commands, generation policies)
+#pragma warning disable S3776
   private static void _generateStreamIdExtractors(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
       ImmutableArray<EventWithoutStreamIdInfo> eventsWithoutStreamId,
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+#pragma warning restore S3776
 
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";

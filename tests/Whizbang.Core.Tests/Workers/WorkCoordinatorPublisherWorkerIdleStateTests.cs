@@ -439,7 +439,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
   private static InboxWork _createInboxWork(Guid messageId) =>
@@ -454,7 +454,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
   // ============================================================

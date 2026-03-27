@@ -413,7 +413,7 @@ public class ReceptorInvokerTests {
     private readonly List<IMessage> _cascadedMessages = [];
     public List<IMessage> CascadedMessages => _cascadedMessages;
 
-    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
       // Extract messages from result (using same logic as DispatcherEventCascader)
       foreach (var (message, _) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
         _cascadedMessages.Add(message);

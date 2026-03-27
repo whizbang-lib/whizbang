@@ -44,7 +44,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
+      Flags = WorkBatchOptions.None,
     };
   }
 
@@ -321,9 +321,9 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
 
-    await publishStrategy.BatchPublishSignal.Task.WaitAsync(cts.Token);
-    // Give time for completion tracking
-    await Task.Delay(200, CancellationToken.None);
+    // Wait for the re-queue signal — fires when TryWrite is called after initial WriteAsync
+    // This is deterministic: the failed msg2 is re-queued via TryWrite in the bulk publisher loop
+    await channelWriter.RequeueSignal.WaitAsync(cts.Token);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

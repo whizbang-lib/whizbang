@@ -119,7 +119,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [
               new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
               new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
@@ -478,7 +478,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }],
             OutboxFailures = [new MessageFailure { MessageId = failedOutboxId, CompletedStatus = MessageProcessingStatus.Stored, Error = "Test failure" }],
             InboxCompletions = [new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored }],
@@ -1420,7 +1420,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion {
               MessageId = messageId,
               Status = MessageProcessingStatus.Stored
@@ -1452,7 +1452,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion {
               MessageId = messageId,
               Status = MessageProcessingStatus.Published
@@ -1535,7 +1535,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync() {
+  public async Task ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync() {
     // Arrange
     await _insertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var newMessageId = _idProvider.NewGuid();
@@ -1599,10 +1599,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(orphanedMessage).IsNotNull()
       .Because("Orphaned message should be returned");
 
-    await Assert.That((newMessage!.Flags & WorkBatchFlags.NewlyStored) == WorkBatchFlags.NewlyStored).IsTrue()
+    await Assert.That((newMessage!.Flags & WorkBatchOptions.NewlyStored) == WorkBatchOptions.NewlyStored).IsTrue()
       .Because("Newly stored message should have NewlyStored flag");
 
-    await Assert.That((orphanedMessage!.Flags & WorkBatchFlags.Orphaned) == WorkBatchFlags.Orphaned).IsTrue()
+    await Assert.That((orphanedMessage!.Flags & WorkBatchOptions.Orphaned) == WorkBatchOptions.Orphaned).IsTrue()
       .Because("Orphaned message should have Orphaned flag");
   }
 

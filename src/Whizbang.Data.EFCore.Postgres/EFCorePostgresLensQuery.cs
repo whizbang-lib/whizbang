@@ -92,7 +92,7 @@ internal static class ScopedAccessHelper {
       where TModel : class {
     var filters = QueryScopeMapper.ToScopeFilter(scope);
 
-    if (filters == ScopeFilter.None) {
+    if (filters == ScopeFilters.None) {
       return new UnfilteredScopedAccess<TModel>(context);
     }
 
@@ -114,20 +114,20 @@ internal static class ScopedAccessHelper {
       IQueryable<PerspectiveRow<TModel>> query,
       ScopeFilterInfo filterInfo)
       where TModel : class {
-    if (filterInfo.Filters.HasFlag(ScopeFilter.Tenant) && filterInfo.TenantId is not null) {
+    if (filterInfo.Filters.HasFlag(ScopeFilters.Tenant) && filterInfo.TenantId is not null) {
       query = query.Where(r => r.Scope.TenantId == filterInfo.TenantId);
     }
 
-    if (filterInfo.Filters.HasFlag(ScopeFilter.Organization) && filterInfo.OrganizationId is not null) {
+    if (filterInfo.Filters.HasFlag(ScopeFilters.Organization) && filterInfo.OrganizationId is not null) {
       query = query.Where(r => r.Scope.OrganizationId == filterInfo.OrganizationId);
     }
 
-    if (filterInfo.Filters.HasFlag(ScopeFilter.Customer) && filterInfo.CustomerId is not null) {
+    if (filterInfo.Filters.HasFlag(ScopeFilters.Customer) && filterInfo.CustomerId is not null) {
       query = query.Where(r => r.Scope.CustomerId == filterInfo.CustomerId);
     }
 
-    var hasUserFilter = filterInfo.Filters.HasFlag(ScopeFilter.User) && filterInfo.UserId is not null;
-    var hasPrincipalFilter = filterInfo.Filters.HasFlag(ScopeFilter.Principal) && filterInfo.SecurityPrincipals.Count > 0;
+    var hasUserFilter = filterInfo.Filters.HasFlag(ScopeFilters.User) && filterInfo.UserId is not null;
+    var hasPrincipalFilter = filterInfo.Filters.HasFlag(ScopeFilters.Principal) && filterInfo.SecurityPrincipals.Count > 0;
 
     if (filterInfo.UseOrLogicForUserAndPrincipal && hasUserFilter && hasPrincipalFilter) {
       query = query.FilterByUserOrPrincipals(filterInfo.UserId, filterInfo.SecurityPrincipals);

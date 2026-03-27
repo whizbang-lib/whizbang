@@ -1230,7 +1230,7 @@ public record SecurityBuilderCascadeTestResult(string Processed);
 /// Event that gets cascaded locally when receptor returns it.
 /// Uses Local routing so it invokes SecurityBuilderCascadeEventReceptor directly.
 /// </summary>
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public record SecurityBuilderCascadeTestEvent(string Data, [property: StreamId] Guid EventId) : IEvent;
 
 /// <summary>
@@ -1274,7 +1274,7 @@ public class SecurityBuilderCascadeEventReceptor(IScopeContextAccessor scopeCont
 /// Test event for verifying AsSystem().PublishAsync() behavior.
 /// This simulates events like ReseedSystemSucceededEvent, FilterSubscriptionTemplateCreatedEvent.
 /// </summary>
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public record SecurityBuilderPublishTestEvent(string Data, [property: StreamId] Guid EventId) : IEvent;
 
 /// <summary>

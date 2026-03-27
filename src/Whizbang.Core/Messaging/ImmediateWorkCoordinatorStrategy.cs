@@ -23,6 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ImmediateWorkCoordinatorStrategy(
   IWorkCoordinator coordinator,
   IServiceInstanceProvider instanceProvider,
@@ -37,6 +38,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IOptions<SystemEventOptions>? systemEventOptions = null,
   IWorkChannelWriter? workChannelWriter = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
+#pragma warning restore S107
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -120,7 +122,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+  public async Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "immediate"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
     // Immediate strategy always flushes regardless of FlushMode
     // Drain deferred channel first - these get written in THIS transaction
@@ -158,25 +160,12 @@ public partial class ImmediateWorkCoordinatorStrategy(
       : null;
 
     var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      _coordinator,
-      _scopeFactory,
-      _instanceProvider,
-      _options,
-      "immediate",
-      outboxMessages,
-      inboxMessages,
-      outboxCompletions,
-      inboxCompletions,
-      outboxFailures,
-      inboxFailures,
-      flags,
-      _lifecycleMessageDeserializer,
-      _logger,
-      _tracingOptions,
-      _metrics,
-      _lifecycleMetrics,
-      workChannelWriter: _workChannelWriter,
-      pendingAuditMessages: pendingAuditMessages,
+      new FlushContext(
+        _coordinator, _scopeFactory, _instanceProvider, _options, "immediate",
+        outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
+        outboxFailures, inboxFailures, flags, _lifecycleMessageDeserializer,
+        _logger, _tracingOptions, _metrics, _lifecycleMetrics,
+        WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
       ct
     );
 
@@ -188,7 +177,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
 
   // ========================================
   // High-Performance LoggerMessage Delegates

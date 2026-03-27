@@ -146,7 +146,7 @@ public sealed record ProcessWorkBatchRequest {
   /// Examples: SkipNewWork, ForceClaimAll.
   /// Defaults to None for normal operation.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; } = WorkBatchFlags.None;
+  public WorkBatchOptions Flags { get; init; } = WorkBatchOptions.None;
 
   /// <summary>
   /// Total number of virtual partitions for consistent hashing (default: 10,000).
@@ -245,7 +245,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
@@ -554,23 +554,6 @@ public record MessageFailure {
 }
 
 /// <summary>
-/// Legacy: Represents a failed message with error information.
-/// Deprecated - use MessageFailure instead for better status tracking.
-/// </summary>
-[Obsolete("Use MessageFailure instead for granular status tracking")]
-public record FailedMessage {
-  /// <summary>
-  /// Message ID that failed.
-  /// </summary>
-  public required Guid MessageId { get; init; }
-
-  /// <summary>
-  /// Error message or exception details.
-  /// </summary>
-  public required string Error { get; init; }
-}
-
-/// <summary>
 /// Shared constraint for work items that expose a MessageId and Status.
 /// Used by <see cref="OrderedStreamProcessor"/> to generically process inbox and outbox messages.
 /// </summary>
@@ -651,7 +634,7 @@ public record OutboxWork : IHasMessageIdAndStatus {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -714,7 +697,7 @@ public record InboxWork : IHasMessageIdAndStatus {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -882,7 +865,7 @@ public record PerspectiveWork {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewCheckpoint (first time processing stream), CatchingUp, Orphaned.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -909,61 +892,68 @@ public record PerspectiveEventCompletion {
 }
 
 /// <summary>
+/// Groups the parameters for <see cref="WorkCoordinatorExtensions.ProcessWorkBatchAsync"/>
+/// to avoid S107 (too many parameters). Maps directly to <see cref="ProcessWorkBatchRequest"/>.
+/// </summary>
+public readonly record struct ProcessWorkBatchContext(
+  Guid InstanceId,
+  string ServiceName,
+  string HostName,
+  int ProcessId,
+  Dictionary<string, JsonElement>? Metadata,
+  MessageCompletion[] OutboxCompletions,
+  MessageFailure[] OutboxFailures,
+  MessageCompletion[] InboxCompletions,
+  MessageFailure[] InboxFailures,
+  ReceptorProcessingCompletion[] ReceptorCompletions,
+  ReceptorProcessingFailure[] ReceptorFailures,
+  PerspectiveCursorCompletion[] PerspectiveCompletions,
+  PerspectiveCursorFailure[] PerspectiveFailures,
+  OutboxMessage[] NewOutboxMessages,
+  InboxMessage[] NewInboxMessages,
+  Guid[] RenewOutboxLeaseIds,
+  Guid[] RenewInboxLeaseIds,
+  WorkBatchOptions Flags = WorkBatchOptions.None,
+  int PartitionCount = 10_000,
+  int LeaseSeconds = 300,
+  int StaleThresholdSeconds = 600);
+
+/// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
 /// </summary>
 public static class WorkCoordinatorExtensions {
   /// <summary>
-  /// Backwards-compatible overload using positional parameters.
+  /// Backwards-compatible overload using a context record.
   /// Converts to ProcessWorkBatchRequest internally.
   /// </summary>
   public static Task<WorkBatch> ProcessWorkBatchAsync(
     this IWorkCoordinator coordinator,
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCursorCompletion[] perspectiveCompletions,
-    PerspectiveCursorFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchContext context,
     CancellationToken cancellationToken = default
   ) {
     var request = new ProcessWorkBatchRequest {
-      InstanceId = instanceId,
-      ServiceName = serviceName,
-      HostName = hostName,
-      ProcessId = processId,
-      Metadata = metadata,
-      OutboxCompletions = outboxCompletions,
-      OutboxFailures = outboxFailures,
-      InboxCompletions = inboxCompletions,
-      InboxFailures = inboxFailures,
-      ReceptorCompletions = receptorCompletions,
-      ReceptorFailures = receptorFailures,
-      PerspectiveCompletions = perspectiveCompletions,
+      InstanceId = context.InstanceId,
+      ServiceName = context.ServiceName,
+      HostName = context.HostName,
+      ProcessId = context.ProcessId,
+      Metadata = context.Metadata,
+      OutboxCompletions = context.OutboxCompletions,
+      OutboxFailures = context.OutboxFailures,
+      InboxCompletions = context.InboxCompletions,
+      InboxFailures = context.InboxFailures,
+      ReceptorCompletions = context.ReceptorCompletions,
+      ReceptorFailures = context.ReceptorFailures,
+      PerspectiveCompletions = context.PerspectiveCompletions,
       PerspectiveEventCompletions = [],
-      PerspectiveFailures = perspectiveFailures,
-      NewOutboxMessages = newOutboxMessages,
-      NewInboxMessages = newInboxMessages,
-      RenewOutboxLeaseIds = renewOutboxLeaseIds,
-      RenewInboxLeaseIds = renewInboxLeaseIds,
-      Flags = flags,
-      PartitionCount = partitionCount,
-      LeaseSeconds = leaseSeconds,
-      StaleThresholdSeconds = staleThresholdSeconds
+      PerspectiveFailures = context.PerspectiveFailures,
+      NewOutboxMessages = context.NewOutboxMessages,
+      NewInboxMessages = context.NewInboxMessages,
+      RenewOutboxLeaseIds = context.RenewOutboxLeaseIds,
+      RenewInboxLeaseIds = context.RenewInboxLeaseIds,
+      Flags = context.Flags,
+      PartitionCount = context.PartitionCount,
+      LeaseSeconds = context.LeaseSeconds,
+      StaleThresholdSeconds = context.StaleThresholdSeconds
     };
     return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
   }

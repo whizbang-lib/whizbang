@@ -107,20 +107,21 @@ public class PerspectiveWorkerScopeContextTests {
   public async Task InvokeAsync_WithEnvelopeScope_SetsInitiatingContextAsync(LifecycleStage stage) {
     // Arrange: Verify IScopeContextAccessor.InitiatingContext is set from the envelope.
     // InitiatingContext is the SOURCE OF TRUTH for security context (UserId, TenantId).
-    IMessageContext? capturedInitiatingContext = null;
+    // Use CapturingScopeContextAccessor to snapshot values at assignment time
+    // (AsyncLocal values set inside child async methods don't flow back to the parent).
+    var capturingScopeAccessor = new CapturingScopeContextAccessor();
     var registry = new TestReceptorRegistry();
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_initiating_context_receptor_{stage}",
       InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-        var accessor = sp.GetService<IScopeContextAccessor>();
-        capturedInitiatingContext = accessor?.InitiatingContext;
         return ValueTask.FromResult<object?>(null);
       }
     ));
 
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
+    services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -132,11 +133,11 @@ public class PerspectiveWorkerScopeContextTests {
     await invoker.InvokeAsync(envelope, stage);
 
     // Assert: InitiatingContext should be set with UserId and TenantId from envelope
-    await Assert.That(capturedInitiatingContext).IsNotNull();
-    await Assert.That(capturedInitiatingContext!.UserId).IsEqualTo("user-abc");
-    await Assert.That(capturedInitiatingContext!.TenantId).IsEqualTo("tenant-xyz");
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext).IsNotNull();
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.UserId).IsEqualTo("user-abc");
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.TenantId).IsEqualTo("tenant-xyz");
     // InitiatingContext should also carry the envelope's MessageId
-    await Assert.That(capturedInitiatingContext!.MessageId).IsEqualTo(envelope.MessageId);
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.MessageId).IsEqualTo(envelope.MessageId);
   }
 
   [Test]
@@ -231,6 +232,32 @@ public class PerspectiveWorkerScopeContextTests {
   #endregion
 
   #region Test Doubles
+
+  /// <summary>
+  /// Captures IScopeContextAccessor values at assignment time into instance fields.
+  /// Required because AsyncLocal values set inside child async methods (like _setMessageContextAsync)
+  /// don't flow back to the parent context after the await completes.
+  /// </summary>
+  private sealed class CapturingScopeContextAccessor : IScopeContextAccessor {
+    public IScopeContext? CapturedContext { get; private set; }
+    public IMessageContext? CapturedInitiatingContext { get; private set; }
+
+    public IScopeContext? Current {
+      get => ScopeContextAccessor.CurrentContext;
+      set {
+        CapturedContext = value;
+        ScopeContextAccessor.CurrentContext = value;
+      }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set {
+        CapturedInitiatingContext = value;
+        ScopeContextAccessor.CurrentInitiatingContext = value;
+      }
+    }
+  }
 
   private sealed class TestReceptorRegistry : IReceptorRegistry {
     private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];

@@ -121,7 +121,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Act - Resolve the singleton, queue a message, flush
     var strategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - The TestWorkChannelWriter should have received the work
     await Assert.That(testWriter.WrittenWork).Count().IsGreaterThanOrEqualTo(1)
@@ -153,7 +153,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Act
     var strategy = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(testWriter.WrittenWork).Count().IsGreaterThanOrEqualTo(1)
@@ -185,7 +185,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Act - Resolve singleton, queue + flush
     var strategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - If metrics were passed, FlushCalls counter would be incremented.
     // We verify the metrics object is reachable by checking that no NullReferenceException occurred

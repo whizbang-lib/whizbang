@@ -23,7 +23,7 @@ public class DispatcherPerspectiveSyncCoverageTests {
   public record TestCmd(string Data);
   public record TestResult(Guid Id);
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record TestEvt([property: StreamId] Guid Id) : IEvent;
 
   // ========================================
@@ -111,7 +111,7 @@ public class DispatcherPerspectiveSyncCoverageTests {
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) => null;
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) => null;
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) => null;
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
   }
 
   // ========================================

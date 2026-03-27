@@ -52,6 +52,26 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     return _appendCoreAsync(streamId, envelope, cancellationToken);
   }
 
+  /// <inheritdoc />
+  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Create a minimal envelope - registry-based lookup would require constructor injection
+    var envelope = new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
+        }
+      ]
+    };
+
+    return AppendAsync(streamId, envelope, cancellationToken);
+  }
+
   private async Task _appendCoreAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
@@ -102,26 +122,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // NOTE: Inline perspective invocation removed - perspectives are now processed via PerspectiveWorker
     // using checkpoint-based processing for better reliability and scalability.
     // See: Stage 4 of perspective worker refactoring (2025-12-18)
-  }
-
-  /// <inheritdoc />
-  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
-    ArgumentNullException.ThrowIfNull(message);
-
-    // Create a minimal envelope - registry-based lookup would require constructor injection
-    var envelope = new MessageEnvelope<TMessage> {
-      MessageId = MessageId.New(),
-      Payload = message,
-      Hops = [
-        new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
-        }
-      ]
-    };
-
-    return AppendAsync(streamId, envelope, cancellationToken);
   }
 
   /// <summary>

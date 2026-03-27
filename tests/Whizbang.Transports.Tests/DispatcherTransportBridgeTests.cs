@@ -462,7 +462,7 @@ public class DispatcherTransportBridgeTests {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }

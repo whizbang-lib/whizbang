@@ -45,28 +45,28 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
   private static readonly AsyncLocal<bool> _isExplicitTrace = new();
 
   public void BeginHandlerTrace(string handlerName, string messageTypeName, int handlerCount, bool isExplicit) {
-    var options = _options.CurrentValue;
+    var tracingOptions = _options.CurrentValue;
 
     // Check if tracing is completely off
-    if (options.Verbosity == TraceVerbosity.Off) {
+    if (tracingOptions.Verbosity == TraceVerbosity.Off) {
       return;
     }
 
     // Check if Handlers component is enabled
-    if (!options.IsEnabled(TraceComponents.Handlers)) {
+    if (!tracingOptions.IsEnabled(TraceComponents.Handlers)) {
       return;
     }
 
     // Determine if this trace is elevated (explicit via config or attribute)
     var isElevated = isExplicit ||
-                     _matchesTracedHandler(handlerName, options) ||
-                     _matchesTracedMessage(messageTypeName, options);
+                     _matchesTracedHandler(handlerName, tracingOptions) ||
+                     _matchesTracedMessage(messageTypeName, tracingOptions);
 
     // Store the elevated state for EndHandlerTrace
     _isExplicitTrace.Value = isElevated;
 
     // Emit OpenTelemetry span if enabled
-    if (options.EnableOpenTelemetry) {
+    if (tracingOptions.EnableOpenTelemetry) {
       var activity = WhizbangActivitySource.Tracing.StartActivity(
         $"Handler: {_extractShortHandlerName(handlerName)}",
         ActivityKind.Internal);
@@ -82,7 +82,7 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
     }
 
     // Emit structured log if enabled
-    if (options.EnableStructuredLogging) {
+    if (tracingOptions.EnableStructuredLogging) {
       if (isElevated) {
         LogExplicitHandlerBegin(handlerName, messageTypeName, handlerCount);
       } else {
@@ -100,20 +100,20 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
     long endTimestamp,
     Exception? exception) {
 
-    var options = _options.CurrentValue;
+    var tracingOptions = _options.CurrentValue;
 
     // Check if tracing is completely off
-    if (options.Verbosity == TraceVerbosity.Off) {
+    if (tracingOptions.Verbosity == TraceVerbosity.Off) {
       return;
     }
 
     // Check if Handlers component is enabled
-    if (!options.IsEnabled(TraceComponents.Handlers)) {
+    if (!tracingOptions.IsEnabled(TraceComponents.Handlers)) {
       return;
     }
 
     var activity = _currentActivity.Value;
-    if (activity != null && options.EnableOpenTelemetry) {
+    if (activity != null && tracingOptions.EnableOpenTelemetry) {
       activity.SetTag("whizbang.handler.status", status.ToString());
       activity.SetTag("whizbang.handler.duration_ms", durationMs);
 
@@ -135,7 +135,7 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
     }
 
     // Emit structured log if enabled
-    if (options.EnableStructuredLogging) {
+    if (tracingOptions.EnableStructuredLogging) {
       var isExplicit = _isExplicitTrace.Value;
       var statusString = status.ToString();
 

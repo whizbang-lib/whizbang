@@ -31,7 +31,7 @@ namespace Whizbang.Core.Generated {
       WhizbangDiagnostics.AddEntry(new DiagnosticEntry(
           GeneratorName: "ReceptorDiscoveryGenerator",
           Timestamp: "{{TIMESTAMP}}",
-          Category: DiagnosticCategory.ReceptorDiscovery,
+          Category: DiagnosticCategories.ReceptorDiscovery,
           Message: message.ToString()
       ));
     }

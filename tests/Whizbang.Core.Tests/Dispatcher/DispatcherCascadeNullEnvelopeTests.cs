@@ -33,7 +33,7 @@ public class DispatcherCascadeNullEnvelopeTests {
   public record NullEnvelopeCommand(string Data, Guid StreamId);
   public record NullEnvelopeResult(string Processed);
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record NullEnvelopeEvent([property: StreamId] Guid StreamId, string ProcessedData) : IEvent;
 
   // ============================================

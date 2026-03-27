@@ -572,8 +572,8 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var evt = new TestCascadeEvent { Detail = "none-mode" };
 
-    // DispatchMode.None should skip all dispatch paths
-    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchMode.None);
+    // DispatchModes.None should skip all dispatch paths
+    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchModes.None);
     // No assertion needed beyond not throwing
   }
 
@@ -582,7 +582,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
 
     var ex = await Assert.That(async () =>
-      await dispatcher.CascadeMessageAsync(null!, sourceEnvelope: null, mode: DispatchMode.Local))
+      await dispatcher.CascadeMessageAsync(null!, sourceEnvelope: null, mode: DispatchModes.Local))
       .ThrowsExactly<ArgumentNullException>();
 
     await Assert.That(ex!.ParamName).IsEqualTo("message");
@@ -596,7 +596,7 @@ public class DispatcherEdgeCaseCoverageTests {
     cts.Cancel();
 
     await Assert.That(async () =>
-      await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchMode.Local, cancellationToken: cts.Token))
+      await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchModes.Local, cancellationToken: cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -704,7 +704,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var routed = Route.Local(command);
     var context = MessageContext.New();
 
-    // Routed<T> with DispatchMode.Local should unwrap and dispatch
+    // Routed<T> with DispatchModes.Local should unwrap and dispatch
     var receipt = await dispatcher.SendAsync((object)routed, context);
 
     await Assert.That(receipt).IsNotNull();
@@ -830,7 +830,7 @@ public class DispatcherEdgeCaseCoverageTests {
   // HELPER TYPES
   // ========================================
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public class TestCascadeEvent : IEvent {
     [StreamId]
     public Guid StreamId { get; set; } = Guid.NewGuid();

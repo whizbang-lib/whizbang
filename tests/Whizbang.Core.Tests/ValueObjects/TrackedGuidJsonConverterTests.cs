@@ -91,7 +91,7 @@ public class TrackedGuidJsonConverterTests {
     var result = JsonSerializer.Deserialize<TrackedGuid>(json, _options);
 
     // Assert - FromExternal sets SourceExternal
-    await Assert.That((result.Metadata & GuidMetadata.SourceExternal) != 0).IsTrue();
+    await Assert.That((result.Metadata & GuidMetadatas.SourceExternal) != 0).IsTrue();
   }
 
   [Test]
@@ -104,7 +104,7 @@ public class TrackedGuidJsonConverterTests {
 
     // Assert
     await Assert.That(result.Value).IsEqualTo(Guid.Empty);
-    await Assert.That(result.Metadata).IsEqualTo(GuidMetadata.None);
+    await Assert.That(result.Metadata).IsEqualTo(GuidMetadatas.None);
   }
 
   [Test]
@@ -152,15 +152,15 @@ public class TrackedGuidJsonConverterTests {
   public async Task RoundTrip_MetadataIsLost_AfterDeserializationAsync() {
     // Arrange - start with Medo metadata
     var original = TrackedGuid.NewMedo();
-    await Assert.That((original.Metadata & GuidMetadata.SourceMedo) != 0).IsTrue();
+    await Assert.That((original.Metadata & GuidMetadatas.SourceMedo) != 0).IsTrue();
 
     // Act
     var json = JsonSerializer.Serialize(original, _options);
     var deserialized = JsonSerializer.Deserialize<TrackedGuid>(json, _options);
 
     // Assert - after deserialization, source is External (not Medo)
-    await Assert.That((deserialized.Metadata & GuidMetadata.SourceMedo) != 0).IsFalse();
-    await Assert.That((deserialized.Metadata & GuidMetadata.SourceExternal) != 0).IsTrue();
+    await Assert.That((deserialized.Metadata & GuidMetadatas.SourceMedo) != 0).IsFalse();
+    await Assert.That((deserialized.Metadata & GuidMetadatas.SourceExternal) != 0).IsTrue();
   }
 
   // ========================================

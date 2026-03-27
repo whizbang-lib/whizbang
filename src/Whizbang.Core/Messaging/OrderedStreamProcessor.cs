@@ -163,6 +163,7 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
     }
 
     // Process messages in this stream SEQUENTIALLY (strict ordering)
+    var callbacks = new MessageProcessingCallbacks<InboxWork>(processor, completionHandler, failureHandler, _logInboxMessageSuccess, _logInboxMessageFailure);
     for (int idx = 0; idx < streamBatch.Messages.Count; idx++) {
       if (ct.IsCancellationRequested) {
         break;
@@ -171,8 +172,7 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
       var message = streamBatch.Messages[idx];
       if (!await _tryProcessSingleMessageAsync(
         message, message.MessageId, message.Status, streamBatch.StreamId,
-        processor, completionHandler, failureHandler,
-        _logInboxMessageSuccess, _logInboxMessageFailure)) {
+        callbacks)) {
         // STOP processing this stream on failure (maintain ordering)
         if (_logger != null) {
           LogStoppingStreamProcessing(_logger, streamBatch.StreamId, streamBatch.Messages.Count - idx - 1);
@@ -197,6 +197,7 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
       LogProcessingOutboxStream(_logger, streamBatch.StreamId == Guid.Empty ? "NULL" : streamBatch.StreamId.ToString(), streamBatch.Messages.Count);
     }
 
+    var callbacks = new MessageProcessingCallbacks<OutboxWork>(processor, completionHandler, failureHandler, _logOutboxMessageSuccess, _logOutboxMessageFailure);
     foreach (var message in streamBatch.Messages) {
       if (ct.IsCancellationRequested) {
         break;
@@ -204,12 +205,21 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
 
       if (!await _tryProcessSingleMessageAsync(
         message, message.MessageId, message.Status, streamBatch.StreamId,
-        processor, completionHandler, failureHandler,
-        _logOutboxMessageSuccess, _logOutboxMessageFailure)) {
+        callbacks)) {
         break;
       }
     }
   }
+
+  /// <summary>
+  /// Groups processing callbacks and loggers for stream message processing.
+  /// </summary>
+  private readonly record struct MessageProcessingCallbacks<TWork>(
+    Func<TWork, Task<MessageProcessingStatus>> Processor,
+    Action<Guid, MessageProcessingStatus> CompletionHandler,
+    Action<Guid, MessageProcessingStatus, string> FailureHandler,
+    Action<ILogger, Guid, Guid, MessageProcessingStatus> SuccessLogger,
+    Action<ILogger, Exception, Guid, Guid> FailureLogger);
 
   /// <summary>
   /// Tries to process a single message. Returns false if processing failed (caller should stop the stream).
@@ -219,25 +229,21 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
     Guid messageId,
     MessageProcessingStatus currentStatus,
     Guid streamId,
-    Func<TWork, Task<MessageProcessingStatus>> processor,
-    Action<Guid, MessageProcessingStatus> completionHandler,
-    Action<Guid, MessageProcessingStatus, string> failureHandler,
-    Action<ILogger, Guid, Guid, MessageProcessingStatus> successLogger,
-    Action<ILogger, Exception, Guid, Guid> failureLogger) {
+    MessageProcessingCallbacks<TWork> callbacks) {
     try {
-      var completedStatus = await processor(message);
-      completionHandler(messageId, completedStatus);
+      var completedStatus = await callbacks.Processor(message);
+      callbacks.CompletionHandler(messageId, completedStatus);
 
       if (_logger != null) {
-        successLogger(_logger, messageId, streamId, completedStatus);
+        callbacks.SuccessLogger(_logger, messageId, streamId, completedStatus);
       }
       return true;
     } catch (Exception ex) {
       if (_logger != null) {
-        failureLogger(_logger, ex, messageId, streamId);
+        callbacks.FailureLogger(_logger, ex, messageId, streamId);
       }
 
-      failureHandler(messageId, currentStatus, ex.Message);
+      callbacks.FailureHandler(messageId, currentStatus, ex.Message);
       return false;
     }
   }

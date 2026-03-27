@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   #region Test Messages
 
@@ -79,12 +79,12 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
     IServiceProvider serviceProvider,
     IScopedEventTracker? tracker = null,
     IStreamIdExtractor? streamIdExtractor = null,
-    Func<object, (object message, DispatchMode mode)>? cascadeResult = null) : Core.Dispatcher(
+    Func<object, (object message, DispatchModes mode)>? cascadeResult = null) : Core.Dispatcher(
         serviceProvider,
         new ServiceInstanceProvider(configuration: null),
         scopedEventTracker: tracker,
         streamIdExtractor: streamIdExtractor) {
-    private readonly Func<object, (object message, DispatchMode mode)>? _cascadeResult = cascadeResult;
+    private readonly Func<object, (object message, DispatchModes mode)>? _cascadeResult = cascadeResult;
     private readonly List<object> _localInvocations = [];
     private readonly Lock _lock = new();
 
@@ -161,7 +161,7 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }

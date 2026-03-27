@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Principal filters are not applied for event queries.
 /// </para>
 /// <para>
-/// Use <see cref="ScopeFilter.None"/> for global/admin access to all events.
+/// Use <see cref="ScopeFilters.None"/> for global/admin access to all events.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-store-query</docs>
@@ -53,22 +53,22 @@ public class EFCoreFilterableEventStoreQuery(DbContext context) : IFilterableEve
       }
 
       // Apply tenant filter
-      if (_filterInfo.Filters.HasFlag(ScopeFilter.Tenant) && _filterInfo.TenantId is not null) {
+      if (_filterInfo.Filters.HasFlag(ScopeFilters.Tenant) && _filterInfo.TenantId is not null) {
         query = query.Where(r => r.Scope != null && r.Scope.TenantId == _filterInfo.TenantId);
       }
 
       // Apply user filter
-      if (_filterInfo.Filters.HasFlag(ScopeFilter.User) && _filterInfo.UserId is not null) {
+      if (_filterInfo.Filters.HasFlag(ScopeFilters.User) && _filterInfo.UserId is not null) {
         query = query.Where(r => r.Scope != null && r.Scope.UserId == _filterInfo.UserId);
       }
 
       // Apply organization filter
-      if (_filterInfo.Filters.HasFlag(ScopeFilter.Organization) && _filterInfo.OrganizationId is not null) {
+      if (_filterInfo.Filters.HasFlag(ScopeFilters.Organization) && _filterInfo.OrganizationId is not null) {
         query = query.Where(r => r.Scope != null && r.Scope.OrganizationId == _filterInfo.OrganizationId);
       }
 
       // Apply customer filter
-      if (_filterInfo.Filters.HasFlag(ScopeFilter.Customer) && _filterInfo.CustomerId is not null) {
+      if (_filterInfo.Filters.HasFlag(ScopeFilters.Customer) && _filterInfo.CustomerId is not null) {
         query = query.Where(r => r.Scope != null && r.Scope.CustomerId == _filterInfo.CustomerId);
       }
 

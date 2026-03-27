@@ -166,7 +166,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -202,7 +202,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 1,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -235,7 +235,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -266,7 +266,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -302,7 +302,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -337,7 +337,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -372,7 +372,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -407,7 +407,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -441,7 +441,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -480,7 +480,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -513,7 +513,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -543,7 +543,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -576,7 +576,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -607,7 +607,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -646,7 +646,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -683,7 +683,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -720,7 +720,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -755,7 +755,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -792,7 +792,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -1034,7 +1034,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -1051,7 +1051,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 }

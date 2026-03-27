@@ -38,27 +38,15 @@ public class WorkCoordinatorFlushHelperTests {
 
     // Act
     _ = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      coordinator,
-      scopeFactory: null,
-      instanceProvider,
-      options,
-      "test",
-      outboxMessages,
-      inboxMessages: [],
-      outboxCompletions: [],
-      inboxCompletions: [],
-      outboxFailures: [],
-      inboxFailures: [],
-      WorkBatchFlags.None,
-      lifecycleMessageDeserializer: null,
-      logger: null,
-      tracingOptions: null,
-      metrics: null,
-      lifecycleMetrics: null,
-      workChannelWriter: null,
-      pendingAuditMessages: null,
-      ct: default,
-      skipLifecycle: true
+      new FlushContext(
+        coordinator, ScopeFactory: null, instanceProvider, options, "test",
+        outboxMessages, InboxMessages: [], OutboxCompletions: [],
+        InboxCompletions: [], OutboxFailures: [], InboxFailures: [],
+        WorkBatchOptions.None, LifecycleMessageDeserializer: null,
+        Logger: null, TracingOptions: null, Metrics: null,
+        LifecycleMetrics: null, WorkChannelWriter: null,
+        PendingAuditMessages: null, SkipLifecycle: true),
+      ct: default
     );
 
     // Assert — data was persisted
@@ -80,27 +68,15 @@ public class WorkCoordinatorFlushHelperTests {
 
     // Act
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      coordinator,
-      scopeFactory: null,
-      instanceProvider,
-      options,
-      "test",
-      outboxMessages: [_buildTestOutboxMessage()],
-      inboxMessages: [],
-      outboxCompletions: [],
-      inboxCompletions: [],
-      outboxFailures: [],
-      inboxFailures: [],
-      WorkBatchFlags.None,
-      lifecycleMessageDeserializer: null,
-      logger: null,
-      tracingOptions: null,
-      metrics: null,
-      lifecycleMetrics: null,
-      workChannelWriter: channelWriter,
-      pendingAuditMessages: null,
-      ct: default,
-      skipLifecycle: true
+      new FlushContext(
+        coordinator, ScopeFactory: null, instanceProvider, options, "test",
+        OutboxMessages: [_buildTestOutboxMessage()], InboxMessages: [],
+        OutboxCompletions: [], InboxCompletions: [], OutboxFailures: [],
+        InboxFailures: [], WorkBatchOptions.None, LifecycleMessageDeserializer: null,
+        Logger: null, TracingOptions: null, Metrics: null,
+        LifecycleMetrics: null, WorkChannelWriter: channelWriter,
+        PendingAuditMessages: null, SkipLifecycle: true),
+      ct: default
     );
 
     // Assert — work was written to channel
@@ -121,27 +97,15 @@ public class WorkCoordinatorFlushHelperTests {
 
     // Act
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      coordinator,
-      scopeFactory: trackingScopeFactory,
-      instanceProvider,
-      options,
-      "test",
-      outboxMessages: [_buildTestOutboxMessage()],
-      inboxMessages: [],
-      outboxCompletions: [],
-      inboxCompletions: [],
-      outboxFailures: [],
-      inboxFailures: [],
-      WorkBatchFlags.None,
-      lifecycleMessageDeserializer: null,
-      logger: null,
-      tracingOptions: null,
-      metrics: null,
-      lifecycleMetrics: null,
-      workChannelWriter: null,
-      pendingAuditMessages: null,
-      ct: default,
-      skipLifecycle: true
+      new FlushContext(
+        coordinator, ScopeFactory: trackingScopeFactory, instanceProvider, options, "test",
+        OutboxMessages: [_buildTestOutboxMessage()], InboxMessages: [],
+        OutboxCompletions: [], InboxCompletions: [], OutboxFailures: [],
+        InboxFailures: [], WorkBatchOptions.None, LifecycleMessageDeserializer: null,
+        Logger: null, TracingOptions: null, Metrics: null,
+        LifecycleMetrics: null, WorkChannelWriter: null,
+        PendingAuditMessages: null, SkipLifecycle: true),
+      ct: default
     );
 
     // Assert — no lifecycle scopes created
@@ -167,25 +131,14 @@ public class WorkCoordinatorFlushHelperTests {
 
     // Act — default skipLifecycle (false)
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      coordinator,
-      scopeFactory: null,
-      instanceProvider,
-      options,
-      "test",
-      outboxMessages: [_buildTestOutboxMessage()],
-      inboxMessages: [],
-      outboxCompletions: [],
-      inboxCompletions: [],
-      outboxFailures: [],
-      inboxFailures: [],
-      WorkBatchFlags.None,
-      lifecycleMessageDeserializer: null,
-      logger: null,
-      tracingOptions: null,
-      metrics: null,
-      lifecycleMetrics: null,
-      workChannelWriter: null,
-      pendingAuditMessages: null,
+      new FlushContext(
+        coordinator, ScopeFactory: null, instanceProvider, options, "test",
+        OutboxMessages: [_buildTestOutboxMessage()], InboxMessages: [],
+        OutboxCompletions: [], InboxCompletions: [], OutboxFailures: [],
+        InboxFailures: [], WorkBatchOptions.None, LifecycleMessageDeserializer: null,
+        Logger: null, TracingOptions: null, Metrics: null,
+        LifecycleMetrics: null, WorkChannelWriter: null,
+        PendingAuditMessages: null),
       ct: default
     );
 
@@ -207,27 +160,15 @@ public class WorkCoordinatorFlushHelperTests {
 
     // Act
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      coordinator,
-      scopeFactory: null,
-      instanceProvider,
-      options,
-      "test",
-      outboxMessages: [_buildTestOutboxMessage()],
-      inboxMessages: [],
-      outboxCompletions: [],
-      inboxCompletions: [],
-      outboxFailures: [],
-      inboxFailures: [],
-      WorkBatchFlags.None,
-      lifecycleMessageDeserializer: null,
-      logger: null,
-      tracingOptions: null,
-      metrics: null,
-      lifecycleMetrics: null,
-      workChannelWriter: null,
-      pendingAuditMessages: [auditMessage],
-      ct: default,
-      skipLifecycle: true
+      new FlushContext(
+        coordinator, ScopeFactory: null, instanceProvider, options, "test",
+        OutboxMessages: [_buildTestOutboxMessage()], InboxMessages: [],
+        OutboxCompletions: [], InboxCompletions: [], OutboxFailures: [],
+        InboxFailures: [], WorkBatchOptions.None, LifecycleMessageDeserializer: null,
+        Logger: null, TracingOptions: null, Metrics: null,
+        LifecycleMetrics: null, WorkChannelWriter: null,
+        PendingAuditMessages: [auditMessage], SkipLifecycle: true),
+      ct: default
     );
 
     // Assert — both original + audit message were in the batch
@@ -309,7 +250,7 @@ public class WorkCoordinatorFlushHelperTests {
           new OutboxWork {
             MessageId = messageId,
             Destination = "test-topic",
-            Flags = WorkBatchFlags.NewlyStored,
+            Flags = WorkBatchOptions.NewlyStored,
             Envelope = envelope,
             EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
             MessageType = "System.Text.Json.JsonElement, System.Text.Json",
