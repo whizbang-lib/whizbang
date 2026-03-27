@@ -382,13 +382,35 @@ function Invoke-Prepare {
     # Run a dotnet command as a background process, polling with progress bar ticks
     function Invoke-DotnetWithProgress {
         param([string]$Arguments, [string]$WorkingDir)
-        $proc = Start-Process -FilePath "dotnet" -ArgumentList $Arguments -WorkingDirectory $WorkingDir -NoNewWindow -PassThru -RedirectStandardOutput ([System.IO.Path]::GetTempFileName()) -RedirectStandardError ([System.IO.Path]::GetTempFileName())
+        return Invoke-ProcessWithProgress -FilePath "dotnet" -Arguments $Arguments -WorkingDir $WorkingDir
+    }
+
+    # Run any process as background with progress bar polling; returns exit code
+    function Invoke-ProcessWithProgress {
+        param([string]$FilePath, [string]$Arguments, [string]$WorkingDir)
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WorkingDirectory $WorkingDir -NoNewWindow -PassThru -RedirectStandardOutput ([System.IO.Path]::GetTempFileName()) -RedirectStandardError ([System.IO.Path]::GetTempFileName())
         while (-not $proc.HasExited) {
             Update-StepProgress
             Start-Sleep -Milliseconds 2000
         }
         $proc.WaitForExit()
         return $proc.ExitCode
+    }
+
+    # Run any process as background with progress bar polling; returns exit code + captured output
+    function Invoke-ProcessWithProgressAndOutput {
+        param([string]$FilePath, [string]$Arguments, [string]$WorkingDir)
+        $outFile = [System.IO.Path]::GetTempFileName()
+        $errFile = [System.IO.Path]::GetTempFileName()
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WorkingDirectory $WorkingDir -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        while (-not $proc.HasExited) {
+            Update-StepProgress
+            Start-Sleep -Milliseconds 2000
+        }
+        $proc.WaitForExit()
+        $output = (Get-Content $outFile -Raw) + (Get-Content $errFile -Raw)
+        Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
+        return @{ ExitCode = $proc.ExitCode; Output = $output }
     }
 
     Write-Host ""
@@ -417,7 +439,7 @@ function Invoke-Prepare {
                 if ($script:dockerOk) {
                     $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
                     if (Test-Path $composeFile) {
-                        docker compose -f $composeFile up -d 2>&1 | Out-Null
+                        Invoke-ProcessWithProgress -FilePath "docker" -Arguments "compose -f $composeFile up -d" -WorkingDir $repoRoot | Out-Null
                         $script:sonarContainerStarted = $true
                         $script:sonarStartTime = [DateTime]::UtcNow
                     }
@@ -435,8 +457,9 @@ function Invoke-Prepare {
     } else {
         $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -ShowOutput -Action {
             # Run format check with diagnostic verbosity to get file:line:rule details
-            $formatOutput = & dotnet format --verify-no-changes --verbosity diagnostic $repoRoot 2>&1 | Out-String
-            $exitCode = $LASTEXITCODE
+            $fmtResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet" -Arguments "format --verify-no-changes --verbosity diagnostic $repoRoot" -WorkingDir $repoRoot
+            $exitCode = $fmtResult.ExitCode
+            $formatOutput = $fmtResult.Output
 
             if ($exitCode -ne 0) {
                 # Extract formatting violations: lines matching "path(line,col): severity ruleId: message"
@@ -469,8 +492,7 @@ function Invoke-Prepare {
                     Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
                     $exitCode = Invoke-DotnetWithProgress -Arguments "format" -WorkingDir $repoRoot
                     Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
-                    $formatOutput2 = & dotnet format --verify-no-changes $repoRoot 2>&1 | Out-String
-                    $exitCode = $LASTEXITCODE
+                    $exitCode = Invoke-DotnetWithProgress -Arguments "format --verify-no-changes $repoRoot" -WorkingDir $repoRoot
                     if ($exitCode -eq 0) {
                         Write-AiLine "    AutoFix: ✅ All formatting issues resolved" -ForegroundColor Green
                     }
@@ -542,15 +564,17 @@ function Invoke-Prepare {
                 # Run sonarscanner begin
                 Push-Location $repoRoot
                 $sonarCoverageReportPath = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
+                $currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
                 $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl", "/d:sonar.coverageReportPaths=$sonarCoverageReportPath")
+                if ($currentBranch) { $beginArgs += "/d:sonar.branch.name=$currentBranch" }
                 if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
                 if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
-                $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
-                if ($LASTEXITCODE -eq 0) {
+                $beginResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments ($beginArgs -join " ") -WorkingDir $repoRoot
+                if ($beginResult.ExitCode -eq 0) {
                     $script:sonarStarted = $true
                 } else {
                     Write-AiLine "    SonarScanner begin failed:" -ForegroundColor Red
-                    $beginOutput -split "`n" | Select-Object -Last 5 | ForEach-Object {
+                    $beginResult.Output -split "`n" | Select-Object -Last 5 | ForEach-Object {
                         Write-Host "      $_" -ForegroundColor DarkGray
                     }
                 }
@@ -631,10 +655,10 @@ function Invoke-Prepare {
                 $fileFilters = "-*.g.cs;-**/.whizbang-generated/*"
 
                 # Generate HTML + TextSummary + JsonSummary for human consumption
-                reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" "-filefilters:$fileFilters" 2>&1 | Out-Null
+                Invoke-ProcessWithProgress -FilePath "reportgenerator" -Arguments "`"-reports:$reports`" `"-targetdir:$reportDir`" `"-reporttypes:Html;TextSummary;JsonSummary`" `"-filefilters:$fileFilters`"" -WorkingDir $repoRoot | Out-Null
 
                 # Generate SonarQube format for local SonarQube ingestion (matches CI pipeline)
-                reportgenerator "-reports:$reports" "-targetdir:$sonarDir" "-reporttypes:SonarQube" "-filefilters:$fileFilters" 2>&1 | Out-Null
+                Invoke-ProcessWithProgress -FilePath "reportgenerator" -Arguments "`"-reports:$reports`" `"-targetdir:$sonarDir`" `"-reporttypes:SonarQube`" `"-filefilters:$fileFilters`"" -WorkingDir $repoRoot | Out-Null
 
                 $summaryFile = Join-Path $reportDir "Summary.txt"
                 if (Test-Path $summaryFile) {
@@ -665,8 +689,9 @@ function Invoke-Prepare {
         $continue = Run-Step -Name "SonarQube Analysis" -FailureType "SonarFailure" -Action {
             Push-Location $repoRoot
             try {
-                $sonarEndOutput = & dotnet-sonarscanner end /d:sonar.login="${script:sonarToken}" 2>&1 | Out-String
-                $exitCode = $LASTEXITCODE
+                $sonarResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments "end /d:sonar.login=`"${script:sonarToken}`"" -WorkingDir $repoRoot
+                $exitCode = $sonarResult.ExitCode
+                $sonarEndOutput = $sonarResult.Output
                 if ($exitCode -ne 0) {
                     Write-AiLine "    sonarscanner end failed:" -ForegroundColor Red
                     $sonarEndOutput -split "`n" | Select-Object -Last 10 | ForEach-Object {

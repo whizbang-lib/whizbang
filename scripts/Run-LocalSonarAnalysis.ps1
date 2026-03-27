@@ -232,6 +232,12 @@ try {
         Write-Info "Loaded exclusions from sonar.config"
     }
 
+    # Detect current git branch
+    $currentBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
+    if ($currentBranch) {
+        Write-Info "Branch: $currentBranch"
+    }
+
     $beginArgs = @(
         "begin",
         "/k:$ProjectKey",
@@ -241,6 +247,9 @@ try {
         "/d:sonar.exclusions=$sonarExclusions",
         "/d:sonar.coverage.exclusions=$sonarCoverageExclusions"
     )
+    if ($currentBranch) {
+        $beginArgs += "/d:sonar.branch.name=$currentBranch"
+    }
     if ($sonarCpdExclusions) { $beginArgs += "/d:sonar.cpd.exclusions=$sonarCpdExclusions" }
     $beginArgs += $sonarExtraArgs
     # Use the correct coverage property based on report format
