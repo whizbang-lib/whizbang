@@ -921,6 +921,161 @@ function Invoke-CleanAll {
 }
 
 # ============================================================================
+# Sonar Scan Folder (temp folder for Community Edition branch workaround)
+# ============================================================================
+
+function New-SonarScanFolder {
+    <#
+    .SYNOPSIS
+        Creates a temp folder clone of the repo for local SonarQube Community Edition scanning.
+    .DESCRIPTION
+        SonarQube Community Edition does not support branch analysis. This function creates
+        a temp folder with the repo contents, initializes it as a fresh git repo on 'main',
+        and writes a marker file pointing back to the original repo and branch.
+
+        Uses the fastest OS-native mechanism:
+        - Windows: directory junctions + file hardlinks (instant, no data copied)
+        - macOS (APFS): cp -cR copy-on-write clones (instant, no extra disk)
+        - Linux: cp --reflink=auto (CoW if supported), fallback to rsync
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepoRoot,
+
+        [string]$BranchName = ""
+    )
+
+    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "whizbang-sonar-scan-$timestamp"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+    $excludedDirs = @('.git', 'bin', 'obj', 'node_modules', '.sonarqube', 'TestResults',
+                      'coverage', 'coverage-report', 'coverage-all', 'coverage-merged',
+                      'nupkg', 'nupkgs', 'artifacts', 'logs')
+
+    if ($IsWindows) {
+        # Windows: junctions for directories, hardlinks for files
+        Get-ChildItem -Path $RepoRoot -Force | Where-Object { $_.Name -ne '.git' } | ForEach-Object {
+            $targetPath = Join-Path $tempDir $_.Name
+            if ($_.PSIsContainer) {
+                cmd /c mklink /J "$targetPath" "$($_.FullName)" 2>$null | Out-Null
+            } else {
+                cmd /c mklink /H "$targetPath" "$($_.FullName)" 2>$null | Out-Null
+            }
+        }
+    } elseif ($IsMacOS) {
+        # macOS: try APFS CoW clone first, fall back to rsync
+        $probeFile = Join-Path $tempDir ".cow-probe"
+        $probeFile2 = Join-Path $tempDir ".cow-probe2"
+        "probe" | Out-File -FilePath $probeFile -NoNewline
+        $cowSupported = $false
+        try {
+            & cp -c $probeFile $probeFile2 2>$null
+            $cowSupported = $LASTEXITCODE -eq 0
+        } catch { }
+        Remove-Item $probeFile, $probeFile2 -ErrorAction SilentlyContinue
+
+        if ($cowSupported) {
+            # APFS CoW clone — instant, then delete unwanted dirs
+            Remove-Item -Recurse -Force $tempDir
+            & cp -cR "$RepoRoot/" "$tempDir/"
+            foreach ($dir in $excludedDirs) {
+                $dirPath = Join-Path $tempDir $dir
+                if (Test-Path $dirPath) { Remove-Item -Recurse -Force $dirPath }
+            }
+            # Also recursively remove bin/obj inside subdirectories
+            Get-ChildItem -Path $tempDir -Directory -Recurse -Include 'bin', 'obj' -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            # Non-APFS: rsync with exclusions
+            $rsyncExcludes = $excludedDirs | ForEach-Object { "--exclude=$_" }
+            & rsync -a @rsyncExcludes "$RepoRoot/" "$tempDir/"
+        }
+    } else {
+        # Linux: try reflink CoW, fall back to rsync
+        $probeFile = Join-Path $tempDir ".cow-probe"
+        $probeFile2 = Join-Path $tempDir ".cow-probe2"
+        "probe" | Out-File -FilePath $probeFile -NoNewline
+        $cowSupported = $false
+        try {
+            & cp --reflink=auto $probeFile $probeFile2 2>$null
+            $cowSupported = $LASTEXITCODE -eq 0
+        } catch { }
+        Remove-Item $probeFile, $probeFile2 -ErrorAction SilentlyContinue
+
+        if ($cowSupported) {
+            Remove-Item -Recurse -Force $tempDir
+            & cp --reflink=auto -aR "$RepoRoot/" "$tempDir/"
+            foreach ($dir in $excludedDirs) {
+                $dirPath = Join-Path $tempDir $dir
+                if (Test-Path $dirPath) { Remove-Item -Recurse -Force $dirPath }
+            }
+            Get-ChildItem -Path $tempDir -Directory -Recurse -Include 'bin', 'obj' -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            $rsyncExcludes = $excludedDirs | ForEach-Object { "--exclude=$_" }
+            & rsync -a @rsyncExcludes "$RepoRoot/" "$tempDir/"
+        }
+    }
+
+    # Initialize fresh git repo on main
+    Push-Location $tempDir
+    try {
+        git init --quiet 2>$null
+        git checkout -b main --quiet 2>$null
+        git add -A 2>$null
+        git commit -m "sonar scan snapshot" --quiet 2>$null
+    } finally {
+        Pop-Location
+    }
+
+    # Write marker file pointing back to original repo
+    $marker = @{
+        originalRepoPath = $RepoRoot
+        originalBranch   = $BranchName
+        scanTimestamp    = (Get-Date -Format 'o')
+        scanType         = "local-community-edition"
+    } | ConvertTo-Json -Depth 2
+    $marker | Out-File -FilePath (Join-Path $tempDir ".sonar-scan-origin.json") -Encoding utf8
+
+    return $tempDir
+}
+
+function Remove-SonarScanFolder {
+    <#
+    .SYNOPSIS
+        Safely removes a sonar scan temp folder, handling Windows junctions correctly.
+    .DESCRIPTION
+        On Windows, directory junctions must be removed before recursive deletion to avoid
+        deleting the original repo contents. On macOS/Linux, standard recursive delete is safe.
+        Always called from finally blocks — cleanup failure is logged but does not propagate.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ScanFolder
+    )
+
+    if (-not (Test-Path $ScanFolder)) { return }
+
+    try {
+        if ($IsWindows) {
+            # Remove junctions first to avoid deleting real repo contents
+            Get-ChildItem -Path $ScanFolder -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                if ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                    cmd /c rmdir "$($_.FullName)" 2>$null | Out-Null
+                }
+            }
+        }
+        Remove-Item -Recurse -Force $ScanFolder -ErrorAction Stop
+    } catch {
+        Write-Host "Warning: Could not fully clean up scan folder: $ScanFolder" -ForegroundColor Yellow
+        Write-Host "  $_" -ForegroundColor DarkGray
+    }
+}
+
+# ============================================================================
 # Exports
 # ============================================================================
 
@@ -940,4 +1095,6 @@ Export-ModuleMember -Function @(
     'Invoke-CleanLogs'
     'Invoke-CleanMetrics'
     'Invoke-CleanAll'
+    'New-SonarScanFolder'
+    'Remove-SonarScanFolder'
 )

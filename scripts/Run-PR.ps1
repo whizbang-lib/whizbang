@@ -118,7 +118,10 @@ param(
     [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
     [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
 
-    [switch]$PersistContainer  # Keep SonarQube Docker container running after script ends
+    [switch]$PersistContainer,  # Keep SonarQube Docker container running after script ends
+
+    [switch]$KeepScanFolder,   # Keep the temp scan folder after script ends (for debugging)
+    [switch]$DirectScan        # Skip temp folder — scan real repo directly (requires Developer Edition for branch support)
 )
 
 $ErrorActionPreference = "Stop"
@@ -134,6 +137,8 @@ Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 $useAiOutput = $Mode -eq "Ai"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$originalRepoRoot = $repoRoot  # Preserve for metrics/history that must survive cleanup
+$script:scanFolder = $null
 
 # Handle cleanup flags before anything else
 if ($CleanAll) {
@@ -235,7 +240,7 @@ function Invoke-Prepare {
     $script:totalSteps = 9  # Sonar Container, Format, Sonar Ready, Build, Unit Tests, Integration, Coverage Report, Sonar Analysis, Coverage Threshold
 
     # Load per-step estimates from history (full stats: avg, stddev, p85)
-    $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
+    $stepHistoryFile = Join-Path $originalRepoRoot "logs" "pr-steps.jsonl"
     $script:stepStats = @{}  # name -> { Avg, StdDev, P85, Count }
     if (Test-Path $stepHistoryFile) {
         $entries = @(Get-Content $stepHistoryFile -ErrorAction SilentlyContinue |
@@ -567,7 +572,11 @@ function Invoke-Prepare {
                 Push-Location $repoRoot
                 $sonarCoverageReportPath = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
                 $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl", "/d:sonar.coverageReportPaths=$sonarCoverageReportPath")
-                # Note: sonar.branch.name requires Developer Edition or above — Community Edition analyzes main branch only
+                # sonar.branch.name requires Developer Edition — only set in DirectScan mode
+                if ($DirectScan) {
+                    $directBranch = git rev-parse --abbrev-ref HEAD 2>$null
+                    if ($directBranch) { $beginArgs += "/d:sonar.branch.name=$directBranch" }
+                }
                 $beginArgs += $sonarConfigArgs
                 $beginResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments ($beginArgs -join " ") -WorkingDir $repoRoot
                 if ($beginResult.ExitCode -eq 0) {
@@ -606,7 +615,7 @@ function Invoke-Prepare {
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests... ⏭️ Skipped $(Format-StepTiming 'Unit Tests')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Unit Tests"; status = "skipped"; duration_s = 0 }
     } else {
-        $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
+        $unitTestLogFile = Join-Path $originalRepoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
             $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
@@ -626,7 +635,7 @@ function Invoke-Prepare {
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped $(Format-StepTiming 'Integration Tests')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Integration Tests"; status = "skipped"; duration_s = 0 }
     } else {
-        $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
+        $integrationTestLogFile = Join-Path $originalRepoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
             $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
@@ -802,8 +811,8 @@ function Invoke-Prepare {
     Write-Progress -Id 1 -Activity "Time" -Completed
     Write-Progress -Id 0 -Activity "Preparing PR" -Completed
 
-    # Save per-step history for future estimation
-    $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
+    # Save per-step history for future estimation (always to original repo)
+    $stepHistoryFile = Join-Path $originalRepoRoot "logs" "pr-steps.jsonl"
     Write-HistoryEntry -FilePath $stepHistoryFile -Entry @{
         steps = $script:steps
         total_duration_s = [math]::Round(([DateTime]::UtcNow - $startTime).TotalSeconds, 1)
@@ -1147,6 +1156,15 @@ $result = @{ Passed = $true }
 $prNumber = $PrNumber
 $prUrl = ""
 
+# Create temp scan folder for sonar (unless -DirectScan or -SkipSonar)
+if (-not $DirectScan -and -not $SkipSonar) {
+    $currentBranchForScan = git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null
+    Write-Host "  Creating scan folder (branch: $currentBranchForScan)..." -ForegroundColor Gray
+    $script:scanFolder = New-SonarScanFolder -RepoRoot $repoRoot -BranchName $currentBranchForScan
+    Write-Host "  Scan folder: $($script:scanFolder)" -ForegroundColor DarkGray
+    $repoRoot = $script:scanFolder
+}
+
 try {
     # Prepare
     if ($Action -in @("Prepare", "Full")) {
@@ -1198,11 +1216,19 @@ finally {
 
     # Stop SonarQube container (unless -PersistContainer)
     if (-not $SkipSonar -and -not $PersistContainer) {
-        $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
+        $composeFile = Join-Path $originalRepoRoot "docker-compose.sonarqube.yml"
         if (Test-Path $composeFile) {
             Write-Host "  Stopping SonarQube container..." -ForegroundColor DarkGray
             docker compose -f $composeFile down 2>&1 | Out-Null
         }
+    }
+
+    # Clean up scan folder
+    if ($script:scanFolder -and -not $KeepScanFolder) {
+        Write-Host "  Cleaning up scan folder..." -ForegroundColor DarkGray
+        Remove-SonarScanFolder -ScanFolder $script:scanFolder
+    } elseif ($script:scanFolder -and $KeepScanFolder) {
+        Write-Host "  Scan folder preserved: $($script:scanFolder)" -ForegroundColor DarkGray
     }
 
     # Stop transcript

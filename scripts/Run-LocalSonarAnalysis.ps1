@@ -48,11 +48,16 @@ param(
     [switch]$SkipDocker,
     [switch]$SkipTests,
     [switch]$Down,
-    [string]$TestFilter
+    [string]$TestFilter,
+    [switch]$KeepScanFolder,
+    [switch]$DirectScan
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Import shared module
+Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 # Configuration
 $SonarUrl = "http://localhost:9000"
@@ -60,6 +65,7 @@ $ProjectKey = "whizbang-local"
 $ProjectName = "Whizbang (Local)"
 $Token = "squ_local" # Will be replaced with actual token
 $RepoRoot = Join-Path $PSScriptRoot ".."
+$originalRepoRoot = $RepoRoot  # Preserve for metrics/history
 $ComposeFile = Join-Path $RepoRoot "docker-compose.sonarqube.yml"
 $CoverageDir = Join-Path $RepoRoot "scripts" "coverage"
 $CoverageReport = Join-Path $CoverageDir "coverage.opencover.xml"
@@ -139,6 +145,20 @@ if (Test-Path $TokenFile) {
     }
 }
 
+# Create temp scan folder (unless -DirectScan)
+$scanFolder = $null
+if (-not $DirectScan) {
+    $currentBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
+    Write-Info "Creating scan folder (branch: $currentBranch)..."
+    $scanFolder = New-SonarScanFolder -RepoRoot $RepoRoot -BranchName $currentBranch
+    Write-Info "Scan folder: $scanFolder"
+    $RepoRoot = $scanFolder
+    $CoverageDir = Join-Path $RepoRoot "scripts" "coverage"
+    $CoverageReport = Join-Path $CoverageDir "coverage.opencover.xml"
+}
+
+try {
+
 # Ensure dotnet tools are restored
 Write-Info "Restoring dotnet tools..."
 Push-Location $RepoRoot
@@ -147,7 +167,6 @@ try {
 } finally {
     Pop-Location
 }
-
 # Run tests with coverage
 if (-not $SkipTests) {
     Write-Info "Running tests with coverage collection..."
@@ -232,12 +251,6 @@ try {
         Write-Info "Loaded exclusions from sonar.config"
     }
 
-    # Detect current git branch
-    $currentBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
-    if ($currentBranch) {
-        Write-Info "Branch: $currentBranch"
-    }
-
     $beginArgs = @(
         "begin",
         "/k:$ProjectKey",
@@ -247,11 +260,14 @@ try {
         "/d:sonar.exclusions=$sonarExclusions",
         "/d:sonar.coverage.exclusions=$sonarCoverageExclusions"
     )
-    # Note: sonar.branch.name requires Developer Edition or above
-    # Community Edition analyzes the "main" branch only
-    # if ($currentBranch) {
-    #     $beginArgs += "/d:sonar.branch.name=$currentBranch"
-    # }
+    # sonar.branch.name requires Developer Edition — only set when scanning real repo directly
+    if ($DirectScan) {
+        $directBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
+        if ($directBranch) {
+            Write-Info "Branch: $directBranch (DirectScan mode)"
+            $beginArgs += "/d:sonar.branch.name=$directBranch"
+        }
+    }
     if ($sonarCpdExclusions) { $beginArgs += "/d:sonar.cpd.exclusions=$sonarCpdExclusions" }
     $beginArgs += $sonarExtraArgs
     # Use the correct coverage property based on report format
@@ -286,3 +302,13 @@ Write-Host ""
 if ($IsWindows) { Start-Process "$SonarUrl/dashboard?id=$ProjectKey" }
 elseif ($IsMacOS) { & open "$SonarUrl/dashboard?id=$ProjectKey" }
 elseif ($IsLinux) { & xdg-open "$SonarUrl/dashboard?id=$ProjectKey" 2>/dev/null }
+
+} finally {
+    # Clean up scan folder (unless -KeepScanFolder or -DirectScan)
+    if ($scanFolder -and -not $KeepScanFolder) {
+        Write-Info "Cleaning up scan folder: $scanFolder"
+        Remove-SonarScanFolder -ScanFolder $scanFolder
+    } elseif ($scanFolder -and $KeepScanFolder) {
+        Write-Info "Scan folder preserved: $scanFolder"
+    }
+}

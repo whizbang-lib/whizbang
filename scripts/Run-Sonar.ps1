@@ -81,7 +81,10 @@ param(
     [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
     [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
 
-    [switch]$PersistContainer  # Keep SonarQube Docker container running after script ends
+    [switch]$PersistContainer,  # Keep SonarQube Docker container running after script ends
+
+    [switch]$KeepScanFolder,   # Keep the temp scan folder after script ends (for debugging)
+    [switch]$DirectScan        # Skip temp folder — scan real repo directly (requires Developer Edition for branch support)
 )
 
 $ErrorActionPreference = "Stop"
@@ -260,6 +263,8 @@ $analysisScript = Join-Path $PSScriptRoot "Run-LocalSonarAnalysis.ps1"
 
 $splatParams = @{ SkipDocker = $true }  # We already handled Docker above
 if ($SkipBuild) { $splatParams["SkipTests"] = $true }
+if ($KeepScanFolder) { $splatParams["KeepScanFolder"] = $true }
+if ($DirectScan) { $splatParams["DirectScan"] = $true }
 
 $analysisExitCode = 0
 try {

@@ -434,6 +434,7 @@ coverage_files.txt
 .sonarcloud.token
 .sonarqube-local.token
 .sonarqube/
+.sonar-scan-origin.json
 .mcp.json
 coverage-report/
 coverage/
