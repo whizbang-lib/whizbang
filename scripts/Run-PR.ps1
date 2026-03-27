@@ -566,7 +566,7 @@ function Invoke-Prepare {
                 $sonarCoverageReportPath = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
                 $currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
                 $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl", "/d:sonar.coverageReportPaths=$sonarCoverageReportPath")
-                if ($currentBranch) { $beginArgs += "/d:sonar.branch.name=$currentBranch" }
+                # Note: sonar.branch.name requires Developer Edition or above — Community Edition analyzes main branch only
                 if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
                 if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
                 $beginResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments ($beginArgs -join " ") -WorkingDir $repoRoot
