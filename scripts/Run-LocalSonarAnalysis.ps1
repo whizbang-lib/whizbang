@@ -247,9 +247,11 @@ try {
         "/d:sonar.exclusions=$sonarExclusions",
         "/d:sonar.coverage.exclusions=$sonarCoverageExclusions"
     )
-    if ($currentBranch) {
-        $beginArgs += "/d:sonar.branch.name=$currentBranch"
-    }
+    # Note: sonar.branch.name requires Developer Edition or above
+    # Community Edition analyzes the "main" branch only
+    # if ($currentBranch) {
+    #     $beginArgs += "/d:sonar.branch.name=$currentBranch"
+    # }
     if ($sonarCpdExclusions) { $beginArgs += "/d:sonar.cpd.exclusions=$sonarCpdExclusions" }
     $beginArgs += $sonarExtraArgs
     # Use the correct coverage property based on report format
