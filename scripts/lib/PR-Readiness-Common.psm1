@@ -946,6 +946,10 @@ function New-SonarScanFolder {
         [string]$BranchName = ""
     )
 
+    # Suppress progress bars from Remove-Item and other cmdlets during folder setup
+    $savedProgressPref = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "whizbang-sonar-scan-$timestamp"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
@@ -1029,6 +1033,9 @@ function New-SonarScanFolder {
     } finally {
         Pop-Location
     }
+
+    # Restore progress preference
+    $ProgressPreference = $savedProgressPref
 
     # Write marker file pointing back to original repo
     $marker = @{
