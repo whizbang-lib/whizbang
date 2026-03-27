@@ -147,6 +147,19 @@ if (-not $DirectScan -and -not $SkipSonar) {
     $repoRoot = $script:scanFolder
 }
 
+# Register CTRL+C handler to clean up scan folder if process is interrupted
+if ($script:scanFolder -and -not $KeepScanFolder) {
+    $scanFolderPath = $script:scanFolder
+    $script:ctrlCCleanup = {
+        param($sender, $e)
+        if (Test-Path $scanFolderPath) {
+            Write-Host "`n  Cleaning up scan folder (interrupted)..." -ForegroundColor DarkGray
+            Remove-SonarScanFolder -ScanFolder $scanFolderPath
+        }
+    }
+    [Console]::add_CancelKeyPress($script:ctrlCCleanup)
+}
+
 # Handle cleanup flags before anything else
 if ($CleanAll) {
     Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
@@ -1224,8 +1237,13 @@ finally {
         }
     }
 
-    # Clean up scan folder
-    if ($script:scanFolder -and -not $KeepScanFolder) {
+    # Unregister CTRL+C handler (avoid double cleanup)
+    if ($script:ctrlCCleanup) {
+        try { [Console]::remove_CancelKeyPress($script:ctrlCCleanup) } catch { }
+    }
+
+    # Clean up scan folder (check existence — CTRL+C handler may have already cleaned it)
+    if ($script:scanFolder -and -not $KeepScanFolder -and (Test-Path $script:scanFolder)) {
         Write-Host "  Cleaning up scan folder..." -ForegroundColor DarkGray
         Remove-SonarScanFolder -ScanFolder $script:scanFolder
     } elseif ($script:scanFolder -and $KeepScanFolder) {
