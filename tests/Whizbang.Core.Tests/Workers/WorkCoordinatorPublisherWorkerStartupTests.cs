@@ -105,8 +105,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
   private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
     public bool IsReady { get; set; } = true;
+    private readonly TaskCompletionSource _checkSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitForCheckAsync(TimeSpan timeout) => _checkSignal.Task.WaitAsync(timeout);
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      _checkSignal.TrySetResult();
       return Task.FromResult(IsReady);
     }
   }
@@ -201,10 +205,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker and let it run briefly
-    // Wait long enough to verify nothing happens when database isn't ready
+    // Act - start worker and wait for readiness check to be called (proves worker tried)
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await databaseReadiness.WaitForCheckAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try {
