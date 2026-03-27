@@ -208,11 +208,14 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Start worker with database not ready
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(500); // Let several not-ready cycles happen
 
-    // Now make database ready
+    // Wait for at least 3 not-ready checks via signal (no Task.Delay)
+    await dbCheck.WaitForChecksAsync(3, TimeSpan.FromSeconds(10));
+
+    // Now make database ready and wait for at least 2 more checks to ensure the ready path runs
+    var checksBeforeReady = dbCheck.CheckCount;
     dbCheck.IsReady = true;
-    await Task.Delay(500); // Let a ready cycle happen
+    await dbCheck.WaitForChecksAsync(checksBeforeReady + 2, TimeSpan.FromSeconds(10));
 
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -1490,8 +1493,36 @@ public class PerspectiveWorkerCoverageTests {
 
   private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
     public bool IsReady { get; set; } = true;
+    private int _checkCount;
+    private readonly List<(int MinChecks, TaskCompletionSource Signal)> _waiters = [];
+
+    public int CheckCount => Volatile.Read(ref _checkCount);
+
+    /// <summary>
+    /// Returns a task that completes when IsReadyAsync has been called at least the specified number of times.
+    /// </summary>
+    public Task WaitForChecksAsync(int minChecks, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_waiters) {
+        if (Volatile.Read(ref _checkCount) >= minChecks) {
+          tcs.TrySetResult();
+          return tcs.Task;
+        }
+        _waiters.Add((minChecks, tcs));
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      var count = Interlocked.Increment(ref _checkCount);
+      lock (_waiters) {
+        for (int i = _waiters.Count - 1; i >= 0; i--) {
+          if (count >= _waiters[i].MinChecks) {
+            _waiters[i].Signal.TrySetResult();
+            _waiters.RemoveAt(i);
+          }
+        }
+      }
       return Task.FromResult(IsReady);
     }
   }
