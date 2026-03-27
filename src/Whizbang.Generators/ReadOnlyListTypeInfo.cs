@@ -9,7 +9,7 @@ namespace Whizbang.Generators;
 /// <param name="ElementSimpleName">Simple element type name for display (e.g., "CatalogItem")</param>
 /// <tests>tests/Whizbang.Generators.Tests/IReadOnlyListTypeInfoTests.cs:IReadOnlyListTypeInfo_ValueEquality_ComparesFieldsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/IReadOnlyListTypeInfoTests.cs:IReadOnlyListTypeInfo_Constructor_SetsPropertiesAsync</tests>
-public sealed record IReadOnlyListTypeInfo(
+public sealed record ReadOnlyListTypeInfo(
     string IReadOnlyListTypeName,
     string ElementTypeName,
     string ElementSimpleName

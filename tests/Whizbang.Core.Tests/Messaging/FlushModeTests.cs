@@ -45,7 +45,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -59,7 +59,7 @@ public class FlushModeTests {
     var strategy = _createScopedStrategy(coordinator);
 
     // Act - no messages queued
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    var result = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
@@ -75,7 +75,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - Scoped strategy always flushes immediately because deferring to
     // DisposeAsync is unreliable (DbContext may already be disposed by DI container)
@@ -91,7 +91,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act - BestEffort flushes immediately on Scoped
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - already flushed, so dispose is a no-op
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -111,11 +111,11 @@ public class FlushModeTests {
 
     // Queue first message and BestEffort (flushes immediately on Scoped)
     _queueTestOutboxMessage(strategy);
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Queue second message and Required
     _queueTestOutboxMessage(strategy);
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert - two separate flushes, one message each
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(2)
@@ -132,7 +132,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act - call without specifying mode (should default to Required)
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -148,7 +148,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act - BestEffort flushes immediately on Scoped (both messages in one batch)
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -165,10 +165,10 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert - queues should be cleared, second flush should be empty
-    _ = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    _ = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("second flush with empty queues should skip DB call");
   }
@@ -181,7 +181,7 @@ public class FlushModeTests {
     await strategy.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required))
+    await Assert.That(async () => await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -193,7 +193,7 @@ public class FlushModeTests {
     await strategy.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort))
+    await Assert.That(async () => await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -206,10 +206,10 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
-    await Assert.That(coordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode)
+    await Assert.That(coordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode)
       .Because("DebugMode flag should be propagated on Required flush");
   }
 
@@ -233,7 +233,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1)
@@ -253,7 +253,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -267,7 +267,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - Immediate strategy ignores FlushMode
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -293,7 +293,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    var result = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - Immediate returns actual work, not empty
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1)
@@ -308,7 +308,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act - no mode specified
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -322,7 +322,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act - BestEffort on Immediate still flushes
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - first flush should have 1 outbox message
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -331,7 +331,7 @@ public class FlushModeTests {
       .Because("the queued message should have been sent");
 
     // Second call with empty queues - still calls ProcessWorkBatch (Immediate doesn't skip)
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
     await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(0)
       .Because("second flush should have no outbox messages since queues were cleared");
   }
@@ -348,7 +348,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -364,7 +364,7 @@ public class FlushModeTests {
     var strategy = _createIntervalStrategy(coordinator);
 
     // Act
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    var result = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
@@ -381,7 +381,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    var result = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - BestEffort returns empty immediately
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0)
@@ -399,7 +399,7 @@ public class FlushModeTests {
     _queueTestOutboxMessage(strategy);
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert - Not flushed yet (deferred to timer)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
@@ -417,11 +417,11 @@ public class FlushModeTests {
 
     // Queue and defer via BestEffort
     _queueTestOutboxMessage(strategy);
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Queue another and Required flush
     _queueTestOutboxMessage(strategy);
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert - both messages included
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -437,7 +437,7 @@ public class FlushModeTests {
     var coordinator = new FakeWorkCoordinator();
     var strategy = _createIntervalStrategy(coordinator);
     _queueTestOutboxMessage(strategy);
-    await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Act
     await strategy.DisposeAsync();
@@ -566,7 +566,7 @@ public class FlushModeTests {
   }
 
   private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchFlags LastFlags { get; private set; }
+    public WorkBatchOptions LastFlags { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,

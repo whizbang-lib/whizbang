@@ -6,7 +6,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.ValueObjects;
 
 /// <summary>
-/// Tests for GuidMetadata flags enum.
+/// Tests for GuidMetadatas flags enum.
 /// Validates bit positions, flag combinations, and the Flags attribute behavior.
 /// </summary>
 [Category("ValueObjects")]
@@ -18,7 +18,7 @@ public class GuidMetadataTests {
 
   [Test]
   public async Task GuidMetadata_None_HasValueZeroAsync() {
-    var value = (ushort)GuidMetadata.None;
+    var value = (ushort)GuidMetadatas.None;
     await Assert.That(value).IsEqualTo((ushort)0);
   }
 
@@ -28,13 +28,13 @@ public class GuidMetadataTests {
 
   [Test]
   public async Task GuidMetadata_Version4_IsBit0Async() {
-    var value = (ushort)GuidMetadata.Version4;
+    var value = (ushort)GuidMetadatas.Version4;
     await Assert.That(value).IsEqualTo((ushort)(1 << 0));
   }
 
   [Test]
   public async Task GuidMetadata_Version7_IsBit1Async() {
-    var value = (ushort)GuidMetadata.Version7;
+    var value = (ushort)GuidMetadatas.Version7;
     await Assert.That(value).IsEqualTo((ushort)(1 << 1));
   }
 
@@ -44,25 +44,25 @@ public class GuidMetadataTests {
 
   [Test]
   public async Task GuidMetadata_SourceMedo_IsBit2Async() {
-    var value = (ushort)GuidMetadata.SourceMedo;
+    var value = (ushort)GuidMetadatas.SourceMedo;
     await Assert.That(value).IsEqualTo((ushort)(1 << 2));
   }
 
   [Test]
   public async Task GuidMetadata_SourceMicrosoft_IsBit3Async() {
-    var value = (ushort)GuidMetadata.SourceMicrosoft;
+    var value = (ushort)GuidMetadatas.SourceMicrosoft;
     await Assert.That(value).IsEqualTo((ushort)(1 << 3));
   }
 
   [Test]
   public async Task GuidMetadata_SourceParsed_IsBit4Async() {
-    var value = (ushort)GuidMetadata.SourceParsed;
+    var value = (ushort)GuidMetadatas.SourceParsed;
     await Assert.That(value).IsEqualTo((ushort)(1 << 4));
   }
 
   [Test]
   public async Task GuidMetadata_SourceExternal_IsBit5Async() {
-    var value = (ushort)GuidMetadata.SourceExternal;
+    var value = (ushort)GuidMetadatas.SourceExternal;
     await Assert.That(value).IsEqualTo((ushort)(1 << 5));
   }
 
@@ -72,13 +72,13 @@ public class GuidMetadataTests {
 
   [Test]
   public async Task GuidMetadata_SourceUnknown_IsBit6Async() {
-    var value = (ushort)GuidMetadata.SourceUnknown;
+    var value = (ushort)GuidMetadatas.SourceUnknown;
     await Assert.That(value).IsEqualTo((ushort)(1 << 6));
   }
 
   [Test]
   public async Task GuidMetadata_Reserved_IsBit7Async() {
-    var value = (ushort)GuidMetadata.Reserved;
+    var value = (ushort)GuidMetadatas.Reserved;
     await Assert.That(value).IsEqualTo((ushort)(1 << 7));
   }
 
@@ -87,14 +87,14 @@ public class GuidMetadataTests {
   // ========================================
 
   [Test]
-  [Arguments(GuidMetadata.SourceMarten, 8)]
-  [Arguments(GuidMetadata.SourceUuidNext, 9)]
-  [Arguments(GuidMetadata.SourceDaanV2, 10)]
-  [Arguments(GuidMetadata.SourceUuids, 11)]
-  [Arguments(GuidMetadata.SourceGuidOne, 12)]
-  [Arguments(GuidMetadata.SourceTaiizor, 13)]
+  [Arguments(GuidMetadatas.SourceMarten, 8)]
+  [Arguments(GuidMetadatas.SourceUuidNext, 9)]
+  [Arguments(GuidMetadatas.SourceDaanV2, 10)]
+  [Arguments(GuidMetadatas.SourceUuids, 11)]
+  [Arguments(GuidMetadatas.SourceGuidOne, 12)]
+  [Arguments(GuidMetadatas.SourceTaiizor, 13)]
   public async Task GuidMetadata_ThirdPartySources_HaveCorrectBitPositionsAsync(
-      GuidMetadata flag, int bitPosition) {
+      GuidMetadatas flag, int bitPosition) {
     var value = (ushort)flag;
     await Assert.That(value).IsEqualTo((ushort)(1 << bitPosition));
   }
@@ -106,13 +106,13 @@ public class GuidMetadataTests {
   [Test]
   public async Task GuidMetadata_IsFlagsEnum_SupportsOrCombinationAsync() {
     // Arrange & Act
-    var combined = GuidMetadata.Version7 | GuidMetadata.SourceMedo;
+    var combined = GuidMetadatas.Version7 | GuidMetadatas.SourceMedo;
 
     // Assert - both flags should be independently testable
-    var hasVersion7 = (combined & GuidMetadata.Version7) != 0;
-    var hasMedo = (combined & GuidMetadata.SourceMedo) != 0;
-    var hasVersion4 = (combined & GuidMetadata.Version4) != 0;
-    var hasMicrosoft = (combined & GuidMetadata.SourceMicrosoft) != 0;
+    var hasVersion7 = (combined & GuidMetadatas.Version7) != 0;
+    var hasMedo = (combined & GuidMetadatas.SourceMedo) != 0;
+    var hasVersion4 = (combined & GuidMetadatas.Version4) != 0;
+    var hasMicrosoft = (combined & GuidMetadatas.SourceMicrosoft) != 0;
 
     await Assert.That(hasVersion7).IsTrue();
     await Assert.That(hasMedo).IsTrue();
@@ -124,13 +124,13 @@ public class GuidMetadataTests {
   public async Task GuidMetadata_AllFlags_AreDistinctBitsAsync() {
     // Arrange - all defined flags
     var allFlags = new[] {
-      GuidMetadata.Version4, GuidMetadata.Version7,
-      GuidMetadata.SourceMedo, GuidMetadata.SourceMicrosoft,
-      GuidMetadata.SourceParsed, GuidMetadata.SourceExternal,
-      GuidMetadata.SourceUnknown, GuidMetadata.Reserved,
-      GuidMetadata.SourceMarten, GuidMetadata.SourceUuidNext,
-      GuidMetadata.SourceDaanV2, GuidMetadata.SourceUuids,
-      GuidMetadata.SourceGuidOne, GuidMetadata.SourceTaiizor
+      GuidMetadatas.Version4, GuidMetadatas.Version7,
+      GuidMetadatas.SourceMedo, GuidMetadatas.SourceMicrosoft,
+      GuidMetadatas.SourceParsed, GuidMetadatas.SourceExternal,
+      GuidMetadatas.SourceUnknown, GuidMetadatas.Reserved,
+      GuidMetadatas.SourceMarten, GuidMetadatas.SourceUuidNext,
+      GuidMetadatas.SourceDaanV2, GuidMetadatas.SourceUuids,
+      GuidMetadatas.SourceGuidOne, GuidMetadatas.SourceTaiizor
     };
 
     // Assert - each flag should have exactly one bit set (power of 2)
@@ -145,13 +145,13 @@ public class GuidMetadataTests {
   public async Task GuidMetadata_NoOverlappingBits_BetweenAnyFlagsAsync() {
     // Arrange - all defined flags
     var allFlags = new[] {
-      GuidMetadata.Version4, GuidMetadata.Version7,
-      GuidMetadata.SourceMedo, GuidMetadata.SourceMicrosoft,
-      GuidMetadata.SourceParsed, GuidMetadata.SourceExternal,
-      GuidMetadata.SourceUnknown, GuidMetadata.Reserved,
-      GuidMetadata.SourceMarten, GuidMetadata.SourceUuidNext,
-      GuidMetadata.SourceDaanV2, GuidMetadata.SourceUuids,
-      GuidMetadata.SourceGuidOne, GuidMetadata.SourceTaiizor
+      GuidMetadatas.Version4, GuidMetadatas.Version7,
+      GuidMetadatas.SourceMedo, GuidMetadatas.SourceMicrosoft,
+      GuidMetadatas.SourceParsed, GuidMetadatas.SourceExternal,
+      GuidMetadatas.SourceUnknown, GuidMetadatas.Reserved,
+      GuidMetadatas.SourceMarten, GuidMetadatas.SourceUuidNext,
+      GuidMetadatas.SourceDaanV2, GuidMetadatas.SourceUuids,
+      GuidMetadatas.SourceGuidOne, GuidMetadatas.SourceTaiizor
     };
 
     // Assert - no two flags share the same bit
@@ -166,18 +166,18 @@ public class GuidMetadataTests {
   [Test]
   public async Task GuidMetadata_VersionAndSource_CanBeCombinedAsync() {
     // Arrange & Act - combine version with each source
-    var medoV7 = GuidMetadata.Version7 | GuidMetadata.SourceMedo;
-    var microsoftV4 = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
-    var externalV7 = GuidMetadata.Version7 | GuidMetadata.SourceExternal;
+    var medoV7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMedo;
+    var microsoftV4 = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
+    var externalV7 = GuidMetadatas.Version7 | GuidMetadatas.SourceExternal;
 
     // Assert
     var medoV7Value = (ushort)medoV7;
     var microsoftV4Value = (ushort)microsoftV4;
     var externalV7Value = (ushort)externalV7;
 
-    await Assert.That(medoV7Value).IsEqualTo((ushort)(GuidMetadata.Version7 | GuidMetadata.SourceMedo));
-    await Assert.That(microsoftV4Value).IsEqualTo((ushort)(GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft));
-    await Assert.That(externalV7Value).IsEqualTo((ushort)(GuidMetadata.Version7 | GuidMetadata.SourceExternal));
+    await Assert.That(medoV7Value).IsEqualTo((ushort)(GuidMetadatas.Version7 | GuidMetadatas.SourceMedo));
+    await Assert.That(microsoftV4Value).IsEqualTo((ushort)(GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft));
+    await Assert.That(externalV7Value).IsEqualTo((ushort)(GuidMetadatas.Version7 | GuidMetadatas.SourceExternal));
   }
 
   // ========================================
@@ -187,13 +187,13 @@ public class GuidMetadataTests {
   [Test]
   public async Task GuidMetadata_UnderlyingType_IsUshortAsync() {
     // The enum is declared as : ushort
-    var underlyingType = Enum.GetUnderlyingType(typeof(GuidMetadata));
+    var underlyingType = Enum.GetUnderlyingType(typeof(GuidMetadatas));
     await Assert.That(underlyingType).IsEqualTo(typeof(ushort));
   }
 
   [Test]
   public async Task GuidMetadata_HasFlagsAttribute_ReturnsTrueAsync() {
-    var hasFlagsAttribute = typeof(GuidMetadata).IsDefined(typeof(FlagsAttribute), false);
+    var hasFlagsAttribute = typeof(GuidMetadatas).IsDefined(typeof(FlagsAttribute), false);
     await Assert.That(hasFlagsAttribute).IsTrue();
   }
 }

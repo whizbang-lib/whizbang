@@ -32,7 +32,7 @@ public readonly struct RoutedNone : IRouted {
   /// <summary>
   /// Gets the dispatch mode, which is always None for RoutedNone.
   /// </summary>
-  public DispatchMode Mode => DispatchMode.None;
+  public DispatchModes Mode => DispatchModes.None;
 
   /// <summary>
   /// Converts this routed none to a completed <see cref="ValueTask{T}"/>.
@@ -53,7 +53,7 @@ public readonly struct RoutedNone : IRouted {
 /// <list type="bullet">
 ///   <item>Pattern match with <c>obj is IRouted</c></item>
 ///   <item>Access the wrapped value as <see cref="object"/></item>
-///   <item>Access the <see cref="DispatchMode"/> without knowing the generic type</item>
+///   <item>Access the <see cref="DispatchModes"/> without knowing the generic type</item>
 /// </list>
 /// </remarks>
 /// <example>
@@ -77,7 +77,7 @@ public interface IRouted {
   /// <summary>
   /// Gets the dispatch mode for routing the wrapped value.
   /// </summary>
-  DispatchMode Mode { get; }
+  DispatchModes Mode { get; }
 }
 
 /// <summary>
@@ -86,7 +86,7 @@ public interface IRouted {
 /// <typeparam name="T">The type of the wrapped value.</typeparam>
 /// <remarks>
 /// <para>
-/// Routed&lt;T&gt; is a readonly struct that associates a value with a <see cref="DispatchMode"/>.
+/// Routed&lt;T&gt; is a readonly struct that associates a value with a <see cref="DispatchModes"/>.
 /// It's used to explicitly control where cascaded messages are dispatched:
 /// </para>
 /// <list type="bullet">
@@ -106,7 +106,7 @@ public interface IRouted {
 /// return Route.Both(new AuditLogEvent { Action = "create" });
 ///
 /// // Using constructor directly
-/// return new Routed&lt;MyEvent&gt;(myEvent, DispatchMode.Local);
+/// return new Routed&lt;MyEvent&gt;(myEvent, DispatchModes.Local);
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
@@ -116,7 +116,7 @@ public interface IRouted {
 /// </remarks>
 /// <param name="value">The value to wrap.</param>
 /// <param name="mode">The dispatch mode for routing.</param>
-public readonly struct Routed<T>(T value, DispatchMode mode) : IRouted {
+public readonly struct Routed<T>(T value, DispatchModes mode) : IRouted {
   /// <summary>
   /// Gets the wrapped value.
   /// </summary>
@@ -125,7 +125,7 @@ public readonly struct Routed<T>(T value, DispatchMode mode) : IRouted {
   /// <summary>
   /// Gets the dispatch mode for routing this value.
   /// </summary>
-  public DispatchMode Mode { get; } = mode;
+  public DispatchModes Mode { get; } = mode;
 
   /// <summary>
   /// Gets the wrapped value as an object (explicit interface implementation).

@@ -62,7 +62,7 @@ public class SecuritySystemEventTests {
       ResourceType = "Order",
       ResourceId = "order-123",
       UsedPermission = Permission.Read("orders"),
-      AccessFilter = ScopeFilter.Tenant | ScopeFilter.User,
+      AccessFilter = ScopeFilters.Tenant | ScopeFilters.User,
       Scope = new PerspectiveScope { TenantId = "tenant-1", UserId = "user-1" },
       Timestamp = DateTimeOffset.UtcNow
     };
@@ -71,8 +71,8 @@ public class SecuritySystemEventTests {
     await Assert.That(@event.ResourceType).IsEqualTo("Order");
     await Assert.That(@event.ResourceId).IsEqualTo("order-123");
     await Assert.That(@event.UsedPermission.Value).IsEqualTo("orders:read");
-    await Assert.That(@event.AccessFilter.HasFlag(ScopeFilter.Tenant)).IsTrue();
-    await Assert.That(@event.AccessFilter.HasFlag(ScopeFilter.User)).IsTrue();
+    await Assert.That(@event.AccessFilter.HasFlag(ScopeFilters.Tenant)).IsTrue();
+    await Assert.That(@event.AccessFilter.HasFlag(ScopeFilters.User)).IsTrue();
     await Assert.That(@event.Scope.TenantId).IsEqualTo("tenant-1");
   }
 
@@ -82,7 +82,7 @@ public class SecuritySystemEventTests {
     var @event = new AccessGranted {
       ResourceType = "Order",
       UsedPermission = Permission.Read("orders"),
-      AccessFilter = ScopeFilter.Tenant,
+      AccessFilter = ScopeFilters.Tenant,
       Scope = new PerspectiveScope(),
       Timestamp = DateTimeOffset.UtcNow
     };

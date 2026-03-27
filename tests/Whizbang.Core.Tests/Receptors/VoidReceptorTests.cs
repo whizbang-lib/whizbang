@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Receptors;
 /// </summary>
 [Category("Receptors")]
 public class VoidReceptorTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   // Test Messages for void pattern
   public record ProcessPaymentCommand(Guid OrderId, decimal Amount, string PaymentMethod);

@@ -442,13 +442,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
-  private static WorkBatchFlags _buildFlags(WorkBatchRow r) {
-    var flags = WorkBatchFlags.None;
+  private static WorkBatchOptions _buildFlags(WorkBatchRow r) {
+    var flags = WorkBatchOptions.None;
     if (r.IsNewlyStored == true) {
-      flags |= WorkBatchFlags.NewlyStored;
+      flags |= WorkBatchOptions.NewlyStored;
     }
     if (r.IsOrphaned == true) {
-      flags |= WorkBatchFlags.Orphaned;
+      flags |= WorkBatchOptions.Orphaned;
     }
     return flags;
   }
@@ -761,7 +761,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DEFAULT_SCHEMA,
         _logger);
       var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{4})
       var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
+#pragma warning restore S2077
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
@@ -816,7 +818,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, "wh_perspective_cursors");
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
+#pragma warning restore S2077
 
     var checkpointState = await _dbContext.Database
       .SqlQueryRaw<CheckpointDiagnostic>(diagnosticSql, streamId, perspectiveName)
@@ -868,7 +872,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{4})
     var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
+#pragma warning restore S2077
 
     await _dbContext.Database.ExecuteSqlRawAsync(
       sql,
@@ -891,7 +897,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var sql = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
+#pragma warning restore S2077
 
     var result = await _dbContext.Database
       .SqlQueryRaw<CursorQueryResult>(sql, streamId, perspectiveName)
@@ -938,7 +946,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
-  /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
+  /// Notices are only generated when WorkBatchOptions.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {

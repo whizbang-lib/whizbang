@@ -758,15 +758,24 @@ try {
             }
 
             $coverageSettingsPath = Join-Path $repoRoot "codecoverage.config"
-            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
-            if ($Filter) { $args += "--treenode-filter"; $args += "/*/*/*/*$Filter*" }
-            if ($FailFastEnabled) { $args += "--fail-fast" }
+            $testArgs = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+            if ($Filter) { $testArgs += "--treenode-filter"; $testArgs += "/*/*/*/*$Filter*" }
+            if ($FailFastEnabled) { $testArgs += "--fail-fast" }
 
-            $output = & dotnet @args 2>&1
+            $outFile = [System.IO.Path]::GetTempFileName()
+            $errFile = [System.IO.Path]::GetTempFileName()
+            $proc = Start-Process -FilePath "dotnet" -ArgumentList ($testArgs -join " ") -WorkingDirectory $projDir -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            while (-not $proc.HasExited) {
+                Update-ParentProgress
+                Start-Sleep -Milliseconds 2000
+            }
+            $proc.WaitForExit()
+            $output = (Get-Content $outFile -Raw) + (Get-Content $errFile -Raw)
+            Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
             return [PSCustomObject]@{
                 ProjectName = $projName
-                ExitCode = $LASTEXITCODE
-                Output = ($output | Select-Object -Last 30) -join "`n"
+                ExitCode = $proc.ExitCode
+                Output = ($output -split "`n" | Select-Object -Last 30) -join "`n"
             }
         }
 
@@ -803,31 +812,75 @@ try {
         if ($unitTestProjects.Count -gt 0) {
             Write-Host "Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
 
-            $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
-                $projectPath = $_
-                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
-                $config = $using:Configuration
-                $testFilter = $using:TestFilter
-                $failFast = $using:FailFast
-                $resultsBag = $using:results
-                $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
-
-                if ($IsLinux -or $IsMacOS) {
-                    $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
-                    if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+            # Start a background thread to keep progress bars alive during ForEach-Object -Parallel
+            $progressCts = [System.Threading.CancellationTokenSource]::new()
+            $progressToken = $progressCts.Token
+            $parentEpochStartCopy = $script:parentEpochStart
+            $parentTotalEstSecCopy = $ParentTotalEstSec
+            $parentStepNumberCopy = $ParentStepNumber
+            $parentTotalStepsCopy = $ParentTotalSteps
+            $stepEstSecCopy = $StepEstSec
+            $runStartTimeCopy = $script:runStartTime
+            $modeCopy = $Mode
+            $progressThread = [System.Threading.Tasks.Task]::Run([Action]{
+                while (-not $progressToken.IsCancellationRequested) {
+                    try {
+                        if ($parentEpochStartCopy -and $parentTotalEstSecCopy -gt 0) {
+                            $elapsed = ([DateTime]::UtcNow - $parentEpochStartCopy).TotalSeconds
+                            if ($parentTotalStepsCopy -gt 0) {
+                                $stepPct = [math]::Round(($parentStepNumberCopy / $parentTotalStepsCopy) * 100)
+                                Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step ${parentStepNumberCopy}/${parentTotalStepsCopy}: $modeCopy Tests" -PercentComplete $stepPct
+                            }
+                            $timePct = [math]::Min(100, [math]::Round(($elapsed / $parentTotalEstSecCopy) * 100))
+                            $remaining = [math]::Max(0, $parentTotalEstSecCopy - $elapsed)
+                            $remMin = [math]::Floor($remaining / 60); $remSec = [math]::Floor($remaining % 60)
+                            $elapMin = [math]::Floor($elapsed / 60); $elapSec = [math]::Floor($elapsed % 60)
+                            Write-Progress -Id 1 -ParentId 0 -Activity "Total: ${elapMin}m ${elapSec}s elapsed" -Status "~${remMin}m ${remSec}s remaining" -PercentComplete $timePct
+                            if ($stepEstSecCopy -gt 0) {
+                                $stepElapsed = ([DateTime]::UtcNow - $runStartTimeCopy).TotalSeconds
+                                $stepTimePct = [math]::Min(100, [math]::Round(($stepElapsed / $stepEstSecCopy) * 100))
+                                $stepRemain = [math]::Max(0, $stepEstSecCopy - $stepElapsed)
+                                $srMin = [math]::Floor($stepRemain / 60); $srSec = [math]::Floor($stepRemain % 60)
+                                $seMin = [math]::Floor($stepElapsed / 60); $seSec = [math]::Floor($stepElapsed % 60)
+                                Write-Progress -Id 3 -ParentId 0 -Activity "$modeCopy Tests: ${seMin}m ${seSec}s elapsed" -Status "~${srMin}m ${srSec}s remaining" -PercentComplete $stepTimePct
+                            }
+                        }
+                    } catch { }
+                    [System.Threading.Thread]::Sleep(2000)
                 }
+            })
 
-                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
-                if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
-                if ($failFast) { $projectArgs += "--fail-fast" }
+            try {
+                $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                    $projectPath = $_
+                    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                    $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+                    $config = $using:Configuration
+                    $testFilter = $using:TestFilter
+                    $failFast = $using:FailFast
+                    $resultsBag = $using:results
+                    $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
 
-                $output = & dotnet @projectArgs 2>&1
-                $resultsBag.Add([PSCustomObject]@{
-                    ProjectName = $projectName
-                    ExitCode = $LASTEXITCODE
-                    Output = ($output | Select-Object -Last 30) -join "`n"
-                })
+                    if ($IsLinux -or $IsMacOS) {
+                        $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                        if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+                    }
+
+                    $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+                    if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
+                    if ($failFast) { $projectArgs += "--fail-fast" }
+
+                    $output = & dotnet @projectArgs 2>&1
+                    $resultsBag.Add([PSCustomObject]@{
+                        ProjectName = $projectName
+                        ExitCode = $LASTEXITCODE
+                        Output = ($output | Select-Object -Last 30) -join "`n"
+                    })
+                }
+            } finally {
+                $progressCts.Cancel()
+                try { $progressThread.Wait(5000) } catch { }
+                $progressCts.Dispose()
             }
         }
 
@@ -1439,21 +1492,16 @@ try {
             }
 
             # Calculate display totals
-            # Use completed counts as authoritative; in-progress is just an activity indicator
-            # This avoids double-counting (a project's progress lines overlap with its summary)
+            # completedPassed/Failed/Skipped are summed from authoritative "succeeded:/failed:/skipped:" summary lines
+            # inProgressPassed is an approximate live indicator (highest seen from any single project's progress lines)
             $completedTotal = $completedPassed + $completedFailed + $completedSkipped
             $inProgressTotal = $inProgressPassed + $inProgressFailed + $inProgressSkipped
 
-            # For display, prefer completed if available, otherwise show in-progress
-            if ($completedTotal -gt 0) {
-                $totalPassed = $completedPassed
-                $totalFailed = $completedFailed
-                $totalSkipped = $completedSkipped
-            } else {
-                $totalPassed = $inProgressPassed
-                $totalFailed = $inProgressFailed
-                $totalSkipped = $inProgressSkipped
-            }
+            # Always use completed counts + in-progress for a combined view
+            # completed = sum of finished project summaries, inProgress = current running project's latest count
+            $totalPassed = $completedPassed + $inProgressPassed
+            $totalFailed = $completedFailed + $inProgressFailed
+            $totalSkipped = $completedSkipped + $inProgressSkipped
             $totalTests = $totalPassed + $totalFailed + $totalSkipped
 
             # Smart progress updates
@@ -1473,13 +1521,12 @@ try {
                 if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
                     # Show test progress
                     $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
-                    # Show running indicator if there's in-progress activity beyond completed
-                    if ($completedTotal -gt 0 -and $inProgressTotal -gt 0) {
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator (+$inProgressTotal running)" -ForegroundColor Gray
-                    } elseif ($completedTotal -eq 0 -and $inProgressTotal -gt 0) {
+                    # Show running indicator when tests are actively executing
+                    if ($inProgressTotal -gt 0) {
                         Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
                     } else {
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+                        # All projects finished — completed counts are authoritative
+                        Write-Host "[$($elapsedMinutes)m] Complete: $completedPassed passed, $completedFailed failed, $completedSkipped skipped$failureIndicator" -ForegroundColor Gray
                     }
                 } else {
                     # Show heartbeat (building/not yet testing)
@@ -1697,16 +1744,14 @@ try {
             Write-Host "Passed: ~$totalPassed" -ForegroundColor Green
             Write-Host "Failed: $actualFailedCount (stopped on first failure)" -ForegroundColor Red
             Write-Host "Skipped: ~$totalSkipped" -ForegroundColor Yellow
-        } elseif ($totalTests -gt 0) {
+        } elseif ($completedPassed + $completedFailed + $completedSkipped -gt 0) {
+            # Use completed counts only — these are the authoritative sums from project summary lines
+            $finalTotal = $completedPassed + $completedFailed + $completedSkipped
             Write-Host ""
-            Write-Host "Total Tests: $totalTests" -ForegroundColor White
-            Write-Host "Passed: $totalPassed" -ForegroundColor Green
-            Write-Host "Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
-            Write-Host "Skipped: $totalSkipped" -ForegroundColor Yellow
-
-            if ($totalPassed + $totalFailed + $totalSkipped -ne $totalTests) {
-                Write-Host "Warning: Test counts don't add up (${totalPassed} + ${totalFailed} + ${totalSkipped} != ${totalTests})" -ForegroundColor Yellow
-            }
+            Write-Host "Total Tests: $finalTotal" -ForegroundColor White
+            Write-Host "Passed: $completedPassed" -ForegroundColor Green
+            Write-Host "Failed: $completedFailed" -ForegroundColor $(if ($completedFailed -gt 0) { "Red" } else { "Green" })
+            Write-Host "Skipped: $completedSkipped" -ForegroundColor Yellow
         } else {
             Write-Host "No test results parsed" -ForegroundColor Yellow
             Write-Host ""

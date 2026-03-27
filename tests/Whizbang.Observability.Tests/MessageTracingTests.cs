@@ -1791,7 +1791,7 @@ public class MessageTracingTests {
     };
 
     // Act
-    var hop = MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
+    var hop = MessageTracing.RecordHop(new HopContext(serviceInstance, "test-topic", "test-stream", "TestExecutor"));
 
     // Assert
     await Assert.That(hop.ServiceInstance.ServiceName).IsNotNull();
@@ -1809,7 +1809,7 @@ public class MessageTracingTests {
     };
 
     // Act
-    var hop = MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
+    var hop = MessageTracing.RecordHop(new HopContext(serviceInstance, "test-topic", "test-stream", "TestExecutor"));
 
     // Assert
     await Assert.That(hop.ServiceInstance.HostName).IsEqualTo(Environment.MachineName);
@@ -1827,7 +1827,7 @@ public class MessageTracingTests {
     var before = DateTimeOffset.UtcNow;
 
     // Act
-    var hop = MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
+    var hop = MessageTracing.RecordHop(new HopContext(serviceInstance, "test-topic", "test-stream", "TestExecutor"));
 
     // Assert
     var after = DateTimeOffset.UtcNow;
@@ -1846,7 +1846,7 @@ public class MessageTracingTests {
     };
 
     // Act
-    var hop = MessageTracing.RecordHop(serviceInstance, "orders", "order-123", "SerialExecutor");
+    var hop = MessageTracing.RecordHop(new HopContext(serviceInstance, "orders", "order-123", "SerialExecutor"));
 
     // Assert
     await Assert.That(hop.Topic).IsEqualTo("orders");
@@ -1877,14 +1877,14 @@ public class MessageTracingTests {
     };
 
     // Act
-    var hop = MessageTracing.RecordHop(
-      serviceInstance: serviceInstance,
-      topic: "test-topic",
-      streamKey: "test-stream",
-      executionStrategy: "TestExecutor",
-      partitionIndex: 7,
-      sequenceNumber: 999
-    );
+    var hop = MessageTracing.RecordHop(new HopContext(
+      ServiceInstance: serviceInstance,
+      Topic: "test-topic",
+      StreamKey: "test-stream",
+      ExecutionStrategy: "TestExecutor",
+      PartitionIndex: 7,
+      SequenceNumber: 999
+    ));
 
     // Assert
     await Assert.That(hop.PartitionIndex).IsEqualTo(7);
@@ -1902,13 +1902,13 @@ public class MessageTracingTests {
     };
 
     // Act
-    var hop = MessageTracing.RecordHop(
-      serviceInstance: serviceInstance,
-      topic: "test-topic",
-      streamKey: "test-stream",
-      executionStrategy: "TestExecutor",
-      duration: TimeSpan.FromMilliseconds(250)
-    );
+    var hop = MessageTracing.RecordHop(new HopContext(
+      ServiceInstance: serviceInstance,
+      Topic: "test-topic",
+      StreamKey: "test-stream",
+      ExecutionStrategy: "TestExecutor",
+      Duration: TimeSpan.FromMilliseconds(250)
+    ));
 
     // Assert
     await Assert.That(hop.Duration).IsEqualTo(TimeSpan.FromMilliseconds(250));
@@ -2056,7 +2056,7 @@ public class MessageTracingTests {
       HostName = "test-host",
       ProcessId = 12345
     };
-    return MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
+    return MessageTracing.RecordHop(new HopContext(serviceInstance, "test-topic", "test-stream", "TestExecutor"));
   }
 
   private static MessageHop _anotherTestMethod_ThatRecordsHop() {
@@ -2066,6 +2066,6 @@ public class MessageTracingTests {
       HostName = "test-host",
       ProcessId = 12345
     };
-    return MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
+    return MessageTracing.RecordHop(new HopContext(serviceInstance, "test-topic", "test-stream", "TestExecutor"));
   }
 }

@@ -609,4 +609,322 @@ public class SyncFilterBuilderTests {
     await Assert.That(outerAnd.Left).IsTypeOf<AndFilter>();
     await Assert.That(outerAnd.Right).IsTypeOf<CurrentScopeFilter>();
   }
+
+  // ==========================================================================
+  // Missing AND 2-generic overload test
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_2Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    await Assert.That(andFilter.Right).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(2);
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(string));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(int));
+  }
+
+  // ==========================================================================
+  // Missing OR 2-generic overload test
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_2Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    await Assert.That(orFilter.Right).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(2);
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(string));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(int));
+  }
+
+  // ==========================================================================
+  // Missing OR params overload test
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_Params_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes(typeof(string), typeof(int));
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    await Assert.That(orFilter.Right).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(string));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(int));
+  }
+
+  // ==========================================================================
+  // Null argument guard tests
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_And_NullOther_ThrowsArgumentNullExceptionAsync() {
+    var builder = SyncFilter.CurrentScope();
+
+    await Assert.That(() => builder.And(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_Or_NullOther_ThrowsArgumentNullExceptionAsync() {
+    var builder = SyncFilter.CurrentScope();
+
+    await Assert.That(() => builder.Or(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_Params_Null_ThrowsArgumentNullExceptionAsync() {
+    var builder = SyncFilter.CurrentScope();
+
+    await Assert.That(() => builder.AndEventTypes(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_Params_Null_ThrowsArgumentNullExceptionAsync() {
+    var builder = SyncFilter.CurrentScope();
+
+    await Assert.That(() => builder.OrEventTypes(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_Params_Null_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => SyncFilter.ForEventTypes(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_ImplicitConversion_Null_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => {
+      SyncFilterBuilder nullBuilder = null!;
+      PerspectiveSyncOptions _ = (PerspectiveSyncOptions)nullBuilder;
+    }).ThrowsExactly<ArgumentNullException>();
+  }
+
+  // ==========================================================================
+  // Build default values tests
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_Build_DefaultTimeout_Is5SecondsAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var options = builder.Build();
+
+    await Assert.That(options.Timeout).IsEqualTo(TimeSpan.FromSeconds(5));
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_Build_DefaultDebuggerAwareTimeout_IsTrueAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var options = builder.Build();
+
+    await Assert.That(options.DebuggerAwareTimeout).IsTrue();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_Build_PreservesFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId);
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<StreamFilter>();
+    var streamFilter = (StreamFilter)options.Filter;
+    await Assert.That(streamFilter.StreamId).IsEqualTo(streamId);
+  }
+
+  // ==========================================================================
+  // Fluent chaining returns same builder tests
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_And_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.And(SyncFilter.All());
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndStream_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.AndStream(Guid.NewGuid());
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_Generic_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.AndEventTypes<string>();
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_Params_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.AndEventTypes(typeof(string));
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndCurrentScope_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.ForStream(Guid.NewGuid());
+    var result = builder.AndCurrentScope();
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_Or_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.Or(SyncFilter.All());
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrStream_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.OrStream(Guid.NewGuid());
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_Generic_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.OrEventTypes<string>();
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_Params_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.OrEventTypes(typeof(string));
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_WithTimeout_ReturnsSameBuilderAsync() {
+    var builder = SyncFilter.CurrentScope();
+    var result = builder.WithTimeout(TimeSpan.FromSeconds(10));
+
+    await Assert.That(result).IsSameReferenceAs(builder);
+  }
+
+  // ==========================================================================
+  // WithTimeout overrides default tests
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_WithTimeout_OverridesDefaultAsync() {
+    var customTimeout = TimeSpan.FromSeconds(30);
+    var builder = SyncFilter.CurrentScope().WithTimeout(customTimeout);
+    var options = builder.Build();
+
+    await Assert.That(options.Timeout).IsEqualTo(customTimeout);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_WithTimeout_ZeroTimespan_IsAllowedAsync() {
+    var builder = SyncFilter.CurrentScope().WithTimeout(TimeSpan.Zero);
+    var options = builder.Build();
+
+    await Assert.That(options.Timeout).IsEqualTo(TimeSpan.Zero);
+  }
+
+  // ==========================================================================
+  // Complex chaining tests
+  // ==========================================================================
+
+  [Test]
+  public async Task SyncFilterBuilder_ChainedOr_CreatesNestedOrFiltersAsync() {
+    var streamId1 = Guid.NewGuid();
+    var streamId2 = Guid.NewGuid();
+
+    var builder = SyncFilter.ForStream(streamId1)
+        .OrStream(streamId2)
+        .OrEventTypes<string>();
+
+    var options = builder.Build();
+
+    // Should be: OrFilter(OrFilter(StreamFilter, StreamFilter), EventTypeFilter)
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var outerOr = (OrFilter)options.Filter;
+    await Assert.That(outerOr.Left).IsTypeOf<OrFilter>();
+    await Assert.That(outerOr.Right).IsTypeOf<EventTypeFilter>();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_FullFluentChain_WithTimeout_WorksAsync() {
+    var streamId = Guid.NewGuid();
+    var timeout = TimeSpan.FromSeconds(15);
+
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int>()
+        .Or(SyncFilter.CurrentScope())
+        .WithTimeout(timeout);
+
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    await Assert.That(options.Timeout).IsEqualTo(timeout);
+    await Assert.That(options.DebuggerAwareTimeout).IsTrue();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_ImplicitConversion_PreservesTimeoutAsync() {
+    var timeout = TimeSpan.FromSeconds(20);
+    var builder = SyncFilter.CurrentScope().WithTimeout(timeout);
+    PerspectiveSyncOptions options = builder;
+
+    await Assert.That(options.Timeout).IsEqualTo(timeout);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndStream_PreservesStreamIdAsync() {
+    var streamId1 = Guid.NewGuid();
+    var streamId2 = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId1)
+        .AndStream(streamId2);
+    var options = builder.Build();
+
+    var andFilter = (AndFilter)options.Filter;
+    var leftStream = (StreamFilter)andFilter.Left;
+    var rightStream = (StreamFilter)andFilter.Right;
+    await Assert.That(leftStream.StreamId).IsEqualTo(streamId1);
+    await Assert.That(rightStream.StreamId).IsEqualTo(streamId2);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrStream_PreservesStreamIdAsync() {
+    var streamId1 = Guid.NewGuid();
+    var streamId2 = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId1)
+        .OrStream(streamId2);
+    var options = builder.Build();
+
+    var orFilter = (OrFilter)options.Filter;
+    var leftStream = (StreamFilter)orFilter.Left;
+    var rightStream = (StreamFilter)orFilter.Right;
+    await Assert.That(leftStream.StreamId).IsEqualTo(streamId1);
+    await Assert.That(rightStream.StreamId).IsEqualTo(streamId2);
+  }
 }

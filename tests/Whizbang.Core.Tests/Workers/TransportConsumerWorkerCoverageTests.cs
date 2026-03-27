@@ -1317,7 +1317,7 @@ public class TransportConsumerWorkerCoverageTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       FlushCount++;
 
       if (_returnEmptyInboxWork) {
@@ -1362,7 +1362,7 @@ public class TransportConsumerWorkerCoverageTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       throw new InvalidOperationException("Simulated flush failure");
     }
   }

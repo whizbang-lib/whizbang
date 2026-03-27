@@ -21,9 +21,10 @@ namespace Whizbang.Core.Workers;
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
-/// <docs>messaging/transports/service-bus-consumer</docs>
+/// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
@@ -34,6 +35,7 @@ public partial class ServiceBusConsumerWorker(
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null
   ) : BackgroundService {
+#pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -154,7 +156,7 @@ public partial class ServiceBusConsumerWorker(
       await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scopedProvider, ct);
 
       // 3. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, ct);
+      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, ct);
       LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
@@ -199,7 +201,7 @@ public partial class ServiceBusConsumerWorker(
     var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
     strategy.QueueInboxMessage(newInboxMessage);
     LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
-    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: ct);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: ct);
     LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
     var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
     LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);
@@ -243,7 +245,7 @@ public partial class ServiceBusConsumerWorker(
     await _orderedProcessor.ProcessInboxWorkAsync(
       myWork,
       processor: async (work) => {
-        var @event = _deserializeEvent(work);
+        _ = _deserializeEvent(work);
         return MessageProcessingStatus.EventStored;
       },
       completionHandler: (msgId, status) => {

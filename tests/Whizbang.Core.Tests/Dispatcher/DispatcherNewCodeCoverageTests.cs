@@ -68,7 +68,7 @@ public class DispatcherNewCodeCoverageTests {
   /// Event that implements IHasStreamId but does NOT have [GenerateStreamId].
   /// Its StreamId starts as Guid.Empty and should inherit from the source command.
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public class PropagatedStreamIdEvent : IEvent, IHasStreamId {
     [StreamId]
     public Guid StreamId { get; set; }
@@ -126,7 +126,7 @@ public class DispatcherNewCodeCoverageTests {
   /// </summary>
   public record VoidOptionsCommand(Guid Id);
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record VoidOptionsEvent([property: StreamId] Guid Id) : IEvent;
 
   public record VoidOptionsResult(Guid Id, bool Success);
@@ -423,7 +423,7 @@ public class DispatcherNewCodeCoverageTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       FlushCount++;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],

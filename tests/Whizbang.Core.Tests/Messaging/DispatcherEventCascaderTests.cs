@@ -222,12 +222,12 @@ public class DispatcherEventCascaderTests {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
       throw new NotImplementedException();
 
-    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) {
+    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);
       return Task.CompletedTask;
     }
 
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) {
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);
       LastSourceEnvelope = sourceEnvelope;
       return Task.CompletedTask;

@@ -14,7 +14,7 @@ public class GraphQLLensAttributeTests {
 
     // Assert - verify all defaults
     await Assert.That(attribute.QueryName).IsNull();
-    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.None);
+    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScopes.None);
     await Assert.That(attribute.EnableFiltering).IsTrue();
     await Assert.That(attribute.EnableSorting).IsTrue();
     await Assert.That(attribute.EnablePaging).IsTrue();
@@ -40,11 +40,11 @@ public class GraphQLLensAttributeTests {
     // Arrange
     var attribute = new GraphQLLensAttribute {
       // Act
-      Scope = GraphQLLensScope.DataOnly
+      Scope = GraphQLLensScopes.DataOnly
     };
 
     // Assert
-    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.DataOnly);
+    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScopes.DataOnly);
   }
 
   [Test]
@@ -52,11 +52,11 @@ public class GraphQLLensAttributeTests {
     // Arrange
     var attribute = new GraphQLLensAttribute {
       // Act
-      Scope = GraphQLLensScope.All
+      Scope = GraphQLLensScopes.All
     };
 
     // Assert
-    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.All);
+    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScopes.All);
   }
 
   [Test]
@@ -64,12 +64,12 @@ public class GraphQLLensAttributeTests {
     // Arrange
     var attribute = new GraphQLLensAttribute {
       // Act
-      Scope = GraphQLLensScope.Data | GraphQLLensScope.Metadata | GraphQLLensScope.SystemFields
+      Scope = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata | GraphQLLensScopes.SystemFields
     };
-    var hasData = attribute.Scope.HasFlag(GraphQLLensScope.Data);
-    var hasMetadata = attribute.Scope.HasFlag(GraphQLLensScope.Metadata);
-    var hasSystemFields = attribute.Scope.HasFlag(GraphQLLensScope.SystemFields);
-    var hasScope = attribute.Scope.HasFlag(GraphQLLensScope.Scope);
+    var hasData = attribute.Scope.HasFlag(GraphQLLensScopes.Data);
+    var hasMetadata = attribute.Scope.HasFlag(GraphQLLensScopes.Metadata);
+    var hasSystemFields = attribute.Scope.HasFlag(GraphQLLensScopes.SystemFields);
+    var hasScope = attribute.Scope.HasFlag(GraphQLLensScopes.Scope);
 
     // Assert
     await Assert.That(hasData).IsTrue();
@@ -171,15 +171,15 @@ public class GraphQLLensAttributeTests {
     // Arrange
     var attribute = new GraphQLLensAttribute {
       // Act
-      Scope = GraphQLLensScope.NoData
+      Scope = GraphQLLensScopes.NoData
     };
-    var hasMetadata = attribute.Scope.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = attribute.Scope.HasFlag(GraphQLLensScope.Scope);
-    var hasSystemFields = attribute.Scope.HasFlag(GraphQLLensScope.SystemFields);
-    var hasData = attribute.Scope.HasFlag(GraphQLLensScope.Data);
+    var hasMetadata = attribute.Scope.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = attribute.Scope.HasFlag(GraphQLLensScopes.Scope);
+    var hasSystemFields = attribute.Scope.HasFlag(GraphQLLensScopes.SystemFields);
+    var hasData = attribute.Scope.HasFlag(GraphQLLensScopes.Data);
 
     // Assert
-    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.NoData);
+    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScopes.NoData);
     await Assert.That(hasMetadata).IsTrue();
     await Assert.That(hasScope).IsTrue();
     await Assert.That(hasSystemFields).IsTrue();
@@ -191,7 +191,7 @@ public class GraphQLLensAttributeTests {
     // Arrange & Act
     var attribute = new GraphQLLensAttribute {
       QueryName = "products",
-      Scope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields,
+      Scope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields,
       EnableFiltering = false,
       EnableSorting = false,
       EnablePaging = false,
@@ -202,7 +202,7 @@ public class GraphQLLensAttributeTests {
 
     // Assert
     await Assert.That(attribute.QueryName).IsEqualTo("products");
-    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.Data | GraphQLLensScope.SystemFields);
+    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields);
     await Assert.That(attribute.EnableFiltering).IsFalse();
     await Assert.That(attribute.EnableSorting).IsFalse();
     await Assert.That(attribute.EnablePaging).IsFalse();

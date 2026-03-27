@@ -670,7 +670,7 @@ public class OrderedStreamProcessorTests {
       StreamId = null,  // No stream ID
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -687,7 +687,7 @@ public class OrderedStreamProcessorTests {
       PartitionNumber = 0,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -701,7 +701,7 @@ public class OrderedStreamProcessorTests {
       StreamId = streamId,
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -718,7 +718,7 @@ public class OrderedStreamProcessorTests {
       PartitionNumber = 0,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 

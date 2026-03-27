@@ -11,7 +11,7 @@ public readonly record struct ScopeFilterInfo {
   /// <summary>
   /// The scope filter flags to apply.
   /// </summary>
-  public ScopeFilter Filters { get; init; }
+  public ScopeFilters Filters { get; init; }
 
   /// <summary>
   /// Tenant ID to filter by (if Tenant flag is set).
@@ -52,11 +52,11 @@ public readonly record struct ScopeFilterInfo {
   /// <summary>
   /// True if no filters are applied.
   /// </summary>
-  public bool IsEmpty => Filters == ScopeFilter.None;
+  public bool IsEmpty => Filters == ScopeFilters.None;
 }
 
 /// <summary>
-/// Builds scope filter information from ScopeFilter flags and context.
+/// Builds scope filter information from ScopeFilters flags and context.
 /// Handles special OR logic when User + Principal are both specified.
 /// </summary>
 /// <docs>fundamentals/security/scoping#filter-composition</docs>
@@ -78,42 +78,42 @@ public static class ScopeFilterBuilder {
   /// <exception cref="InvalidOperationException">
   /// Thrown when required scope values are missing.
   /// </exception>
-  public static ScopeFilterInfo Build(ScopeFilter filters, IScopeContext context) {
+  public static ScopeFilterInfo Build(ScopeFilters filters, IScopeContext context) {
     // Fast path for no filtering
-    if (filters == ScopeFilter.None) {
+    if (filters == ScopeFilters.None) {
       return new ScopeFilterInfo {
-        Filters = ScopeFilter.None,
+        Filters = ScopeFilters.None,
         SecurityPrincipals = new HashSet<SecurityPrincipalId>()
       };
     }
 
     // Validate and extract required values
     string? tenantId = null;
-    if (filters.HasFlag(ScopeFilter.Tenant)) {
+    if (filters.HasFlag(ScopeFilters.Tenant)) {
       tenantId = context.Scope.TenantId
         ?? throw new InvalidOperationException("Tenant filter requested but TenantId is not set in scope context.");
     }
 
     string? userId = null;
-    if (filters.HasFlag(ScopeFilter.User)) {
+    if (filters.HasFlag(ScopeFilters.User)) {
       userId = context.Scope.UserId
         ?? throw new InvalidOperationException("User filter requested but UserId is not set in scope context.");
     }
 
     string? organizationId = null;
-    if (filters.HasFlag(ScopeFilter.Organization)) {
+    if (filters.HasFlag(ScopeFilters.Organization)) {
       organizationId = context.Scope.OrganizationId
         ?? throw new InvalidOperationException("Organization filter requested but OrganizationId is not set in scope context.");
     }
 
     string? customerId = null;
-    if (filters.HasFlag(ScopeFilter.Customer)) {
+    if (filters.HasFlag(ScopeFilters.Customer)) {
       customerId = context.Scope.CustomerId
         ?? throw new InvalidOperationException("Customer filter requested but CustomerId is not set in scope context.");
     }
 
     IReadOnlySet<SecurityPrincipalId> principals = new HashSet<SecurityPrincipalId>();
-    if (filters.HasFlag(ScopeFilter.Principal)) {
+    if (filters.HasFlag(ScopeFilters.Principal)) {
       if (context.SecurityPrincipals.Count == 0) {
         throw new InvalidOperationException("Principal filter requested but SecurityPrincipals is empty in scope context.");
       }
@@ -121,7 +121,7 @@ public static class ScopeFilterBuilder {
     }
 
     // Determine if we should use OR logic for User + Principal
-    var useOrLogic = filters.HasFlag(ScopeFilter.User) && filters.HasFlag(ScopeFilter.Principal);
+    var useOrLogic = filters.HasFlag(ScopeFilters.User) && filters.HasFlag(ScopeFilters.Principal);
 
     return new ScopeFilterInfo {
       Filters = filters,

@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("Coverage")]
 public class DispatcherCoverageScopeTests {
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record ScopeTestEvent([property: StreamId] Guid OrderId) : IEvent;
   public record ScopeTestCommand(Guid OrderId);
   public record ScopeTestResult(bool Success);
@@ -54,7 +54,7 @@ public class DispatcherCoverageScopeTests {
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) => null;
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) => null;
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) => null;
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
     protected override Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) { _trackOutbox(message); return Task.CompletedTask; }
     protected override Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) { _trackOutbox(message); return Task.CompletedTask; }
   }
@@ -72,7 +72,7 @@ public class DispatcherCoverageScopeTests {
   public async Task CascadeMessageAsync_WithLocalMode_InvokesLocalReceptorsAsync() {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Local);
+    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchModes.Local);
     var (LocalCount, _) = _snapshotCounts();
     await Assert.That(LocalCount).IsGreaterThanOrEqualTo(1);
   }
@@ -82,7 +82,7 @@ public class DispatcherCoverageScopeTests {
   public async Task CascadeMessageAsync_WithOutboxMode_CallsCascadeToOutboxAsync() {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Outbox);
+    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchModes.Outbox);
     var (_, OutboxCount) = _snapshotCounts();
     await Assert.That(OutboxCount).IsEqualTo(1);
   }
@@ -92,7 +92,7 @@ public class DispatcherCoverageScopeTests {
   public async Task CascadeMessageAsync_WithBothMode_InvokesBothLocalAndOutboxAsync() {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Both);
+    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchModes.Both);
     var (LocalCount, OutboxCount) = _snapshotCounts();
     await Assert.That(LocalCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(OutboxCount).IsEqualTo(1);
@@ -102,7 +102,7 @@ public class DispatcherCoverageScopeTests {
   [NotInParallel]
   public async Task CascadeMessageAsync_WithNullMessage_ThrowsArgumentNullExceptionAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    await Assert.That(async () => await dispatcher.CascadeMessageAsync(null!, null, DispatchMode.Local)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(async () => await dispatcher.CascadeMessageAsync(null!, null, DispatchModes.Local)).ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
@@ -111,7 +111,7 @@ public class DispatcherCoverageScopeTests {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     var cts = new CancellationTokenSource();
     await cts.CancelAsync();
-    await Assert.That(async () => await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), null, DispatchMode.Local, cts.Token)).ThrowsExactly<OperationCanceledException>();
+    await Assert.That(async () => await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), null, DispatchModes.Local, cts.Token)).ThrowsExactly<OperationCanceledException>();
   }
 
   [Test]
@@ -119,7 +119,7 @@ public class DispatcherCoverageScopeTests {
   public async Task CascadeMessageAsync_WithEventStoreOnlyMode_CallsCascadeToEventStoreOnlyAsync() {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.EventStoreOnly);
+    await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchModes.EventStoreOnly);
     var (_, OutboxCount) = _snapshotCounts();
     await Assert.That(OutboxCount).IsEqualTo(1);
   }

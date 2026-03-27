@@ -42,7 +42,7 @@ public class DispatcherComprehensiveCoverageTests {
   public record TestCommand(string Data);
   public record TestResult(Guid Id, bool Success);
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record TestEvent([property: StreamId] Guid OrderId) : IEvent;
 
   public record UnhandledCommand(string Data); // No receptor registered
@@ -65,7 +65,7 @@ public class DispatcherComprehensiveCoverageTests {
     VoidSyncReceptorInvoker? voidSyncInvoker = null,
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
-    DispatchMode? defaultRouting = null
+    DispatchModes? defaultRouting = null
     ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
@@ -79,7 +79,7 @@ public class DispatcherComprehensiveCoverageTests {
     private readonly VoidSyncReceptorInvoker? _voidSyncInvoker = voidSyncInvoker;
     private readonly Func<object, ValueTask<object?>>? _anyInvoker = anyInvoker;
     private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher = untypedPublisher;
-    private readonly DispatchMode? _defaultRouting = defaultRouting;
+    private readonly DispatchModes? _defaultRouting = defaultRouting;
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (_invoker != null && messageType == typeof(TestCommand)) {
@@ -127,7 +127,7 @@ public class DispatcherComprehensiveCoverageTests {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) => _defaultRouting;
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => _defaultRouting;
   }
 
   // ========================================
@@ -192,7 +192,7 @@ public class DispatcherComprehensiveCoverageTests {
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       FlushCount++;
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }
@@ -268,7 +268,7 @@ public class DispatcherComprehensiveCoverageTests {
     VoidSyncReceptorInvoker? voidSyncInvoker = null,
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
-    DispatchMode? defaultRouting = null) {
+    DispatchModes? defaultRouting = null) {
     var sp = _buildProvider(workStrategy, deferredChannel);
     return new TestDispatcher(sp,
       traceStore: traceStore,
@@ -962,7 +962,7 @@ public class DispatcherComprehensiveCoverageTests {
     var evt = new TestEvent(Guid.NewGuid());
 
     // Act
-    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, DispatchMode.Local);
+    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, DispatchModes.Local);
 
     // Assert
     await Assert.That(published).IsTrue();
@@ -974,7 +974,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher();
 
     // Act & Assert
-    await Assert.That(async () => await dispatcher.CascadeMessageAsync(null!, null, DispatchMode.Local))
+    await Assert.That(async () => await dispatcher.CascadeMessageAsync(null!, null, DispatchModes.Local))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -987,7 +987,7 @@ public class DispatcherComprehensiveCoverageTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(async () => await dispatcher.CascadeMessageAsync(evt, null, DispatchMode.Local, cts.Token))
+    await Assert.That(async () => await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.Local, cts.Token))
       .ThrowsExactly<OperationCanceledException>();
   }
 
@@ -1405,7 +1405,7 @@ public class DispatcherComprehensiveCoverageTests {
     var evt = new TestEvent(Guid.NewGuid());
 
     // Act
-    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, DispatchMode.Local);
+    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, DispatchModes.Local);
 
     // Assert - event was tracked
     var tracked = tracker.GetEmittedEvents();

@@ -99,9 +99,8 @@ public static class ServiceCollectionExtensions {
       logger?.LogInformation("Initializing PostgreSQL schema with per-perspective tracking...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries);
       initializer.InitializeSchema();
-      logger?.LogInformation("PostgreSQL schema initialized, waiting for readiness...");
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
-      logger?.LogInformation("PostgreSQL database ready");
+      logger?.LogInformation("PostgreSQL schema initialized and database ready");
     }
 
     // Register database infrastructure
@@ -192,9 +191,8 @@ public static class ServiceCollectionExtensions {
       logger?.LogInformation("Initializing PostgreSQL schema...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql);
       initializer.InitializeSchema();
-      logger?.LogInformation("PostgreSQL schema initialized, waiting for readiness...");
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
-      logger?.LogInformation("PostgreSQL database ready");
+      logger?.LogInformation("PostgreSQL schema initialized and database ready");
     }
 
     // Register database infrastructure

@@ -228,7 +228,7 @@ public class GuidInterceptorGeneratorTests {
     // Should use global:: for all type references
     await Assert.That(generatedSource).Contains("global::System.Guid");
     await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.TrackedGuid");
-    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadata");
+    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadatas");
   }
 
   /// <summary>

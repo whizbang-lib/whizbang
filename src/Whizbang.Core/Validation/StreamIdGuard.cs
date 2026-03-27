@@ -7,7 +7,7 @@ namespace Whizbang.Core.Validation;
 /// Throws <see cref="InvalidStreamIdException"/> when an event that MUST have a StreamId
 /// is found with Guid.Empty, indicating a bug in the dispatch pipeline.
 /// </summary>
-/// <docs>validation/stream-id-guard</docs>
+/// <docs>fundamentals/events/stream-id#validation</docs>
 /// <tests>tests/Whizbang.Core.Tests/Validation/StreamIdGuardTests.cs</tests>
 public static class StreamIdGuard {
   /// <summary>

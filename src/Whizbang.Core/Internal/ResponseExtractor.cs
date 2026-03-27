@@ -66,7 +66,7 @@ public static class ResponseExtractor {
   /// Unwraps a Routed wrapper and recursively extracts the response.
   /// </summary>
   private static bool _tryExtractFromRouted<TResponse>(IRouted routed, out TResponse? response) {
-    if (routed.Mode == DispatchMode.None) {
+    if (routed.Mode == DispatchModes.None) {
       response = default;
       return false;
     }

@@ -50,28 +50,27 @@ public class LeaseRenewalTests : EFCoreTestBase {
 
     // Act - Call process_work_batch with lease renewal
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-    await coordinator.ProcessWorkBatchAsync(
-      instanceId: instanceId,
-      serviceName: "TestService",
-      hostName: "localhost",
-      processId: 12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [messageId1, messageId2],  // NEW PARAMETER
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300,  // 5 minutes
-      staleThresholdSeconds: 600,
-      cancellationToken: default
-    );
+    await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      InstanceId: instanceId,
+      ServiceName: "TestService",
+      HostName: "localhost",
+      ProcessId: 12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [messageId1, messageId2],  // NEW PARAMETER
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300,  // 5 minutes
+      StaleThresholdSeconds: 600
+    ));
 
     // Assert - Verify leases were renewed
     await using var verifyCmd = new NpgsqlCommand(selectSql, connection);
@@ -122,28 +121,27 @@ public class LeaseRenewalTests : EFCoreTestBase {
 
     // Act
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-    await coordinator.ProcessWorkBatchAsync(
-      instanceId: instanceId,
-      serviceName: "TestService",
-      hostName: "localhost",
-      processId: 12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [messageId],  // NEW PARAMETER
-      leaseSeconds: 300,
-      staleThresholdSeconds: 600,
-      cancellationToken: default
-    );
+    await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      InstanceId: instanceId,
+      ServiceName: "TestService",
+      HostName: "localhost",
+      ProcessId: 12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [messageId],  // NEW PARAMETER
+      LeaseSeconds: 300,
+      StaleThresholdSeconds: 600
+    ));
 
     // Assert
     await using var verifyCmd = new NpgsqlCommand(selectSql, connection);
@@ -195,34 +193,33 @@ public class LeaseRenewalTests : EFCoreTestBase {
 
     // Act - Renew lease without marking complete/failed
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-    var workBatch = await coordinator.ProcessWorkBatchAsync(
-      instanceId: instanceId,
-      serviceName: "TestService",
-      hostName: "localhost",
-      processId: 12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [messageId],
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300,
-      staleThresholdSeconds: 600,
-      cancellationToken: default
-    );
+    var workBatch = await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      InstanceId: instanceId,
+      ServiceName: "TestService",
+      HostName: "localhost",
+      ProcessId: 12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [messageId],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300,
+      StaleThresholdSeconds: 600
+    ));
 
     // Assert - Lease-renewed message must be returned as work with Orphaned flag
     await Assert.That(workBatch.OutboxWork.Count).IsEqualTo(1)
       .Because("Lease-renewed outbox messages must be returned as work to avoid message loss");
     await Assert.That(workBatch.OutboxWork[0].MessageId).IsEqualTo(messageId);
-    await Assert.That(workBatch.OutboxWork[0].Flags.HasFlag(WorkBatchFlags.Orphaned)).IsTrue()
+    await Assert.That(workBatch.OutboxWork[0].Flags.HasFlag(WorkBatchOptions.Orphaned)).IsTrue()
       .Because("Lease-renewed messages are returned via the orphaned work path");
 
     // Cleanup

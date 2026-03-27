@@ -36,27 +36,27 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Store message and capture returned work
-    var workBatch = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
           instanceId,
           "TestService",
           "test-host",
           12345,
-          metadata: null,
-          outboxCompletions: [],
-          outboxFailures: [],
-          inboxCompletions: [],
-          inboxFailures: [],
-          receptorCompletions: [],
-          receptorFailures: [],
-          perspectiveCompletions: [],
-          perspectiveFailures: [],
-          newOutboxMessages: [
+          Metadata: null,
+          OutboxCompletions: [],
+          OutboxFailures: [],
+          InboxCompletions: [],
+          InboxFailures: [],
+          ReceptorCompletions: [],
+          ReceptorFailures: [],
+          PerspectiveCompletions: [],
+          PerspectiveFailures: [],
+          NewOutboxMessages: [
             CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
           ],
-          newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+          NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // The function should return the newly stored message as work
     await Assert.That(workBatch.OutboxWork).Count().IsEqualTo(1)
@@ -77,31 +77,31 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(published.MessageId).IsEqualTo(messageId.Value);
 
     // Mark as published
-    await workCoordinator.ProcessWorkBatchAsync(
+    await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion {
           MessageId = messageId.Value,
           Status = MessageProcessingStatus.Published
         }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode  // Keep published messages for assertion
-    );
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      Flags: WorkBatchOptions.DebugMode  // Keep published messages for assertion
+));
 
     // Assert - Database was updated
     var outboxRecord = await CreateDbContext().Database
@@ -131,29 +131,29 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     var messageId3 = MessageId.New();
     var streamId = Guid.CreateVersion7();
 
-    var workBatch = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId1.Value, "test", streamId, true),
         CreateTestOutboxMessage(messageId2.Value, "test", streamId, true),
         CreateTestOutboxMessage(messageId3.Value, "test", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // All 3 messages should be returned as work
     await Assert.That(workBatch.OutboxWork).Count().IsEqualTo(3);
@@ -194,27 +194,27 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     var messageId1 = MessageId.New();
     var streamId = Guid.CreateVersion7();
 
-    var workBatch1 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch1 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId1.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // First message should be returned
     await Assert.That(workBatch1.OutboxWork).Count().IsEqualTo(1);
@@ -224,32 +224,32 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     // This simulates what happens when the dispatcher stores messages while we're processing
     var messageId2 = MessageId.New();
 
-    var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion {
           MessageId = messageId1.Value,
           Status = MessageProcessingStatus.Published
         }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId2.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // Second message should be returned (because it was just stored)
     await Assert.That(workBatch2.OutboxWork).Count().IsEqualTo(1)
@@ -270,115 +270,115 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     var streamId = Guid.CreateVersion7();
 
     // Iteration 1: Store first message
-    var workBatch1 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch1 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId1.Value, "test", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     await Assert.That(workBatch1.OutboxWork).Count().IsEqualTo(1);
 
     // Iteration 2: Report first as complete AND store second message
-    var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion {
           MessageId = messageId1.Value,
           Status = MessageProcessingStatus.Published
         }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId2.Value, "test", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     await Assert.That(workBatch2.OutboxWork).Count().IsEqualTo(1);
 
     // Iteration 3: Report second as complete AND store third message
-    var workBatch3 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch3 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion {
           MessageId = messageId2.Value,
           Status = MessageProcessingStatus.Published
         }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId3.Value, "test", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     await Assert.That(workBatch3.OutboxWork).Count().IsEqualTo(1);
 
     // Iteration 4: Report third as complete with NO new messages
-    var workBatch4 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch4 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion {
           MessageId = messageId3.Value,
           Status = MessageProcessingStatus.Published
         }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // No more work should be returned
     await Assert.That(workBatch4.OutboxWork).Count().IsEqualTo(0)
@@ -392,25 +392,25 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Call with no messages - should return empty work batch
-    var workBatch = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     await Assert.That(workBatch.OutboxWork).Count().IsEqualTo(0);
     await Assert.That(workBatch.InboxWork).Count().IsEqualTo(0);

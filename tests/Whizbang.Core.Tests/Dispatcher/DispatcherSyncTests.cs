@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("Dispatcher")]
 [NotInParallel]
 public class DispatcherSyncTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   // Test Messages - unique names to avoid conflicts with other tests
   public record DispatcherSyncCreateOrderCommand(Guid CustomerId, decimal Amount);
@@ -27,7 +27,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
 
   // Event uses [DefaultRouting(Local)] for local cascade test verification.
   // (System default is Outbox for cross-service delivery)
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record DispatcherSyncOrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId, decimal Amount) : IEvent;
   public record DispatcherSyncLogCommand(string Message);
 
@@ -288,7 +288,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }

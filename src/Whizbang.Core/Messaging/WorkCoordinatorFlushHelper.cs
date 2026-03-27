@@ -12,6 +12,31 @@ using Whizbang.Core.Tracing;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// Groups the parameters for <see cref="WorkCoordinatorFlushHelper.ExecuteFlushAsync"/>.
+/// </summary>
+internal readonly record struct FlushContext(
+  IWorkCoordinator? Coordinator,
+  IServiceScopeFactory? ScopeFactory,
+  IServiceInstanceProvider InstanceProvider,
+  WorkCoordinatorOptions Options,
+  string StrategyName,
+  OutboxMessage[] OutboxMessages,
+  InboxMessage[] InboxMessages,
+  MessageCompletion[] OutboxCompletions,
+  MessageCompletion[] InboxCompletions,
+  MessageFailure[] OutboxFailures,
+  MessageFailure[] InboxFailures,
+  WorkBatchOptions Flags,
+  ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
+  ILogger? Logger,
+  IOptionsMonitor<TracingOptions>? TracingOptions,
+  WorkCoordinatorMetrics? Metrics,
+  LifecycleMetrics? LifecycleMetrics,
+  IWorkChannelWriter? WorkChannelWriter,
+  OutboxMessage[]? PendingAuditMessages,
+  bool SkipLifecycle = false);
+
+/// <summary>
 /// Shared flush logic used by <see cref="IntervalWorkCoordinatorStrategy"/> and <see cref="BatchWorkCoordinatorStrategy"/>
 /// to eliminate duplication of the core flush pipeline (coordinator resolution, lifecycle stages, ProcessWorkBatchAsync,
 /// metrics recording, and scope cleanup).
@@ -26,132 +51,100 @@ internal static class WorkCoordinatorFlushHelper {
   /// and resetting _flushing in their own finally block. This method handles coordinator resolution
   /// through scope disposal.
   /// </remarks>
-#pragma warning disable S107 // Methods should not have too many parameters
   internal static async Task<WorkBatch> ExecuteFlushAsync(
-    IWorkCoordinator? coordinator,
-    IServiceScopeFactory? scopeFactory,
-    IServiceInstanceProvider instanceProvider,
-    WorkCoordinatorOptions options,
-    string strategyName,
-    OutboxMessage[] outboxMessages,
-    InboxMessage[] inboxMessages,
-    MessageCompletion[] outboxCompletions,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageFailure[] inboxFailures,
-    WorkBatchFlags flags,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
-    ILogger? logger,
-    IOptionsMonitor<TracingOptions>? tracingOptions,
-    WorkCoordinatorMetrics? metrics,
-    LifecycleMetrics? lifecycleMetrics,
-    IWorkChannelWriter? workChannelWriter,
-    OutboxMessage[]? pendingAuditMessages,
-    CancellationToken ct,
-    bool skipLifecycle = false
+    FlushContext ctx,
+    CancellationToken ct
   ) {
-#pragma warning restore S107
     // Resolve coordinator: use direct reference if available, otherwise create a scope
     IServiceScope? flushScope = null;
     IWorkCoordinator resolvedCoordinator;
-    if (coordinator != null) {
-      resolvedCoordinator = coordinator;
+    if (ctx.Coordinator != null) {
+      resolvedCoordinator = ctx.Coordinator;
     } else {
-      flushScope = scopeFactory!.CreateScope();
+      flushScope = ctx.ScopeFactory!.CreateScope();
       resolvedCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     }
 
     try {
-      if (!skipLifecycle) {
+      if (!ctx.SkipLifecycle) {
         // Check if lifecycle tracing is enabled
-        var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+        var enableLifecycleTracing = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+        var lifecycleContext = new DistributeLifecycleContext(
+          ctx.OutboxMessages, ctx.InboxMessages, ctx.ScopeFactory, ctx.LifecycleMessageDeserializer,
+          ctx.Logger, enableLifecycleTracing, ctx.LifecycleMetrics);
 
         // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
           LifecycleStage.PreDistributeAsync,
           LifecycleStage.PreDistributeInline,
-          outboxMessages,
-          inboxMessages,
-          scopeFactory,
-          lifecycleMessageDeserializer,
-          logger,
-          enableLifecycleTracing: enableLifecycleTracing,
-          metrics: lifecycleMetrics,
+          lifecycleContext,
           ct: ct
         );
 
         // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
         LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
           LifecycleStage.DistributeAsync,
-          outboxMessages,
-          inboxMessages,
-          scopeFactory,
-          lifecycleMessageDeserializer,
-          logger,
-          enableLifecycleTracing: enableLifecycleTracing,
-          metrics: lifecycleMetrics,
+          lifecycleContext,
           ct: ct
         );
       }
 
       // Merge pending audit messages (after lifecycle stages, before request build)
-      var finalOutboxMessages = outboxMessages;
-      if (pendingAuditMessages is { Length: > 0 }) {
-        finalOutboxMessages = [.. outboxMessages, .. pendingAuditMessages];
+      var finalOutboxMessages = ctx.OutboxMessages;
+      if (ctx.PendingAuditMessages is { Length: > 0 }) {
+        finalOutboxMessages = [.. ctx.OutboxMessages, .. ctx.PendingAuditMessages];
       }
 
       // Call process_work_batch with snapshot
       var request = new ProcessWorkBatchRequest {
-        InstanceId = instanceProvider.InstanceId,
-        ServiceName = instanceProvider.ServiceName,
-        HostName = instanceProvider.HostName,
-        ProcessId = instanceProvider.ProcessId,
+        InstanceId = ctx.InstanceProvider.InstanceId,
+        ServiceName = ctx.InstanceProvider.ServiceName,
+        HostName = ctx.InstanceProvider.HostName,
+        ProcessId = ctx.InstanceProvider.ProcessId,
         Metadata = null,
-        OutboxCompletions = outboxCompletions,
-        OutboxFailures = outboxFailures,
-        InboxCompletions = inboxCompletions,
-        InboxFailures = inboxFailures,
+        OutboxCompletions = ctx.OutboxCompletions,
+        OutboxFailures = ctx.OutboxFailures,
+        InboxCompletions = ctx.InboxCompletions,
+        InboxFailures = ctx.InboxFailures,
         ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
         PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
         PerspectiveEventCompletions = [],
         PerspectiveFailures = [],
         NewOutboxMessages = finalOutboxMessages,
-        NewInboxMessages = inboxMessages,
+        NewInboxMessages = ctx.InboxMessages,
         RenewOutboxLeaseIds = [],
         RenewInboxLeaseIds = [],
-        Flags = flags | (options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
-        PartitionCount = options.PartitionCount,
-        LeaseSeconds = options.LeaseSeconds,
-        StaleThresholdSeconds = options.StaleThresholdSeconds
+        Flags = ctx.Flags | (ctx.Options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
+        PartitionCount = ctx.Options.PartitionCount,
+        LeaseSeconds = ctx.Options.LeaseSeconds,
+        StaleThresholdSeconds = ctx.Options.StaleThresholdSeconds
       };
       var flushSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await resolvedCoordinator.ProcessWorkBatchAsync(request, ct);
       flushSw.Stop();
-      metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", strategyName));
+      ctx.Metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", ctx.StrategyName));
 
       // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-      if (!skipLifecycle) {
-        var enableLifecycleTracingPost = tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+      if (!ctx.SkipLifecycle) {
+        var enableLifecycleTracingPost = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+        var postLifecycleContext = new DistributeLifecycleContext(
+          ctx.OutboxMessages, ctx.InboxMessages, ctx.ScopeFactory, ctx.LifecycleMessageDeserializer,
+          ctx.Logger, enableLifecycleTracingPost, ctx.LifecycleMetrics);
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
           LifecycleStage.PostDistributeAsync,
           LifecycleStage.PostDistributeInline,
-          outboxMessages,
-          inboxMessages,
-          scopeFactory,
-          lifecycleMessageDeserializer,
-          logger,
-          enableLifecycleTracing: enableLifecycleTracingPost,
-          metrics: lifecycleMetrics,
+          postLifecycleContext,
           ct: ct
         );
       }
 
       // Write returned work to channel for publishing
-      if (workChannelWriter != null && workBatch.OutboxWork.Count > 0) {
+      if (ctx.WorkChannelWriter != null && workBatch.OutboxWork.Count > 0) {
         try {
           foreach (var work in workBatch.OutboxWork) {
-            await workChannelWriter.WriteAsync(work, ct);
+            await ctx.WorkChannelWriter.WriteAsync(work, ct);
           }
         } catch (ChannelClosedException) {
           // Work is persisted to database, will be picked up on restart

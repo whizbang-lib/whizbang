@@ -98,7 +98,7 @@ public class DispatcherPostLifecycleCoverageTests {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }

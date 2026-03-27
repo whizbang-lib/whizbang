@@ -45,10 +45,12 @@ public class PerspectiveWorkerDedupTests {
 
     var worker = _createWorker(coordinator, registry, observer: observer);
 
-    // Act — run 2+ cycles
+    // Act — run 2+ cycles. Wait for runner first (cycle 1 processing complete + cache updated)
+    // then wait for cycle 3 to ensure cycle 2 had a chance to dedup
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 

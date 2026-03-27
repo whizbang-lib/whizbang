@@ -176,11 +176,14 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       INamedTypeSymbol propType,
       HashSet<INamedTypeSymbol> visited) {
 
+    // S3267: Loop has side effects (reporting diagnostics, mutating visited set) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
       if (!_isSystemPrimitiveType(typeArg) && !_isPolymorphicType(typeArg)) {
         _checkForPolymorphicTypes(context, typeArg, visited);
       }
     }
+#pragma warning restore S3267
   }
 
   /// <summary>

@@ -193,7 +193,7 @@ public class DapperWorkCoordinatorCommandTimeoutTests : PostgresTestBase {
         HostName = "test-host",
         ProcessId = 12345,
         Metadata = null,
-        Flags = WorkBatchFlags.DebugMode,
+        Flags = WorkBatchOptions.DebugMode,
         OutboxCompletions = [
           new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
         ],
@@ -235,7 +235,7 @@ public class DapperWorkCoordinatorCommandTimeoutTests : PostgresTestBase {
         HostName = "test-host",
         ProcessId = 12345,
         Metadata = null,
-        Flags = WorkBatchFlags.DebugMode,
+        Flags = WorkBatchOptions.DebugMode,
         OutboxCompletions = [
           new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
         ],
@@ -262,7 +262,7 @@ public class DapperWorkCoordinatorCommandTimeoutTests : PostgresTestBase {
         HostName = "test-host",
         ProcessId = 12345,
         Metadata = null,
-        Flags = WorkBatchFlags.DebugMode,
+        Flags = WorkBatchOptions.DebugMode,
         OutboxCompletions = [
           new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
         ],

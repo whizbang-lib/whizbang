@@ -74,11 +74,14 @@ internal sealed class ProcessedEventCache {
     var added = new List<Guid>();
     var ackedAt = startTtl ? _timeProvider.GetUtcNow() : (DateTimeOffset?)null;
 
+    // S3267: Loop has side effects (concurrent dictionary mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var eventId in eventIds) {
       if (_entries.TryAdd(eventId, new EventCacheEntry(ackedAt))) {
         added.Add(eventId);
       }
     }
+#pragma warning restore S3267
 
     if (added.Count > 0) {
       _observer.OnEventsMarkedInFlight(added);
@@ -94,13 +97,14 @@ internal sealed class ProcessedEventCache {
     var now = _timeProvider.GetUtcNow();
     var activatedCount = 0;
 
+    // S3267: Loop has side effects (concurrent dictionary mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var kvp in _entries) {
-      if (kvp.Value.AckedAt is null) {
-        if (_entries.TryUpdate(kvp.Key, new EventCacheEntry(now), kvp.Value)) {
-          activatedCount++;
-        }
+      if (kvp.Value.AckedAt is null && _entries.TryUpdate(kvp.Key, new EventCacheEntry(now), kvp.Value)) {
+        activatedCount++;
       }
     }
+#pragma warning restore S3267
 
     if (activatedCount > 0) {
       _observer.OnRetentionActivated(activatedCount);

@@ -74,6 +74,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// where handlers are scoped and resolved from the message processing scope.
   /// </para>
   /// </remarks>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
   public TransportConsumerWorker(
     ITransport transport,
     TransportConsumerOptions options,
@@ -85,6 +86,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger
   ) {
+#pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(resilienceOptions);
@@ -130,6 +132,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     // Log all destinations we're going to subscribe to
+    // S3267: Loop has side effects (logging/state mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var destination in _options.Destinations) {
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var address = destination.Address;
@@ -141,6 +145,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         );
       }
     }
+#pragma warning restore S3267
 
     _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
@@ -367,7 +372,7 @@ public partial class TransportConsumerWorker : BackgroundService {
 
       // 5. Report completions/failures
       var completionSw = Stopwatch.StartNew();
-      await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, cancellationToken);
+      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
       completionSw.Stop();
       _metrics?.InboxCompletionDuration.Record(completionSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
@@ -422,7 +427,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     strategy.QueueInboxMessage(newInboxMessage);
 
     var dedupSw = Stopwatch.StartNew();
-    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
     dedupSw.Stop();
     _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
@@ -460,7 +465,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     await _orderedProcessor.ProcessInboxWorkAsync(
       myWork,
       processor: async (work) => {
-        var @event = _deserializeEvent(work);
+        _ = _deserializeEvent(work);
         return MessageProcessingStatus.EventStored;
       },
       completionHandler: (msgId, status) => {
@@ -714,11 +719,14 @@ public partial class TransportConsumerWorker : BackgroundService {
   public async Task PauseAllSubscriptionsAsync() {
     _logger.LogInformation("Pausing all subscriptions");
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var state in _states.Values) {
       if (state.Subscription != null) {
         await state.Subscription.PauseAsync();
       }
     }
+#pragma warning restore S3267
 
     _logger.LogInformation("All subscriptions paused");
   }
@@ -730,11 +738,14 @@ public partial class TransportConsumerWorker : BackgroundService {
   public async Task ResumeAllSubscriptionsAsync() {
     _logger.LogInformation("Resuming all subscriptions");
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var state in _states.Values) {
       if (state.Subscription != null) {
         await state.Subscription.ResumeAsync();
       }
     }
+#pragma warning restore S3267
 
     _logger.LogInformation("All subscriptions resumed");
   }

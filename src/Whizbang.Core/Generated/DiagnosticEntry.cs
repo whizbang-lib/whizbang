@@ -13,6 +13,6 @@ namespace Whizbang.Core.Generated;
 public record DiagnosticEntry(
     string GeneratorName,
     string Timestamp,
-    DiagnosticCategory Category,
+    DiagnosticCategories Category,
     string Message
 );

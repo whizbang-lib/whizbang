@@ -10,7 +10,7 @@ namespace Whizbang.Core.Diagnostics;
 /// Banner data (characters + colors) is generated from canonical source files
 /// by Build-Logo.ps1 into WhizbangBanner.Generated.cs.
 /// </summary>
-/// <docs>core-concepts/diagnostics</docs>
+/// <docs>operations/observability/diagnostics</docs>
 public static partial class WhizbangBanner {
   private const string ESC_CODE = "\x1b";
   private const int BACKGROUND_R = 45;

@@ -39,7 +39,7 @@ public class ScopedLensFactoryTests {
   [Test]
   public async Task IScopedLensFactory_HasGetLens_ScopeFilter_MethodAsync() {
     // Arrange
-    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter)]);
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters)]);
 
     // Assert
     await Assert.That(method).IsNotNull();
@@ -49,7 +49,7 @@ public class ScopedLensFactoryTests {
   [Test]
   public async Task IScopedLensFactory_HasGetLens_ScopeFilter_Permission_MethodAsync() {
     // Arrange
-    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter), typeof(Permission)]);
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters), typeof(Permission)]);
 
     // Assert
     await Assert.That(method).IsNotNull();
@@ -59,7 +59,7 @@ public class ScopedLensFactoryTests {
   [Test]
   public async Task IScopedLensFactory_HasGetLens_ScopeFilter_PermissionArray_MethodAsync() {
     // Arrange
-    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter), typeof(Permission[])]);
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters), typeof(Permission[])]);
 
     // Assert
     await Assert.That(method).IsNotNull();

@@ -84,11 +84,8 @@ public sealed class RoutingOptions {
   public RoutingOptions OwnDomains(params string[] namespaces) {
     ArgumentNullException.ThrowIfNull(namespaces);
 
-    foreach (var ns in namespaces) {
-      if (!string.IsNullOrWhiteSpace(ns)) {
-        _ownedDomains.Add(ns.ToLowerInvariant());
-      }
-    }
+    _ownedDomains.UnionWith(
+        namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
 
     return this;
   }
@@ -154,11 +151,8 @@ public sealed class RoutingOptions {
   public RoutingOptions SubscribeTo(params string[] namespaces) {
     ArgumentNullException.ThrowIfNull(namespaces);
 
-    foreach (var ns in namespaces) {
-      if (!string.IsNullOrWhiteSpace(ns)) {
-        _subscribedNamespaces.Add(ns.ToLowerInvariant());
-      }
-    }
+    _subscribedNamespaces.UnionWith(
+        namespaces.Where(ns => !string.IsNullOrWhiteSpace(ns)).Select(ns => ns.ToLowerInvariant()));
 
     return this;
   }

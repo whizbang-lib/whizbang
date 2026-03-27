@@ -8,19 +8,19 @@ namespace Whizbang.Transports.HotChocolate;
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/GraphQLLensScopeTests.cs</tests>
 /// <example>
 /// // Expose only the model data (simplest, most common)
-/// [GraphQLLens(Scope = GraphQLLensScope.DataOnly)]
+/// [GraphQLLens(Scope = GraphQLLensScopes.DataOnly)]
 ///
 /// // Expose data plus system fields (Id, CreatedAt, UpdatedAt, Version)
-/// [GraphQLLens(Scope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields)]
+/// [GraphQLLens(Scope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields)]
 ///
 /// // Expose everything for admin queries
-/// [GraphQLLens(Scope = GraphQLLensScope.All)]
+/// [GraphQLLens(Scope = GraphQLLensScopes.All)]
 ///
 /// // Use system-configured default
-/// [GraphQLLens(Scope = GraphQLLensScope.None)]
+/// [GraphQLLens(Scope = GraphQLLensScopes.None)]
 /// </example>
 [Flags]
-public enum GraphQLLensScope {
+public enum GraphQLLensScopes {
   /// <summary>
   /// Use system-configured default from <see cref="WhizbangGraphQLOptions.DefaultScope"/>.
   /// When no explicit scope is set, the system default is applied at runtime.

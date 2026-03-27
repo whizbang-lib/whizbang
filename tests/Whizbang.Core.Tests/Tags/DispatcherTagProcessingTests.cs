@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -84,10 +85,13 @@ public class DispatcherTagProcessingTests {
     // Act
     await dispatcher.LocalInvokeAsync<TestResult>(command);
 
-    // Assert - Tag processor should be invoked
-    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(1);
-    await Assert.That(spyProcessor.LastMessage).IsEqualTo(command);
-    await Assert.That(spyProcessor.LastMessageType).IsEqualTo(typeof(TestCommand));
+    // Assert - Dispatcher should invoke tag processor at AfterReceptorCompletion stage
+    // (ReceptorInvoker also processes tags at each lifecycle stage; filter to Dispatcher-specific stage)
+    var dispatcherInvocations = spyProcessor.AllInvocations
+        .Where(i => i.Stage == LifecycleStage.AfterReceptorCompletion).ToList();
+    await Assert.That(dispatcherInvocations.Count).IsEqualTo(1);
+    await Assert.That(dispatcherInvocations[0].Message).IsEqualTo(command);
+    await Assert.That(dispatcherInvocations[0].MessageType).IsEqualTo(typeof(TestCommand));
   }
 
   [Test]
@@ -105,9 +109,11 @@ public class DispatcherTagProcessingTests {
     // Act
     await dispatcher.LocalInvokeAsync<TestResult>(command);
 
-    // Assert - Tag processor should NOT be invoked
-    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(0);
-    await Assert.That(spyProcessor.LastMessage).IsNull();
+    // Assert - Dispatcher should NOT invoke tag processor at AfterReceptorCompletion stage
+    // (ReceptorInvoker may still process tags at lifecycle stages; only check Dispatcher-specific stage)
+    var dispatcherInvocations = spyProcessor.AllInvocations
+        .Where(i => i.Stage == LifecycleStage.AfterReceptorCompletion).ToList();
+    await Assert.That(dispatcherInvocations.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -125,9 +131,11 @@ public class DispatcherTagProcessingTests {
     // Act
     await dispatcher.LocalInvokeAsync<TestResult>(command);
 
-    // Assert - Immediate processing should be skipped when using lifecycle stage mode
-    // (Tag processing happens during lifecycle invocation instead)
-    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(0);
+    // Assert - Dispatcher should skip immediate processing when using lifecycle stage mode
+    // (ReceptorInvoker still processes tags at lifecycle stages; only check Dispatcher-specific stage)
+    var dispatcherInvocations = spyProcessor.AllInvocations
+        .Where(i => i.Stage == LifecycleStage.AfterReceptorCompletion).ToList();
+    await Assert.That(dispatcherInvocations.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -206,12 +214,14 @@ public class DispatcherTagProcessingTests {
     await dispatcher.LocalInvokeAsync<TestResult>(command2);
     await dispatcher.LocalInvokeAsync<TestResult>(command3);
 
-    // Assert - Tag processor should be invoked for each command
-    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(3);
-    await Assert.That(spyProcessor.AllInvocations.Count).IsEqualTo(3);
-    await Assert.That(spyProcessor.AllInvocations[0].Message).IsEqualTo(command1);
-    await Assert.That(spyProcessor.AllInvocations[1].Message).IsEqualTo(command2);
-    await Assert.That(spyProcessor.AllInvocations[2].Message).IsEqualTo(command3);
+    // Assert - Dispatcher should invoke tag processor for each command at AfterReceptorCompletion
+    // (ReceptorInvoker also processes tags at lifecycle stages; filter to Dispatcher-specific stage)
+    var dispatcherInvocations = spyProcessor.AllInvocations
+        .Where(i => i.Stage == LifecycleStage.AfterReceptorCompletion).ToList();
+    await Assert.That(dispatcherInvocations.Count).IsEqualTo(3);
+    await Assert.That(dispatcherInvocations[0].Message).IsEqualTo(command1);
+    await Assert.That(dispatcherInvocations[1].Message).IsEqualTo(command2);
+    await Assert.That(dispatcherInvocations[2].Message).IsEqualTo(command3);
   }
 
   [Test]

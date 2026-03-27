@@ -8,7 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// <para>
 /// <strong>Scope Filtering:</strong> When used via <see cref="Lenses.IScopedLensFactory"/>,
 /// scope filters (tenant, user, principal) are automatically applied based on the current context.
-/// Use <see cref="Lenses.ScopeFilter.None"/> for global/admin access.
+/// Use <see cref="Lenses.ScopeFilters.None"/> for global/admin access.
 /// </para>
 ///
 /// <para>

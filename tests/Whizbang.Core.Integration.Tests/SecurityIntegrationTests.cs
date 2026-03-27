@@ -76,7 +76,7 @@ public class SecurityIntegrationTests {
     await Assert.That(context.IsMemberOfAny(SecurityPrincipalId.Group("sales-team"))).IsFalse();
   }
 
-  // === ScopeFilter Integration ===
+  // === ScopeFilters Integration ===
 
   [Test]
   public async Task ScopeFilterBuilder_WithScopeContext_BuildsCorrectFiltersAsync() {
@@ -99,11 +99,11 @@ public class SecurityIntegrationTests {
     };
 
     // Act - Build various filter combinations
-    var tenantFilter = ScopeFilterBuilder.Build(ScopeFilter.Tenant, context);
-    var userFilter = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.User, context);
-    var principalFilter = ScopeFilterBuilder.Build(ScopeFilter.Tenant | ScopeFilter.Principal, context);
+    var tenantFilter = ScopeFilterBuilder.Build(ScopeFilters.Tenant, context);
+    var userFilter = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.User, context);
+    var principalFilter = ScopeFilterBuilder.Build(ScopeFilters.Tenant | ScopeFilters.Principal, context);
     var myOrSharedFilter = ScopeFilterBuilder.Build(
-      ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal, context);
+      ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal, context);
 
     // Assert
     await Assert.That(tenantFilter.TenantId).IsEqualTo("tenant-123");
@@ -242,7 +242,7 @@ public class SecurityIntegrationTests {
       ResourceType = "Order",
       ResourceId = "order-123",
       UsedPermission = Permission.Read("orders"),
-      AccessFilter = ScopeFilter.Tenant | ScopeFilter.User,
+      AccessFilter = ScopeFilters.Tenant | ScopeFilters.User,
       Scope = new PerspectiveScope { TenantId = "tenant-1", UserId = "user-1" },
       Timestamp = DateTimeOffset.UtcNow
     };
@@ -251,8 +251,8 @@ public class SecurityIntegrationTests {
     await Assert.That(accessGranted.ResourceType).IsEqualTo("Order");
     await Assert.That(accessGranted.ResourceId).IsEqualTo("order-123");
     await Assert.That(accessGranted.UsedPermission.Value).IsEqualTo("orders:read");
-    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilter.Tenant)).IsTrue();
-    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilter.User)).IsTrue();
+    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilters.Tenant)).IsTrue();
+    await Assert.That(accessGranted.AccessFilter.HasFlag(ScopeFilters.User)).IsTrue();
     await Assert.That(accessGranted.Scope.TenantId).IsEqualTo("tenant-1");
   }
 
@@ -367,11 +367,11 @@ public class SecurityIntegrationTests {
     var stringMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(string)]);
     await Assert.That(stringMethod).IsNotNull();
 
-    // ScopeFilter-based methods
-    var filterMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter)]);
+    // ScopeFilters-based methods
+    var filterMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters)]);
     await Assert.That(filterMethod).IsNotNull();
 
-    var permissionMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter), typeof(Permission)]);
+    var permissionMethod = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilters), typeof(Permission)]);
     await Assert.That(permissionMethod).IsNotNull();
 
     // Convenience methods

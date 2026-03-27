@@ -51,7 +51,7 @@ public interface ILifecycleCoordinator {
 
   /// <summary>
   /// Registers expected completion sources for WhenAll pattern.
-  /// Called at cascade time when DispatchMode determines multiple paths.
+  /// Called at cascade time when DispatchModes determines multiple paths.
   /// PostLifecycle fires only when all expected sources signal completion.
   /// </summary>
   /// <param name="eventId">The event ID to register completions for.</param>

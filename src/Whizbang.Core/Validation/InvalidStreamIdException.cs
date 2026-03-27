@@ -6,7 +6,7 @@ namespace Whizbang.Core.Validation;
 /// Exception thrown when a StreamId validation guard fails.
 /// Indicates a bug where an event requiring a StreamId was dispatched without one.
 /// </summary>
-/// <docs>validation/invalid-stream-id</docs>
+/// <docs>fundamentals/events/stream-id#validation</docs>
 /// <tests>tests/Whizbang.Core.Tests/Validation/StreamIdGuardTests.cs</tests>
 public sealed class InvalidStreamIdException : Exception {
   /// <summary>

@@ -14,7 +14,7 @@ public class DiagnosticEntryTests {
     // Arrange
     const string generatorName = "TestGenerator";
     const string timestamp = "2024-01-01T00:00:00Z";
-    var category = DiagnosticCategory.Dispatcher;
+    var category = DiagnosticCategories.Dispatcher;
     const string message = "Test diagnostic message";
 
     // Act
@@ -32,7 +32,7 @@ public class DiagnosticEntryTests {
     // Arrange
     const string generatorName = "TestGenerator";
     const string timestamp = "2024-01-01T00:00:00Z";
-    var category = DiagnosticCategory.Dispatcher;
+    var category = DiagnosticCategories.Dispatcher;
     const string message = "Test diagnostic message";
 
     var entry1 = new DiagnosticEntry(generatorName, timestamp, category, message);
@@ -52,7 +52,7 @@ public class DiagnosticEntryTests {
     // Arrange
     const string generatorName = "TestGenerator";
     const string timestamp = "2024-01-01T00:00:00Z";
-    var category = DiagnosticCategory.Dispatcher;
+    var category = DiagnosticCategories.Dispatcher;
     const string message = "Test diagnostic message";
 
     var entry = new DiagnosticEntry(generatorName, timestamp, category, message);

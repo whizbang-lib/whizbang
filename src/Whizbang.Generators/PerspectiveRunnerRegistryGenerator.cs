@@ -44,9 +44,12 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Extracts perspective information from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
   /// </summary>
+  // S3776: Complexity from sequential interface discovery checks — generator needs to inspect multiple perspective interface variants
+#pragma warning disable S3776
   private static PerspectiveRegistryInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
+#pragma warning restore S3776
 
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
@@ -120,16 +123,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Checks if the model type has a property with the [StreamId] attribute.
   /// </summary>
   private static bool _modelHasStreamIdAttribute(ITypeSymbol modelType) {
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasAttr = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
-        if (hasAttr) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return modelType.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Any(property => property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute"));
   }
 
   /// <summary>
@@ -143,21 +140,27 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 
     if (singleStreamInterfaces.Count > 0) {
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> - events start at index 1
+      // S3267: Inner loop with index arithmetic — LINQ SelectMany would be less clear
+#pragma warning disable S3267
       foreach (var iface in singleStreamInterfaces) {
         for (var i = 1; i < iface.TypeArguments.Length; i++) {
           eventTypes.Add(TypeNameUtilities.FormatTypeNameForRuntime(iface.TypeArguments[i]));
           eventTypesCodeGen.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
         }
       }
+#pragma warning restore S3267
     } else {
       // globalInterfaces.Count is guaranteed > 0 here (we returned null above if both were empty)
       // IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> - events start at index 2
+      // S3267: Inner loop with index arithmetic — LINQ SelectMany would be less clear
+#pragma warning disable S3267
       foreach (var iface in globalInterfaces) {
         for (var i = 2; i < iface.TypeArguments.Length; i++) {
           eventTypes.Add(TypeNameUtilities.FormatTypeNameForRuntime(iface.TypeArguments[i]));
           eventTypesCodeGen.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
         }
       }
+#pragma warning restore S3267
     }
 
     return (eventTypes, eventTypesCodeGen);

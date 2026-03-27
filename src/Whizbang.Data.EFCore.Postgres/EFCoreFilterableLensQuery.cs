@@ -90,7 +90,7 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
   private IScopedLensAccess<TModel> _createScopedAccess(QueryScope scope, ScopeFilterOverride? overrideValues) {
     var filters = QueryScopeMapper.ToScopeFilter(scope);
 
-    if (filters == ScopeFilter.None) {
+    if (filters == ScopeFilters.None) {
       return new UnfilteredScopedAccess(_context);
     }
 
@@ -114,23 +114,23 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
       IQueryable<PerspectiveRow<TModel>> query,
       ScopeFilterInfo filterInfo) {
     // Apply tenant filter (always AND'd first)
-    if (filterInfo.Filters.HasFlag(ScopeFilter.Tenant) && filterInfo.TenantId is not null) {
+    if (filterInfo.Filters.HasFlag(ScopeFilters.Tenant) && filterInfo.TenantId is not null) {
       query = query.Where(r => r.Scope.TenantId == filterInfo.TenantId);
     }
 
     // Apply organization filter
-    if (filterInfo.Filters.HasFlag(ScopeFilter.Organization) && filterInfo.OrganizationId is not null) {
+    if (filterInfo.Filters.HasFlag(ScopeFilters.Organization) && filterInfo.OrganizationId is not null) {
       query = query.Where(r => r.Scope.OrganizationId == filterInfo.OrganizationId);
     }
 
     // Apply customer filter
-    if (filterInfo.Filters.HasFlag(ScopeFilter.Customer) && filterInfo.CustomerId is not null) {
+    if (filterInfo.Filters.HasFlag(ScopeFilters.Customer) && filterInfo.CustomerId is not null) {
       query = query.Where(r => r.Scope.CustomerId == filterInfo.CustomerId);
     }
 
     // Handle User and Principal filters with special OR logic when both are present
-    var hasUserFilter = filterInfo.Filters.HasFlag(ScopeFilter.User) && filterInfo.UserId is not null;
-    var hasPrincipalFilter = filterInfo.Filters.HasFlag(ScopeFilter.Principal) && filterInfo.SecurityPrincipals.Count > 0;
+    var hasUserFilter = filterInfo.Filters.HasFlag(ScopeFilters.User) && filterInfo.UserId is not null;
+    var hasPrincipalFilter = filterInfo.Filters.HasFlag(ScopeFilters.Principal) && filterInfo.SecurityPrincipals.Count > 0;
 
     if (filterInfo.UseOrLogicForUserAndPrincipal && hasUserFilter && hasPrincipalFilter) {
       // "My records OR shared with me" pattern

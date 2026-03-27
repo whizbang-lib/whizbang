@@ -73,7 +73,6 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         compilationAndCalls,
         static (ctx, data) => {
-          var compilation = data.Left.Left.Left;
           var intercepted = data.Left.Left.Right;
           var suppressed = data.Left.Right;
           var enabled = data.Right;
@@ -82,9 +81,12 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     );
   }
 
+  // S3776: Complexity is from sequential validation checks with early returns — already well-structured
+#pragma warning disable S3776
   private static (GuidInterceptionInfo? Intercepted, SuppressedGuidInterceptionInfo? Suppressed) _extractGuidCallInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
+#pragma warning restore S3776
 
     var invocation = (InvocationExpressionSyntax)context.Node;
     var memberAccess = (MemberAccessExpressionSyntax)invocation.Expression;
@@ -116,31 +118,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       return (null, null);
     }
 
-    string? guidVersion = null;
-    string? guidSource = null;
-
-    // Check for System.Guid methods
-    if (containingType == GUID_TYPE) {
-      if (methodName == METHOD_NEW_GUID) {
-        guidVersion = "Version4";
-        guidSource = "SourceMicrosoft";
-      } else if (methodName == "CreateVersion7") {
-        guidVersion = GUID_VERSION_7;
-        guidSource = "SourceMicrosoft";
-      }
-    }
-
-    // Check for third-party methods
-    if (guidVersion is null) {
-      foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
-        if (containingType == typePattern && methodName == method) {
-          guidVersion = version;
-          guidSource = source;
-          break;
-        }
-      }
-    }
-
+    var (guidVersion, guidSource) = _resolveGuidVersionAndSource(containingType, methodName);
     if (guidVersion is null || guidSource is null) {
       return (null, null);
     }
@@ -178,6 +156,31 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         GuidSource: guidSource,
         InterceptorMethodName: interceptorName
     ), null);
+  }
+
+  /// <summary>
+  /// Resolves the GUID version and source metadata for a given containing type and method name.
+  /// Checks System.Guid methods first, then third-party library methods.
+  /// </summary>
+  private static (string? Version, string? Source) _resolveGuidVersionAndSource(string containingType, string methodName) {
+    // Check for System.Guid methods
+    if (containingType == GUID_TYPE) {
+      if (methodName == METHOD_NEW_GUID) {
+        return ("Version4", "SourceMicrosoft");
+      }
+      if (methodName == "CreateVersion7") {
+        return (GUID_VERSION_7, "SourceMicrosoft");
+      }
+    }
+
+    // Check for third-party methods
+    foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
+      if (containingType == typePattern && methodName == method) {
+        return (version, source);
+      }
+    }
+
+    return (null, null);
   }
 
   private static string? _checkSuppression(
@@ -265,12 +268,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         .Where(t => t.SpanStart < position &&
                    t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
 
-    foreach (var trivia in triviaList) {
-      if (_isActiveDisablePragma(trivia, root, position)) {
-        return true;
-      }
-    }
-    return false;
+    return triviaList.Any(trivia => _isActiveDisablePragma(trivia, root, position));
   }
 
   /// <summary>
@@ -332,6 +330,8 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     return restoreCodes.Contains("WHIZ055") || restoreCodes.Contains("WHIZ056") || restoreCodes.Count == 0;
   }
 
+  // S3776: Code generation method — complexity from sequential template building with conditional paths
+#pragma warning disable S3776
 #pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
@@ -339,6 +339,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
 #pragma warning restore S1144
+#pragma warning restore S3776
 
     // Report diagnostics for intercepted calls (always, even when disabled)
     foreach (var info in intercepted) {
@@ -419,7 +420,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
       sb.AppendLine("      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
       sb.AppendLine($"          {originalCall},");
-      sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidSource});");
+      sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadatas.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadatas.{info.GuidSource});");
       sb.AppendLine("    }");
     }
 

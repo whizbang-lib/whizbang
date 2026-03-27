@@ -75,12 +75,6 @@ public class PostgresMigrationProvider : IMigrationProvider {
   }
 
   /// <summary>
-  /// Gets all migration scripts in order (sorted by filename).
-  /// </summary>
-  [Obsolete("Use GetMigrations() instead")]
-  public List<Core.Data.MigrationScript> GetAllMigrations() => [.. GetMigrations()];
-
-  /// <summary>
   /// Gets a specific migration script by name.
   /// </summary>
   /// <param name="scriptName">Name of the script (without .sql extension)</param>

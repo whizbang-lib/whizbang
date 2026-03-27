@@ -188,7 +188,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush before disposal
-    _ = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Manual flush should work immediately
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -371,7 +371,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act — BestEffort should flush immediately (the fix)
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert — message was flushed during the BestEffort call, not deferred
     await Assert.That(disposableCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -404,13 +404,13 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Simulate a typical request: multiple publishes via BestEffort
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert — each BestEffort call flushed immediately
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(3)
@@ -530,12 +530,12 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // First flush: queue an event message (generates audit message)
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
     var firstFlushOutboxCount = fakeCoordinator.LastNewOutboxMessages.Length;
 
     // Second flush: queue another event message
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
     var secondFlushOutboxCount = fakeCoordinator.LastNewOutboxMessages.Length;
 
     // Assert — same count both times (no accumulation of stale audit messages)
@@ -733,7 +733,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     await sut.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -771,10 +771,10 @@ public class ScopedWorkCoordinatorStrategyTests {
     sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode flag should be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
 
     // Cleanup
     await sut.DisposeAsync();
@@ -809,7 +809,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Flush to merge audit messages (lines 227-228)
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Should have original + audit message in the batch
     await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsGreaterThanOrEqualTo(1);
@@ -893,7 +893,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act - Flush (FakeWorkCoordinator returns empty OutboxWork, triggers line 270)
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Logger received multiple log calls
     await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(2);
@@ -1012,6 +1012,28 @@ public class ScopedWorkCoordinatorStrategyTests {
     });
   }
 
+  private void _queueTestInboxMessage(ScopedWorkCoordinatorStrategy strategy) {
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent2> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent2(),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
+
+    strategy.QueueInboxMessage(new InboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "TestEnvelope, TestAssembly",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
+    });
+  }
+
   /// <summary>
   /// Simulates a DbContext-backed coordinator that becomes disposed mid-scope
   /// (as happens when DI container disposes services in arbitrary order).
@@ -1066,8 +1088,632 @@ public class ScopedWorkCoordinatorStrategyTests {
     }
   }
 
+  // ========================================
+  // QUEUE WITH LOGGER Tests (Lines 74-76, 84-86, 102-104, 111-113)
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_WithLogger_LogsQueuedMessageAsync() {
+    // Arrange - logger != null exercises lines 74-76
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Act
+    _queueTestOutboxMessage(sut);
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0)
+      .Because("QueueOutboxMessage should log when logger is provided");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueInboxMessage_WithLogger_LogsQueuedMessageAsync() {
+    // Arrange - logger != null exercises lines 84-86
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Act
+    _queueTestInboxMessage(sut);
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0)
+      .Because("QueueInboxMessage should log when logger is provided");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_WithLogger_LogsCompletionQueuedAsync() {
+    // Arrange - logger != null exercises lines 102-104
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Act
+    sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0)
+      .Because("QueueInboxCompletion should log when logger is provided");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_WithLogger_LogsFailureQueuedAsync() {
+    // Arrange - logger != null exercises lines 111-113
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Act
+    sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "Test outbox error");
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0)
+      .Because("QueueOutboxFailure should log when logger is provided");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // METRICS Tests (Lines 127, 135)
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithMetrics_RecordsFlushCallsMetricAsync() {
+    // Arrange - metrics != null exercises line 127
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, metrics: metrics
+    );
+
+    _queueTestOutboxMessage(sut);
+
+    // Act
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert - no exception means metrics were recorded successfully
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task FlushAsync_WithMetrics_EmptyQueue_RecordsEmptyFlushMetricAsync() {
+    // Arrange - metrics != null + empty queue exercises lines 127 AND 135
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, metrics: metrics
+    );
+
+    // Act - flush with empty queues
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0);
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
+      .Because("empty queue should skip ProcessWorkBatchAsync");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // FLUSH DIAGNOSTIC LOGGING — outbox work returned (Lines 176-179)
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithLogger_OutboxWorkReturned_LogsReturnedWorkAsync() {
+    // Arrange - logger != null + OutboxWork.Count > 0 exercises lines 176-179
+    var fakeCoordinator = new FakeWorkCoordinatorWithOutboxWork();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    _queueTestOutboxMessage(sut);
+
+    // Act
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert - OutboxWork was returned and logged
+    await Assert.That(result.OutboxWork).Count().IsGreaterThan(0);
+    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(3)
+      .Because("Should log flush summary, instance id, batch result, AND returned outbox work");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // IWorkFlusher EXPLICIT INTERFACE (Line 190-191)
+  // ========================================
+
+  [Test]
+  public async Task IWorkFlusher_FlushAsync_DelegatesToFlushWithRequiredModeAsync() {
+    // Arrange - exercises line 190-191 (explicit IWorkFlusher.FlushAsync implementation)
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options
+    );
+
+    _queueTestOutboxMessage(sut);
+
+    // Act - call via IWorkFlusher interface
+    IWorkFlusher flusher = sut;
+    await flusher.FlushAsync(CancellationToken.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("IWorkFlusher.FlushAsync should delegate to FlushAsync with Required mode");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // DISPOSE WITH LOGGER — unflushed ops (Lines 204-211)
+  // ========================================
+
+  [Test]
+  public async Task DisposeAsync_WithLogger_UnflushedOps_LogsWarningAsync() {
+    // Arrange - logger != null + unflushed ops exercises lines 204-211
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Queue messages but don't flush manually
+    _queueTestOutboxMessage(sut);
+    sut.QueueOutboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+    sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "test error");
+
+    // Act
+    await sut.DisposeAsync();
+
+    // Assert - logger should have received warning about unflushed ops
+    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(4)
+      .Because("Should log queue operations AND the unflushed-on-disposal warning");
+  }
+
+  // ========================================
+  // DISPOSE CATCH BLOCK — flush throws (Lines 238-241)
+  // ========================================
+
+  [Test]
+  public async Task DisposeAsync_FlushThrows_WithLogger_LogsErrorAndDoesNotThrowAsync() {
+    // Arrange - exercises lines 238-241 (catch block with logger)
+    var throwingCoordinator = new FakeThrowingWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      throwingCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Queue a message so DisposeAsync attempts flush
+    _queueTestOutboxMessage(sut);
+
+    // Act - DisposeAsync should catch the exception and log it, not throw
+    await sut.DisposeAsync();
+
+    // Assert - error was logged, no exception propagated
+    await Assert.That(logger.LogCount).IsGreaterThan(0)
+      .Because("DisposeAsync should log the error when flush fails");
+  }
+
+  [Test]
+  public async Task DisposeAsync_FlushThrows_WithoutLogger_DoesNotThrowAsync() {
+    // Arrange - exercises catch block without logger (line 239 condition)
+    var throwingCoordinator = new FakeThrowingWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      throwingCoordinator, instanceProvider, null, options
+    // no logger
+    );
+
+    // Queue a message so DisposeAsync attempts flush
+    _queueTestOutboxMessage(sut);
+
+    // Act - DisposeAsync should catch the exception, not throw
+    await sut.DisposeAsync();
+
+    // Assert - no exception was thrown (test passes if we reach here)
+  }
+
+  // ========================================
+  // STREAM ID GUARD Tests (Lines 71, 81)
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_WithEmptyGuidStreamId_ThrowsInvalidStreamIdExceptionAsync() {
+    // Arrange - StreamId = Guid.Empty (non-null) exercises line 71
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options
+    );
+
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent1> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent1(),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "TestEnvelope, TestAssembly",
+      StreamId = Guid.Empty, // Empty Guid triggers StreamIdGuard
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+    })).Throws<Whizbang.Core.Validation.InvalidStreamIdException>();
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueInboxMessage_WithEmptyGuidStreamId_ThrowsInvalidStreamIdExceptionAsync() {
+    // Arrange - StreamId = Guid.Empty (non-null) exercises line 81
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options
+    );
+
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent1> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent1(),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxMessage(new InboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "TestEnvelope, TestAssembly",
+      StreamId = Guid.Empty, // Empty Guid triggers StreamIdGuard
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
+    })).Throws<Whizbang.Core.Validation.InvalidStreamIdException>();
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // FLUSH WITH INBOX-ONLY (no outbox queued) — exercises branch where outboxMessages.Length == 0
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithInboxOnly_FlushesInboxMessagesAsync() {
+    // Arrange - only inbox messages, no outbox, exercises the else-if branch at line 181
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options
+    );
+
+    _queueTestInboxMessage(sut);
+
+    // Act
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(0);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // FLUSH WITH COMPLETIONS-ONLY — exercises flush with no new messages but completions
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithCompletionsOnly_FlushesCompletionsAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options
+    );
+
+    sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+
+    // Act
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task FlushAsync_WithOutboxFailuresOnly_FlushesFailuresAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options
+    );
+
+    sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "test error");
+
+    // Act
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // CONSTRUCTOR — null dependencies defaults (Line 62)
+  // ========================================
+
+  [Test]
+  public async Task Constructor_WithNullDependencies_DefaultsToEmptyDependenciesAsync() {
+    // Arrange & Act - null dependencies should default to new ScopedWorkCoordinatorDependencies()
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options,
+      dependencies: null
+    );
+
+    // Should work fine without throwing
+    _queueTestOutboxMessage(sut);
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // FLUSH WITH LOGGER — multiple outbox work items (Lines 177-179 loop)
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithLogger_MultipleOutboxWorkReturned_LogsUpToThreeAsync() {
+    // Arrange - exercises the Take(3) loop at lines 177-179
+    var fakeCoordinator = new FakeWorkCoordinatorWithMultipleOutboxWork();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    _queueTestOutboxMessage(sut);
+
+    // Act
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert - should have logged returned work items (up to 3)
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(4);
+    // Logs: queued message, flush summary, instance id, batch result, + 3 returned work items
+    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(6)
+      .Because("Should log up to 3 returned outbox work items plus other diagnostics");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // DISPOSE — inbox completions and failures in unflushed warning
+  // ========================================
+
+  [Test]
+  public async Task DisposeAsync_WithLogger_InboxCompletionsAndFailures_LogsAllCountsAsync() {
+    // Arrange - exercises all counters in unflushed warning (lines 204-211)
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Queue all types of operations to ensure all counters in the warning are non-zero
+    _queueTestOutboxMessage(sut);
+    _queueTestInboxMessage(sut);
+    sut.QueueOutboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+    sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+    sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "error1");
+    sut.QueueInboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "error2");
+
+    // Act
+    await sut.DisposeAsync();
+
+    // Assert - logger should have many calls from queuing + disposal warning
+    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(7)
+      .Because("Should log each queue operation AND the unflushed-on-disposal warning");
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("DisposeAsync should flush all remaining operations");
+  }
+
+  // ========================================
+  // Additional Test Fakes
+  // ========================================
+
+  /// <summary>
+  /// Coordinator that always throws on ProcessWorkBatchAsync.
+  /// Used to test DisposeAsync catch block (lines 238-241).
+  /// </summary>
+  private sealed class FakeThrowingWorkCoordinator : IWorkCoordinator {
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      throw new InvalidOperationException("Simulated database failure");
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// Coordinator that returns outbox work items — used to exercise lines 176-179.
+  /// </summary>
+  private sealed class FakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      var outboxWork = request.NewOutboxMessages.Select(m => new OutboxWork {
+        MessageId = m.MessageId,
+        Destination = m.Destination,
+        Envelope = m.Envelope,
+        EnvelopeType = m.EnvelopeType,
+        MessageType = m.MessageType,
+        Attempts = 0,
+        Flags = WorkBatchOptions.NewlyStored
+      }).ToList();
+
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = outboxWork,
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// Coordinator that returns 4 outbox work items to test Take(3) logging loop.
+  /// </summary>
+  private sealed class FakeWorkCoordinatorWithMultipleOutboxWork : IWorkCoordinator {
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      var outboxWork = new List<OutboxWork>();
+      var envelope = request.NewOutboxMessages.Length > 0 ? request.NewOutboxMessages[0].Envelope : default!;
+      // Return 4 items — only 3 should be logged
+      for (int i = 0; i < 4; i++) {
+        outboxWork.Add(new OutboxWork {
+          MessageId = Guid.NewGuid(),
+          Destination = $"topic-{i}",
+          Envelope = envelope,
+          EnvelopeType = "TestEnvelope, TestAssembly",
+          MessageType = "TestMessage, TestAssembly",
+          Attempts = 0,
+          Flags = i % 2 == 0 ? WorkBatchOptions.NewlyStored : WorkBatchOptions.None
+        });
+      }
+
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = outboxWork,
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
   private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchFlags LastFlags { get; private set; }
+    public WorkBatchOptions LastFlags { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,

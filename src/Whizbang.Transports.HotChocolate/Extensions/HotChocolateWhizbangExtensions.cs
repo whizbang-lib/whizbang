@@ -16,7 +16,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// // With configuration
 /// services.AddGraphQLServer()
 ///     .AddWhizbangLenses(options => {
-///         options.DefaultScope = GraphQLLensScope.All;
+///         options.DefaultScope = GraphQLLensScopes.All;
 ///         options.DefaultPageSize = 25;
 ///     });
 /// </example>

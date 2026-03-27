@@ -72,7 +72,7 @@ public class OutboxPublishPipelineIntegrationTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -89,7 +89,7 @@ public class OutboxPublishPipelineIntegrationTests {
     try {
       // Act
       strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      await strategy.FlushAsync(WorkBatchOptions.None);
 
       // Wait for publish to complete
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -130,7 +130,7 @@ public class OutboxPublishPipelineIntegrationTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -147,7 +147,7 @@ public class OutboxPublishPipelineIntegrationTests {
       // Act
       var msgId = Guid.CreateVersion7();
       strategy.QueueOutboxMessage(_createOutboxMessage(msgId));
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      await strategy.FlushAsync(WorkBatchOptions.None);
 
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
@@ -190,7 +190,7 @@ public class OutboxPublishPipelineIntegrationTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -206,7 +206,7 @@ public class OutboxPublishPipelineIntegrationTests {
     try {
       // Act
       strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      await strategy.FlushAsync(WorkBatchOptions.None);
 
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
@@ -242,7 +242,7 @@ public class OutboxPublishPipelineIntegrationTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -258,7 +258,7 @@ public class OutboxPublishPipelineIntegrationTests {
     try {
       // Act
       strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      await strategy.FlushAsync(WorkBatchOptions.None);
 
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
@@ -300,7 +300,7 @@ public class OutboxPublishPipelineIntegrationTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -318,7 +318,7 @@ public class OutboxPublishPipelineIntegrationTests {
     try {
       // Act — same pattern as working tests
       strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      await strategy.FlushAsync(WorkBatchOptions.None);
 
       // publishedTcs set deterministically by TestPublishStrategy.PublishAsync
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
