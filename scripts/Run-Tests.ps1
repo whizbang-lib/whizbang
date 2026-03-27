@@ -758,15 +758,24 @@ try {
             }
 
             $coverageSettingsPath = Join-Path $repoRoot "codecoverage.config"
-            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
-            if ($Filter) { $args += "--treenode-filter"; $args += "/*/*/*/*$Filter*" }
-            if ($FailFastEnabled) { $args += "--fail-fast" }
+            $testArgs = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+            if ($Filter) { $testArgs += "--treenode-filter"; $testArgs += "/*/*/*/*$Filter*" }
+            if ($FailFastEnabled) { $testArgs += "--fail-fast" }
 
-            $output = & dotnet @args 2>&1
+            $outFile = [System.IO.Path]::GetTempFileName()
+            $errFile = [System.IO.Path]::GetTempFileName()
+            $proc = Start-Process -FilePath "dotnet" -ArgumentList ($testArgs -join " ") -WorkingDirectory $projDir -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            while (-not $proc.HasExited) {
+                Update-ParentProgress
+                Start-Sleep -Milliseconds 2000
+            }
+            $proc.WaitForExit()
+            $output = (Get-Content $outFile -Raw) + (Get-Content $errFile -Raw)
+            Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
             return [PSCustomObject]@{
                 ProjectName = $projName
-                ExitCode = $LASTEXITCODE
-                Output = ($output | Select-Object -Last 30) -join "`n"
+                ExitCode = $proc.ExitCode
+                Output = ($output -split "`n" | Select-Object -Last 30) -join "`n"
             }
         }
 
@@ -803,31 +812,75 @@ try {
         if ($unitTestProjects.Count -gt 0) {
             Write-Host "Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
 
-            $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
-                $projectPath = $_
-                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
-                $config = $using:Configuration
-                $testFilter = $using:TestFilter
-                $failFast = $using:FailFast
-                $resultsBag = $using:results
-                $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
-
-                if ($IsLinux -or $IsMacOS) {
-                    $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
-                    if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+            # Start a background thread to keep progress bars alive during ForEach-Object -Parallel
+            $progressCts = [System.Threading.CancellationTokenSource]::new()
+            $progressToken = $progressCts.Token
+            $parentEpochStartCopy = $script:parentEpochStart
+            $parentTotalEstSecCopy = $ParentTotalEstSec
+            $parentStepNumberCopy = $ParentStepNumber
+            $parentTotalStepsCopy = $ParentTotalSteps
+            $stepEstSecCopy = $StepEstSec
+            $runStartTimeCopy = $script:runStartTime
+            $modeCopy = $Mode
+            $progressThread = [System.Threading.Tasks.Task]::Run([Action]{
+                while (-not $progressToken.IsCancellationRequested) {
+                    try {
+                        if ($parentEpochStartCopy -and $parentTotalEstSecCopy -gt 0) {
+                            $elapsed = ([DateTime]::UtcNow - $parentEpochStartCopy).TotalSeconds
+                            if ($parentTotalStepsCopy -gt 0) {
+                                $stepPct = [math]::Round(($parentStepNumberCopy / $parentTotalStepsCopy) * 100)
+                                Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step ${parentStepNumberCopy}/${parentTotalStepsCopy}: $modeCopy Tests" -PercentComplete $stepPct
+                            }
+                            $timePct = [math]::Min(100, [math]::Round(($elapsed / $parentTotalEstSecCopy) * 100))
+                            $remaining = [math]::Max(0, $parentTotalEstSecCopy - $elapsed)
+                            $remMin = [math]::Floor($remaining / 60); $remSec = [math]::Floor($remaining % 60)
+                            $elapMin = [math]::Floor($elapsed / 60); $elapSec = [math]::Floor($elapsed % 60)
+                            Write-Progress -Id 1 -ParentId 0 -Activity "Total: ${elapMin}m ${elapSec}s elapsed" -Status "~${remMin}m ${remSec}s remaining" -PercentComplete $timePct
+                            if ($stepEstSecCopy -gt 0) {
+                                $stepElapsed = ([DateTime]::UtcNow - $runStartTimeCopy).TotalSeconds
+                                $stepTimePct = [math]::Min(100, [math]::Round(($stepElapsed / $stepEstSecCopy) * 100))
+                                $stepRemain = [math]::Max(0, $stepEstSecCopy - $stepElapsed)
+                                $srMin = [math]::Floor($stepRemain / 60); $srSec = [math]::Floor($stepRemain % 60)
+                                $seMin = [math]::Floor($stepElapsed / 60); $seSec = [math]::Floor($stepElapsed % 60)
+                                Write-Progress -Id 3 -ParentId 0 -Activity "$modeCopy Tests: ${seMin}m ${seSec}s elapsed" -Status "~${srMin}m ${srSec}s remaining" -PercentComplete $stepTimePct
+                            }
+                        }
+                    } catch { }
+                    [System.Threading.Thread]::Sleep(2000)
                 }
+            })
 
-                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
-                if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
-                if ($failFast) { $projectArgs += "--fail-fast" }
+            try {
+                $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                    $projectPath = $_
+                    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                    $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+                    $config = $using:Configuration
+                    $testFilter = $using:TestFilter
+                    $failFast = $using:FailFast
+                    $resultsBag = $using:results
+                    $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
 
-                $output = & dotnet @projectArgs 2>&1
-                $resultsBag.Add([PSCustomObject]@{
-                    ProjectName = $projectName
-                    ExitCode = $LASTEXITCODE
-                    Output = ($output | Select-Object -Last 30) -join "`n"
-                })
+                    if ($IsLinux -or $IsMacOS) {
+                        $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                        if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+                    }
+
+                    $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+                    if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
+                    if ($failFast) { $projectArgs += "--fail-fast" }
+
+                    $output = & dotnet @projectArgs 2>&1
+                    $resultsBag.Add([PSCustomObject]@{
+                        ProjectName = $projectName
+                        ExitCode = $LASTEXITCODE
+                        Output = ($output | Select-Object -Last 30) -join "`n"
+                    })
+                }
+            } finally {
+                $progressCts.Cancel()
+                try { $progressThread.Wait(5000) } catch { }
+                $progressCts.Dispose()
             }
         }
 
