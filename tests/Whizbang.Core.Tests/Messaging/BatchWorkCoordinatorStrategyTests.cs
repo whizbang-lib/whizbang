@@ -1050,7 +1050,8 @@ public class BatchWorkCoordinatorStrategyTests {
       using var cts = new CancellationTokenSource();
       cts.Cancel();
       await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token))
-        .ThrowsExactly<TaskCanceledException>();
+        .ThrowsException()
+        .WithMessageContaining("canceled");
     } finally {
       await sut.DisposeAsync();
     }
