@@ -140,6 +140,13 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $originalRepoRoot = $repoRoot  # Preserve for metrics/history that must survive cleanup
 $script:scanFolder = $null
 
+# Create temp scan folder early (before header) so path is available for display
+if (-not $DirectScan -and -not $SkipSonar) {
+    $currentBranchForScan = git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null
+    $script:scanFolder = New-SonarScanFolder -RepoRoot $repoRoot -BranchName $currentBranchForScan
+    $repoRoot = $script:scanFolder
+}
+
 # Handle cleanup flags before anything else
 if ($CleanAll) {
     Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
@@ -191,6 +198,9 @@ if (-not $NoHeader) {
     Write-WhizbangHeader -ScriptName "PR Runner" -Params $headerParams -Estimate $estimateStr
     Write-AiLine "Lines marked with 🤖 require AI attention. Filter with: grep '🤖'" -ForegroundColor DarkGray
     Write-AiLine "Log: $effectiveLogFile" -ForegroundColor DarkGray
+    if ($script:scanFolder) {
+        Write-Host "Scan folder: $($script:scanFolder)" -ForegroundColor DarkGray
+    }
     Write-Host ""
 }
 
@@ -1155,15 +1165,6 @@ function Invoke-Monitor {
 $result = @{ Passed = $true }
 $prNumber = $PrNumber
 $prUrl = ""
-
-# Create temp scan folder for sonar (unless -DirectScan or -SkipSonar)
-if (-not $DirectScan -and -not $SkipSonar) {
-    $currentBranchForScan = git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null
-    Write-Host "  Creating scan folder (branch: $currentBranchForScan)..." -ForegroundColor Gray
-    $script:scanFolder = New-SonarScanFolder -RepoRoot $repoRoot -BranchName $currentBranchForScan
-    Write-Host "  Scan folder: $($script:scanFolder)" -ForegroundColor DarkGray
-    $repoRoot = $script:scanFolder
-}
 
 try {
     # Prepare
