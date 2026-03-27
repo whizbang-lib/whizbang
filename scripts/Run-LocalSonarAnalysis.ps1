@@ -147,6 +147,7 @@ if (Test-Path $TokenFile) {
 
 # Create temp scan folder (unless -DirectScan)
 $scanFolder = $null
+$ctrlCCleanup = $null
 if (-not $DirectScan) {
     $currentBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
     Write-Info "Creating scan folder (branch: $currentBranch)..."
@@ -155,6 +156,19 @@ if (-not $DirectScan) {
     $RepoRoot = $scanFolder
     $CoverageDir = Join-Path $RepoRoot "scripts" "coverage"
     $CoverageReport = Join-Path $CoverageDir "coverage.opencover.xml"
+
+    # Register CTRL+C handler to clean up scan folder if process is interrupted
+    if (-not $KeepScanFolder) {
+        $scanFolderPath = $scanFolder
+        $ctrlCCleanup = {
+            param($sender, $e)
+            if (Test-Path $scanFolderPath) {
+                Write-Host "`n[INFO] Cleaning up scan folder (interrupted)..." -ForegroundColor Cyan
+                Remove-SonarScanFolder -ScanFolder $scanFolderPath
+            }
+        }
+        [Console]::add_CancelKeyPress($ctrlCCleanup)
+    }
 }
 
 try {
@@ -304,8 +318,13 @@ elseif ($IsMacOS) { & open "$SonarUrl/dashboard?id=$ProjectKey" }
 elseif ($IsLinux) { & xdg-open "$SonarUrl/dashboard?id=$ProjectKey" 2>/dev/null }
 
 } finally {
-    # Clean up scan folder (unless -KeepScanFolder or -DirectScan)
-    if ($scanFolder -and -not $KeepScanFolder) {
+    # Unregister CTRL+C handler (avoid double cleanup)
+    if ($ctrlCCleanup) {
+        try { [Console]::remove_CancelKeyPress($ctrlCCleanup) } catch { }
+    }
+
+    # Clean up scan folder (check existence — CTRL+C handler may have already cleaned it)
+    if ($scanFolder -and -not $KeepScanFolder -and (Test-Path $scanFolder)) {
         Write-Info "Cleaning up scan folder: $scanFolder"
         Remove-SonarScanFolder -ScanFolder $scanFolder
     } elseif ($scanFolder -and $KeepScanFolder) {
