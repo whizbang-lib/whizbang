@@ -1439,21 +1439,16 @@ try {
             }
 
             # Calculate display totals
-            # Use completed counts as authoritative; in-progress is just an activity indicator
-            # This avoids double-counting (a project's progress lines overlap with its summary)
+            # completedPassed/Failed/Skipped are summed from authoritative "succeeded:/failed:/skipped:" summary lines
+            # inProgressPassed is an approximate live indicator (highest seen from any single project's progress lines)
             $completedTotal = $completedPassed + $completedFailed + $completedSkipped
             $inProgressTotal = $inProgressPassed + $inProgressFailed + $inProgressSkipped
 
-            # For display, prefer completed if available, otherwise show in-progress
-            if ($completedTotal -gt 0) {
-                $totalPassed = $completedPassed
-                $totalFailed = $completedFailed
-                $totalSkipped = $completedSkipped
-            } else {
-                $totalPassed = $inProgressPassed
-                $totalFailed = $inProgressFailed
-                $totalSkipped = $inProgressSkipped
-            }
+            # Always use completed counts + in-progress for a combined view
+            # completed = sum of finished project summaries, inProgress = current running project's latest count
+            $totalPassed = $completedPassed + $inProgressPassed
+            $totalFailed = $completedFailed + $inProgressFailed
+            $totalSkipped = $completedSkipped + $inProgressSkipped
             $totalTests = $totalPassed + $totalFailed + $totalSkipped
 
             # Smart progress updates
@@ -1473,13 +1468,12 @@ try {
                 if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
                     # Show test progress
                     $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
-                    # Show running indicator if there's in-progress activity beyond completed
-                    if ($completedTotal -gt 0 -and $inProgressTotal -gt 0) {
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator (+$inProgressTotal running)" -ForegroundColor Gray
-                    } elseif ($completedTotal -eq 0 -and $inProgressTotal -gt 0) {
+                    # Show running indicator when tests are actively executing
+                    if ($inProgressTotal -gt 0) {
                         Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
                     } else {
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+                        # All projects finished — completed counts are authoritative
+                        Write-Host "[$($elapsedMinutes)m] Complete: $completedPassed passed, $completedFailed failed, $completedSkipped skipped$failureIndicator" -ForegroundColor Gray
                     }
                 } else {
                     # Show heartbeat (building/not yet testing)
@@ -1697,16 +1691,14 @@ try {
             Write-Host "Passed: ~$totalPassed" -ForegroundColor Green
             Write-Host "Failed: $actualFailedCount (stopped on first failure)" -ForegroundColor Red
             Write-Host "Skipped: ~$totalSkipped" -ForegroundColor Yellow
-        } elseif ($totalTests -gt 0) {
+        } elseif ($completedPassed + $completedFailed + $completedSkipped -gt 0) {
+            # Use completed counts only — these are the authoritative sums from project summary lines
+            $finalTotal = $completedPassed + $completedFailed + $completedSkipped
             Write-Host ""
-            Write-Host "Total Tests: $totalTests" -ForegroundColor White
-            Write-Host "Passed: $totalPassed" -ForegroundColor Green
-            Write-Host "Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
-            Write-Host "Skipped: $totalSkipped" -ForegroundColor Yellow
-
-            if ($totalPassed + $totalFailed + $totalSkipped -ne $totalTests) {
-                Write-Host "Warning: Test counts don't add up (${totalPassed} + ${totalFailed} + ${totalSkipped} != ${totalTests})" -ForegroundColor Yellow
-            }
+            Write-Host "Total Tests: $finalTotal" -ForegroundColor White
+            Write-Host "Passed: $completedPassed" -ForegroundColor Green
+            Write-Host "Failed: $completedFailed" -ForegroundColor $(if ($completedFailed -gt 0) { "Red" } else { "Green" })
+            Write-Host "Skipped: $completedSkipped" -ForegroundColor Yellow
         } else {
             Write-Host "No test results parsed" -ForegroundColor Yellow
             Write-Host ""
