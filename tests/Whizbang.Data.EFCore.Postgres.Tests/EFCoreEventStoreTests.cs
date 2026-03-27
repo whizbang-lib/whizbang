@@ -1157,14 +1157,13 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     // Act & Assert
-    var action = () => eventStore.GetEventsBetweenPolymorphicAsync(
+    await Assert.That(async () => await eventStore.GetEventsBetweenPolymorphicAsync(
       Guid.NewGuid(),
       afterEventId: null,
       upToEventId: Guid.NewGuid(),
       eventTypes: null!,
       CancellationToken.None
-    );
-    await Assert.That(action).ThrowsExactly<ArgumentNullException>();
+    )).ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
