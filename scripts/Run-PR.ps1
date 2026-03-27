@@ -549,14 +549,16 @@ function Invoke-Prepare {
                 ${script:sonarToken} = (Get-Content $tokenFile -Raw).Trim()
 
                 # Load exclusions
-                $sonarExclusions = ""; $sonarCoverageExclusions = ""
+                # Load ALL sonar.config properties (exclusions, issue ignores, coverage, CPD, etc.)
+                $sonarConfigArgs = @()
                 $exclusionConfig = Join-Path $repoRoot "sonar.config"
                 if (Test-Path $exclusionConfig) {
                     Get-Content $exclusionConfig | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
                         $parts = $_ -split "=", 2
-                        switch ($parts[0].Trim()) {
-                            "sonar.exclusions" { $sonarExclusions = $parts[1].Trim() }
-                            "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
+                        $key = $parts[0].Trim()
+                        $value = $parts[1].Trim()
+                        if ($key -and $value) {
+                            $sonarConfigArgs += "/d:$key=$value"
                         }
                     }
                 }
@@ -564,11 +566,9 @@ function Invoke-Prepare {
                 # Run sonarscanner begin
                 Push-Location $repoRoot
                 $sonarCoverageReportPath = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
-                $currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
                 $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl", "/d:sonar.coverageReportPaths=$sonarCoverageReportPath")
                 # Note: sonar.branch.name requires Developer Edition or above — Community Edition analyzes main branch only
-                if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
-                if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
+                $beginArgs += $sonarConfigArgs
                 $beginResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments ($beginArgs -join " ") -WorkingDir $repoRoot
                 if ($beginResult.ExitCode -eq 0) {
                     $script:sonarStarted = $true
