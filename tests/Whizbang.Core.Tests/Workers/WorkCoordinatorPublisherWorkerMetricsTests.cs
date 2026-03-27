@@ -45,11 +45,11 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var instanceProvider = _createTestInstanceProvider();
     var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
 
-    // Act - Start worker briefly to process one batch
+    // Act - Start worker and wait for the expected log message via signal
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);  // Allow one batch to process
+    await testLogger.WaitForLogContainingAsync("Transport not ready, buffering message", TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -279,24 +279,52 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
 
   private sealed class TestLogger<T> : ILogger<T> {
     private readonly List<LogEntry> _logs = [];
+    private readonly List<(string Substring, TaskCompletionSource Signal)> _waiters = [];
+
+    /// <summary>
+    /// Returns a task that completes when a log message containing the specified substring is written.
+    /// </summary>
+    public Task WaitForLogContainingAsync(string substring, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_logs) {
+        // Check if already logged
+        if (_logs.Exists(l => l.Message.Contains(substring, StringComparison.OrdinalIgnoreCase))) {
+          tcs.TrySetResult();
+          return tcs.Task;
+        }
+        _waiters.Add((substring, tcs));
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
 
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      _logs.Add(new LogEntry {
+      var entry = new LogEntry {
         LogLevel = logLevel,
         Message = formatter(state, exception),
         Exception = exception
-      });
+      };
+      lock (_logs) {
+        _logs.Add(entry);
+        for (int i = _waiters.Count - 1; i >= 0; i--) {
+          if (entry.Message.Contains(_waiters[i].Substring, StringComparison.OrdinalIgnoreCase)) {
+            _waiters[i].Signal.TrySetResult();
+            _waiters.RemoveAt(i);
+          }
+        }
+      }
     }
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-    public List<LogEntry> GetLogsContaining(string text) =>
-      _logs.FindAll(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase));
+    public List<LogEntry> GetLogsContaining(string text) {
+      lock (_logs) { return _logs.FindAll(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase)); }
+    }
 
-    public List<LogEntry> GetLogsAtLevel(LogLevel level) =>
-      _logs.FindAll(l => l.LogLevel == level);
+    public List<LogEntry> GetLogsAtLevel(LogLevel level) {
+      lock (_logs) { return _logs.FindAll(l => l.LogLevel == level); }
+    }
 
     public sealed class LogEntry {
       public LogLevel LogLevel { get; init; }

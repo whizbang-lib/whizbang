@@ -1046,12 +1046,20 @@ public class BatchWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     try {
-      // Act & Assert
+      // Act & Assert - Accept both TaskCanceledException and OperationCanceledException
+      // since cancellation may manifest as either type depending on runtime/instrumentation timing
       using var cts = new CancellationTokenSource();
       cts.Cancel();
-      await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token))
-        .ThrowsException()
-        .WithMessageContaining("canceled");
+      Exception? caught = null;
+      try {
+        await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token);
+      } catch (Exception ex) {
+        caught = ex;
+      }
+      await Assert.That(caught).IsNotNull()
+        .Because("Flushing with a cancelled token should throw");
+      await Assert.That(caught is OperationCanceledException).IsTrue()
+        .Because("Should throw OperationCanceledException (or its subclass TaskCanceledException)");
     } finally {
       await sut.DisposeAsync();
     }
