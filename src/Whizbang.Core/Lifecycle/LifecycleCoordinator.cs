@@ -198,7 +198,7 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
           return false;
         }
         _completed.Add(perspectiveName);
-        if (!_expected.SetEquals(_completed)) {
+        if (!_expected.IsSubsetOf(_completed)) {
           return false;
         }
         _allComplete = true;

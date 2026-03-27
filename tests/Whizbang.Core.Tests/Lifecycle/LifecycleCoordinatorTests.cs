@@ -870,6 +870,39 @@ public class LifecycleCoordinatorTests {
   }
 
   /// <summary>
+  /// RED TEST: Reproduces the JDNext notification bug.
+  ///
+  /// In the PerspectiveWorker, signal replay sends ALL perspective completions from the current
+  /// batch to ALL events in the batch. So an event expecting only [ActiveTenantProjection] also
+  /// receives a signal for [AuditProjection] (from a different event in the same batch).
+  ///
+  /// The bug: PerspectiveWhenAllState.TrySignalAndCheck uses SetEquals(_expected, _completed).
+  /// SetEquals requires EXACT set equality. Since _completed has an extra element (the unrelated
+  /// perspective), SetEquals returns false even though all expected perspectives ARE complete.
+  ///
+  /// The fix: Use _expected.IsSubsetOf(_completed) instead of _expected.SetEquals(_completed).
+  /// </summary>
+  [Test]
+  public async Task SignalPerspectiveComplete_ExtraUnrelatedSignal_DoesNotPreventCompletionAsync() {
+    // Arrange — event expects only perspective "ActiveTenantProjection"
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "extra-signal-bug"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["ActiveTenantProjection"]);
+
+    // Act — signal from batch replay: AuditProjection (unrelated) + ActiveTenantProjection (expected)
+    coordinator.SignalPerspectiveComplete(eventId, "AuditProjection");          // unrelated
+    coordinator.SignalPerspectiveComplete(eventId, "ActiveTenantProjection");   // expected
+
+    // Assert — all EXPECTED perspectives are complete, extra signals should be ignored
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue()
+      .Because("Extra signals from unrelated perspectives in the same batch must not " +
+               "prevent WhenAll completion. This is the root cause of JDNext notification " +
+               "hooks never firing at PostAllPerspectivesAsync.");
+  }
+
+  /// <summary>
   /// When no expectations are registered for an event, AreAllPerspectivesComplete should return true.
   /// PostAllPerspectives/PostLifecycle are terminal stages that must always fire — the WhenAll gate
   /// controls timing (wait for all to complete), not whether these stages fire.
