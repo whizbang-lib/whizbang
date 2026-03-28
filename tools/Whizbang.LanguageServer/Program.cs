@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Server;
-using Whizbang.LanguageServer.Debug;
+using Whizbang.LanguageServer.Debugging;
 using Whizbang.LanguageServer.Handlers;
 using Whizbang.LanguageServer.Services;
 

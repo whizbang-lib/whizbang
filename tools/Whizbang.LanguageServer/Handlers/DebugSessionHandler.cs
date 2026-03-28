@@ -1,4 +1,4 @@
-using Whizbang.LanguageServer.Debug;
+using Whizbang.LanguageServer.Debugging;
 
 namespace Whizbang.LanguageServer.Handlers;
 
