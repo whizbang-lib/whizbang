@@ -20,6 +20,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Extract perspective info or warning for models missing StreamId
     var perspectiveResults = context.SyntaxProvider.CreateSyntaxProvider(

@@ -6,7 +6,9 @@ namespace Whizbang.Core.SystemEvents.Audit;
 /// Simple key-value entry for EF Core JSONB compatibility (KeyValuePair lacks parameterless ctor).
 /// </summary>
 public class ScopeEntry {
+  /// <summary>The scope entry key (e.g., "TenantId", "UserId").</summary>
   public string Key { get; set; } = string.Empty;
+  /// <summary>The scope entry value, or null if not set.</summary>
   public string? Value { get; set; }
 }
 
@@ -16,26 +18,37 @@ public class ScopeEntry {
 /// </summary>
 /// <docs>fundamentals/events/system-events#audit-model</docs>
 public class AuditEventModel {
+  /// <summary>Unique identifier for this audit record.</summary>
   [StreamId]
   public Guid Id { get; set; }
+  /// <summary>When this audit record was created.</summary>
   public DateTimeOffset CreatedAt { get; set; }
+  /// <summary>When this audit record was last updated.</summary>
   public DateTimeOffset UpdatedAt { get; set; }
 
-  // Audit fields
+  /// <summary>The ID of the original event that was audited.</summary>
   public Guid OriginalEventId { get; set; }
+  /// <summary>Fully-qualified type name of the original event.</summary>
   public string EventType { get; set; } = string.Empty;
+  /// <summary>Human-readable name derived from the event type.</summary>
   public string EventName { get; set; } = string.Empty;
+  /// <summary>Human-readable description derived from the event namespace/domain.</summary>
   public string EventDescription { get; set; } = string.Empty;
+  /// <summary>Version of the event schema.</summary>
   public string EventVersion { get; set; } = "1.0";
+  /// <summary>Stream ID of the original event.</summary>
   public string EventStreamId { get; set; } = string.Empty;
+  /// <summary>Position of the original event within its stream.</summary>
   public long EventStreamPosition { get; set; }
+  /// <summary>Timestamp when the original event occurred.</summary>
   public DateTimeOffset OccurredAt { get; set; }
 
-  // Snapshot of the audited event's scope context (TenantId, UserId, name, email, etc.)
+  /// <summary>Snapshot of the audited event's scope context (TenantId, UserId, name, email, etc.).</summary>
   public List<ScopeEntry>? OriginalScope { get; set; }
 
-  // Correlation/causation for distributed tracing
+  /// <summary>Correlation ID for distributed tracing.</summary>
   public string? CorrelationId { get; set; }
+  /// <summary>Causation ID for distributed tracing.</summary>
   public string? CausationId { get; set; }
 }
 

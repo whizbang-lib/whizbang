@@ -3,6 +3,9 @@
 
 namespace Whizbang.Core.Diagnostics;
 
+/// <summary>
+/// Auto-generated banner data containing ASCII art and color information for the Whizbang startup banner.
+/// </summary>
 public static partial class WhizbangBanner {
   private const int BANNER_ROWS = 9;
 

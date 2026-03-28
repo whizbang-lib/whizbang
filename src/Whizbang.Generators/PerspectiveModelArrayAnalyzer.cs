@@ -31,9 +31,11 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
                    "EF Core's snapshot mechanism uses IList.Add() which fails on arrays. Use List<T> for collection properties."
   );
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
       [ArrayPropertyInPerspectiveModel];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();

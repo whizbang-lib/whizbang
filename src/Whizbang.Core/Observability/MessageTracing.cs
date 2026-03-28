@@ -89,6 +89,10 @@ public readonly record struct HopContext(
   long? SequenceNumber = null,
   TimeSpan? Duration = null);
 
+/// <summary>
+/// Static helper for recording message hops with automatic caller information capture.
+/// Uses C# compiler attributes to capture call site information at zero runtime cost.
+/// </summary>
 public static class MessageTracing {
   /// <summary>
   /// Records a message hop with automatic caller information capture.

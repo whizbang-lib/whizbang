@@ -71,8 +71,10 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     }
   }
 
+  /// <inheritdoc/>
   public string Name => "Serial";
 
+  /// <inheritdoc/>
   public async ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
     Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
@@ -104,6 +106,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     return await new ValueTask<TResult>(source, token);
   }
 
+  /// <inheritdoc/>
   public Task StartAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state == State.Running) {
@@ -122,6 +125,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     return Task.CompletedTask;
   }
 
+  /// <inheritdoc/>
   public async Task StopAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state == State.Stopped) {
@@ -154,6 +158,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     }
   }
 
+  /// <inheritdoc/>
   public async Task DrainAsync(CancellationToken ct = default) {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.DrainAsync");
 
@@ -233,16 +238,23 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     }
   }
 
+  /// <summary>
+  /// Represents a unit of work queued for serial execution.
+  /// </summary>
   private readonly struct WorkItem(
     Func<object?, ValueTask> executeAsync,
     object? state,
     CancellationToken cancellationToken
     ) {
+    /// <summary>The delegate that executes the handler with pooled state.</summary>
     public readonly Func<object?, ValueTask> ExecuteAsync = executeAsync;
+    /// <summary>The pooled execution state containing the handler, envelope, and context.</summary>
     public readonly object? State = state;
+    /// <summary>The cancellation token associated with this work item.</summary>
     public readonly CancellationToken CancellationToken = cancellationToken;
   }
 
+  /// <summary>Stops the executor and disposes the worker cancellation token source.</summary>
   public async ValueTask DisposeAsync() {
     if (_disposed) {
       return;

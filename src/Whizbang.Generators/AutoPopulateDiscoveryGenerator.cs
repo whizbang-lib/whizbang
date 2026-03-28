@@ -29,6 +29,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private const string POPULATE_KIND_SERVICE = "Service";
   private const string POPULATE_KIND_IDENTIFIER = "Identifier";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with auto-populate attributes on properties
     var populatedProperties = context.SyntaxProvider.CreateSyntaxProvider(

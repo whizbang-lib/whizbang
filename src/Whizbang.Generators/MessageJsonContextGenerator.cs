@@ -80,6 +80,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PRAGMA_DISABLE_CS0169 = "#pragma warning disable CS0169  // Field is never used";
   private const string PRAGMA_RESTORE_CS0169 = "#pragma warning restore CS0169";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
     // Predicate includes:
@@ -808,6 +809,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Override base GetTypeInfo(Type) for compatibility
+    sb.AppendLine("/// <inheritdoc/>");
     sb.AppendLine("public override JsonTypeInfo? GetTypeInfo(Type type) {");
     sb.AppendLine("  // When called directly (not in resolver chain), Options might be null");
     sb.AppendLine("  if (Options == null) return null;");

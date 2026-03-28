@@ -85,6 +85,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching

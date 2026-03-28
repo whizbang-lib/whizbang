@@ -678,7 +678,7 @@ function Invoke-Prepare {
     }
 
     # Step 5: Unit tests (with coverage collection)
-    $coveragePct = $null
+    $script:coveragePct = $null
     if ($SkipUnitTests) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests... ⏭️ Skipped $(Format-StepTiming 'Unit Tests')" -ForegroundColor DarkGray
@@ -687,9 +687,9 @@ function Invoke-Prepare {
         $unitTestLogFile = Join-Path $originalRepoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
-            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps
-            $exitCode = $LASTEXITCODE
+            $testArgs = "-Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile `"$unitTestLogFile`" -LogMode All"
+            $testResult = Invoke-ProcessWithProgressAndOutput -FilePath "pwsh" -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$testScript`" $testArgs" -WorkingDir $repoRoot
+            $exitCode = $testResult.ExitCode
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
             }
@@ -707,9 +707,9 @@ function Invoke-Prepare {
         $integrationTestLogFile = Join-Path $originalRepoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
-            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps
-            $exitCode = $LASTEXITCODE
+            $testArgs = "-Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile `"$integrationTestLogFile`" -LogMode All"
+            $testResult = Invoke-ProcessWithProgressAndOutput -FilePath "pwsh" -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$testScript`" $testArgs" -WorkingDir $repoRoot
+            $exitCode = $testResult.ExitCode
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
             }
@@ -871,16 +871,19 @@ function Invoke-Prepare {
         $script:stepNumber++
         $covTimingStr = Format-StepTiming -StepName "Coverage Threshold"
         Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
-        if ($null -ne $coveragePct) {
-            if ($coveragePct -lt $CoverageThreshold) {
-                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
-                $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
+        if ($null -ne $script:coveragePct) {
+            if ($script:coveragePct -lt $CoverageThreshold) {
+                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ $($script:coveragePct)% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
+                $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage $($script:coveragePct)% below threshold ${CoverageThreshold}%" }
                 $script:overallPassed = $false
             }
             else {
-                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
-                $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
+                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ $($script:coveragePct)% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
+                $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage $($script:coveragePct)%" }
             }
+        } else {
+            Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped (no coverage data) $covTimingStr" -ForegroundColor DarkGray
+            $script:steps += @{ name = "Coverage Threshold"; status = "skipped"; duration_s = 0 }
         }
     }
 
@@ -904,7 +907,7 @@ function Invoke-Prepare {
         }
     }
 
-    return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $coveragePct }
+    return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $script:coveragePct }
 }
 
 # ============================================================================
