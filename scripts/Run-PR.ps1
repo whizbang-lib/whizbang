@@ -140,45 +140,25 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $originalRepoRoot = $repoRoot  # Preserve for metrics/history that must survive cleanup
 $script:scanFolder = $null
 
-# Create temp scan folder early (before header) so path is available for display
-if (-not $DirectScan -and -not $SkipSonar) {
-    $currentBranchForScan = git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null
-    $script:scanFolder = New-SonarScanFolder -RepoRoot $repoRoot -BranchName $currentBranchForScan
-    $repoRoot = $script:scanFolder
-}
-
-# Register CTRL+C handler to clean up scan folder if process is interrupted
-if ($script:scanFolder -and -not $KeepScanFolder) {
-    $scanFolderPath = $script:scanFolder
-    $script:ctrlCCleanup = {
-        param($sender, $e)
-        if (Test-Path $scanFolderPath) {
-            Write-Host "`n  Cleaning up scan folder (interrupted)..." -ForegroundColor DarkGray
-            Remove-SonarScanFolder -ScanFolder $scanFolderPath
-        }
-    }
-    [Console]::add_CancelKeyPress($script:ctrlCCleanup)
-}
-
 # Handle cleanup flags before anything else
 if ($CleanAll) {
     Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
-    Invoke-CleanAll -RepoRoot $repoRoot
+    Invoke-CleanAll -RepoRoot $originalRepoRoot
     Write-Host ""
 } elseif ($CleanLogs -or $CleanMetrics) {
     if ($CleanLogs) {
         Write-Host "Cleaning logs and reports..." -ForegroundColor Yellow
-        Invoke-CleanLogs -RepoRoot $repoRoot
+        Invoke-CleanLogs -RepoRoot $originalRepoRoot
     }
     if ($CleanMetrics) {
         Write-Host "Cleaning metrics..." -ForegroundColor Yellow
-        Invoke-CleanMetrics -RepoRoot $repoRoot
+        Invoke-CleanMetrics -RepoRoot $originalRepoRoot
     }
     Write-Host ""
 }
 
 # Auto-generate a timestamped log file for this run (captures ALL output including child scripts)
-$logsDir = Join-Path $repoRoot "logs"
+$logsDir = Join-Path $originalRepoRoot "logs"
 if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
 $runTimestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $autoLogFile = Join-Path $logsDir "pr-run-${runTimestamp}.log"
@@ -196,23 +176,24 @@ if ($LogFile) {
 # Track timing
 $startTime = [DateTime]::UtcNow
 
-# Get current branch
+# Get current branch (from original repo, before scan folder replaces $repoRoot)
 $currentBranch = (git -C $repoRoot rev-parse --abbrev-ref HEAD 2>$null).Trim()
 
 # Show estimation
-$historyFile = Join-Path $repoRoot "logs" "pr-checks.jsonl"
+$historyFile = Join-Path $originalRepoRoot "logs" "pr-checks.jsonl"
 $estimate = Get-RunEstimate -FilePath $historyFile
 $estimateStr = if ($estimate) { $estimate.Formatted } else { "" }
 
-# Branded header (suppressed with -NoHeader)
+# Branded header (suppressed with -NoHeader) — show immediately so user sees output
 if (-not $NoHeader) {
     $headerParams = @{ Action = $Action; Mode = $Mode; Branch = $currentBranch }
     if ($CoverageThreshold -ne 80) { $headerParams["CoverageThreshold"] = "${CoverageThreshold}%" }
     Write-WhizbangHeader -ScriptName "PR Runner" -Params $headerParams -Estimate $estimateStr
     Write-AiLine "Lines marked with 🤖 require AI attention. Filter with: grep '🤖'" -ForegroundColor DarkGray
     Write-AiLine "Log: $effectiveLogFile" -ForegroundColor DarkGray
-    if ($script:scanFolder) {
-        Write-Host "Scan folder: $($script:scanFolder)" -ForegroundColor DarkGray
+    if (-not $DirectScan -and -not $SkipSonar) {
+        $expectedScanFolder = Join-Path ([System.IO.Path]::GetTempPath()) "whizbang-sonar-scan-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Write-Host "Scan folder: $expectedScanFolder" -ForegroundColor DarkGray
     }
     Write-Host ""
 }
@@ -259,8 +240,8 @@ function Invoke-Prepare {
     $script:stepNumber = 0
     $script:failureTypes = @()
 
-    # Total steps always includes all 7 steps (skipped ones still show in output)
-    $script:totalSteps = 9  # Sonar Container, Format, Sonar Ready, Build, Unit Tests, Integration, Coverage Report, Sonar Analysis, Coverage Threshold
+    # Total steps always includes all steps (skipped ones still show in output)
+    $script:totalSteps = 10  # Scan Folder, Sonar Container, Format, Sonar Ready, Build, Unit Tests, Integration, Coverage Report, Sonar Analysis, Coverage Threshold
 
     # Load per-step estimates from history (full stats: avg, stddev, p85)
     $stepHistoryFile = Join-Path $originalRepoRoot "logs" "pr-steps.jsonl"
@@ -413,15 +394,29 @@ function Invoke-Prepare {
         return Invoke-ProcessWithProgress -FilePath "dotnet" -Arguments $Arguments -WorkingDir $WorkingDir
     }
 
+    # Append captured process output to the run log file (not shown on console)
+    function Write-ToRunLog {
+        param([string]$Label, [string]$Content)
+        if ($Content -and $effectiveLogFile) {
+            $separator = "`n--- [$Label] $(Get-Date -Format 'HH:mm:ss') ---`n"
+            Add-Content -Path $effectiveLogFile -Value "$separator$Content" -ErrorAction SilentlyContinue
+        }
+    }
+
     # Run any process as background with progress bar polling; returns exit code
     function Invoke-ProcessWithProgress {
         param([string]$FilePath, [string]$Arguments, [string]$WorkingDir)
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WorkingDirectory $WorkingDir -NoNewWindow -PassThru -RedirectStandardOutput ([System.IO.Path]::GetTempFileName()) -RedirectStandardError ([System.IO.Path]::GetTempFileName())
+        $outFile = [System.IO.Path]::GetTempFileName()
+        $errFile = [System.IO.Path]::GetTempFileName()
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WorkingDirectory $WorkingDir -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
         while (-not $proc.HasExited) {
             Update-StepProgress
             Start-Sleep -Milliseconds 2000
         }
         $proc.WaitForExit()
+        Write-ToRunLog -Label "$FilePath $Arguments" -Content (Get-Content $outFile -Raw -ErrorAction SilentlyContinue)
+        Write-ToRunLog -Label "$FilePath $Arguments (stderr)" -Content (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+        Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
         return $proc.ExitCode
     }
 
@@ -436,9 +431,13 @@ function Invoke-Prepare {
             Start-Sleep -Milliseconds 2000
         }
         $proc.WaitForExit()
-        $output = (Get-Content $outFile -Raw) + (Get-Content $errFile -Raw)
+        $output = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue)
+        $errOutput = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+        Write-ToRunLog -Label "$FilePath $Arguments" -Content $output
+        Write-ToRunLog -Label "$FilePath $Arguments (stderr)" -Content $errOutput
+        $combined = "$output$errOutput"
         Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
-        return @{ ExitCode = $proc.ExitCode; Output = $output }
+        return @{ ExitCode = $proc.ExitCode; Output = $combined }
     }
 
     Write-Host ""
@@ -455,7 +454,22 @@ function Invoke-Prepare {
     $script:dockerOk = $false
     $script:sonarContainerStarted = $false
 
-    # Step 1: Start SonarQube container (non-blocking — boots while format runs)
+    # Step 1: Create scan folder for SonarQube Community Edition (does not support branch analysis)
+    if ($DirectScan -or $SkipSonar) {
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Create Scan Folder... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Create Scan Folder"; status = "skipped"; duration_s = 0 }
+    } else {
+        Run-Step -Name "Create Scan Folder" -ShowOutput -Action {
+            $script:scanFolder = New-SonarScanFolder -RepoRoot $repoRoot -BranchName $currentBranch
+            $script:repoRoot = $script:scanFolder
+            Write-Host "    Scan folder: $($script:scanFolder)" -ForegroundColor DarkGray
+
+            return @{ ExitCode = 0; Details = $script:scanFolder }
+        }
+    }
+
+    # Step 2: Start SonarQube container (non-blocking — boots while format runs)
     if ($SkipSonar) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Start SonarQube Container... ⏭️ Skipped" -ForegroundColor DarkGray
@@ -491,10 +505,10 @@ function Invoke-Prepare {
 
             if ($exitCode -ne 0) {
                 # Extract formatting violations: lines matching "path(line,col): severity ruleId: message"
-                $violations = $formatOutput -split "`n" |
+                $violations = @($formatOutput -split "`n" |
                     Where-Object { $_ -match ":\s*(warning|error)\s+\w+\s*:" -or $_ -match "Formatted code file" } |
                     ForEach-Object { $_.Trim() } |
-                    Where-Object { $_ }
+                    Where-Object { $_ })
 
                 if ($violations.Count -gt 0) {
                     Write-AiLine "    Formatting issues:" -ForegroundColor Yellow
@@ -506,7 +520,7 @@ function Invoke-Prepare {
                     }
                 } else {
                     # Fallback: show which files would be changed
-                    $changedFiles = $formatOutput -split "`n" | Where-Object { $_ -match "\.cs" } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -First 20
+                    $changedFiles = @($formatOutput -split "`n" | Where-Object { $_ -match "\.cs" } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -First 20)
                     if ($changedFiles.Count -gt 0) {
                         Write-AiLine "    Files with formatting issues:" -ForegroundColor Yellow
                         foreach ($f in $changedFiles) {
@@ -624,8 +638,31 @@ function Invoke-Prepare {
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Build... ⏭️ Skipped $(Format-StepTiming 'Build')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Build"; status = "skipped"; duration_s = 0 }
     } else {
-        $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
-            $exitCode = Invoke-DotnetWithProgress -Arguments "build --verbosity minimal" -WorkingDir $repoRoot
+        $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -ShowOutput -Action {
+            $buildResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet" -Arguments "build --verbosity minimal" -WorkingDir $repoRoot
+            $exitCode = $buildResult.ExitCode
+            if ($exitCode -ne 0) {
+                # Extract error lines from build output
+                $errors = @($buildResult.Output -split "`n" |
+                    Where-Object { $_ -match ":\s*error\s+" } |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ })
+                if ($errors.Count -gt 0) {
+                    Write-AiLine "    Build errors:" -ForegroundColor Red
+                    foreach ($e in $errors | Select-Object -First 30) {
+                        Write-AiLine "      $e" -ForegroundColor Gray
+                    }
+                    if ($errors.Count -gt 30) {
+                        Write-Host "      ... and $($errors.Count - 30) more" -ForegroundColor DarkGray
+                    }
+                } else {
+                    # No structured errors found — show last lines of output
+                    $tail = @($buildResult.Output -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 20)
+                    foreach ($line in $tail) {
+                        Write-Host "      $($line.Trim())" -ForegroundColor Gray
+                    }
+                }
+            }
             @{ ExitCode = $exitCode; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
@@ -677,20 +714,28 @@ function Invoke-Prepare {
     # MUST run before SonarQube Analysis so sonarscanner end can pick up the coverage data
     if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
         $continue = Run-Step -Name "Coverage Report" -FailureType "BuildFailure" -Action {
-            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+            # Coverage files are in the original repo (tests run there, not in the scan folder)
+            $coberturaFiles = @(Get-ChildItem -Path (Join-Path $originalRepoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" })
 
             if ($coberturaFiles.Count -gt 0) {
-                $reportDir = Join-Path $repoRoot "coverage-report"
-                $sonarDir = Join-Path $repoRoot "coverage" "sonarqube"
+                $reportDir = Join-Path $originalRepoRoot "coverage-report"
+                $sonarDir = Join-Path $originalRepoRoot "coverage" "sonarqube"
                 $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
                 $fileFilters = "-*.g.cs;-**/.whizbang-generated/*"
 
                 # Generate HTML + TextSummary + JsonSummary for human consumption
-                Invoke-ProcessWithProgress -FilePath "reportgenerator" -Arguments "`"-reports:$reports`" `"-targetdir:$reportDir`" `"-reporttypes:Html;TextSummary;JsonSummary`" `"-filefilters:$fileFilters`"" -WorkingDir $repoRoot | Out-Null
+                Invoke-ProcessWithProgress -FilePath "reportgenerator" -Arguments "`"-reports:$reports`" `"-targetdir:$reportDir`" `"-reporttypes:Html;TextSummary;JsonSummary`" `"-filefilters:$fileFilters`"" -WorkingDir $originalRepoRoot | Out-Null
 
                 # Generate SonarQube format for local SonarQube ingestion (matches CI pipeline)
-                Invoke-ProcessWithProgress -FilePath "reportgenerator" -Arguments "`"-reports:$reports`" `"-targetdir:$sonarDir`" `"-reporttypes:SonarQube`" `"-filefilters:$fileFilters`"" -WorkingDir $repoRoot | Out-Null
+                Invoke-ProcessWithProgress -FilePath "reportgenerator" -Arguments "`"-reports:$reports`" `"-targetdir:$sonarDir`" `"-reporttypes:SonarQube`" `"-filefilters:$fileFilters`"" -WorkingDir $originalRepoRoot | Out-Null
+
+                # Copy SonarQube coverage report to scan folder so sonarscanner end can pick it up
+                if ($script:scanFolder -and (Test-Path $sonarDir)) {
+                    $scanSonarDir = Join-Path $script:scanFolder "coverage" "sonarqube"
+                    New-Item -ItemType Directory -Path $scanSonarDir -Force | Out-Null
+                    Copy-Item -Path (Join-Path $sonarDir "*") -Destination $scanSonarDir -Force
+                }
 
                 $summaryFile = Join-Path $reportDir "Summary.txt"
                 if (Test-Path $summaryFile) {
@@ -767,7 +812,7 @@ function Invoke-Prepare {
 
                         # Top issues with file + line numbers
                         $issues = Invoke-RestMethod -Uri "$sonarUrl/api/issues/search?projectKeys=$sonarProjectKey&ps=20&statuses=OPEN,CONFIRMED&s=SEVERITY&asc=false" -Headers $authHeader -ErrorAction Stop
-                        if ($issues.issues.Count -gt 0) {
+                        if (@($issues.issues).Count -gt 0) {
                             Write-Host ""
                             Write-AiLine "    Top Issues:" -ForegroundColor Yellow
                             foreach ($issue in $issues.issues | Select-Object -First 15) {
@@ -1005,7 +1050,7 @@ function Invoke-Monitor {
             continue
         }
 
-        $checks = $prData.statusCheckRollup
+        $checks = @($prData.statusCheckRollup)
 
         # Build status table
         $tableRows = @()
@@ -1237,12 +1282,7 @@ finally {
         }
     }
 
-    # Unregister CTRL+C handler (avoid double cleanup)
-    if ($script:ctrlCCleanup) {
-        try { [Console]::remove_CancelKeyPress($script:ctrlCCleanup) } catch { }
-    }
-
-    # Clean up scan folder (check existence — CTRL+C handler may have already cleaned it)
+    # Clean up scan folder
     if ($script:scanFolder -and -not $KeepScanFolder -and (Test-Path $script:scanFolder)) {
         Write-Host "  Cleaning up scan folder..." -ForegroundColor DarkGray
         Remove-SonarScanFolder -ScanFolder $script:scanFolder
