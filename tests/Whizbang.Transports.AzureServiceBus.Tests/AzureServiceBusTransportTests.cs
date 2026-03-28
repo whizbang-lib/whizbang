@@ -26,7 +26,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
 
   [Test]
-  public async Task Capabilities_ReturnsPublishSubscribeReliableAndOrderedAsync() {
+  public async Task Capabilities_DefaultOptions_ReturnsPublishSubscribeReliableWithoutOrderedAsync() {
     // Arrange
     var jsonOptions = new JsonSerializerOptions {
       TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -40,9 +40,35 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     var capabilities = transport.Capabilities;
 
-    // Assert - Azure Service Bus supports PublishSubscribe, Reliable, and Ordered
+    // Assert - Without EnableSessions, Ordered is NOT claimed
     await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
     await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsFalse()
+      .Because("Ordered requires EnableSessions = true");
+  }
+
+  [Test]
+  public async Task Capabilities_WithEnableSessions_ReturnsOrderedAsync() {
+    // Arrange
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = new AzureServiceBusTransport(
+      _fixture.Client,
+      jsonOptions,
+      options
+    );
+
+    // Act
+    var capabilities = transport.Capabilities;
+
+    // Assert - With EnableSessions, Ordered IS claimed
+    await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
     await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsTrue();
   }
 

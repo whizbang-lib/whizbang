@@ -118,12 +118,14 @@ public class AzureServiceBusTransportUnitTests {
   // HELPERS
   // ========================================
 
-  private static AzureServiceBusTransport _createTransport(TestableAdminClient adminClient) {
+  private static AzureServiceBusTransport _createTransport(
+    TestableAdminClient? adminClient = null,
+    AzureServiceBusOptions? options = null) {
     var client = new ServiceBusClient(EMULATOR_CONNECTION_STRING);
     var jsonOptions = new JsonSerializerOptions {
       TypeInfoResolver = new DefaultJsonTypeInfoResolver()
     };
-    var options = new AzureServiceBusOptions {
+    options ??= new AzureServiceBusOptions {
       AutoProvisionInfrastructure = true
     };
     var logger = LoggerFactory
@@ -152,6 +154,64 @@ public class AzureServiceBusTransportUnitTests {
         }
       ]
     };
+  }
+
+  // ========================================
+  // SESSION OPTIONS TESTS
+  // ========================================
+
+  [Test]
+  public async Task EnableSessions_DefaultsToFalseAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.EnableSessions).IsFalse()
+      .Because("Sessions must be opt-in — existing deployments without sessions must not break");
+  }
+
+  [Test]
+  public async Task MaxConcurrentSessions_DefaultsTo64Async() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(64)
+      .Because("Default should be reasonably high for a single process handling many streams");
+  }
+
+  [Test]
+  public async Task Capabilities_WithoutEnableSessions_ExcludesOrderedAsync() {
+    // Arrange
+    var options = new AzureServiceBusOptions { EnableSessions = false };
+    var transport = _createTransport(options: options);
+
+    // Act
+    var capabilities = transport.Capabilities;
+
+    // Assert
+    await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsFalse()
+      .Because("Ordered should only be claimed when sessions are enabled — otherwise it's a lie");
+    await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
+  }
+
+  [Test]
+  public async Task Capabilities_WithEnableSessions_IncludesOrderedAsync() {
+    // Arrange
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = _createTransport(options: options);
+
+    // Act
+    var capabilities = transport.Capabilities;
+
+    // Assert
+    await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsTrue()
+      .Because("Ordered should be claimed when sessions are enabled");
+    await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
   }
 
   // ========================================
@@ -190,6 +250,18 @@ public class AzureServiceBusTransportUnitTests {
     }
 
     public Task CreateSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 

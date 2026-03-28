@@ -272,6 +272,18 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
 
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
     // Rule management - not needed for provisioner tests
     public IAsyncEnumerable<RuleProperties> GetRulesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
