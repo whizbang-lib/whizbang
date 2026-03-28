@@ -10,6 +10,14 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
+  <!-- Regenerate banner data if the generated file is missing (requires Python 3 + Pillow) -->
+  <Target Name="GenerateBannerData" BeforeTargets="CoreCompile"
+          Condition="!Exists('$(MSBuildProjectDirectory)/Diagnostics/WhizbangBanner.Generated.cs')">
+    <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)/../../scripts/Build-Logo.ps1&quot;"
+          WorkingDirectory="$(MSBuildProjectDirectory)/../.."
+          IgnoreExitCode="true"
+          StandardOutputImportance="Low" />
+  </Target>
   <!-- Include message registry in NuGet package - added dynamically after build generates it -->
   <Target Name="IncludeMessageRegistryInPack" BeforeTargets="GenerateNuspec" DependsOnTargets="WhizbangExtractMessageRegistry">
     <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/.whizbang/message-registry.json')">
