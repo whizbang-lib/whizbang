@@ -460,7 +460,7 @@ function Invoke-Prepare {
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Create Scan Folder... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Create Scan Folder"; status = "skipped"; duration_s = 0 }
     } else {
-        Run-Step -Name "Create Scan Folder" -ShowOutput -Action {
+        $null = Run-Step -Name "Create Scan Folder" -ShowOutput -Action {
             $script:scanFolder = New-SonarScanFolder -RepoRoot $repoRoot -BranchName $currentBranch
             $script:repoRoot = $script:scanFolder
             Write-Host "    Scan folder: $($script:scanFolder)" -ForegroundColor DarkGray
@@ -475,7 +475,7 @@ function Invoke-Prepare {
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Start SonarQube Container... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Start SonarQube Container"; status = "skipped"; duration_s = 0 }
     } else {
-        Run-Step -Name "Start SonarQube Container" -Action {
+        $null = Run-Step -Name "Start SonarQube Container" -Action {
             if ($script:dockerAvailable) {
                 $dockerRunning = docker info 2>&1; $script:dockerOk = $LASTEXITCODE -eq 0
                 if ($script:dockerOk) {
@@ -600,7 +600,7 @@ function Invoke-Prepare {
                         $key = $parts[0].Trim()
                         $value = $parts[1].Trim()
                         if ($key -and $value) {
-                            $sonarConfigArgs += "/d:$key=$value"
+                            $sonarConfigArgs += "/d:${key}=${value}"
                         }
                     }
                 }
@@ -615,7 +615,16 @@ function Invoke-Prepare {
                     if ($directBranch) { $beginArgs += "/d:sonar.branch.name=$directBranch" }
                 }
                 $beginArgs += $sonarConfigArgs
-                $beginResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments ($beginArgs -join " ") -WorkingDir $repoRoot
+                # Join args with space, quoting values that contain commas or wildcards
+                $joinedArgs = ($beginArgs | ForEach-Object {
+                    if ($_ -match '[,\*]' -and $_ -match '^/d:') {
+                        $eqIdx = $_.IndexOf('=')
+                        if ($eqIdx -gt 0) {
+                            $_.Substring(0, $eqIdx + 1) + '"' + $_.Substring($eqIdx + 1) + '"'
+                        } else { $_ }
+                    } else { $_ }
+                }) -join " "
+                $beginResult = Invoke-ProcessWithProgressAndOutput -FilePath "dotnet-sonarscanner" -Arguments $joinedArgs -WorkingDir $repoRoot
                 if ($beginResult.ExitCode -eq 0) {
                     $script:sonarStarted = $true
                 } else {
