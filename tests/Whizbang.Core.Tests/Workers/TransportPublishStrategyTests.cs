@@ -845,8 +845,10 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
-    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp");
+    // Same StreamId → same batch group (stream-aware grouping)
+    var sharedStreamId = Guid.CreateVersion7();
+    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
+    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp", sharedStreamId);
 
     // Act
     var results = await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
@@ -942,8 +944,9 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
-    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp");
+    var sharedStreamId = Guid.CreateVersion7();
+    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
+    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp", sharedStreamId);
 
     // Act
     await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
@@ -978,8 +981,9 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
-    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp");
+    var sharedStreamId = Guid.CreateVersion7();
+    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
+    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp", sharedStreamId);
 
     transport.PublishBatchHandler = (items, _) => {
       var results = new List<BulkPublishItemResult> {
@@ -1022,7 +1026,7 @@ public class TransportPublishStrategyTests {
   }
 
   // Helper to create event OutboxWork
-  private static OutboxWork _createEventOutboxWork(string? destination, string messageType) {
+  private static OutboxWork _createEventOutboxWork(string? destination, string messageType, Guid? streamId = null) {
     var messageId = Guid.CreateVersion7();
     return new OutboxWork {
       MessageId = messageId,
@@ -1030,7 +1034,7 @@ public class TransportPublishStrategyTests {
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core",
       MessageType = messageType,
-      StreamId = Guid.CreateVersion7(),
+      StreamId = streamId ?? Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
