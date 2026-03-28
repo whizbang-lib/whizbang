@@ -84,7 +84,7 @@ public sealed class SymbolResolver {
   /// </summary>
   public SymbolInfo? Resolve(string symbolName) {
     // 1. Check registry (exact match first, then EndsWith for partial names)
-    var registryEntry = FindRegistryEntry(symbolName);
+    var registryEntry = _findRegistryEntry(symbolName);
 
     // 2. Check VSCode feed (exact match on key)
     _vscodeFeedData.TryGetValue(
@@ -112,12 +112,12 @@ public sealed class SymbolResolver {
 
     // Build merged result
     var name = registryEntry?.Type ?? symbolName;
-    var kind = DetermineKind(registryEntry, feedEntry);
-    var docsUrl = BuildDocsUrl(registryEntry, feedEntry, docsEntry);
+    var kind = _determineKind(registryEntry, feedEntry);
+    var docsUrl = _buildDocsUrl(registryEntry, feedEntry, docsEntry);
     var docsTitle = feedEntry?.Title;
-    var sourceFile = NonEmpty(registryEntry?.FilePath) ?? feedEntry?.File ?? docsEntry?.File;
-    var sourceLine = NonZero(registryEntry?.LineNumber) ?? NonZero(feedEntry?.Line) ?? docsEntry?.Line;
-    var testCount = NonZero(registryEntry?.TestCount) ?? feedEntry?.Tests?.Count ?? 0;
+    var sourceFile = _nonEmpty(registryEntry?.FilePath) ?? feedEntry?.File ?? docsEntry?.File;
+    var sourceLine = _nonZero(registryEntry?.LineNumber) ?? _nonZero(feedEntry?.Line) ?? docsEntry?.Line;
+    var testCount = _nonZero(registryEntry?.TestCount) ?? feedEntry?.Tests?.Count ?? 0;
 
     return new SymbolInfo {
       Name = name,
@@ -156,7 +156,7 @@ public sealed class SymbolResolver {
     return [.. symbols];
   }
 
-  private MessageRegistryEntry? FindRegistryEntry(string symbolName) {
+  private MessageRegistryEntry? _findRegistryEntry(string symbolName) {
     // Exact match first
     foreach (var entry in _registryData) {
       if (string.Equals(entry.Type, symbolName, StringComparison.Ordinal)) {
@@ -174,7 +174,7 @@ public sealed class SymbolResolver {
     return null;
   }
 
-  private static string DetermineKind(MessageRegistryEntry? registry, VscodeFeedEntry? feed) {
+  private static string _determineKind(MessageRegistryEntry? registry, VscodeFeedEntry? feed) {
     if (registry is not null) {
       if (registry.IsCommand) {
         return "command";
@@ -191,7 +191,7 @@ public sealed class SymbolResolver {
     return feed is not null ? "type" : "type";
   }
 
-  private string? BuildDocsUrl(
+  private string? _buildDocsUrl(
       MessageRegistryEntry? registry,
       VscodeFeedEntry? feed,
       CodeDocsEntry? docs) {
@@ -207,11 +207,11 @@ public sealed class SymbolResolver {
     return registry?.DocsUrl;
   }
 
-  private static int? NonZero(int? value) {
+  private static int? _nonZero(int? value) {
     return value is null or 0 ? null : value;
   }
 
-  private static string? NonEmpty(string? value) {
+  private static string? _nonEmpty(string? value) {
     return string.IsNullOrEmpty(value) ? null : value;
   }
 }

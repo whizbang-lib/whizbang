@@ -27,7 +27,7 @@ public sealed class MermaidGenerator {
     var sb = new StringBuilder();
     sb.AppendLine("graph LR");
 
-    var msgId = SanitizeId(messageType);
+    var msgId = _sanitizeId(messageType);
     var msgLabel = messageType;
     var msgShape = isCommand ? $"[/{msgLabel}\\]" : isEvent ? $"(({msgLabel}))" : $"[{msgLabel}]";
 
@@ -105,6 +105,6 @@ public sealed class MermaidGenerator {
     return sb.ToString().TrimEnd();
   }
 
-  private static string SanitizeId(string name) =>
+  private static string _sanitizeId(string name) =>
       name.Replace(".", "_").Replace("<", "_").Replace(">", "_").Replace(",", "_").Replace(" ", "_");
 }

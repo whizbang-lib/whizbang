@@ -18,7 +18,7 @@ public sealed record SearchDocument {
 }
 
 public sealed class SearchService : IDisposable {
-  private const LuceneVersion AppLuceneVersion = LuceneVersion.LUCENE_48;
+  private const LuceneVersion APP_LUCENE_VERSION = LuceneVersion.LUCENE_48;
 
   private RAMDirectory? _directory;
   private IndexSearcher? _searcher;
@@ -31,8 +31,8 @@ public sealed class SearchService : IDisposable {
     _directory?.Dispose();
     _directory = new RAMDirectory();
 
-    using var analyzer = new StandardAnalyzer(AppLuceneVersion);
-    var config = new IndexWriterConfig(AppLuceneVersion, analyzer);
+    using var analyzer = new StandardAnalyzer(APP_LUCENE_VERSION);
+    var config = new IndexWriterConfig(APP_LUCENE_VERSION, analyzer);
 
     using (var writer = new IndexWriter(_directory, config)) {
       foreach (var doc in documents) {
@@ -86,11 +86,11 @@ public sealed class SearchService : IDisposable {
       return [];
     }
 
-    var expandedQuery = ExpandQuery(query.Trim());
+    var expandedQuery = _expandQuery(query.Trim());
 
-    using var analyzer = new StandardAnalyzer(AppLuceneVersion);
+    using var analyzer = new StandardAnalyzer(APP_LUCENE_VERSION);
     var parser = new MultiFieldQueryParser(
-      AppLuceneVersion,
+      APP_LUCENE_VERSION,
       ["title", "category", "content"],
       analyzer);
     parser.DefaultOperator = Operator.OR;
@@ -160,7 +160,7 @@ public sealed class SearchService : IDisposable {
     return seenSlugs.Values.ToList();
   }
 
-  private string ExpandQuery(string query) {
+  private string _expandQuery(string query) {
     var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
     var expandedParts = new List<string>();
 
