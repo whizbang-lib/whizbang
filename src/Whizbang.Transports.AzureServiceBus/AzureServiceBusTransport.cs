@@ -165,12 +165,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <inheritdoc />
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithEnableSessions_IncludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithoutEnableSessions_ExcludesOrderedAsync</tests>
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
-    TransportCapabilities.Ordered |
-    TransportCapabilities.BulkPublish;
+    TransportCapabilities.BulkPublish |
+    (_options.EnableSessions ? TransportCapabilities.Ordered : TransportCapabilities.None);
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
@@ -225,6 +226,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         Subject = destination.RoutingKey ?? "message",
         ContentType = "application/json"
       };
+
+      // Set SessionId for FIFO ordering when StreamId is carried in destination metadata
+      // TransportPublishStrategy adds StreamId to metadata for transports that support ordering
+      if (destination.Metadata?.TryGetValue("StreamId", out var streamIdElement) == true) {
+        var streamIdStr = _convertJsonElementToAmqpValue(streamIdElement)?.ToString();
+        if (!string.IsNullOrEmpty(streamIdStr)) {
+          message.SessionId = streamIdStr;
+        }
+      }
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug(
@@ -322,42 +332,52 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var results = new List<BulkPublishItemResult>(items.Count);
     var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
 
-    var currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
-    var batchItemIds = new List<Guid>();
+    // Group items by StreamId to ensure messages in the same session go into the same batch.
+    // ASB requires all messages in a ServiceBusMessageBatch to have the same SessionId
+    // when sessions are enabled. Null StreamId items group together (no session requirement).
+    var streamGroups = items
+      .Select((item, index) => (Item: item, OriginalIndex: index))
+      .GroupBy(x => x.Item.StreamId);
 
-    for (var i = 0; i < items.Count; i++) {
-      var item = items[i];
-      try {
-        var message = _createServiceBusMessage(item, destination);
+    foreach (var streamGroup in streamGroups) {
+      var groupItems = streamGroup.ToList();
 
-        if (!currentBatch.TryAddMessage(message)) {
-          // Current batch is full -- send and start new
-          await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
-          currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
-          batchItemIds = [];
+      var currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+      var batchItemIds = new List<Guid>();
+
+      foreach (var (item, _) in groupItems) {
+        try {
+          var message = _createServiceBusMessage(item, destination);
 
           if (!currentBatch.TryAddMessage(message)) {
-            results.Add(new BulkPublishItemResult {
-              MessageId = item.MessageId,
-              Success = false,
-              Error = $"Message {item.MessageId} exceeds maximum batch message size"
-            });
-            continue;
+            // Current batch is full -- send and start new
+            await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
+            currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+            batchItemIds = [];
+
+            if (!currentBatch.TryAddMessage(message)) {
+              results.Add(new BulkPublishItemResult {
+                MessageId = item.MessageId,
+                Success = false,
+                Error = $"Message {item.MessageId} exceeds maximum batch message size"
+              });
+              continue;
+            }
           }
+
+          batchItemIds.Add(item.MessageId);
+        } catch (Exception ex) {
+          results.Add(new BulkPublishItemResult {
+            MessageId = item.MessageId,
+            Success = false,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
         }
-
-        batchItemIds.Add(item.MessageId);
-      } catch (Exception ex) {
-        results.Add(new BulkPublishItemResult {
-          MessageId = item.MessageId,
-          Success = false,
-          Error = $"{ex.GetType().Name}: {ex.Message}"
-        });
       }
-    }
 
-    // Send remaining batch
-    await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
+      // Send remaining batch for this stream group
+      await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
+    }
 
     return results;
   }
@@ -404,6 +424,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       Subject = item.RoutingKey ?? destination.RoutingKey ?? "message",
       ContentType = "application/json"
     };
+
+    // Set SessionId for FIFO ordering when StreamId is present
+    // ASB delivers messages with the same SessionId in order to a single consumer
+    if (item.StreamId.HasValue) {
+      message.SessionId = item.StreamId.Value.ToString();
+    }
 
     message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
 
@@ -457,44 +483,82 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Apply routing and correlation filters from metadata
       await _applySubscriptionFiltersAsync(destination, topicName, subscriptionName, cancellationToken);
 
-      // Create processor for the topic/subscription
-      var processorOptions = new ServiceBusProcessorOptions {
-        MaxConcurrentCalls = _options.MaxConcurrentCalls,
-        AutoCompleteMessages = false, // We'll complete manually after successful handling
-        MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
-      };
+      AzureServiceBusSubscription subscription;
 
-      var processor = _client.CreateProcessor(
-        topicName,
-        subscriptionName,
-        processorOptions
-      );
+      if (_options.EnableSessions) {
+        // Create session processor for FIFO ordering
+        var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
+          MaxConcurrentSessions = _options.MaxConcurrentSessions,
+          MaxConcurrentCallsPerSession = 1, // Strict FIFO within each session
+          AutoCompleteMessages = false,
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+        };
 
-      var subscription = new AzureServiceBusSubscription(processor, _logger);
+        var sessionProcessor = _client.CreateSessionProcessor(
+          topicName,
+          subscriptionName,
+          sessionProcessorOptions
+        );
 
-      // Configure message handler
-      processor.ProcessMessageAsync += async args => {
-        if (!subscription.IsActive) {
-          _logger.LogWarning(
-            "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
-            args.Message.MessageId,
-            destination.Address,
-            destination.RoutingKey ?? _options.DefaultSubscriptionName
-          );
-          await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          return;
-        }
+        subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
-        await _processReceivedMessageAsync(args, handler, destination);
-      };
+        sessionProcessor.ProcessMessageAsync += async args => {
+          if (!subscription.IsActive) {
+            _logger.LogWarning(
+              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
+            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            return;
+          }
 
-      // Configure error handler
-      processor.ProcessErrorAsync += async args => {
-        await _handleProcessorErrorAsync(args, destination);
-      };
+          await _processReceivedMessageAsync(args, handler, destination);
+        };
 
-      // Start processing
-      await processor.StartProcessingAsync(cancellationToken);
+        sessionProcessor.ProcessErrorAsync += async args => {
+          await _handleProcessorErrorAsync(args, destination);
+        };
+
+        await sessionProcessor.StartProcessingAsync(cancellationToken);
+      } else {
+        // Create standard processor (no session/FIFO guarantees)
+        var processorOptions = new ServiceBusProcessorOptions {
+          MaxConcurrentCalls = _options.MaxConcurrentCalls,
+          AutoCompleteMessages = false,
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+        };
+
+        var processor = _client.CreateProcessor(
+          topicName,
+          subscriptionName,
+          processorOptions
+        );
+
+        subscription = new AzureServiceBusSubscription(processor, _logger);
+
+        processor.ProcessMessageAsync += async args => {
+          if (!subscription.IsActive) {
+            _logger.LogWarning(
+              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
+            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            return;
+          }
+
+          await _processReceivedMessageAsync(args, handler, destination);
+        };
+
+        processor.ProcessErrorAsync += async args => {
+          await _handleProcessorErrorAsync(args, destination);
+        };
+
+        await processor.StartProcessingAsync(cancellationToken);
+      }
 
       if (_logger.IsEnabled(LogLevel.Information)) {
         var topic = destination.Address;
@@ -623,6 +687,165 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
 
     return (envelope, envelopeTypeName);
+  }
+
+  // ========================================
+  // SESSION MESSAGE PROCESSING OVERLOADS
+  // ProcessSessionMessageEventArgs does not inherit from ProcessMessageEventArgs,
+  // so we need separate overloads for session-aware message handling.
+  // ========================================
+
+  private async Task _processReceivedMessageAsync(
+    ProcessSessionMessageEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination
+  ) {
+    try {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+      if (envelope is null) {
+        return;
+      }
+
+      await handler(envelope, envelopeTypeName, args.CancellationToken);
+      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "Processed session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+    } catch (Exception ex) {
+      await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
+    }
+  }
+
+  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedSessionMessageAsync(
+    ProcessSessionMessageEventArgs args,
+    TransportDestination destination
+  ) {
+    if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+        envelopeTypeObj is not string envelopeTypeName) {
+      if (_logger.IsEnabled(LogLevel.Warning)) {
+        _logger.LogWarning(
+          "DEAD-LETTER reason: Missing EnvelopeType metadata for session message {MessageId} from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MissingEnvelopeType",
+        "Message does not contain EnvelopeType metadata",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, null);
+    }
+
+    var json = args.Message.Body.ToString();
+
+    try {
+      var type = Type.GetType(envelopeTypeName);
+      if (type is null) {
+        if (_logger.IsEnabled(LogLevel.Warning)) {
+          _logger.LogWarning(
+            "DEAD-LETTER reason: Cannot resolve type {EnvelopeTypeName} for session message {MessageId}",
+            envelopeTypeName,
+            args.Message.MessageId
+          );
+        }
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          "UnresolvableType",
+          $"Cannot resolve type: {envelopeTypeName}",
+          cancellationToken: args.CancellationToken
+        );
+        return (null, null);
+      }
+
+      var typeInfo = _jsonOptions.GetTypeInfo(type);
+      if (typeInfo is null) {
+        if (_logger.IsEnabled(LogLevel.Warning)) {
+          _logger.LogWarning(
+            "DEAD-LETTER reason: No JsonTypeInfo for {TypeName} for session message {MessageId}",
+            type.Name,
+            args.Message.MessageId
+          );
+        }
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          "MissingJsonTypeInfo",
+          $"No JsonTypeInfo for {type.Name}",
+          cancellationToken: args.CancellationToken
+        );
+        return (null, null);
+      }
+
+      var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
+      if (envelope is null) {
+        if (_logger.IsEnabled(LogLevel.Warning)) {
+          _logger.LogWarning(
+            "DEAD-LETTER reason: Failed to deserialize session message {MessageId} as IMessageEnvelope",
+            args.Message.MessageId
+          );
+        }
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          "DeserializationFailed",
+          "Deserialized object is not IMessageEnvelope",
+          cancellationToken: args.CancellationToken
+        );
+        return (null, null);
+      }
+
+      return (envelope, envelopeTypeName);
+    } catch (Exception ex) {
+      if (_logger.IsEnabled(LogLevel.Warning)) {
+        _logger.LogWarning(
+          ex,
+          "DEAD-LETTER reason: Deserialization exception for session message {MessageId}",
+          args.Message.MessageId
+        );
+      }
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "DeserializationException",
+        ex.Message,
+        cancellationToken: args.CancellationToken
+      );
+      return (null, null);
+    }
+  }
+
+  private async Task _handleSessionMessageProcessingErrorAsync(
+    ProcessSessionMessageEventArgs args,
+    Exception ex,
+    TransportDestination destination
+  ) {
+    _logger.LogError(
+      ex,
+      "Error processing session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+      args.Message.MessageId,
+      args.SessionId,
+      destination.Address,
+      destination.RoutingKey ?? _options.DefaultSubscriptionName
+    );
+
+    var deliveryCount = args.Message.DeliveryCount;
+    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MaxDeliveryAttemptsExceeded",
+        ex.Message,
+        cancellationToken: args.CancellationToken
+      );
+    } else {
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    }
   }
 
   private async Task _handleMessageProcessingErrorAsync(
@@ -996,13 +1219,32 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // Ensure topic exists
     await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
 
-    // Ensure subscription exists
+    // Ensure subscription exists (with session auto-migration when EnableSessions is true)
     try {
-      if (!await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken)) {
+      var subscriptionExists = await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken);
+
+      if (subscriptionExists && _options.EnableSessions) {
+        // Check if existing subscription needs migration to sessions
+        var properties = await _adminClient.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+        if (!properties.RequiresSession) {
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            _logger.LogInformation(
+              "Auto-migrating subscription {TopicName}/{SubscriptionName} to require sessions (FIFO ordering). " +
+              "Deleting and recreating because ASB does not allow toggling RequiresSession.",
+              topicName, subscriptionName);
+          }
+          await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, cancellationToken);
+        }
+      } else if (!subscriptionExists) {
         if (_logger.IsEnabled(LogLevel.Information)) {
           _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
         }
-        await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+        if (_options.EnableSessions) {
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, cancellationToken);
+        } else {
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+        }
       }
     } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
       // Race condition - subscription created by another instance, safe to ignore

@@ -86,8 +86,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
-    TransportCapabilities.BulkPublish;
-  // Note: NOT Ordered - RabbitMQ doesn't guarantee ordering in multi-consumer scenarios
+    TransportCapabilities.BulkPublish |
+    (_options.EnableSingleActiveConsumer ? TransportCapabilities.Ordered : TransportCapabilities.None);
+  // Note: Ordered only when SAC is enabled - RabbitMQ doesn't guarantee ordering in multi-consumer scenarios
 
   /// <inheritdoc />
   public Task InitializeAsync(CancellationToken cancellationToken = default) {
@@ -661,6 +662,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     var queueArgs = new Dictionary<string, object?>();
     if (_options.AutoDeclareDeadLetterExchange) {
       queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
+    }
+    if (_options.EnableSingleActiveConsumer) {
+      queueArgs["x-single-active-consumer"] = true;
     }
 
     await channel.QueueDeclareAsync(

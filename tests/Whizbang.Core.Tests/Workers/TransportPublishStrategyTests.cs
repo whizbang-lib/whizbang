@@ -1038,6 +1038,271 @@ public class TransportPublishStrategyTests {
     };
   }
 
+  // ========================================
+  // STREAMID FLOW TESTS (FIFO Ordering)
+  // ========================================
+
+  [Test]
+  public async Task PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = streamId,
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination!.Metadata).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination.Metadata!.ContainsKey("StreamId")).IsTrue()
+      .Because("StreamId must be carried in destination metadata for transports to use for ordering");
+    await Assert.That(transport.LastPublishedDestination.Metadata["StreamId"].GetString())
+      .IsEqualTo(streamId.ToString());
+  }
+
+  [Test]
+  public async Task PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = null,
+      PartitionNumber = null,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // Metadata should either be null or not contain StreamId
+    var hasStreamId = transport.LastPublishedDestination!.Metadata?.ContainsKey("StreamId") ?? false;
+    await Assert.That(hasStreamId).IsFalse()
+      .Because("Null StreamId should not add StreamId to metadata — no ordering requirement");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamId = Guid.CreateVersion7();
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = streamId,
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    await strategy.PublishBatchAsync([work], CancellationToken.None);
+
+    // Assert
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+    var bulkItem = transport.PublishBatchCalls[0].Items[0];
+    await Assert.That(bulkItem.StreamId).IsEqualTo(streamId)
+      .Because("StreamId must flow from OutboxWork to BulkPublishItem for transport-level FIFO");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_WithNullStreamId_LeavesStreamIdNullAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = null,
+      PartitionNumber = null,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    await strategy.PublishBatchAsync([work], CancellationToken.None);
+
+    // Assert
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+    var bulkItem = transport.PublishBatchCalls[0].Items[0];
+    await Assert.That(bulkItem.StreamId).IsNull()
+      .Because("Null StreamId should remain null — no ordering requirement");
+  }
+
+  // ========================================
+  // STREAM-AWARE BATCH GROUPING TESTS
+  // ========================================
+
+  [Test]
+  public async Task PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync() {
+    // Arrange — 2 messages same address, different streams → 2 separate batch calls
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamA = Guid.CreateVersion7();
+    var streamB = Guid.CreateVersion7();
+    var msg1 = Guid.CreateVersion7();
+    var msg2 = Guid.CreateVersion7();
+
+    var workItems = new List<OutboxWork> {
+      new() {
+        MessageId = msg1, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg1),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+        StreamId = streamA, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg2, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg2),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderUpdatedEvent, MyApp",
+        StreamId = streamB, PartitionNumber = 2, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      }
+    };
+
+    // Act
+    await strategy.PublishBatchAsync(workItems, CancellationToken.None);
+
+    // Assert — 2 batch calls (one per stream)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(2)
+      .Because("Messages with different StreamIds should be in separate batch calls for FIFO correctness");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync() {
+    // Arrange — 2 messages same address, same stream → 1 batch call
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamId = Guid.CreateVersion7();
+    var msg1 = Guid.CreateVersion7();
+    var msg2 = Guid.CreateVersion7();
+
+    var workItems = new List<OutboxWork> {
+      new() {
+        MessageId = msg1, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg1),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+        StreamId = streamId, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg2, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg2),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderUpdatedEvent, MyApp",
+        StreamId = streamId, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      }
+    };
+
+    // Act
+    await strategy.PublishBatchAsync(workItems, CancellationToken.None);
+
+    // Assert — 1 batch call (same stream)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1)
+      .Because("Messages with the same StreamId should stay in the same batch call");
+    await Assert.That(transport.PublishBatchCalls[0].Items).Count().IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync() {
+    // Arrange — 3 messages: 1 with streamA, 1 with streamB, 1 with null → 3 groups
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamA = Guid.CreateVersion7();
+    var streamB = Guid.CreateVersion7();
+    var msg1 = Guid.CreateVersion7();
+    var msg2 = Guid.CreateVersion7();
+    var msg3 = Guid.CreateVersion7();
+
+    var workItems = new List<OutboxWork> {
+      new() {
+        MessageId = msg1, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg1),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+        StreamId = streamA, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg2, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg2),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderUpdatedEvent, MyApp",
+        StreamId = streamB, PartitionNumber = 2, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg3, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg3),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderDeletedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderDeletedEvent, MyApp",
+        StreamId = null, PartitionNumber = null, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      }
+    };
+
+    // Act
+    await strategy.PublishBatchAsync(workItems, CancellationToken.None);
+
+    // Assert — 3 batch calls (streamA, streamB, null)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(3)
+      .Because("Each unique StreamId (including null) should result in a separate batch call");
+  }
+
   // Helper to create command OutboxWork
   private static OutboxWork _createCommandOutboxWork(string messageType) {
     var messageId = Guid.CreateVersion7();
