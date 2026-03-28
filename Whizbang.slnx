@@ -75,6 +75,7 @@
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.AspNet.Tests/Whizbang.Hosting.AspNet.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.LanguageServer.Tests/Whizbang.LanguageServer.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
@@ -90,6 +91,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+    <Project Path="tools/Whizbang.LanguageServer/Whizbang.LanguageServer.csproj" />
     <Project Path="tools/Whizbang.Migrate/Whizbang.Migrate.csproj" />
   </Folder>
 </Solution>

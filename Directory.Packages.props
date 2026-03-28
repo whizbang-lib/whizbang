@@ -72,5 +72,11 @@
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.1.0" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
+    <!-- Language Server Protocol -->
+    <PackageVersion Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
+    <!-- Full-text search -->
+    <PackageVersion Include="Lucene.Net" Version="4.8.0-beta00017" />
+    <PackageVersion Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00017" />
+    <PackageVersion Include="Lucene.Net.QueryParser" Version="4.8.0-beta00017" />
   </ItemGroup>
 </Project>
