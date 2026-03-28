@@ -17,12 +17,19 @@ namespace Whizbang.Core.Messaging;
 public sealed class NonDisposingStrategyAdapter(IWorkCoordinatorStrategy inner) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
   private readonly IWorkCoordinatorStrategy _inner = inner;
 
+  /// <inheritdoc />
   public void QueueOutboxMessage(OutboxMessage message) => _inner.QueueOutboxMessage(message);
+  /// <inheritdoc />
   public void QueueInboxMessage(InboxMessage message) => _inner.QueueInboxMessage(message);
+  /// <inheritdoc />
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) => _inner.QueueOutboxCompletion(messageId, completedStatus);
+  /// <inheritdoc />
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) => _inner.QueueInboxCompletion(messageId, completedStatus);
+  /// <inheritdoc />
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) => _inner.QueueOutboxFailure(messageId, completedStatus, errorMessage);
+  /// <inheritdoc />
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) => _inner.QueueInboxFailure(messageId, completedStatus, errorMessage);
+  /// <inheritdoc />
   public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) => _inner.FlushAsync(flags, mode, ct);
 
   /// <inheritdoc />

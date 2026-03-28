@@ -61,10 +61,14 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, TEvent2> 
   where TPartitionKey : notnull
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
+  /// <inheritdoc/>
   TPartitionKey GetPartitionKey(TEvent1 eventData);
+  /// <inheritdoc/>
   TPartitionKey GetPartitionKey(TEvent2 eventData);
 
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
 }
 
@@ -77,12 +81,18 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, TEvent2, 
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
+  /// <inheritdoc/>
   TPartitionKey GetPartitionKey(TEvent1 eventData);
+  /// <inheritdoc/>
   TPartitionKey GetPartitionKey(TEvent2 eventData);
+  /// <inheritdoc/>
   TPartitionKey GetPartitionKey(TEvent3 eventData);
 
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
 }
 

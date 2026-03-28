@@ -33,6 +33,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover classes with [AwaitPerspectiveSync] attribute
     var syncMappings = context.SyntaxProvider.CreateSyntaxProvider(

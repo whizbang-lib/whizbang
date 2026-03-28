@@ -66,6 +66,7 @@ public partial class ScopedWorkCoordinatorStrategy(
 
   private bool _disposed;
 
+  /// <inheritdoc />
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ScopedStrategy.QueueOutbox", message.MessageType);
@@ -76,6 +77,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ScopedStrategy.QueueInbox", message.MessageType);
@@ -86,6 +88,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -95,6 +98,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -104,6 +108,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -113,6 +118,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -122,6 +128,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
   public async Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
@@ -190,6 +197,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
     FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
 
+  /// <inheritdoc />
   public async ValueTask DisposeAsync() {
     if (_disposed) {
       return;
@@ -247,6 +255,8 @@ public partial class ScopedWorkCoordinatorStrategy(
   }
 
   // LoggerMessage definitions
+
+  /// <summary>Logs a queued outbox message with its destination.</summary>
   [LoggerMessage(
     EventId = 1,
     Level = LogLevel.Trace,
@@ -254,6 +264,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string? destination);
 
+  /// <summary>Logs a queued inbox message with its handler name.</summary>
   [LoggerMessage(
     EventId = 2,
     Level = LogLevel.Trace,
@@ -261,6 +272,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogQueuedInboxMessage(ILogger logger, Guid messageId, string handlerName);
 
+  /// <summary>Logs a queued outbox completion with its processing status.</summary>
   [LoggerMessage(
     EventId = 3,
     Level = LogLevel.Trace,
@@ -268,6 +280,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogQueuedOutboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
 
+  /// <summary>Logs a queued inbox completion with its processing status.</summary>
   [LoggerMessage(
     EventId = 4,
     Level = LogLevel.Trace,
@@ -275,6 +288,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogQueuedInboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
 
+  /// <summary>Logs a queued outbox failure with the error message.</summary>
   [LoggerMessage(
     EventId = 5,
     Level = LogLevel.Trace,
@@ -282,6 +296,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogQueuedOutboxFailure(ILogger logger, Guid messageId, string error);
 
+  /// <summary>Logs a queued inbox failure with the error message.</summary>
   [LoggerMessage(
     EventId = 6,
     Level = LogLevel.Trace,
@@ -289,6 +304,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogQueuedInboxFailure(ILogger logger, Guid messageId, string error);
 
+  /// <summary>Logs a summary of outbox and inbox queue counts before flushing.</summary>
   [LoggerMessage(
     EventId = 7,
     Level = LogLevel.Debug,
@@ -296,6 +312,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogFlushSummary(ILogger logger, int queued, int inboxQueued);
 
+  /// <summary>Logs a warning when the scoped strategy is disposing with unflushed operations.</summary>
   [LoggerMessage(
     EventId = 10,
     Level = LogLevel.Warning,
@@ -303,6 +320,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogDisposingWithUnflushedOperations(ILogger logger, int outboxMsg, int inboxMsg, int completions, int failures);
 
+  /// <summary>Logs an error that occurred while flushing during disposal.</summary>
   [LoggerMessage(
     EventId = 11,
     Level = LogLevel.Error,
@@ -310,6 +328,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogErrorFlushingOnDisposal(ILogger logger, Exception ex);
 
+  /// <summary>Logs the instance ID and service name during a flush operation.</summary>
   [LoggerMessage(
     EventId = 12,
     Level = LogLevel.Debug,
@@ -317,6 +336,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogFlushingWithInstanceId(ILogger logger, Guid instanceId, string serviceName, int count);
 
+  /// <summary>Logs the work batch result counts returned from ProcessWorkBatchAsync.</summary>
   [LoggerMessage(
     EventId = 13,
     Level = LogLevel.Debug,
@@ -324,6 +344,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogProcessWorkBatchResult(ILogger logger, int outboxCount, int inboxCount, int perspectiveCount);
 
+  /// <summary>Logs details of returned outbox work items for diagnostics.</summary>
   [LoggerMessage(
     EventId = 14,
     Level = LogLevel.Debug,
@@ -331,6 +352,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   )]
   static partial void LogReturnedOutboxWork(ILogger logger, Guid messageId, string? destination, bool isNewlyStored);
 
+  /// <summary>Logs a critical error when queued outbox messages produce zero work items.</summary>
   [LoggerMessage(
     EventId = 15,
     Level = LogLevel.Error,

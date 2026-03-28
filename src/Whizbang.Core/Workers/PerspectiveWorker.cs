@@ -132,6 +132,7 @@ public partial class PerspectiveWorker(
     Guid? LastProcessedEventId,
     IServiceProvider ScopedProvider);
 
+  /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 

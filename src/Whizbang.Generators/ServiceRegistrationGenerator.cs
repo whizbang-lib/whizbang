@@ -39,6 +39,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Single pipeline: discover classes that implement user interfaces extending Whizbang interfaces
     var serviceCandidates = context.SyntaxProvider.CreateSyntaxProvider(

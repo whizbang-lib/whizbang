@@ -221,6 +221,7 @@ public partial class WorkCoordinatorPublisherWorker(
   /// </summary>
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
+  /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(
       _logger,

@@ -89,7 +89,9 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> : IPerspec
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
 }
 
@@ -101,8 +103,11 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3> :
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
 }
 
@@ -115,9 +120,13 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
 }
 
@@ -131,10 +140,15 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent3 : IEvent
   where TEvent4 : IEvent
   where TEvent5 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
 }
 
@@ -149,11 +163,17 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent4 : IEvent
   where TEvent5 : IEvent
   where TEvent6 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
 }
 
@@ -169,12 +189,19 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent5 : IEvent
   where TEvent6 : IEvent
   where TEvent7 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
 }
 
@@ -191,13 +218,21 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent6 : IEvent
   where TEvent7 : IEvent
   where TEvent8 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent8 eventData);
 }
 
@@ -215,14 +250,23 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent7 : IEvent
   where TEvent8 : IEvent
   where TEvent9 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent9 eventData);
 }
 
@@ -241,14 +285,24 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
   where TEvent8 : IEvent
   where TEvent9 : IEvent
   where TEvent10 : IEvent {
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   ApplyResult<TModel> Apply(TModel currentData, TEvent10 eventData);
 }

@@ -10,27 +10,48 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Observability/LifecycleMetricsTests.cs</tests>
 public sealed class LifecycleMetrics {
 #pragma warning disable CA1707
+  /// <summary>The OpenTelemetry meter name for this metrics group.</summary>
   public const string METER_NAME = "Whizbang.Lifecycle";
 #pragma warning restore CA1707
 
 
   // Stage timing
+
+  /// <summary>Time executing all receptors for a stage.</summary>
   public Histogram<double> StageDuration { get; }
+
+  /// <summary>Individual receptor invocation time.</summary>
   public Histogram<double> ReceptorDuration { get; }
 
   // Stage counters
+
+  /// <summary>Total invocations per lifecycle stage.</summary>
   public Counter<long> StageInvocations { get; }
+
+  /// <summary>Individual receptor invocations.</summary>
   public Counter<long> ReceptorInvocations { get; }
+
+  /// <summary>Receptor failures per stage.</summary>
   public Counter<long> ReceptorErrors { get; }
 
   // Tag hook timing
+
+  /// <summary>Per-hook execution time.</summary>
   public Histogram<double> TagHookDuration { get; }
+
+  /// <summary>Total tag processing time (all hooks).</summary>
   public Histogram<double> TagProcessingDuration { get; }
 
   // Tag hook counters
+
+  /// <summary>Hook invocations.</summary>
   public Counter<long> TagHookInvocations { get; }
+
+  /// <summary>Hook failures.</summary>
   public Counter<long> TagHookErrors { get; }
 
+  /// <summary>Initializes a new instance of the <see cref="LifecycleMetrics"/> class.</summary>
+  /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public LifecycleMetrics(WhizbangMetrics whizbangMetrics) {
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 

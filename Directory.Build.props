@@ -14,6 +14,10 @@
     <!-- This makes IDE1006 (naming violations) fail compilation when severity = error -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
+    <!-- Generate XML documentation files for IntelliSense in VSCode, Visual Studio, and Rider -->
+    <!-- XML files are included in NuGet packages automatically when this is enabled -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
     <!-- Enable comprehensive code analysis with latest rules (CA warnings) -->
     <!-- Uses compound value: latest = SDK version, Recommended = curated rule set -->
     <!-- Options: latest-minimum, latest-recommended, latest-all -->
@@ -37,7 +41,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.12.12-local.4</Version>
+    <Version>0.12.12-local.5</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -90,6 +94,18 @@
     <!-- IL2046: RequiresUnreferencedCode mismatch in implementations -->
     <!-- IL2075: DynamicallyAccessedMembers mismatch -->
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- XML documentation warnings suppression -->
+  <!-- CS1570/CS1573/CS1574/CS0419 are XML doc quality warnings that need separate cleanup -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS1570;CS1573;CS1574;CS0419</NoWarn>
+  </PropertyGroup>
+
+  <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->
+  <!-- Other source projects still suppress CS1591 until their docs are completed -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.Core' and '$(MSBuildProjectName)' != 'Whizbang.Generators'">
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <!-- BannedApiAnalyzers - Ban reflection attributes (except in test and benchmark projects) -->

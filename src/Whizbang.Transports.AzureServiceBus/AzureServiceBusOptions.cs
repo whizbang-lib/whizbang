@@ -41,14 +41,14 @@ public class AzureServiceBusOptions {
   #region Session / FIFO Ordering
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToFalseAsync</tests>
-  /// If true, subscriptions are created with RequiresSession = true and messages with
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
+  /// When true, subscriptions are created with RequiresSession = true and messages with
   /// a StreamId will have their SessionId set for FIFO ordering within a stream.
-  /// Enabling sessions on existing subscriptions requires auto-migration (delete + recreate).
-  /// Default: false (backward compatible — existing deployments without sessions are unaffected)
+  /// Existing subscriptions without sessions are auto-migrated (delete + recreate).
+  /// Default: true (FIFO ordering works out of the box)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
-  public bool EnableSessions { get; set; }
+  public bool EnableSessions { get; set; } = true;
 
   /// <summary>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo64Async</tests>

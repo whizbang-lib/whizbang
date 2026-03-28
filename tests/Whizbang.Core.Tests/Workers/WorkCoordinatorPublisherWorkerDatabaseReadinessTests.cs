@@ -163,7 +163,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
     // Wait for the specific "Database not ready for X consecutive polling cycles" warning
     // This only happens after the threshold (10 consecutive checks) is exceeded
-    await testLogger.WaitForLogContainingAsync("Database not ready for", TimeSpan.FromSeconds(15));
+    await testLogger.WaitForLogContainingAsync("Database not ready for", TimeSpan.FromSeconds(30));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);

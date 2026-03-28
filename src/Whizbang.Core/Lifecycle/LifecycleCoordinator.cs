@@ -165,10 +165,6 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   }
 
   /// <summary>
-  /// Tracks expected completions for the WhenAll pattern.
-  /// Thread-safe — uses interlocked operations for completion tracking.
-  /// </summary>
-  /// <summary>
   /// Tracks expected perspective completions for per-event WhenAll.
   /// PostLifecycle fires only after all expected perspectives signal complete.
   /// Thread-safe with full state exposure for debugging/observers.
@@ -179,6 +175,10 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     private readonly Lock _lock = new();
     private bool _allComplete;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PerspectiveWhenAllState"/> class.
+    /// </summary>
+    /// <param name="perspectiveNames">The perspective names expected to signal completion.</param>
     public PerspectiveWhenAllState(IReadOnlyList<string> perspectiveNames) {
       _expected = [.. perspectiveNames];
     }
@@ -213,6 +213,10 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     private readonly Lock _lock = new();
     private bool _fired;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WhenAllState"/> class.
+    /// </summary>
+    /// <param name="sources">The completion sources expected to signal before PostLifecycle fires.</param>
     public WhenAllState(PostLifecycleCompletionSource[] sources) {
       _expected = [.. sources];
     }

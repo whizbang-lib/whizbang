@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SonarQubeExclude>true</SonarQubeExclude>
+    <IsPackable>true</IsPackable>
+
+    <!-- Relax analysis for tool project (OmniSharp deps trigger false positives) -->
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CA1305;CA1822;CA1848;CA1873;CS1591</NoWarn>
+
+    <!-- Package as global .NET tool -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>whizbang-lsp</ToolCommandName>
+    <PackageId>SoftwareExtravaganza.Whizbang.LanguageServer</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Whizbang Contributors</Authors>
+    <Description>Language Server Protocol implementation for Whizbang - provides IDE features, debug session awareness, and transport keepalive</Description>
+    <PackageTags>whizbang;lsp;language-server;ide;vscode</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- LSP Framework -->
+    <PackageReference Include="OmniSharp.Extensions.LanguageServer" />
+
+    <!-- Search -->
+    <PackageReference Include="Lucene.Net" />
+    <PackageReference Include="Lucene.Net.Analysis.Common" />
+    <PackageReference Include="Lucene.Net.QueryParser" />
+
+    <!-- File watching -->
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
+
+    <!-- Library references -->
+    <ProjectReference Include="..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Observability\Whizbang.Observability.csproj" />
+  </ItemGroup>
+
+</Project>

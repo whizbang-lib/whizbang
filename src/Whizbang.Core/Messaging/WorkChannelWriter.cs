@@ -18,6 +18,7 @@ namespace Whizbang.Core.Messaging;
 public class WorkChannelWriter : IWorkChannelWriter {
   private readonly Channel<OutboxWork> _channel;
 
+  /// <summary>Initializes a new instance of the <see cref="WorkChannelWriter"/> class.</summary>
   public WorkChannelWriter() {
     _channel = Channel.CreateUnbounded<OutboxWork>(new UnboundedChannelOptions {
       SingleReader = false,  // Multiple publisher loops may read concurrently

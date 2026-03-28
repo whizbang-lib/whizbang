@@ -26,7 +26,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
 
   [Test]
-  public async Task Capabilities_DefaultOptions_ReturnsPublishSubscribeReliableWithoutOrderedAsync() {
+  public async Task Capabilities_DefaultOptions_IncludesOrderedAsync() {
     // Arrange
     var jsonOptions = new JsonSerializerOptions {
       TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -40,12 +40,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     var capabilities = transport.Capabilities;
 
-    // Assert - Without EnableSessions, Ordered is NOT claimed
+    // Assert - EnableSessions defaults to true, so Ordered is included out of the box
     await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
     await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
     await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
-    await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsFalse()
-      .Because("Ordered requires EnableSessions = true");
+    await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsTrue()
+      .Because("FIFO ordering works out of the box — EnableSessions defaults to true");
   }
 
   [Test]

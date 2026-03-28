@@ -70,6 +70,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(
           SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover IReceptor implementations
     var receptorCandidates = context.SyntaxProvider.CreateSyntaxProvider(

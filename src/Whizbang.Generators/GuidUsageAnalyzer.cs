@@ -14,6 +14,7 @@ namespace Whizbang.Generators;
 /// <docs>fundamentals/identity/whizbang-ids#analyzer</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class GuidUsageAnalyzer : DiagnosticAnalyzer {
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
   [
     DiagnosticDescriptors.GuidNewGuidUsage,
@@ -22,6 +23,7 @@ public class GuidUsageAnalyzer : DiagnosticAnalyzer {
 ,
   ];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();

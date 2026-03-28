@@ -32,6 +32,15 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
   private bool _isComplete;
   private DateTimeOffset _lastActivityUtc;
 
+  /// <summary>
+  /// Initializes a new instance of the <see cref="LifecycleTrackingState"/> class.
+  /// </summary>
+  /// <param name="eventId">The event ID being tracked.</param>
+  /// <param name="envelope">The message envelope for receptor invocation.</param>
+  /// <param name="entryStage">The lifecycle stage at which tracking begins.</param>
+  /// <param name="source">Whether the message arrived via inbox, local dispatch, etc.</param>
+  /// <param name="streamId">The optional stream ID for stream-scoped lifecycle.</param>
+  /// <param name="perspectiveType">The optional perspective type for perspective-scoped lifecycle.</param>
   public LifecycleTrackingState(
     Guid eventId,
     IMessageEnvelope envelope,

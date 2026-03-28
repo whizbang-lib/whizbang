@@ -791,6 +791,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         DateTimeOffset.UtcNow);
   }
 
+  /// <summary>Logs that a message was dropped during shutdown due to ObjectDisposedException.</summary>
   [LoggerMessage(
     Level = LogLevel.Debug,
     Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"

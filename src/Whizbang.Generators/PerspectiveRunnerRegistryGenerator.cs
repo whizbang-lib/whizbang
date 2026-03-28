@@ -20,6 +20,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Reuse the same discovery logic as PerspectiveRunnerGenerator
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(

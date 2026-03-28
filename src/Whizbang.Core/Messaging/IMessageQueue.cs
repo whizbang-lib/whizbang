@@ -54,8 +54,12 @@ public interface IMessageQueue {
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/QueuedMessageTests.cs</tests>
 public record QueuedMessage {
+  /// <summary>Unique identifier for the queued message.</summary>
   public required Guid MessageId { get; init; }
+  /// <summary>Fully-qualified event type name for deserialization.</summary>
   public required string EventType { get; init; }
-  public required string EventData { get; init; }  // JSON-serialized event
-  public string? Metadata { get; init; }  // JSON-serialized envelope metadata
+  /// <summary>JSON-serialized event payload.</summary>
+  public required string EventData { get; init; }
+  /// <summary>JSON-serialized envelope metadata (tracing, hops, etc.).</summary>
+  public string? Metadata { get; init; }
 }
