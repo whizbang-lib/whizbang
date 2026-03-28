@@ -138,11 +138,19 @@ internal class FakeChannel : IChannel {
   }
 
   public ValueTask BasicPublishAsync<TProperties>(string exchange, string routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body = default, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
+    if (ExceptionToThrowOnPublish != null) {
+      throw ExceptionToThrowOnPublish;
+    }
     BasicPublishAsyncCalled = true;
+    PublishedMessages.Add((exchange, routingKey, body));
+    LastPublishedProperties = basicProperties;
     return ValueTask.CompletedTask;
   }
 
   public ValueTask BasicPublishAsync<TProperties>(CachedString exchange, CachedString routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body = default, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
+    if (ExceptionToThrowOnPublish != null) {
+      throw ExceptionToThrowOnPublish;
+    }
     BasicPublishAsyncCalled = true;
     return ValueTask.CompletedTask;
   }
@@ -151,18 +159,21 @@ internal class FakeChannel : IChannel {
   public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
     QueueDeclareAsyncCalled = true;
     LastDeclaredQueueName = queue;
+    LastQueueDeclareArguments = arguments;
     // Return a fake QueueDeclareOk
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }
 
   public virtual Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
     QueueBindAsyncCalled = true;
+    QueueBindings.Add((queue, exchange, routingKey));
     return Task.CompletedTask;
   }
 
   public Task<string> BasicConsumeAsync(string queue, bool autoAck, string consumerTag, bool noLocal, bool exclusive, IDictionary<string, object?>? arguments, IAsyncBasicConsumer consumer, CancellationToken cancellationToken = default) {
     BasicConsumeAsyncCalled = true;
     LastConsumerTag = consumerTag;
+    LastRegisteredConsumer = consumer;
     return Task.FromResult(consumerTag);
   }
 
@@ -171,12 +182,53 @@ internal class FakeChannel : IChannel {
     return Task.CompletedTask;
   }
 
+  // Track ack/nack calls for message processing tests
+  public bool BasicAckAsyncCalled { get; private set; }
+  public ulong LastAckedDeliveryTag { get; private set; }
+  public bool BasicNackAsyncCalled { get; private set; }
+  public ulong LastNackedDeliveryTag { get; private set; }
+  public bool LastNackRequeue { get; private set; }
+  public IAsyncBasicConsumer? LastRegisteredConsumer { get; private set; }
+
+  // Track published messages for verification
+  public List<(string Exchange, string RoutingKey, ReadOnlyMemory<byte> Body)> PublishedMessages { get; } = [];
+  public IReadOnlyBasicProperties? LastPublishedProperties { get; private set; }
+
+  // Track queue bindings
+  public List<(string Queue, string Exchange, string RoutingKey)> QueueBindings { get; } = [];
+
+  // Track queue arguments for dead letter exchange verification
+  public IDictionary<string, object?>? LastQueueDeclareArguments { get; private set; }
+
+  // Optional: throw specific exceptions from methods
+  public Exception? ExceptionToThrowOnPublish { get; set; }
+  public Exception? ExceptionToThrowOnAck { get; set; }
+  public Exception? ExceptionToThrowOnNack { get; set; }
+
   // All other methods throw NotImplementedException
   public ValueTask<ulong> GetNextPublishSequenceNumberAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task AbortAsync(ushort replyCode, string replyText, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+
+  public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) {
+    if (ExceptionToThrowOnAck != null) {
+      throw ExceptionToThrowOnAck;
+    }
+    BasicAckAsyncCalled = true;
+    LastAckedDeliveryTag = deliveryTag;
+    return ValueTask.CompletedTask;
+  }
+
   public Task<BasicGetResult?> BasicGetAsync(string queue, bool autoAck, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public ValueTask BasicNackAsync(ulong deliveryTag, bool multiple, bool requeue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+
+  public ValueTask BasicNackAsync(ulong deliveryTag, bool multiple, bool requeue, CancellationToken cancellationToken = default) {
+    if (ExceptionToThrowOnNack != null) {
+      throw ExceptionToThrowOnNack;
+    }
+    BasicNackAsyncCalled = true;
+    LastNackedDeliveryTag = deliveryTag;
+    LastNackRequeue = requeue;
+    return ValueTask.CompletedTask;
+  }
 
   // Implement BasicQosAsync for SubscribeAsync tests
   public Task BasicQosAsync(uint prefetchSize, ushort prefetchCount, bool global, CancellationToken cancellationToken = default) {

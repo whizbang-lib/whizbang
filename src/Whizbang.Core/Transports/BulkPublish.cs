@@ -37,6 +37,17 @@ public record BulkPublishItem {
   /// (e.g., different event types published to the same topic).
   /// </summary>
   public string? RoutingKey { get; init; }
+
+  /// <summary>
+  /// <tests>tests/Whizbang.Transports.Tests/BulkPublishTests.cs:BulkPublishItem_WithStreamId_SetsStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/BulkPublishTests.cs:BulkPublishItem_WithoutStreamId_DefaultsToNullAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/BulkPublishTests.cs:BulkPublishItem_RecordEquality_WithStreamId_BehavesCorrectlyAsync</tests>
+  /// Optional stream ID for FIFO ordering. When set, transports that support ordering
+  /// (e.g., Azure Service Bus sessions) use this to guarantee message delivery order
+  /// within the stream. Messages with the same StreamId are delivered in MessageId order.
+  /// </summary>
+  /// <docs>messaging/transports/transports</docs>
+  public Guid? StreamId { get; init; }
 }
 
 /// <summary>

@@ -66,6 +66,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Import shared module
+Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+
 # Find repo root
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) {
@@ -167,15 +170,12 @@ if ($EnableFrameworkDebugging) {
 $localPackagesDir = Join-Path $repoRoot "local-packages"
 $srcDir = Join-Path $repoRoot "src"
 
-Write-Host "Whizbang Local Package Builder" -ForegroundColor Cyan
-Write-Host "===============================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Repository: $repoRoot"
-Write-Host "Output:     $localPackagesDir"
-Write-Host "Config:     $Configuration"
-if ($EnableFrameworkDebugging) {
-    Write-Host "Directives: WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING" -ForegroundColor Magenta
-}
+# Read current version for header display
+$currentVersion = if ($propsContent -match '<Version>([^<]+)</Version>') { $Matches[1] } else { "unknown" }
+$headerParams = @{ Config = $Configuration; Version = $currentVersion }
+if ($EnableFrameworkDebugging) { $headerParams["Debug"] = "On" }
+Write-WhizbangHeader -ScriptName "Local Pack" -Params $headerParams
+Write-Host "Output: $localPackagesDir" -ForegroundColor DarkGray
 Write-Host ""
 
 # Clean if requested

@@ -282,20 +282,29 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// Helper method to drain stale messages from a subscription.
   /// </summary>
   private static async Task _drainSubscriptionAsync(ServiceBusClient client, string topicName, string subscriptionName) {
-    var receiver = client.CreateReceiver(topicName, subscriptionName);
-    var drained = 0;
-    for (var i = 0; i < 100; i++) {
-      var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-      if (msg == null) {
-        break;
-      }
+    // Retry on ConnectionsQuotaExceeded — emulator has limited connections
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        var receiver = client.CreateReceiver(topicName, subscriptionName);
+        var drained = 0;
+        for (var i = 0; i < 100; i++) {
+          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+          if (msg == null) {
+            break;
+          }
 
-      await receiver.CompleteMessageAsync(msg);
-      drained++;
-    }
-    await receiver.DisposeAsync();
-    if (drained > 0) {
-      Console.WriteLine($"[MANUAL TEST] Drained {drained} stale messages from {subscriptionName}");
+          await receiver.CompleteMessageAsync(msg);
+          drained++;
+        }
+        await receiver.DisposeAsync();
+        if (drained > 0) {
+          Console.WriteLine($"[MANUAL TEST] Drained {drained} stale messages from {subscriptionName}");
+        }
+        return; // Success
+      } catch (Azure.Messaging.ServiceBus.ServiceBusException ex) when (ex.Reason == Azure.Messaging.ServiceBus.ServiceBusFailureReason.QuotaExceeded) {
+        Console.WriteLine($"[MANUAL TEST] Connection quota exceeded on attempt {attempt + 1}, waiting 2s...");
+        await Task.Delay(2000);
+      }
     }
   }
 }

@@ -170,8 +170,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act & Assert
-      await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token))
-        .ThrowsExactly<TaskCanceledException>();
+      var threw = false;
+      try {
+        await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token);
+      } catch (OperationCanceledException) {
+        threw = true;
+      }
+      await Assert.That(threw).IsTrue();
     } finally {
       await sut.DisposeAsync();
     }

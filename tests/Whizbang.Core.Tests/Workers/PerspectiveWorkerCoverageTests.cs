@@ -186,10 +186,10 @@ public class PerspectiveWorkerCoverageTests {
     var (worker, _, dbCheck) = _createWorker();
     dbCheck.IsReady = false;
 
-    // Act
+    // Act — wait for readiness check to be called (signal-based, not Task.Delay)
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(1000); // Let several polling cycles complete (generous for CI contention)
+    await dbCheck.WaitForChecksAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }

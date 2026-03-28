@@ -48,11 +48,16 @@ param(
     [switch]$SkipDocker,
     [switch]$SkipTests,
     [switch]$Down,
-    [string]$TestFilter
+    [string]$TestFilter,
+    [switch]$KeepScanFolder,
+    [switch]$DirectScan
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Import shared module
+Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 # Configuration
 $SonarUrl = "http://localhost:9000"
@@ -60,6 +65,7 @@ $ProjectKey = "whizbang-local"
 $ProjectName = "Whizbang (Local)"
 $Token = "squ_local" # Will be replaced with actual token
 $RepoRoot = Join-Path $PSScriptRoot ".."
+$originalRepoRoot = $RepoRoot  # Preserve for metrics/history
 $ComposeFile = Join-Path $RepoRoot "docker-compose.sonarqube.yml"
 $CoverageDir = Join-Path $RepoRoot "scripts" "coverage"
 $CoverageReport = Join-Path $CoverageDir "coverage.opencover.xml"
@@ -139,6 +145,34 @@ if (Test-Path $TokenFile) {
     }
 }
 
+# Create temp scan folder (unless -DirectScan)
+$scanFolder = $null
+$ctrlCCleanup = $null
+if (-not $DirectScan) {
+    $currentBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
+    Write-Info "Creating scan folder (branch: $currentBranch)..."
+    $scanFolder = New-SonarScanFolder -RepoRoot $RepoRoot -BranchName $currentBranch
+    Write-Info "Scan folder: $scanFolder"
+    $RepoRoot = $scanFolder
+    $CoverageDir = Join-Path $RepoRoot "scripts" "coverage"
+    $CoverageReport = Join-Path $CoverageDir "coverage.opencover.xml"
+
+    # Register CTRL+C handler to clean up scan folder if process is interrupted
+    if (-not $KeepScanFolder) {
+        $scanFolderPath = $scanFolder
+        $ctrlCCleanup = {
+            param($sender, $e)
+            if (Test-Path $scanFolderPath) {
+                Write-Host "`n[INFO] Cleaning up scan folder (interrupted)..." -ForegroundColor Cyan
+                Remove-SonarScanFolder -ScanFolder $scanFolderPath
+            }
+        }
+        [Console]::add_CancelKeyPress($ctrlCCleanup)
+    }
+}
+
+try {
+
 # Ensure dotnet tools are restored
 Write-Info "Restoring dotnet tools..."
 Push-Location $RepoRoot
@@ -147,7 +181,6 @@ try {
 } finally {
     Pop-Location
 }
-
 # Run tests with coverage
 if (-not $SkipTests) {
     Write-Info "Running tests with coverage collection..."
@@ -232,12 +265,6 @@ try {
         Write-Info "Loaded exclusions from sonar.config"
     }
 
-    # Detect current git branch
-    $currentBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
-    if ($currentBranch) {
-        Write-Info "Branch: $currentBranch"
-    }
-
     $beginArgs = @(
         "begin",
         "/k:$ProjectKey",
@@ -247,11 +274,14 @@ try {
         "/d:sonar.exclusions=$sonarExclusions",
         "/d:sonar.coverage.exclusions=$sonarCoverageExclusions"
     )
-    # Note: sonar.branch.name requires Developer Edition or above
-    # Community Edition analyzes the "main" branch only
-    # if ($currentBranch) {
-    #     $beginArgs += "/d:sonar.branch.name=$currentBranch"
-    # }
+    # sonar.branch.name requires Developer Edition — only set when scanning real repo directly
+    if ($DirectScan) {
+        $directBranch = git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null
+        if ($directBranch) {
+            Write-Info "Branch: $directBranch (DirectScan mode)"
+            $beginArgs += "/d:sonar.branch.name=$directBranch"
+        }
+    }
     if ($sonarCpdExclusions) { $beginArgs += "/d:sonar.cpd.exclusions=$sonarCpdExclusions" }
     $beginArgs += $sonarExtraArgs
     # Use the correct coverage property based on report format
@@ -286,3 +316,18 @@ Write-Host ""
 if ($IsWindows) { Start-Process "$SonarUrl/dashboard?id=$ProjectKey" }
 elseif ($IsMacOS) { & open "$SonarUrl/dashboard?id=$ProjectKey" }
 elseif ($IsLinux) { & xdg-open "$SonarUrl/dashboard?id=$ProjectKey" 2>/dev/null }
+
+} finally {
+    # Unregister CTRL+C handler (avoid double cleanup)
+    if ($ctrlCCleanup) {
+        try { [Console]::remove_CancelKeyPress($ctrlCCleanup) } catch { }
+    }
+
+    # Clean up scan folder (check existence — CTRL+C handler may have already cleaned it)
+    if ($scanFolder -and -not $KeepScanFolder -and (Test-Path $scanFolder)) {
+        Write-Info "Cleaning up scan folder: $scanFolder"
+        Remove-SonarScanFolder -ScanFolder $scanFolder
+    } elseif ($scanFolder -and $KeepScanFolder) {
+        Write-Info "Scan folder preserved: $scanFolder"
+    }
+}
