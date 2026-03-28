@@ -745,6 +745,31 @@ try {
         }
 
         # Helper function to run a single test project with coverage
+        # Extract test counts from dotnet test output (summary lines or progress indicators)
+        function Get-TestCountsFromOutput {
+            param([string]$FullOutput)
+            $passed = 0; $failed = 0; $skipped = 0
+            $foundSummary = $false
+            foreach ($line in ($FullOutput -split "`n")) {
+                $l = $line.Trim()
+                # Authoritative: TUnit summary lines (e.g., "succeeded: 6534")
+                if ($l -match "^\s*succeeded:\s+(\d+)\s*$") { $passed = [int]$Matches[1]; $foundSummary = $true }
+                if ($l -match "^\s*failed:\s+(\d+)\s*$") { $failed = [int]$Matches[1]; $foundSummary = $true }
+                if ($l -match "^\s*skipped:\s+(\d+)\s*$") { $skipped = [int]$Matches[1]; $foundSummary = $true }
+            }
+            # Fallback: if no summary lines, extract from last progress indicator [+N/xN/?N]
+            if (-not $foundSummary) {
+                $progressMatches = [regex]::Matches($FullOutput, '\[\+(\d+)/x(\d+)/\?(\d+)\]')
+                if ($progressMatches.Count -gt 0) {
+                    $last = $progressMatches[$progressMatches.Count - 1]
+                    $passed = [int]$last.Groups[1].Value
+                    $failed = [int]$last.Groups[2].Value
+                    $skipped = [int]$last.Groups[3].Value
+                }
+            }
+            return @{ Passed = $passed; Failed = $failed; Skipped = $skipped }
+        }
+
         function Invoke-TestWithCoverage {
             param([string]$ProjectPath, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
 
@@ -772,10 +797,15 @@ try {
             $proc.WaitForExit()
             $output = (Get-Content $outFile -Raw) + (Get-Content $errFile -Raw)
             Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
+            # Parse test counts from full output before truncating
+            $counts = Get-TestCountsFromOutput -FullOutput $output
             return [PSCustomObject]@{
                 ProjectName = $projName
                 ExitCode = $proc.ExitCode
                 Output = ($output -split "`n" | Select-Object -Last 30) -join "`n"
+                TestsPassed = $counts.Passed
+                TestsFailed = $counts.Failed
+                TestsSkipped = $counts.Skipped
             }
         }
 
@@ -871,10 +901,31 @@ try {
                     if ($failFast) { $projectArgs += "--fail-fast" }
 
                     $output = & dotnet @projectArgs 2>&1
+                    $fullOutput = ($output | Out-String)
+                    # Parse test counts from full output (inline — can't call script functions from parallel runspace)
+                    $tPassed = 0; $tFailed = 0; $tSkipped = 0; $foundSummary = $false
+                    foreach ($line in ($fullOutput -split "`n")) {
+                        $l = $line.Trim()
+                        if ($l -match "^\s*succeeded:\s+(\d+)\s*$") { $tPassed = [int]$Matches[1]; $foundSummary = $true }
+                        if ($l -match "^\s*failed:\s+(\d+)\s*$") { $tFailed = [int]$Matches[1]; $foundSummary = $true }
+                        if ($l -match "^\s*skipped:\s+(\d+)\s*$") { $tSkipped = [int]$Matches[1]; $foundSummary = $true }
+                    }
+                    if (-not $foundSummary) {
+                        $progressMatches = [regex]::Matches($fullOutput, '\[\+(\d+)/x(\d+)/\?(\d+)\]')
+                        if ($progressMatches.Count -gt 0) {
+                            $last = $progressMatches[$progressMatches.Count - 1]
+                            $tPassed = [int]$last.Groups[1].Value
+                            $tFailed = [int]$last.Groups[2].Value
+                            $tSkipped = [int]$last.Groups[3].Value
+                        }
+                    }
                     $resultsBag.Add([PSCustomObject]@{
                         ProjectName = $projectName
                         ExitCode = $LASTEXITCODE
                         Output = ($output | Select-Object -Last 30) -join "`n"
+                        TestsPassed = $tPassed
+                        TestsFailed = $tFailed
+                        TestsSkipped = $tSkipped
                     })
                 }
             } finally {
@@ -912,6 +963,9 @@ try {
         # Aggregate results
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
+        $totalTestsPassed = 0
+        $totalTestsFailed = 0
+        $totalTestsSkipped = 0
         $failedProjects = @()
 
         $resultIndex = 0
@@ -921,6 +975,11 @@ try {
                 $pct = [math]::Round(($resultIndex / $totalTestProjects) * 100)
                 Write-Progress -Id 2 -ParentId 0 -Activity "Test Results" -Status "${resultIndex}/${totalTestProjects}: $($result.ProjectName)" -PercentComplete $pct
             }
+
+            # Accumulate test counts from parsed output
+            $totalTestsPassed += if ($result.PSObject.Properties['TestsPassed']) { $result.TestsPassed } else { 0 }
+            $totalTestsFailed += if ($result.PSObject.Properties['TestsFailed']) { $result.TestsFailed } else { 0 }
+            $totalTestsSkipped += if ($result.PSObject.Properties['TestsSkipped']) { $result.TestsSkipped } else { 0 }
 
             if ($result.ExitCode -eq 0) {
                 $totalProjectsPassed++
@@ -955,6 +1014,13 @@ try {
         Write-Host ""
         Write-Host "=== COVERAGE TEST RESULTS ===" -ForegroundColor Cyan
         Write-Host "Duration: $elapsedString" -ForegroundColor Cyan
+        $totalTests = $totalTestsPassed + $totalTestsFailed + $totalTestsSkipped
+        if ($totalTests -gt 0) {
+            Write-Host "Total Tests: $totalTests" -ForegroundColor White
+            Write-Host "Passed: $totalTestsPassed" -ForegroundColor Green
+            if ($totalTestsFailed -gt 0) { Write-Host "Failed: $totalTestsFailed" -ForegroundColor Red }
+            if ($totalTestsSkipped -gt 0) { Write-Host "Skipped: $totalTestsSkipped" -ForegroundColor Yellow }
+        }
         Write-Host "Projects Passed: $totalProjectsPassed" -ForegroundColor Green
         Write-Host "Projects Failed: $totalProjectsFailed" -ForegroundColor $(if ($totalProjectsFailed -gt 0) { "Red" } else { "Green" })
 

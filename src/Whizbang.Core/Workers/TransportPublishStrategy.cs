@@ -23,6 +23,12 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync</tests>
 /// Default implementation of IMessagePublishStrategy that publishes messages via ITransport.
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
@@ -111,6 +117,12 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
       // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
       var destination = _resolveDestination(work);
 
+      // Carry StreamId in destination metadata for transport-level FIFO ordering
+      // Transports that support ordering (e.g., ASB sessions) use this to set SessionId
+      if (work.StreamId.HasValue) {
+        destination = _addStreamIdToMetadata(destination, work.StreamId.Value);
+      }
+
       LogPublishingMessage(work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
 
       // Publish to transport - envelope is already deserialized
@@ -186,8 +198,10 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
       }
     }
 
-    // Group by destination address for batch transport calls
-    var groups = transportableItems.GroupBy(item => item.Destination.Address);
+    // Group by (destination address, stream ID) for batch transport calls.
+    // Messages with the same StreamId stay together to preserve FIFO ordering.
+    // Different StreamIds get separate batch calls so transports can handle sessions correctly.
+    var groups = transportableItems.GroupBy(item => (item.Destination.Address, item.Work.StreamId));
 
     foreach (var group in groups) {
       var groupItems = group.ToList();
@@ -201,7 +215,8 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
           Envelope = work.Envelope,
           EnvelopeType = work.EnvelopeType,
           MessageId = work.MessageId,
-          RoutingKey = destination.RoutingKey
+          RoutingKey = destination.RoutingKey,
+          StreamId = work.StreamId
         });
       }
 
@@ -361,4 +376,23 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
 
   private static string? _extractTypeName(string typeFullName) =>
     TypeNameFormatter.GetSimpleName(typeFullName);
+
+  /// <summary>
+  /// Creates a new TransportDestination with StreamId added to the metadata dictionary.
+  /// Used to carry stream ordering context to transports that support FIFO (e.g., ASB sessions).
+  /// </summary>
+  private static TransportDestination _addStreamIdToMetadata(TransportDestination destination, Guid streamId) {
+    var metadata = new Dictionary<string, JsonElement>();
+
+    // Preserve existing metadata entries
+    if (destination.Metadata is not null) {
+      foreach (var kvp in destination.Metadata) {
+        metadata[kvp.Key] = kvp.Value;
+      }
+    }
+
+    metadata["StreamId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement;
+
+    return destination with { Metadata = metadata };
+  }
 }

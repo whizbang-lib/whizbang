@@ -68,6 +68,35 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
   }
 
+  /// <inheritdoc />
+  public async Task CreateSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    bool requiresSession,
+    CancellationToken cancellationToken = default) {
+    var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
+      RequiresSession = requiresSession
+    };
+    await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<SubscriptionProperties> GetSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default) {
+    var response = await _adminClient.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    return response.Value;
+  }
+
+  /// <inheritdoc />
+  public async Task DeleteSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default) {
+    await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+  }
+
   #endregion
 
   #region Rule Management

@@ -121,6 +121,60 @@ public class BulkPublishTests {
     await Assert.That(result1).IsEqualTo(result2);
   }
 
+  [Test]
+  public async Task BulkPublishItem_WithStreamId_SetsStreamIdAsync() {
+    // Arrange
+    var streamId = Guid.CreateVersion7();
+
+    // Act
+    var item = new BulkPublishItem {
+      Envelope = _createTestEnvelope(),
+      EnvelopeType = "TestType, TestAssembly",
+      MessageId = Guid.NewGuid(),
+      StreamId = streamId
+    };
+
+    // Assert
+    await Assert.That(item.StreamId).IsEqualTo(streamId);
+  }
+
+  [Test]
+  public async Task BulkPublishItem_WithoutStreamId_DefaultsToNullAsync() {
+    // Arrange & Act
+    var item = new BulkPublishItem {
+      Envelope = _createTestEnvelope(),
+      EnvelopeType = "TestType, TestAssembly",
+      MessageId = Guid.NewGuid(),
+    };
+
+    // Assert
+    await Assert.That(item.StreamId).IsNull();
+  }
+
+  [Test]
+  public async Task BulkPublishItem_RecordEquality_WithStreamId_BehavesCorrectlyAsync() {
+    // Arrange
+    var messageId = Guid.NewGuid();
+    var streamId = Guid.CreateVersion7();
+    var envelope = _createTestEnvelope();
+
+    var item1 = new BulkPublishItem {
+      Envelope = envelope,
+      EnvelopeType = "TestType, TestAssembly",
+      MessageId = messageId,
+      StreamId = streamId
+    };
+    var item2 = new BulkPublishItem {
+      Envelope = envelope,
+      EnvelopeType = "TestType, TestAssembly",
+      MessageId = messageId,
+      StreamId = streamId
+    };
+
+    // Assert
+    await Assert.That(item1).IsEqualTo(item2);
+  }
+
   // Helper methods
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     var message = new TestMessage { Content = "Test" };

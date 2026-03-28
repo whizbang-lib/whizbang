@@ -35,6 +35,22 @@ public class RabbitMQOptions {
   /// </summary>
   public bool AutoDeclareDeadLetterExchange { get; set; } = true;
 
+  #region FIFO / Single Active Consumer
+
+  /// <summary>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQFifoIntegrationTests.cs:EnableSingleActiveConsumer_DefaultsToFalseAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQFifoIntegrationTests.cs:SAC_Capabilities_IncludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQFifoIntegrationTests.cs:NonSAC_Capabilities_ExcludesOrderedAsync</tests>
+  /// If true, queues are declared with x-single-active-consumer = true.
+  /// This ensures only one consumer processes messages at a time, guaranteeing FIFO ordering.
+  /// RabbitMQ guarantees per-publisher per-channel ordering, so with SAC, ordering is preserved.
+  /// Default: false (backward compatible)
+  /// </summary>
+  /// <docs>messaging/transports/rabbitmq#single-active-consumer</docs>
+  public bool EnableSingleActiveConsumer { get; set; }
+
+  #endregion
+
   #region Connection Retry Options
 
   /// <summary>

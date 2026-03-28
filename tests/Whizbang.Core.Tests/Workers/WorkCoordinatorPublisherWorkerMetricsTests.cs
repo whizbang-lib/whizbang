@@ -81,7 +81,14 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+
+    // Wait for the worker loop to complete the not-ready check and increment the counter
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+    while (worker.ConsecutiveNotReadyChecks < 1 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10, CancellationToken.None);
+    }
+
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -111,7 +118,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(500);  // Allow enough time to process messages
+    await testLogger.WaitForLogContainingAsync("Transport not ready for", TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -146,12 +153,12 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
 
     // Act - Transport becomes ready
     publishStrategy.IsReadyResult = true;
     workCoordinator.WorkToReturn = [_createTestOutboxWork(Guid.CreateVersion7())];
-    await Task.Delay(300);
+    await publishStrategy.WaitForPublishAsync(TimeSpan.FromSeconds(10));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -182,7 +189,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -210,7 +217,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    // Wait for first batch to be processed (signal-based, not Task.Delay)
+    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -223,6 +231,26 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
   private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int CallCount { get; private set; }
+    private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _callCountLock = new();
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _callCountWaiters = [];
+
+    public Task WaitForFirstCallAsync(TimeSpan timeout) => _firstCallSignal.Task.WaitAsync(timeout);
+
+    /// <summary>
+    /// Returns a task that completes when CallCount reaches or exceeds the specified count.
+    /// </summary>
+    public Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_callCountLock) {
+        if (CallCount >= count) {
+          tcs.TrySetResult();
+          return tcs.Task;
+        }
+        _callCountWaiters.Add((count, tcs));
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -231,6 +259,16 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
       CallCount++;
       var work = new List<OutboxWork>(WorkToReturn);
       WorkToReturn.Clear();  // Return work once, then empty
+      _firstCallSignal.TrySetResult();
+
+      lock (_callCountLock) {
+        for (int i = _callCountWaiters.Count - 1; i >= 0; i--) {
+          if (CallCount >= _callCountWaiters[i].TargetCount) {
+            _callCountWaiters[i].Signal.TrySetResult();
+            _callCountWaiters.RemoveAt(i);
+          }
+        }
+      }
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = work,
@@ -259,16 +297,51 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     }
   }
 
-  private sealed class TestPublishStrategy : IMessagePublishStrategy {
+  private sealed class TestPublishStrategy : IMessagePublishStrategy, IDisposable {
     public bool IsReadyResult { get; set; } = true;
     public List<OutboxWork> PublishedWork { get; } = [];
+    private readonly object _isReadyLock = new();
+    private int _isReadyCheckCount;
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _isReadyWaiters = [];
+    private readonly SemaphoreSlim _publishSignal = new(0);
+
+    /// <summary>
+    /// Returns a task that completes when IsReadyAsync has been called at least the specified number of times.
+    /// </summary>
+    public Task WaitForIsReadyCheckCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_isReadyLock) {
+        if (_isReadyCheckCount >= count) {
+          tcs.TrySetResult();
+          return tcs.Task;
+        }
+        _isReadyWaiters.Add((count, tcs));
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
+    /// <summary>
+    /// Returns a task that completes when PublishAsync has been called at least once (since last wait).
+    /// </summary>
+    public async Task WaitForPublishAsync(TimeSpan timeout) => await _publishSignal.WaitAsync(timeout);
+    public void Dispose() => _publishSignal.Dispose();
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      lock (_isReadyLock) {
+        _isReadyCheckCount++;
+        for (int i = _isReadyWaiters.Count - 1; i >= 0; i--) {
+          if (_isReadyCheckCount >= _isReadyWaiters[i].TargetCount) {
+            _isReadyWaiters[i].Signal.TrySetResult();
+            _isReadyWaiters.RemoveAt(i);
+          }
+        }
+      }
       return Task.FromResult(IsReadyResult);
     }
 
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       PublishedWork.Add(work);
+      _publishSignal.Release();
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
         Success = true,
