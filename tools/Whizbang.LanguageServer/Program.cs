@@ -1,7 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Server;
+using Whizbang.LanguageServer.Handlers;
 using Whizbang.LanguageServer.Services;
+
+var docsBaseUrl = Environment.GetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL")
+    ?? "https://whizbang-lib.github.io";
 
 var server = await LanguageServer.From(options => options
     .WithInput(Console.OpenStandardInput())
@@ -10,7 +14,18 @@ var server = await LanguageServer.From(options => options
       logging.SetMinimumLevel(LogLevel.Information);
     })
     .WithServices(services => {
+      // Services
       services.AddSingleton<MermaidGenerator>();
+      services.AddSingleton(new SymbolResolver(docsBaseUrl));
+      services.AddSingleton<SearchService>();
+      services.AddSingleton<TestCoverageService>();
+
+      // Handlers
+      services.AddSingleton<SearchHandler>();
+      services.AddSingleton<SymbolHandler>();
+      services.AddSingleton<TestCoverageHandler>();
+      services.AddSingleton<FlowDiagramHandler>();
+      services.AddSingleton<StatusHandler>();
     })
     .OnInitialize(async (server, request, ct) => {
       var logger = server.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Whizbang.LSP");
