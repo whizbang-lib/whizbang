@@ -23,6 +23,12 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync</tests>
 /// Default implementation of IMessagePublishStrategy that publishes messages via ITransport.
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
