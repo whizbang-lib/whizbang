@@ -161,13 +161,13 @@ public class AzureServiceBusTransportUnitTests {
   // ========================================
 
   [Test]
-  public async Task EnableSessions_DefaultsToFalseAsync() {
+  public async Task EnableSessions_DefaultsToTrueAsync() {
     // Arrange & Act
     var options = new AzureServiceBusOptions();
 
     // Assert
-    await Assert.That(options.EnableSessions).IsFalse()
-      .Because("Sessions must be opt-in — existing deployments without sessions must not break");
+    await Assert.That(options.EnableSessions).IsTrue()
+      .Because("FIFO ordering should work out of the box — no configuration required");
   }
 
   [Test]
