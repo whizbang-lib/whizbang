@@ -153,6 +153,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     public ConcurrentBag<ProcessWorkBatchRequest> ReceivedRequests { get; } = [];
     public bool ThrowOnCall { get; set; }
     public TaskCompletionSource? CallSignal { get; set; }
+    public TaskCompletionSource CompletionReceivedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -162,6 +163,11 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
       ReceivedRequests.Add(request);
       OnProcessWorkBatch?.Invoke();
       CallSignal?.TrySetResult();
+
+      // Signal when completions arrive (for tests that wait for completion reporting)
+      if (request.OutboxCompletions.Length > 0 || request.InboxCompletions.Length > 0) {
+        CompletionReceivedSignal.TrySetResult();
+      }
 
       if (ThrowOnCall) {
         throw new InvalidOperationException("Simulated database failure");
@@ -537,11 +543,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
 
-    // Wait for completions to be reported
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    // Wait for completion to be reported via signal (deterministic, no polling)
+    await coordinator.CompletionReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

@@ -82,6 +82,13 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+
+    // Wait for the worker loop to complete the not-ready check and increment the counter
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+    while (worker.ConsecutiveNotReadyChecks < 1 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10, CancellationToken.None);
+    }
+
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 

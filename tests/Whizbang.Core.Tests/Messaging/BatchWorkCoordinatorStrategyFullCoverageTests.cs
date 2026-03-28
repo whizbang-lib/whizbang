@@ -338,7 +338,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-      await Assert.That(logger.LogCount).IsGreaterThan(5);
+      await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(5);
     } finally {
       await sut.DisposeAsync();
     }

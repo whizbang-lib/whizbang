@@ -32,6 +32,11 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
     };
   }
 
+  // Shared StreamId for tests that expect items with the same destination to be in one batch.
+  // Stream-aware grouping splits by (Address, StreamId), so tests that rely on batching
+  // must use the same StreamId for items that should stay together.
+  private static readonly Guid _sharedTestStreamId = Guid.CreateVersion7();
+
   private static OutboxWork _createOutboxWork(Guid? messageId = null) {
     var id = messageId ?? Guid.CreateVersion7();
     return new OutboxWork {
@@ -40,7 +45,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
       Envelope = _createTestEnvelope(id),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = Guid.CreateVersion7(),
+      StreamId = _sharedTestStreamId,
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
