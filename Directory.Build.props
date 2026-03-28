@@ -14,6 +14,10 @@
     <!-- This makes IDE1006 (naming violations) fail compilation when severity = error -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
+    <!-- Generate XML documentation files for IntelliSense in VSCode, Visual Studio, and Rider -->
+    <!-- XML files are included in NuGet packages automatically when this is enabled -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
     <!-- Enable comprehensive code analysis with latest rules (CA warnings) -->
     <!-- Uses compound value: latest = SDK version, Recommended = curated rule set -->
     <!-- Options: latest-minimum, latest-recommended, latest-all -->
@@ -90,6 +94,16 @@
     <!-- IL2046: RequiresUnreferencedCode mismatch in implementations -->
     <!-- IL2075: DynamicallyAccessedMembers mismatch -->
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Suppress CS1591 (missing XML doc comments) for test, benchmark, and sample projects -->
+  <!-- Production library projects MUST have XML documentation on all public members -->
+  <!-- Suppress XML documentation warnings while adding docs to all public members -->
+  <!-- TODO: Remove this suppression once all 3,304 CS1591 gaps are fixed -->
+  <!-- See plans/xml-doc-completion.md for the separate session plan -->
+  <!-- Largest gaps: IPerspectiveFor.cs (2,548), ILensQuery.cs (112), metrics (200+) -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS1591;CS1570;CS1573;CS1574;CS0419</NoWarn>
   </PropertyGroup>
 
   <!-- BannedApiAnalyzers - Ban reflection attributes (except in test and benchmark projects) -->
