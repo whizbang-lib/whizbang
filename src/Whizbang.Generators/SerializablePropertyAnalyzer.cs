@@ -23,6 +23,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
   [
     DiagnosticDescriptors.NonSerializablePropertyObject,
@@ -32,6 +33,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
 ,
   ];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();

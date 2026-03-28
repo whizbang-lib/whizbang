@@ -46,7 +46,9 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2> : IPerspectiveFor<TMo
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
 }
 
@@ -58,8 +60,11 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspecti
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
 }
 
@@ -72,9 +77,13 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : I
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
 }
 
@@ -88,10 +97,15 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent3 : IEvent
   where TEvent4 : IEvent
   where TEvent5 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
 }
 
@@ -106,11 +120,17 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent4 : IEvent
   where TEvent5 : IEvent
   where TEvent6 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
 }
 
@@ -126,12 +146,19 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent5 : IEvent
   where TEvent6 : IEvent
   where TEvent7 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
 }
 
@@ -148,13 +175,21 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent6 : IEvent
   where TEvent7 : IEvent
   where TEvent8 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
 }
 
@@ -172,14 +207,23 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent7 : IEvent
   where TEvent8 : IEvent
   where TEvent9 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
 }
 
@@ -198,15 +242,25 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent8 : IEvent
   where TEvent9 : IEvent
   where TEvent10 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
 }
 
@@ -226,16 +280,27 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent9 : IEvent
   where TEvent10 : IEvent
   where TEvent11 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
 }
 
@@ -256,17 +321,29 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent10 : IEvent
   where TEvent11 : IEvent
   where TEvent12 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
 }
 
@@ -288,18 +365,31 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent
   where TEvent12 : IEvent
   where TEvent13 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
 }
 
@@ -322,19 +412,33 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent12 : IEvent
   where TEvent13 : IEvent
   where TEvent14 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
 }
 
@@ -358,20 +462,35 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent13 : IEvent
   where TEvent14 : IEvent
   where TEvent15 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent15 eventData);
 }
 
@@ -396,21 +515,37 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent14 : IEvent
   where TEvent15 : IEvent
   where TEvent16 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent16 eventData);
 }
 
@@ -436,22 +571,39 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent15 : IEvent
   where TEvent16 : IEvent
   where TEvent17 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent17 eventData);
 }
 
@@ -478,23 +630,41 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent16 : IEvent
   where TEvent17 : IEvent
   where TEvent18 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent18 eventData);
 }
 
@@ -522,24 +692,43 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent17 : IEvent
   where TEvent18 : IEvent
   where TEvent19 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent19 eventData);
 }
 
@@ -568,25 +757,45 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent18 : IEvent
   where TEvent19 : IEvent
   where TEvent20 : IEvent {
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent20 eventData);
 }
 
@@ -600,16 +809,47 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent21 eventData);
 }
 
@@ -623,17 +863,50 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
 }
 
 /// <summary>
@@ -646,17 +919,51 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent23 eventData);
 }
 
@@ -670,18 +977,54 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
 }
 
 /// <summary>
@@ -694,18 +1037,55 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent25 eventData);
 }
 
@@ -720,19 +1100,58 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent
   where TEvent26 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
-  TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
 }
 
 /// <summary>
@@ -746,19 +1165,59 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent
   where TEvent26 : IEvent where TEvent27 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
-  TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent27 eventData);
 }
 
@@ -773,20 +1232,62 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent
   where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
-  TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData);
-  TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
 }
 
 /// <summary>
@@ -800,20 +1301,63 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent
   where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
-  TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData);
-  TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent29 eventData);
 }
 
@@ -828,21 +1372,66 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent
   where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData);
-  TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData);
-  TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData);
-  TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData);
-  TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData);
-  TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData);
-  TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData);
-  TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData);
-  TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData);
-  TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData);
-  TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData);
-  TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData);
-  TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
 }
 
 /// <summary>
@@ -854,12 +1443,67 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent
   where TEvent31 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData);
-  TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData);
-  TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData);
-  TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
   TModel Apply(TModel currentData, TEvent31 eventData);
 }
 
@@ -872,13 +1516,70 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent
   where TEvent31 : IEvent where TEvent32 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData);
-  TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData);
-  TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData);
-  TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData);
-  TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
 }
 
 /// <summary>
@@ -890,13 +1591,72 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent
   where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData);
-  TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData);
-  TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData);
-  TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData);
-  TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
 }
 
 /// <summary>
@@ -908,13 +1668,74 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent
   where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData);
-  TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData);
-  TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData);
-  TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData);
-  TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
 }
 
 /// <summary>
@@ -926,13 +1747,76 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent
   where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent
   where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData);
-  TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData);
-  TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData);
-  TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData);
-  TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData);
-  TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData);
-  TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
 }
 
 /// <summary>
@@ -940,7 +1824,78 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
 }
 
 /// <summary>
@@ -948,7 +1903,80 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
 }
 
 /// <summary>
@@ -956,7 +1984,82 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
 }
 
 /// <summary>
@@ -964,7 +2067,84 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
 }
 
 /// <summary>
@@ -972,7 +2152,86 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
 }
 
 /// <summary>
@@ -980,7 +2239,88 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
 }
 
 /// <summary>
@@ -988,7 +2328,90 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
 }
 
 /// <summary>
@@ -996,7 +2419,92 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
 }
 
 /// <summary>
@@ -1004,7 +2512,94 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
 }
 
 /// <summary>
@@ -1012,7 +2607,96 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent where TEvent45 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData); TModel Apply(TModel currentData, TEvent45 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent45 eventData);
 }
 
 /// <summary>
@@ -1020,7 +2704,98 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent where TEvent45 : IEvent where TEvent46 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData); TModel Apply(TModel currentData, TEvent45 eventData); TModel Apply(TModel currentData, TEvent46 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent45 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent46 eventData);
 }
 
 /// <summary>
@@ -1028,7 +2803,100 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent where TEvent45 : IEvent where TEvent46 : IEvent where TEvent47 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData); TModel Apply(TModel currentData, TEvent45 eventData); TModel Apply(TModel currentData, TEvent46 eventData); TModel Apply(TModel currentData, TEvent47 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent45 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent46 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent47 eventData);
 }
 
 /// <summary>
@@ -1036,7 +2904,102 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47, TEvent48> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47, TEvent48>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent where TEvent45 : IEvent where TEvent46 : IEvent where TEvent47 : IEvent where TEvent48 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData); TModel Apply(TModel currentData, TEvent45 eventData); TModel Apply(TModel currentData, TEvent46 eventData); TModel Apply(TModel currentData, TEvent47 eventData); TModel Apply(TModel currentData, TEvent48 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent45 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent46 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent47 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent48 eventData);
 }
 
 /// <summary>
@@ -1044,7 +3007,104 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47, TEvent48, TEvent49> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47, TEvent48, TEvent49>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent where TEvent45 : IEvent where TEvent46 : IEvent where TEvent47 : IEvent where TEvent48 : IEvent where TEvent49 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData); TModel Apply(TModel currentData, TEvent45 eventData); TModel Apply(TModel currentData, TEvent46 eventData); TModel Apply(TModel currentData, TEvent47 eventData); TModel Apply(TModel currentData, TEvent48 eventData); TModel Apply(TModel currentData, TEvent49 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent45 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent46 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent47 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent48 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent49 eventData);
 }
 
 /// <summary>
@@ -1052,5 +3112,104 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
 /// </summary>
 public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47, TEvent48, TEvent49, TEvent50> : IPerspectiveFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10, TEvent11, TEvent12, TEvent13, TEvent14, TEvent15, TEvent16, TEvent17, TEvent18, TEvent19, TEvent20, TEvent21, TEvent22, TEvent23, TEvent24, TEvent25, TEvent26, TEvent27, TEvent28, TEvent29, TEvent30, TEvent31, TEvent32, TEvent33, TEvent34, TEvent35, TEvent36, TEvent37, TEvent38, TEvent39, TEvent40, TEvent41, TEvent42, TEvent43, TEvent44, TEvent45, TEvent46, TEvent47, TEvent48, TEvent49, TEvent50>
   where TModel : class where TEvent1 : IEvent where TEvent2 : IEvent where TEvent3 : IEvent where TEvent4 : IEvent where TEvent5 : IEvent where TEvent6 : IEvent where TEvent7 : IEvent where TEvent8 : IEvent where TEvent9 : IEvent where TEvent10 : IEvent where TEvent11 : IEvent where TEvent12 : IEvent where TEvent13 : IEvent where TEvent14 : IEvent where TEvent15 : IEvent where TEvent16 : IEvent where TEvent17 : IEvent where TEvent18 : IEvent where TEvent19 : IEvent where TEvent20 : IEvent where TEvent21 : IEvent where TEvent22 : IEvent where TEvent23 : IEvent where TEvent24 : IEvent where TEvent25 : IEvent where TEvent26 : IEvent where TEvent27 : IEvent where TEvent28 : IEvent where TEvent29 : IEvent where TEvent30 : IEvent where TEvent31 : IEvent where TEvent32 : IEvent where TEvent33 : IEvent where TEvent34 : IEvent where TEvent35 : IEvent where TEvent36 : IEvent where TEvent37 : IEvent where TEvent38 : IEvent where TEvent39 : IEvent where TEvent40 : IEvent where TEvent41 : IEvent where TEvent42 : IEvent where TEvent43 : IEvent where TEvent44 : IEvent where TEvent45 : IEvent where TEvent46 : IEvent where TEvent47 : IEvent where TEvent48 : IEvent where TEvent49 : IEvent where TEvent50 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 eventData); TModel Apply(TModel currentData, TEvent2 eventData); TModel Apply(TModel currentData, TEvent3 eventData); TModel Apply(TModel currentData, TEvent4 eventData); TModel Apply(TModel currentData, TEvent5 eventData); TModel Apply(TModel currentData, TEvent6 eventData); TModel Apply(TModel currentData, TEvent7 eventData); TModel Apply(TModel currentData, TEvent8 eventData); TModel Apply(TModel currentData, TEvent9 eventData); TModel Apply(TModel currentData, TEvent10 eventData); TModel Apply(TModel currentData, TEvent11 eventData); TModel Apply(TModel currentData, TEvent12 eventData); TModel Apply(TModel currentData, TEvent13 eventData); TModel Apply(TModel currentData, TEvent14 eventData); TModel Apply(TModel currentData, TEvent15 eventData); TModel Apply(TModel currentData, TEvent16 eventData); TModel Apply(TModel currentData, TEvent17 eventData); TModel Apply(TModel currentData, TEvent18 eventData); TModel Apply(TModel currentData, TEvent19 eventData); TModel Apply(TModel currentData, TEvent20 eventData); TModel Apply(TModel currentData, TEvent21 eventData); TModel Apply(TModel currentData, TEvent22 eventData); TModel Apply(TModel currentData, TEvent23 eventData); TModel Apply(TModel currentData, TEvent24 eventData); TModel Apply(TModel currentData, TEvent25 eventData); TModel Apply(TModel currentData, TEvent26 eventData); TModel Apply(TModel currentData, TEvent27 eventData); TModel Apply(TModel currentData, TEvent28 eventData); TModel Apply(TModel currentData, TEvent29 eventData); TModel Apply(TModel currentData, TEvent30 eventData); TModel Apply(TModel currentData, TEvent31 eventData); TModel Apply(TModel currentData, TEvent32 eventData); TModel Apply(TModel currentData, TEvent33 eventData); TModel Apply(TModel currentData, TEvent34 eventData); TModel Apply(TModel currentData, TEvent35 eventData); TModel Apply(TModel currentData, TEvent36 eventData); TModel Apply(TModel currentData, TEvent37 eventData); TModel Apply(TModel currentData, TEvent38 eventData); TModel Apply(TModel currentData, TEvent39 eventData); TModel Apply(TModel currentData, TEvent40 eventData); TModel Apply(TModel currentData, TEvent41 eventData); TModel Apply(TModel currentData, TEvent42 eventData); TModel Apply(TModel currentData, TEvent43 eventData); TModel Apply(TModel currentData, TEvent44 eventData); TModel Apply(TModel currentData, TEvent45 eventData); TModel Apply(TModel currentData, TEvent46 eventData); TModel Apply(TModel currentData, TEvent47 eventData); TModel Apply(TModel currentData, TEvent48 eventData); TModel Apply(TModel currentData, TEvent49 eventData); TModel Apply(TModel currentData, TEvent50 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent5 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent6 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent7 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent8 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent9 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent10 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent11 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent12 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent13 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent14 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent15 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent16 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent17 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent18 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent19 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent20 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent21 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent22 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent23 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent24 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent25 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent26 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent27 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent28 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent29 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent30 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent31 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent32 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent33 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent34 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent35 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent36 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent37 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent38 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent39 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent40 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent41 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent42 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent43 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent44 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent45 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent46 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent47 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent48 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent49 eventData);
+  /// <inheritdoc/>
+  TModel Apply(TModel currentData, TEvent50 eventData);
 }

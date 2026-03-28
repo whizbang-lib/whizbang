@@ -56,9 +56,11 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
                    "they must all use the same TModel type. Different model types would cause the perspective runner to fail."
   );
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
       [InconsistentModelTypes];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();

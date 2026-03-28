@@ -14,6 +14,7 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class TopicRegistryGenerator : IIncrementalGenerator {
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover event/command types with [Topic] attribute or convention-based routing
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(

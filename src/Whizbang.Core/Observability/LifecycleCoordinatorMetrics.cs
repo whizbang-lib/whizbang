@@ -11,27 +11,50 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Observability/LifecycleCoordinatorMetricsTests.cs</tests>
 public sealed class LifecycleCoordinatorMetrics {
 #pragma warning disable CA1707
+  /// <summary>The OpenTelemetry meter name for this metrics group.</summary>
   public const string METER_NAME = "Whizbang.LifecycleCoordinator";
 #pragma warning restore CA1707
 
   // Active tracking gauges (up/down counters for current state)
+
+  /// <summary>Events currently in lifecycle tracking.</summary>
   public UpDownCounter<int> ActiveTrackedEvents { get; }
+
+  /// <summary>Events awaiting perspective WhenAll completion.</summary>
   public UpDownCounter<int> PendingPerspectiveStates { get; }
+
+  /// <summary>Events awaiting segment WhenAll completion.</summary>
   public UpDownCounter<int> PendingWhenAllStates { get; }
 
   // Completion counters
+
+  /// <summary>Individual perspective complete signals received.</summary>
   public Counter<long> PerspectiveCompletionsSignaled { get; }
+
+  /// <summary>Events where all perspectives finished.</summary>
   public Counter<long> AllPerspectivesCompleted { get; }
+
+  /// <summary>Events with no perspective expectations (key mismatch detector).</summary>
   public Counter<long> ExpectationsNotRegistered { get; }
 
   // Stage firing counters
+
+  /// <summary>PostAllPerspectives stage executions.</summary>
   public Counter<long> PostAllPerspectivesFired { get; }
+
+  /// <summary>PostLifecycle stage executions.</summary>
   public Counter<long> PostLifecycleFired { get; }
+
+  /// <summary>Stage transitions (tag: stage).</summary>
   public Counter<long> StageTransitions { get; }
 
   // Cleanup
+
+  /// <summary>Stale tracking entries cleaned by inactivity threshold.</summary>
   public Counter<long> StaleTrackingCleaned { get; }
 
+  /// <summary>Initializes a new instance of the <see cref="LifecycleCoordinatorMetrics"/> class.</summary>
+  /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public LifecycleCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 

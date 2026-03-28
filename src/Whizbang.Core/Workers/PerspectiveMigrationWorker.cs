@@ -28,6 +28,7 @@ public sealed partial class PerspectiveMigrationWorker(
   /// </summary>
   public Func<string, int, string, CancellationToken, Task>? UpdateMigrationStatus { get; set; }
 
+  /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (GetPendingRebuilds == null || UpdateMigrationStatus == null) {
       return;
@@ -75,26 +76,32 @@ public sealed partial class PerspectiveMigrationWorker(
     }
   }
 
+  /// <summary>Logs the number of pending migration rebuilds being processed.</summary>
   [LoggerMessage(Level = LogLevel.Information,
       Message = "PerspectiveMigrationWorker: processing {Count} pending migration rebuild(s)")]
   private static partial void LogProcessingPending(ILogger logger, int count);
 
+  /// <summary>Logs the start of a migration rebuild for a specific perspective.</summary>
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Starting migration rebuild for perspective {Perspective} (migration: {Migration})")]
   private static partial void LogRebuildStarting(ILogger logger, string perspective, string migration);
 
+  /// <summary>Logs the successful completion of a migration rebuild.</summary>
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Migration rebuild completed for {Perspective}: {Streams} streams in {ElapsedMs}ms")]
   private static partial void LogRebuildCompleted(ILogger logger, string perspective, int streams, double elapsedMs);
 
+  /// <summary>Logs a migration rebuild failure with the error reason.</summary>
   [LoggerMessage(Level = LogLevel.Error,
       Message = "Migration rebuild failed for {Perspective}: {Error}")]
   private static partial void LogRebuildFailed(ILogger logger, string perspective, string error);
 
+  /// <summary>Logs an exception thrown during migration rebuild.</summary>
   [LoggerMessage(Level = LogLevel.Error,
       Message = "Migration rebuild threw for perspective {Perspective}")]
   private static partial void LogRebuildException(ILogger logger, Exception ex, string perspective);
 
+  /// <summary>Logs a failure in the migration worker's overall processing loop.</summary>
   [LoggerMessage(Level = LogLevel.Error,
       Message = "PerspectiveMigrationWorker failed to process pending rebuilds")]
   private static partial void LogWorkerFailed(ILogger logger, Exception ex);

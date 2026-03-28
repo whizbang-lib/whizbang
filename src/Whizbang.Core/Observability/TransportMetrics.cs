@@ -10,42 +10,85 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Observability/TransportMetricsTests.cs</tests>
 public sealed class TransportMetrics {
 #pragma warning disable CA1707
+  /// <summary>The OpenTelemetry meter name for this metrics group.</summary>
   public const string METER_NAME = "Whizbang.Transport";
 #pragma warning restore CA1707
 
 
   // Inbox (receive side)
+
+  /// <summary>Full receive duration: receive, process, and complete.</summary>
   public Histogram<double> InboxReceiveDuration { get; }
+
+  /// <summary>Duration of first FlushAsync deduplication (INSERT ... ON CONFLICT).</summary>
   public Histogram<double> InboxDedupDuration { get; }
+
+  /// <summary>Duration of OrderedStreamProcessor.ProcessInboxWorkAsync.</summary>
   public Histogram<double> InboxProcessingDuration { get; }
+
+  /// <summary>Duration of second FlushAsync to report completions.</summary>
   public Histogram<double> InboxCompletionDuration { get; }
+
+  /// <summary>Duration of SecurityContextHelper.EstablishFullContextAsync.</summary>
   public Histogram<double> InboxSecurityContextDuration { get; }
 
   // Inbox counters
+
+  /// <summary>Messages received from transport.</summary>
   public Counter<long> InboxMessagesReceived { get; }
+
+  /// <summary>Successfully processed messages.</summary>
   public Counter<long> InboxMessagesProcessed { get; }
+
+  /// <summary>Messages rejected as duplicates.</summary>
   public Counter<long> InboxMessagesDeduplicated { get; }
+
+  /// <summary>Processing failures.</summary>
   public Counter<long> InboxMessagesFailed { get; }
+
+  /// <summary>Transport subscription retry attempts.</summary>
   public Counter<long> InboxSubscriptionRetries { get; }
 
   // Outbox (send side)
+
+  /// <summary>Duration of _publishStrategy.PublishAsync to transport.</summary>
   public Histogram<double> OutboxPublishDuration { get; }
+
+  /// <summary>Time waiting for transport readiness.</summary>
   public Histogram<double> OutboxReadinessWaitDuration { get; }
 
   // Outbox counters
+
+  /// <summary>Messages published to transport.</summary>
   public Counter<long> OutboxMessagesPublished { get; }
+
+  /// <summary>Publish failures by reason.</summary>
   public Counter<long> OutboxMessagesFailed { get; }
+
+  /// <summary>Retry attempts.</summary>
   public Counter<long> OutboxPublishRetries { get; }
 
   // Gauges
+
+  /// <summary>Currently active transport subscriptions.</summary>
   public UpDownCounter<int> ActiveSubscriptions { get; }
 
   // Event store
+
+  /// <summary>AppendAsync latency.</summary>
   public Histogram<double> EventStoreAppendDuration { get; }
+
+  /// <summary>GetEventsBetweenPolymorphicAsync latency.</summary>
   public Histogram<double> EventStoreQueryDuration { get; }
+
+  /// <summary>Events appended.</summary>
   public Counter<long> EventsStored { get; }
+
+  /// <summary>Event queries executed.</summary>
   public Counter<long> EventsQueried { get; }
 
+  /// <summary>Initializes a new instance of the <see cref="TransportMetrics"/> class.</summary>
+  /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public TransportMetrics(WhizbangMetrics whizbangMetrics) {
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 

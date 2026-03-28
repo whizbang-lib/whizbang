@@ -171,6 +171,10 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     private TimeSpan? _stoppedWallElapsed;
     private bool _stopped;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ActiveStopwatch"/> class.
+    /// </summary>
+    /// <param name="clock">The parent clock used for pause detection.</param>
     public ActiveStopwatch(DebuggerAwareClock clock) {
       _clock = clock;
       _wallStopwatch = Stopwatch.StartNew();
@@ -182,6 +186,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       }
     }
 
+    /// <inheritdoc/>
     public TimeSpan ActiveElapsed {
       get {
         if (_stopped && _stoppedActiveElapsed.HasValue) {
@@ -192,6 +197,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       }
     }
 
+    /// <inheritdoc/>
     public TimeSpan WallElapsed {
       get {
         if (_stopped && _stoppedWallElapsed.HasValue) {
@@ -202,6 +208,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       }
     }
 
+    /// <inheritdoc/>
     public TimeSpan FrozenTime {
       get {
         var wall = WallElapsed;
@@ -216,10 +223,12 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       }
     }
 
+    /// <inheritdoc/>
     public bool HasTimedOut(TimeSpan timeout) {
       return ActiveElapsed >= timeout;
     }
 
+    /// <inheritdoc/>
     public void Halt() {
       if (_stopped) {
         return;
@@ -270,7 +279,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   }
 
   /// <summary>
-  /// Subscription to pause state changes.
+  /// Subscription to pause state changes. Reads from the channel in background and invokes the handler.
   /// </summary>
   private sealed class PauseStateSubscription : IDisposable {
     private readonly CancellationTokenSource _cts;
@@ -278,6 +287,11 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     private readonly Task _readTask;
 #pragma warning restore S4487
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PauseStateSubscription"/> class.
+    /// </summary>
+    /// <param name="reader">The channel reader for pause state changes.</param>
+    /// <param name="handler">The callback invoked when pause state changes.</param>
     public PauseStateSubscription(ChannelReader<bool> reader, Action<bool> handler) {
       _cts = new CancellationTokenSource();
       _readTask = _readLoopAsync(reader, handler, _cts.Token);

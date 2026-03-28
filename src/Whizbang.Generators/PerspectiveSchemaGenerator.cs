@@ -40,6 +40,7 @@ namespace Whizbang.Generators;
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Read table name configuration from MSBuild properties
     var tableNameConfig = context.AnalyzerConfigOptionsProvider.Select(

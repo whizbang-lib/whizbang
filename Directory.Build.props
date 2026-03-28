@@ -96,14 +96,16 @@
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
   </PropertyGroup>
 
-  <!-- Suppress CS1591 (missing XML doc comments) for test, benchmark, and sample projects -->
-  <!-- Production library projects MUST have XML documentation on all public members -->
-  <!-- Suppress XML documentation warnings while adding docs to all public members -->
-  <!-- TODO: Remove this suppression once all 3,304 CS1591 gaps are fixed -->
-  <!-- See plans/xml-doc-completion.md for the separate session plan -->
-  <!-- Largest gaps: IPerspectiveFor.cs (2,548), ILensQuery.cs (112), metrics (200+) -->
+  <!-- XML documentation warnings suppression -->
+  <!-- CS1570/CS1573/CS1574/CS0419 are XML doc quality warnings that need separate cleanup -->
   <PropertyGroup>
-    <NoWarn>$(NoWarn);CS1591;CS1570;CS1573;CS1574;CS0419</NoWarn>
+    <NoWarn>$(NoWarn);CS1570;CS1573;CS1574;CS0419</NoWarn>
+  </PropertyGroup>
+
+  <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->
+  <!-- Other source projects still suppress CS1591 until their docs are completed -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.Core' and '$(MSBuildProjectName)' != 'Whizbang.Generators'">
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <!-- BannedApiAnalyzers - Ban reflection attributes (except in test and benchmark projects) -->

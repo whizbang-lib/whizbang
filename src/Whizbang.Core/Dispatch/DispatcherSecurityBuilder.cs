@@ -293,6 +293,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// Uses compile-time LoggerMessage source generator for zero-allocation, high-performance logging.
   /// </summary>
   private static partial class Log {
+    /// <summary>Logs a warning when an explicit security context has an empty GUID as ActualPrincipal.</summary>
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Warning,

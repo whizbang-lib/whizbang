@@ -233,6 +233,7 @@ public record MessageHop {
 /// Long names (legacy format): Type, CausationId, CorrelationId, CausationType, ServiceInstance, Timestamp, etc.
 /// </summary>
 public sealed class MessageHopConverter : JsonConverter<MessageHop> {
+  /// <inheritdoc/>
   public override MessageHop? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     if (reader.TokenType != JsonTokenType.StartObject) {
       throw new JsonException("Expected start of object for MessageHop");
@@ -273,6 +274,7 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     };
   }
 
+  /// <inheritdoc/>
   public override void Write(Utf8JsonWriter writer, MessageHop value, JsonSerializerOptions options) {
     writer.WriteStartObject();
 

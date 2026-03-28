@@ -117,6 +117,7 @@ public class JsonMessageSerializer : IMessageSerializer {
 /// JSON converter for MessageId value object.
 /// </summary>
 public class MessageIdConverter : JsonConverter<MessageId> {
+  /// <inheritdoc/>
   public override MessageId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     var guidString = reader.GetString();
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {
@@ -125,6 +126,7 @@ public class MessageIdConverter : JsonConverter<MessageId> {
     return MessageId.From(guid);
   }
 
+  /// <inheritdoc/>
   public override void Write(Utf8JsonWriter writer, MessageId value, JsonSerializerOptions options) {
     writer.WriteStringValue(value.Value.ToString());
   }
@@ -134,6 +136,7 @@ public class MessageIdConverter : JsonConverter<MessageId> {
 /// JSON converter for CorrelationId value object.
 /// </summary>
 public class CorrelationIdConverter : JsonConverter<CorrelationId> {
+  /// <inheritdoc/>
   public override CorrelationId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     var guidString = reader.GetString();
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {
@@ -142,6 +145,7 @@ public class CorrelationIdConverter : JsonConverter<CorrelationId> {
     return CorrelationId.From(guid);
   }
 
+  /// <inheritdoc/>
   public override void Write(Utf8JsonWriter writer, CorrelationId value, JsonSerializerOptions options) {
     writer.WriteStringValue(value.Value.ToString());
   }
@@ -152,6 +156,7 @@ public class CorrelationIdConverter : JsonConverter<CorrelationId> {
 /// Supports any JSON value type (string, number, boolean, object, array) via JsonElement.
 /// </summary>
 internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, JsonElement>?> {
+  /// <inheritdoc/>
   public override IReadOnlyDictionary<string, JsonElement>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     if (reader.TokenType == JsonTokenType.Null) {
       return null;
@@ -183,6 +188,7 @@ internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, Jso
     throw new JsonException("Unexpected end of JSON");
   }
 
+  /// <inheritdoc/>
   public override void Write(Utf8JsonWriter writer, IReadOnlyDictionary<string, JsonElement>? value, JsonSerializerOptions options) {
     if (value is null) {
       writer.WriteNullValue();

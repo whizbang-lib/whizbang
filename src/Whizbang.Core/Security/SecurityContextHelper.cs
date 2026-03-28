@@ -392,6 +392,7 @@ public static partial class SecurityContextHelper {
   /// Uses compile-time LoggerMessage source generator for zero-allocation, high-performance logging.
   /// </summary>
   private static partial class Log {
+    /// <summary>Logs the start of cascade security context establishment.</summary>
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Debug,
@@ -399,6 +400,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void CascadeContextEstablishmentStarted(ILogger logger);
 
+    /// <summary>Logs whether the parent MessageContextAccessor.CurrentContext is null.</summary>
     [LoggerMessage(
       EventId = 2,
       Level = LogLevel.Debug,
@@ -406,6 +408,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ParentMessageContextChecked(ILogger logger, bool isNull);
 
+    /// <summary>Logs security values read from MessageContextAccessor.</summary>
     [LoggerMessage(
       EventId = 3,
       Level = LogLevel.Debug,
@@ -413,6 +416,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ReadFromMessageContextAccessor(ILogger logger, string? userId, string? tenantId);
 
+    /// <summary>Logs security values read from ScopeContextAccessor fallback.</summary>
     [LoggerMessage(
       EventId = 4,
       Level = LogLevel.Debug,
@@ -420,6 +424,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ReadFromScopeContextAccessorFallback(ILogger logger, string? userId, string? tenantId);
 
+    /// <summary>Logs the extracted UserId and TenantId values for cascade context.</summary>
     [LoggerMessage(
       EventId = 5,
       Level = LogLevel.Debug,
@@ -427,6 +432,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ExtractedSecurityValues(ILogger logger, string? userId, string? tenantId);
 
+    /// <summary>Logs whether UserId and TenantId are available for context establishment.</summary>
     [LoggerMessage(
       EventId = 6,
       Level = LogLevel.Debug,
@@ -434,6 +440,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ContextEstablishmentCondition(ILogger logger, bool hasUserId, bool hasTenantId);
 
+    /// <summary>Logs the creation of a SecurityExtraction for ScopeContextAccessor.</summary>
     [LoggerMessage(
       EventId = 7,
       Level = LogLevel.Debug,
@@ -441,6 +448,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void CreatingScopeContext(ILogger logger);
 
+    /// <summary>Logs whether ScopeContextAccessor.CurrentContext was successfully established.</summary>
     [LoggerMessage(
       EventId = 8,
       Level = LogLevel.Debug,
@@ -448,6 +456,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ScopeContextEstablished(ILogger logger, bool isNull);
 
+    /// <summary>Logs that ScopeContextAccessor setup was skipped due to missing security values.</summary>
     [LoggerMessage(
       EventId = 9,
       Level = LogLevel.Debug,
@@ -455,6 +464,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void SkippingScopeContextSetup(ILogger logger);
 
+    /// <summary>Logs the established MessageContextAccessor values.</summary>
     [LoggerMessage(
       EventId = 10,
       Level = LogLevel.Debug,
@@ -462,6 +472,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void MessageContextEstablished(ILogger logger, string? userId, string? tenantId);
 
+    /// <summary>Logs security values read from an explicit context (AsSystem/RunAs).</summary>
     [LoggerMessage(
       EventId = 11,
       Level = LogLevel.Debug,
@@ -469,6 +480,7 @@ public static partial class SecurityContextHelper {
       SkipEnabledCheck = true)]
     public static partial void ReadFromExplicitContext(ILogger logger, string? userId, string? tenantId);
 
+    /// <summary>Logs that ScopeContextAccessor setup was skipped because an explicit context is already set.</summary>
     [LoggerMessage(
       EventId = 12,
       Level = LogLevel.Debug,
