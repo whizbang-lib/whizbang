@@ -1,4 +1,4 @@
-using Whizbang.LanguageServer.Debug;
+using Whizbang.LanguageServer.Debugging;
 using Whizbang.LanguageServer.Handlers;
 
 namespace Whizbang.LanguageServer.Tests.Handlers;
