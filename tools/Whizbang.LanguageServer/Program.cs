@@ -7,22 +7,22 @@ var server = await LanguageServer.From(options => options
     .WithInput(Console.OpenStandardInput())
     .WithOutput(Console.OpenStandardOutput())
     .ConfigureLogging(logging => {
-        logging.SetMinimumLevel(LogLevel.Information);
+      logging.SetMinimumLevel(LogLevel.Information);
     })
     .WithServices(services => {
-        services.AddSingleton<MermaidGenerator>();
+      services.AddSingleton<MermaidGenerator>();
     })
     .OnInitialize(async (server, request, ct) => {
-        var logger = server.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Whizbang.LSP");
-        logger.LogInformation("Whizbang Language Server initializing...");
+      var logger = server.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Whizbang.LSP");
+      logger.LogInformation("Whizbang Language Server initializing...");
 
-        if (request.RootUri is not null) {
-            logger.LogInformation("Workspace: {Root}", request.RootUri.GetFileSystemPath());
-        }
+      if (request.RootUri is not null) {
+        logger.LogInformation("Workspace: {Root}", request.RootUri.GetFileSystemPath());
+      }
     })
     .OnInitialized(async (server, request, response, ct) => {
-        var logger = server.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Whizbang.LSP");
-        logger.LogInformation("Whizbang Language Server ready");
+      var logger = server.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Whizbang.LSP");
+      logger.LogInformation("Whizbang Language Server ready");
     })
 ).ConfigureAwait(false);
 
