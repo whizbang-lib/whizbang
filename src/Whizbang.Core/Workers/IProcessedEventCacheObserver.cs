@@ -46,11 +46,17 @@ public interface IProcessedEventCacheObserver {
 /// No-op observer. Registered by default — zero overhead.
 /// </summary>
 internal sealed class NullProcessedEventCacheObserver : IProcessedEventCacheObserver {
+  /// <summary>Singleton instance of the no-op observer.</summary>
   public static readonly NullProcessedEventCacheObserver Instance = new();
 
+  /// <inheritdoc/>
   public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) { }
+  /// <inheritdoc/>
   public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) { }
+  /// <inheritdoc/>
   public void OnRetentionActivated(int count) { }
+  /// <inheritdoc/>
   public void OnEvicted(int count) { }
+  /// <inheritdoc/>
   public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
 }

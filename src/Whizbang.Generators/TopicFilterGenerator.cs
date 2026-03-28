@@ -30,6 +30,7 @@ namespace Whizbang.Generators;
 public class TopicFilterGenerator : IIncrementalGenerator {
   private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover ICommand classes with TopicFilter attributes
     var topicFilters = context.SyntaxProvider.CreateSyntaxProvider(

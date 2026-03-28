@@ -34,6 +34,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     "global::Whizbang.Core.Attributes.MetricTagAttribute",
   ];
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with [MessageTag] or derived attributes
     // FIX: Use SelectMany to flatten multiple MessageTagInfo per type

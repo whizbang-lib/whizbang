@@ -263,6 +263,7 @@ public static class ServiceCollectionExtensions {
   private sealed class TracingOptionsPostConfigure(IConfiguration? config) : IPostConfigureOptions<TracingOptions> {
     private readonly IConfiguration? _config = config;
 
+    /// <inheritdoc/>
     public void PostConfigure(string? name, TracingOptions options) {
       if (_config == null) {
         return;

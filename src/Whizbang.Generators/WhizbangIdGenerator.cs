@@ -36,6 +36,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Phase 2.1: Type-based discovery - [WhizbangId] on struct declarations
     var typeBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
@@ -673,6 +674,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine($"public sealed class {id.TypeName}JsonConverter : JsonConverter<{id.TypeName}> {{");
 
     // Read method
+    sb.AppendLine("  /// <inheritdoc/>");
     sb.AppendLine($"  public override {id.TypeName} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
     sb.AppendLine("    var uuid7String = reader.GetString()!;");
     sb.AppendLine("    var uuid7 = Uuid7.Parse(uuid7String);");
@@ -681,6 +683,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Write method
+    sb.AppendLine("  /// <inheritdoc/>");
     sb.AppendLine($"  public override void Write(Utf8JsonWriter writer, {id.TypeName} value, JsonSerializerOptions options) {{");
     sb.AppendLine("    var uuid7 = new Uuid7(value.Value);");
     sb.AppendLine("    writer.WriteStringValue(uuid7.ToString());");
@@ -915,6 +918,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("/// Public to allow explicit initialization in test assemblies where module initializers may not run.");
     sb.AppendLine("/// </summary>");
     sb.AppendLine("public static class WhizbangIdConverterInitializer {");
+    sb.AppendLine("  /// <summary>Registers all WhizbangId JSON converters with the global JsonContextRegistry.</summary>");
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("  public static void Initialize() {");
 

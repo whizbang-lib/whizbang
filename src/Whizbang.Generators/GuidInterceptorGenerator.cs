@@ -39,6 +39,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     ("Medo.Uuid7", "NewUuid7", GUID_VERSION_7, "SourceMedo"),
   ];
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Check if interception is enabled via MSBuild property
     var interceptionEnabled = context.AnalyzerConfigOptionsProvider.Select(

@@ -38,6 +38,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_COMMAND_TYPE = "__COMMAND_TYPE__";
   private const string TYPE_STRING = "string";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IEvent types with [StreamId] attribute
     var eventsWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(

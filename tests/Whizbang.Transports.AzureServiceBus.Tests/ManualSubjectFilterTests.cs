@@ -26,7 +26,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// <docs>components/transports/azure-service-bus#sqlfilter-syntax</docs>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]
-[Timeout(60_000)]  // 60s timeout for fail-fast
+[Timeout(120_000)]  // 120s timeout — retry on quota exhaustion needs headroom
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;

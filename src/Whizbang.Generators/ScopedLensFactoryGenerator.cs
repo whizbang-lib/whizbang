@@ -19,6 +19,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
   private const string LENS_QUERY_INTERFACE_NAME = "ILensQuery";
   private const string LENS_QUERY_NAMESPACE = "Whizbang.Core.Lenses";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types implementing ILensQuery<TModel>
     var lensTypes = context.SyntaxProvider.CreateSyntaxProvider(

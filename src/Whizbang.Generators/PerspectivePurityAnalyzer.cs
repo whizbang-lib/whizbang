@@ -97,6 +97,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       description: "Perspectives may be replayed during system recovery. Injected services must be pure (deterministic, no side effects). Mark the service with [PureService] or suppress this warning if you're certain the service is pure."
   );
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
       ApplyMethodIsAsync,
       ApplyMethodUsesAwait,
@@ -106,6 +107,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       NonPureServiceInjected
   );
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();

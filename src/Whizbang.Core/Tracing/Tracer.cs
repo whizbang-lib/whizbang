@@ -44,6 +44,7 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
   // Thread-local storage to track if current trace is explicit (elevated)
   private static readonly AsyncLocal<bool> _isExplicitTrace = new();
 
+  /// <inheritdoc/>
   public void BeginHandlerTrace(string handlerName, string messageTypeName, int handlerCount, bool isExplicit) {
     var tracingOptions = _options.CurrentValue;
 
@@ -91,6 +92,7 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
     }
   }
 
+  /// <inheritdoc/>
   public void EndHandlerTrace(
     string handlerName,
     string messageTypeName,
@@ -226,18 +228,23 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
     return fullName;
   }
 
+  /// <summary>Logs the start of an explicitly traced handler invocation.</summary>
   [LoggerMessage(Level = LogLevel.Information, Message = "[TRACE] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers) - explicit via [WhizbangTrace]")]
   private partial void LogExplicitHandlerBegin(string handlerName, string messageType, int handlerCount);
 
+  /// <summary>Logs the start of a handler invocation at debug verbosity.</summary>
   [LoggerMessage(Level = LogLevel.Debug, Message = "[trace] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers)")]
   private partial void LogHandlerBegin(string handlerName, string messageType, int handlerCount);
 
+  /// <summary>Logs the completion of an explicitly traced handler.</summary>
   [LoggerMessage(Level = LogLevel.Information, Message = "[TRACE] Handler completed: {HandlerName} for {MessageType} - {Status} in {DurationMs:F2}ms - explicit")]
   private partial void LogExplicitHandlerEnd(string handlerName, string messageType, string status, double durationMs);
 
+  /// <summary>Logs the completion of a handler at debug verbosity.</summary>
   [LoggerMessage(Level = LogLevel.Debug, Message = "[trace] Handler completed: {HandlerName} for {MessageType} - {Status} in {DurationMs:F2}ms")]
   private partial void LogHandlerEnd(string handlerName, string messageType, string status, double durationMs);
 
+  /// <summary>Logs a handler failure with exception details.</summary>
   [LoggerMessage(Level = LogLevel.Error, Message = "[TRACE] Handler FAILED: {HandlerName} for {MessageType} after {DurationMs:F2}ms")]
   private partial void LogHandlerFailed(string handlerName, string messageType, double durationMs, Exception exception);
 }
