@@ -678,7 +678,7 @@ function Invoke-Prepare {
     }
 
     # Step 5: Unit tests (with coverage collection)
-    $coveragePct = $null
+    $script:coveragePct = $null
     if ($SkipUnitTests) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests... ⏭️ Skipped $(Format-StepTiming 'Unit Tests')" -ForegroundColor DarkGray
@@ -871,16 +871,19 @@ function Invoke-Prepare {
         $script:stepNumber++
         $covTimingStr = Format-StepTiming -StepName "Coverage Threshold"
         Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
-        if ($null -ne $coveragePct) {
-            if ($coveragePct -lt $CoverageThreshold) {
-                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
-                $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
+        if ($null -ne $script:coveragePct) {
+            if ($script:coveragePct -lt $CoverageThreshold) {
+                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ $($script:coveragePct)% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
+                $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage $($script:coveragePct)% below threshold ${CoverageThreshold}%" }
                 $script:overallPassed = $false
             }
             else {
-                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
-                $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
+                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ $($script:coveragePct)% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
+                $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage $($script:coveragePct)%" }
             }
+        } else {
+            Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped (no coverage data) $covTimingStr" -ForegroundColor DarkGray
+            $script:steps += @{ name = "Coverage Threshold"; status = "skipped"; duration_s = 0 }
         }
     }
 
@@ -904,7 +907,7 @@ function Invoke-Prepare {
         }
     }
 
-    return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $coveragePct }
+    return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $script:coveragePct }
 }
 
 # ============================================================================

@@ -4,12 +4,11 @@ using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests;
 
-[InheritsTests]
-
 /// <summary>
 /// Tests for PostgresSchemaBuilder - generates Postgres DDL from schema definitions.
 /// Inherits from ISchemaBuilderContractTests to ensure compliance with ISchemaBuilder interface.
 /// </summary>
+[InheritsTests]
 public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
   protected override ISchemaBuilder CreateBuilder() => new PostgresSchemaBuilder();
   protected override string ExpectedDatabaseEngine => "Postgres";

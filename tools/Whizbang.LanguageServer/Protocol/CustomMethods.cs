@@ -2,7 +2,9 @@ namespace Whizbang.LanguageServer.Protocol;
 
 /// <summary>
 /// String constants for custom LSP method names used by the Whizbang language server.
+/// PascalCase field names follow CA1707; values are lowercase per LSP protocol convention.
 /// </summary>
+#pragma warning disable IDE1006 // LSP method name values are lowercase by protocol specification
 public static class CustomMethods {
   // Client → Server requests
   public const string SearchDocs = "whizbang/searchDocs";
