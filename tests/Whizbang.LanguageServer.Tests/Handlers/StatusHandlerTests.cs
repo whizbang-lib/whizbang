@@ -1,3 +1,4 @@
+using Whizbang.LanguageServer.Debug;
 using Whizbang.LanguageServer.Handlers;
 using Whizbang.LanguageServer.Services;
 
@@ -47,7 +48,8 @@ public class StatusHandlerTests {
       ]
     });
 
-    var handler = new StatusHandler(resolver, testCoverage);
+    using var debugManager = new DebugSessionManager();
+    var handler = new StatusHandler(resolver, testCoverage, debugManager);
 
     // Act
     var result = handler.Handle();

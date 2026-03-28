@@ -1,3 +1,4 @@
+using Whizbang.LanguageServer.Debug;
 using Whizbang.LanguageServer.Protocol;
 using Whizbang.LanguageServer.Services;
 
@@ -6,10 +7,12 @@ namespace Whizbang.LanguageServer.Handlers;
 public sealed class StatusHandler {
   private readonly SymbolResolver _symbolResolver;
   private readonly TestCoverageService _testCoverageService;
+  private readonly DebugSessionManager _debugSessionManager;
 
-  public StatusHandler(SymbolResolver symbolResolver, TestCoverageService testCoverageService) {
+  public StatusHandler(SymbolResolver symbolResolver, TestCoverageService testCoverageService, DebugSessionManager debugSessionManager) {
     _symbolResolver = symbolResolver;
     _testCoverageService = testCoverageService;
+    _debugSessionManager = debugSessionManager;
   }
 
   public StatusInfo Handle() {
@@ -48,7 +51,8 @@ public sealed class StatusHandler {
       CommandCount = commandCount,
       EventCount = eventCount,
       TypeDocCount = typeDocCount,
-      TestCount = _testCoverageService.GetTestCount()
+      TestCount = _testCoverageService.GetTestCount(),
+      IsDebugPaused = _debugSessionManager.IsPaused
     };
   }
 }

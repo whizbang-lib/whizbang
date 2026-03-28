@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Server;
+using Whizbang.LanguageServer.Debug;
 using Whizbang.LanguageServer.Handlers;
 using Whizbang.LanguageServer.Services;
 
@@ -20,7 +21,11 @@ var server = await LanguageServer.From(options => options
       services.AddSingleton<SearchService>();
       services.AddSingleton<TestCoverageService>();
 
+      // Debug
+      services.AddSingleton<DebugSessionManager>();
+
       // Handlers
+      services.AddSingleton<DebugSessionHandler>();
       services.AddSingleton<SearchHandler>();
       services.AddSingleton<SymbolHandler>();
       services.AddSingleton<TestCoverageHandler>();
