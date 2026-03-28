@@ -645,8 +645,9 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     // Act - simulate recovery
     await transport.SimulateRecoveryAsync();
 
-    // Wait for resubscriptions
-    await transport.WaitForSubscriptionsAsync(4, TimeSpan.FromSeconds(5));
+    // Wait for 2 resubscriptions (recovery re-subscribes both destinations)
+    // Note: WaitForSubscriptionsAsync consumes semaphore signals, so we wait for 2 more (not 4 total)
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(30));
     cts.Cancel();
 
     // Assert - should have 4 total subscribe calls (2 initial + 2 recovery)
