@@ -687,9 +687,9 @@ function Invoke-Prepare {
         $unitTestLogFile = Join-Path $originalRepoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
-            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps
-            $exitCode = $LASTEXITCODE
+            $testArgs = "-Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile `"$unitTestLogFile`" -LogMode All"
+            $testResult = Invoke-ProcessWithProgressAndOutput -FilePath "pwsh" -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$testScript`" $testArgs" -WorkingDir $repoRoot
+            $exitCode = $testResult.ExitCode
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
             }
@@ -707,9 +707,9 @@ function Invoke-Prepare {
         $integrationTestLogFile = Join-Path $originalRepoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
-            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps
-            $exitCode = $LASTEXITCODE
+            $testArgs = "-Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile `"$integrationTestLogFile`" -LogMode All"
+            $testResult = Invoke-ProcessWithProgressAndOutput -FilePath "pwsh" -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$testScript`" $testArgs" -WorkingDir $repoRoot
+            $exitCode = $testResult.ExitCode
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
             }
