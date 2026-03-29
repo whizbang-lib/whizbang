@@ -81,7 +81,7 @@ jobs:
       - name: Run RabbitMQ Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
         continue-on-error: true
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag RabbitMQ -NoBuild
+        run: pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations -Configuration Release -Tag RabbitMQ -NoBuild
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
           WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
@@ -89,7 +89,7 @@ jobs:
       - name: Run RabbitMQ Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
         continue-on-error: true
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag RabbitMQ
+        run: pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations -Coverage -Configuration Release -Tag RabbitMQ
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
           WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
