@@ -493,5 +493,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 }

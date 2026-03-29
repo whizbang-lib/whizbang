@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -17,6 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
 public class WorkChannelWriter : IWorkChannelWriter {
   private readonly Channel<OutboxWork> _channel;
+  private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
 
   /// <summary>Initializes a new instance of the <see cref="WorkChannelWriter"/> class.</summary>
   public WorkChannelWriter() {
@@ -48,6 +50,7 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
+    _inFlight.TryAdd(work.MessageId, 0);
     return _channel.Writer.WriteAsync(work, ct);
   }
 
@@ -61,7 +64,11 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.TryWrite</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.TryWrite</tests>
   public bool TryWrite(OutboxWork work) {
-    return _channel.Writer.TryWrite(work);
+    if (_channel.Writer.TryWrite(work)) {
+      _inFlight.TryAdd(work.MessageId, 0);
+      return true;
+    }
+    return false;
   }
 
   /// <summary>
@@ -77,4 +84,10 @@ public class WorkChannelWriter : IWorkChannelWriter {
   public void Complete() {
     _channel.Writer.Complete();
   }
+
+  /// <inheritdoc />
+  public bool IsInFlight(Guid messageId) => _inFlight.ContainsKey(messageId);
+
+  /// <inheritdoc />
+  public void RemoveInFlight(Guid messageId) => _inFlight.TryRemove(messageId, out _);
 }

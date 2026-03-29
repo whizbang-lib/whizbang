@@ -639,6 +639,9 @@ public class FlushModeTests {
     }
 
     public void Complete() { }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {

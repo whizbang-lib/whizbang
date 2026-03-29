@@ -1720,6 +1720,9 @@ public class BatchWorkCoordinatorStrategyTests {
     }
 
     public void Complete() { }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
@@ -1732,6 +1735,9 @@ public class BatchWorkCoordinatorStrategyTests {
     public bool TryWrite(OutboxWork work) => false;
 
     public void Complete() { }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   private sealed class BatchFakeWorkCoordinator : IWorkCoordinator, IDisposable {

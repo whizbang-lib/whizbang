@@ -243,6 +243,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public void Complete() {
       // No-op for testing
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   // Test helper - Mock work coordinator
