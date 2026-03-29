@@ -1576,6 +1576,12 @@ try {
                 if ($passed -gt $inProgressPassed) { $inProgressPassed = $passed }
                 if ($failed -gt $inProgressFailed) { $inProgressFailed = $failed }
                 if ($skipped -gt $inProgressSkipped) { $inProgressSkipped = $skipped }
+
+                # Extract currently running test name from progress line:
+                # [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
+                if ($lineStr -match ' - ([^\(]+)\s*\(') {
+                    $lastTestName = $matches[1].Trim()
+                }
             }
             # Capture final summary lines - these are the accurate completed counts
             # Reset in-progress tracking when a project completes to avoid double-counting
