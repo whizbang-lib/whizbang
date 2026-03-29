@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -257,23 +256,17 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    for (var s = 0; s < 10; s++) {
-      try {
-        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
-          topicName, subscriptionName,
-          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete },
-          cts.Token);
-        for (var i = 0; i < 100; i++) {
-          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-          if (msg == null) {
-            break;
-          }
+    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
+    try {
+      for (var i = 0; i < 100; i++) {
+        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+        if (msg == null) {
+          break;
         }
-      } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.ServiceTimeout }
-                                    or OperationCanceledException) {
-        break;
+        await receiver.CompleteMessageAsync(msg);
       }
+    } finally {
+      await receiver.DisposeAsync();
     }
   }
 
