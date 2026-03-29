@@ -348,7 +348,10 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };

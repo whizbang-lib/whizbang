@@ -1457,6 +1457,9 @@ try {
         $inProgressFailed = 0
         $inProgressSkipped = 0
 
+        # Track the most recently completed test name for progress display
+        $lastTestName = ""
+
         # FailFast tracking (set at outer scope, used here)
         $firstFailureDetails = $null
 

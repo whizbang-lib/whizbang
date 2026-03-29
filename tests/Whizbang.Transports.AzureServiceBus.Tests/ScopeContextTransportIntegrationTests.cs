@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -152,7 +153,10 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };
@@ -239,6 +243,9 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          },
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = userId,
             TenantId = tenantId
@@ -256,7 +263,10 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };
