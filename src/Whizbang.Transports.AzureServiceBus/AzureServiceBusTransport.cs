@@ -1234,16 +1234,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               topicName, subscriptionName);
           }
           await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
-          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, cancellationToken);
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
         }
       } else if (!subscriptionExists) {
         if (_logger.IsEnabled(LogLevel.Information)) {
           _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
         }
         if (_options.EnableSessions) {
-          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, cancellationToken);
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
         } else {
-          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, cancellationToken);
         }
       }
     } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {

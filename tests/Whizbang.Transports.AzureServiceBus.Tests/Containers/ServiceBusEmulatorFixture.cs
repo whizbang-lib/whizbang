@@ -298,20 +298,24 @@ services:
 
     Console.WriteLine("[ServiceBusEmulator] Warming up...");
 
-    // Warmup topic-00
+    // Warmup topic-00 (session-enabled subscription)
     const string topicName = "topic-00";
     const string subscriptionName = "sub-00-a";
 
     var sender = _client.CreateSender(topicName);
-    var receiver = _client.CreateReceiver(topicName, subscriptionName);
 
     try {
+      var sessionId = Guid.NewGuid().ToString();
       var message = new ServiceBusMessage("{\"warmup\":true}") {
         MessageId = Guid.NewGuid().ToString(),
-        ContentType = "application/json"
+        ContentType = "application/json",
+        SessionId = sessionId
       };
 
       await sender.SendMessageAsync(message, cancellationToken);
+
+      // Use session receiver for session-enabled subscriptions
+      await using var receiver = await _client.AcceptSessionAsync(topicName, subscriptionName, sessionId, cancellationToken: cancellationToken);
 
       // Wait for message with retries
       ServiceBusReceivedMessage? received = null;
@@ -333,7 +337,6 @@ services:
       Console.WriteLine("[ServiceBusEmulator] ✓ Warmup complete");
     } finally {
       await sender.DisposeAsync();
-      await receiver.DisposeAsync();
     }
   }
 

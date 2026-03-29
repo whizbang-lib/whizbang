@@ -151,16 +151,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     await transport.PublishAsync(envelope, destination);
 
-    // Assert - Verify message arrived by receiving it
-    var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
-    try {
-      var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-      await Assert.That(received).IsNotNull();
-      await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
-      await receiver.CompleteMessageAsync(received);
-    } finally {
-      await receiver.DisposeAsync();
-    }
+    // Assert - Verify message arrived by receiving it (session-enabled subscription)
+    await using var receiver = await _fixture.Client.AcceptNextSessionAsync("topic-00", "sub-00-a");
+    var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(received).IsNotNull();
+    await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
+    await receiver.CompleteMessageAsync(received);
   }
 
   [Test]
@@ -352,24 +348,35 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
-    try {
-      for (var i = 0; i < 100; i++) {
-        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-        if (msg == null) {
-          break;
+    // Session-enabled subscriptions require AcceptNextSessionAsync
+    // Use short timeout to avoid blocking when no sessions exist
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    for (var s = 0; s < 10; s++) {
+      try {
+        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
+          topicName, subscriptionName,
+          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete },
+          cts.Token);
+        for (var i = 0; i < 100; i++) {
+          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+          if (msg == null) {
+            break;
+          }
         }
-        await receiver.CompleteMessageAsync(msg);
+      } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.ServiceTimeout }
+                                    or OperationCanceledException) {
+        break; // No more sessions or timeout
       }
-    } finally {
-      await receiver.DisposeAsync();
     }
   }
 
