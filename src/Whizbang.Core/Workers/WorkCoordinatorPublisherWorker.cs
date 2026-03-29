@@ -346,7 +346,12 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Post-outbox lifecycle per message + track results
         await _processPublishBatchResultsAsync(batchContexts, results, stoppingToken);
+      } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
+        // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
+        LogPublisherLoopInternalCancellation(_logger, batch.Count);
+        _handleBulkBatchException(batch, new InvalidOperationException("Internal OperationCanceledException during bulk publish — not a shutdown cancellation"));
       } catch (ObjectDisposedException) {
+        LogPublisherLoopDisposed(_logger, "bulk");
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _handleBulkBatchException(batch, ex);
@@ -480,7 +485,18 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Collect results
         _trackPublishResult(work, result);
+      } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
+        // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
+        _workChannelWriter.RemoveInFlight(work.MessageId);
+        LogPublisherLoopInternalCancellationSingular(_logger, work.MessageId);
+        _failures.Add(new MessageFailure {
+          MessageId = work.MessageId,
+          CompletedStatus = work.Status,
+          Error = "Internal OperationCanceledException",
+          Reason = MessageFailureReason.Unknown
+        });
       } catch (ObjectDisposedException) {
+        LogPublisherLoopDisposed(_logger, "singular");
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _workChannelWriter.RemoveInFlight(work.MessageId);
@@ -1136,6 +1152,27 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "Unexpected error publishing outbox message {MessageId}"
   )]
   static partial void LogUnexpectedErrorPublishing(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(
+    EventId = 25,
+    Level = LogLevel.Warning,
+    Message = "Publisher loop internal OperationCanceledException (not shutdown) — {BatchSize} messages affected. This typically indicates a DB timeout or infrastructure issue during pre-publish lifecycle."
+  )]
+  static partial void LogPublisherLoopInternalCancellation(ILogger logger, int batchSize);
+
+  [LoggerMessage(
+    EventId = 26,
+    Level = LogLevel.Warning,
+    Message = "Publisher loop singular: internal OperationCanceledException for message {MessageId} — not a shutdown cancellation"
+  )]
+  static partial void LogPublisherLoopInternalCancellationSingular(ILogger logger, Guid messageId);
+
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Warning,
+    Message = "Publisher loop {Path}: ObjectDisposedException — shutting down"
+  )]
+  static partial void LogPublisherLoopDisposed(ILogger logger, string path);
 
   [LoggerMessage(
     EventId = 20,
