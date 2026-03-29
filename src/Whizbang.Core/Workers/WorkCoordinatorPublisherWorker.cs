@@ -808,10 +808,8 @@ public partial class WorkCoordinatorPublisherWorker(
       foreach (var work in orderedOutboxWork) {
         if (!_workChannelWriter.IsInFlight(work.MessageId)) {
           await _workChannelWriter.WriteAsync(work, cancellationToken);
-        } else {
-          // Already in-flight — renew lease to keep it alive while processing
-          _leaseRenewals.Add(work.MessageId);
         }
+        // else: already in-flight, lease still valid from Phase 7 — skip silently
       }
     }
 
