@@ -1532,7 +1532,8 @@ try {
 
                     if ($displayTotal -gt 0) {
                         $failureIndicator = if ($displayFailed -gt 0) { " ⚠️" } else { "" }
-                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                        $currentTestInfo = if ($lastTestName) { " - Current test: $lastTestName" } else { "" }
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)$currentTestInfo" -ForegroundColor Gray
                     } else {
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                     }
@@ -1634,9 +1635,10 @@ try {
                 if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
                     # Show test progress
                     $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
+                    $currentTestInfo = if ($lastTestName) { " - Current test: $lastTestName" } else { "" }
                     # Show running indicator when tests are actively executing
                     if ($inProgressTotal -gt 0) {
-                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)$currentTestInfo" -ForegroundColor Gray
                     } else {
                         # All projects finished — completed counts are authoritative
                         Write-Host "[$($elapsedMinutes)m] Complete: $completedPassed passed, $completedFailed failed, $completedSkipped skipped$failureIndicator" -ForegroundColor Gray
@@ -1652,6 +1654,11 @@ try {
                 $lastTotalFailed = $totalFailed
             }
 
+            # Track last completed test name from passed/skipped lines for progress display
+            if ($lineStr -match "^passed\s+([^\(]+)\s+\(" -or $lineStr -match "^skipped\s+([^\(]+)\s+\(") {
+                $lastTestName = $matches[1].Trim()
+            }
+
             # Capture failed test names (lines starting with "failed " followed by test name)
             # Note: This is an independent if block, not chained to progress display
             if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
@@ -1662,6 +1669,7 @@ try {
                 }
 
                 $testName = $matches[1].Trim()
+                $lastTestName = $testName
                 # Exclude false positives (EF Core logging, etc.)
                 if ($testName -notmatch "executing|DbCommand|Executed") {
                     $failedTests += $testName
