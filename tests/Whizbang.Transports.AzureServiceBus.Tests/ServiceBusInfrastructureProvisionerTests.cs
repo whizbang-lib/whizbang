@@ -268,11 +268,11 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
       throw new NotImplementedException();
     }
 

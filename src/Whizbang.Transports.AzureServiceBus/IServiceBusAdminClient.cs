@@ -57,6 +57,7 @@ public interface IServiceBusAdminClient {
   Task CreateSubscriptionAsync(
     string topicName,
     string subscriptionName,
+    int maxDeliveryCount,
     CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -66,11 +67,13 @@ public interface IServiceBusAdminClient {
   /// <param name="topicName">The topic name.</param>
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="requiresSession">If true, the subscription requires session-enabled messages for FIFO ordering.</param>
+  /// <param name="maxDeliveryCount">The maximum number of delivery attempts before dead-lettering.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   Task CreateSubscriptionAsync(
     string topicName,
     string subscriptionName,
     bool requiresSession,
+    int maxDeliveryCount,
     CancellationToken cancellationToken = default);
 
   /// <summary>

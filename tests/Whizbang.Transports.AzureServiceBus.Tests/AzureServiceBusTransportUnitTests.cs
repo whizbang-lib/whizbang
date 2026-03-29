@@ -485,6 +485,94 @@ public class AzureServiceBusTransportUnitTests {
     }
   }
 
+  /// <summary>
+  /// Creating a subscription without sessions passes MaxDeliveryAttempts as MaxDeliveryCount.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_CreatesSubscription_WithMaxDeliveryCountFromOptionsAsync() {
+    var adminClient = new TestableAdminClient {
+      ExistingTopics = { "delivery-topic" }
+    };
+
+    var options = new AzureServiceBusOptions {
+      AutoProvisionInfrastructure = true,
+      EnableSessions = false,
+      MaxDeliveryAttempts = 25,
+      DefaultSubscriptionName = "test-sub"
+    };
+    var transport = _createTransport(adminClient, options);
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("delivery-topic") { RoutingKey = "test-sub" };
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    try {
+      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+    } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
+      // Expected - no broker
+    }
+
+    await Assert.That(adminClient.LastMaxDeliveryCount).IsEqualTo(25);
+  }
+
+  /// <summary>
+  /// Creating a session subscription passes MaxDeliveryAttempts as MaxDeliveryCount.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_WithSessions_CreatesSubscription_WithMaxDeliveryCountFromOptionsAsync() {
+    var adminClient = new TestableAdminClient {
+      ExistingTopics = { "session-delivery-topic" }
+    };
+
+    var options = new AzureServiceBusOptions {
+      AutoProvisionInfrastructure = true,
+      EnableSessions = true,
+      MaxDeliveryAttempts = 42,
+      DefaultSubscriptionName = "test-sub"
+    };
+    var transport = _createTransport(adminClient, options);
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("session-delivery-topic") { RoutingKey = "test-sub" };
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    try {
+      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+    } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
+      // Expected - no broker
+    }
+
+    await Assert.That(adminClient.LastMaxDeliveryCount).IsEqualTo(42);
+  }
+
+  /// <summary>
+  /// Default MaxDeliveryAttempts (10) is passed to subscription creation.
+  /// </summary>
+  [Test]
+  public async Task SubscribeAsync_DefaultOptions_PassesMaxDeliveryCount10Async() {
+    var adminClient = new TestableAdminClient {
+      ExistingTopics = { "default-delivery-topic" }
+    };
+
+    var options = new AzureServiceBusOptions {
+      AutoProvisionInfrastructure = true,
+      DefaultSubscriptionName = "test-sub"
+    };
+    var transport = _createTransport(adminClient, options);
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("default-delivery-topic") { RoutingKey = "test-sub" };
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    try {
+      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+    } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
+      // Expected - no broker
+    }
+
+    await Assert.That(adminClient.LastMaxDeliveryCount).IsEqualTo(10);
+  }
+
   // ========================================
   // HELPERS
   // ========================================
@@ -536,13 +624,17 @@ public class AzureServiceBusTransportUnitTests {
       return Task.FromResult(ExistingSubscriptions.Contains((topicName, subscriptionName)));
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    public int? LastMaxDeliveryCount { get; private set; }
+
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, CancellationToken cancellationToken = default) {
       ExistingSubscriptions.Add((topicName, subscriptionName));
+      LastMaxDeliveryCount = maxDeliveryCount;
       return Task.CompletedTask;
     }
 
-    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, CancellationToken cancellationToken = default) {
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, CancellationToken cancellationToken = default) {
       ExistingSubscriptions.Add((topicName, subscriptionName));
+      LastMaxDeliveryCount = maxDeliveryCount;
       return Task.CompletedTask;
     }
 
