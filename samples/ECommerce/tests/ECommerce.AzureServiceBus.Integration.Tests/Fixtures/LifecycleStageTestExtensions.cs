@@ -303,8 +303,9 @@ public static class LifecycleStageTestExtensions {
     registry.Register<TMessage>(receptor, stage);
 
     try {
-      // Wait for completion with timeout
-      await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds));
+      // Wait for completion with timeout (scaled for CI environments via WHIZBANG_TEST_TIMEOUT_MULTIPLIER)
+      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+      await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
     } finally {
       // Always unregister, even if timeout occurs
       registry.Unregister<TMessage>(receptor, stage);

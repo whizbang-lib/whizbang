@@ -104,14 +104,15 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <param name="timeoutMilliseconds">Timeout in milliseconds (default: 45000ms for transport latency).</param>
   /// <exception cref="TimeoutException">Thrown if perspectives don't complete within timeout.</exception>
   public async Task WaitAsync(int timeoutMilliseconds = 45000) {
+    var effectiveTimeout = TestTimeouts.Scale(timeoutMilliseconds);
     var totalPerspectives = _inventoryPerspectives + _bffPerspectives;
-    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
+    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={effectiveTimeout}ms{(TestTimeouts.Multiplier > 1 ? $" [x{TestTimeouts.Multiplier}]" : "")})");
 
     try {
       // Wait for BOTH hosts to complete their perspectives
       await Task.WhenAll(
-        _inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)),
-        _bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds))
+        _inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout)),
+        _bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout))
       );
       Console.WriteLine($"[PerspectiveWaiter] All {totalPerspectives} perspectives completed for {typeof(TEvent).Name}!");
     } catch (TimeoutException) {
