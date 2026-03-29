@@ -359,19 +359,23 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
     // Session-enabled subscriptions require AcceptNextSessionAsync
+    // Use short timeout to avoid blocking when no sessions exist
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     for (var s = 0; s < 10; s++) {
       try {
         await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
           topicName, subscriptionName,
-          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete },
+          cts.Token);
         for (var i = 0; i < 100; i++) {
           var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
           if (msg == null) {
             break;
           }
         }
-      } catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.ServiceTimeout) {
-        break; // No more sessions
+      } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.ServiceTimeout }
+                                    or OperationCanceledException) {
+        break; // No more sessions or timeout
       }
     }
   }
