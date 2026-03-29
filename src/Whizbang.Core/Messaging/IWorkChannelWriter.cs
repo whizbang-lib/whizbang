@@ -76,4 +76,13 @@ public interface IWorkChannelWriter {
   /// </summary>
   /// <param name="messageId">The message ID to remove from tracking</param>
   void RemoveInFlight(Guid messageId);
+
+  /// <summary>
+  /// Checks whether an in-flight message's lease should be renewed.
+  /// Returns true when the message has been in-flight for more than half the lease duration,
+  /// preventing unnecessary lease renewals on every tick while ensuring the lease doesn't expire.
+  /// </summary>
+  /// <param name="messageId">The message ID to check</param>
+  /// <returns>True if the message needs a lease renewal</returns>
+  bool ShouldRenewLease(Guid messageId);
 }

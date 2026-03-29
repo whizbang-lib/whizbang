@@ -1723,6 +1723,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 
   private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
@@ -1738,6 +1739,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 
   private sealed class BatchFakeWorkCoordinator : IWorkCoordinator, IDisposable {

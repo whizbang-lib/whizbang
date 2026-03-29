@@ -160,6 +160,28 @@ public class WorkChannelWriterInFlightTests {
   // Publish-completion race: message must stay in-flight after publish success
   // ========================================
 
+  // ========================================
+  // ShouldRenewLease: only renew near expiry, not every tick
+  // ========================================
+
+  [Test]
+  public async Task ShouldRenewLease_RecentlyWritten_ReturnsFalseAsync() {
+    var writer = new WorkChannelWriter();
+    var work = _createWork();
+
+    await writer.WriteAsync(work);
+
+    // Just written — should NOT need renewal yet
+    await Assert.That(writer.ShouldRenewLease(work.MessageId)).IsFalse()
+      .Because("Recently written messages should not need lease renewal");
+  }
+
+  [Test]
+  public async Task ShouldRenewLease_NotInFlight_ReturnsFalseAsync() {
+    var writer = new WorkChannelWriter();
+    await Assert.That(writer.ShouldRenewLease(Guid.NewGuid())).IsFalse();
+  }
+
   /// <summary>
   /// After a successful publish, the message must remain in-flight until the DB
   /// confirms the completion. If RemoveInFlight is called on publish success,
