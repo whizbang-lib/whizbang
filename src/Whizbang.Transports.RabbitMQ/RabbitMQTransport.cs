@@ -70,7 +70,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// Handles RabbitMQ connection recovery event by invoking the recovery handler.
   /// </summary>
   private async Task _onConnectionRecoverySucceededAsync(object sender, AsyncEventArgs args) {
-    _logger?.LogInformation("RabbitMQ connection recovered, clearing exchange cache and invoking recovery handler");
+    _logger?.LogInformation("RabbitMQ connection recovered — resetting channel pool and exchange cache");
+    _channelPool.Reset();
     _declaredExchanges.Clear();
 
     if (_recoveryHandler != null) {
