@@ -30,6 +30,17 @@
             Directory.CreateDirectory(outputDir);
         }
 
+        // Only write if content changed (avoids triggering file watchers unnecessarily)
+        if (File.Exists(OutputFile)) {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var existingHash = Convert.ToBase64String(sha.ComputeHash(File.ReadAllBytes(OutputFile)));
+            var newHash = Convert.ToBase64String(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(json)));
+            if (existingHash == newHash) {
+                Log.LogMessage(MessageImportance.Low, "Whizbang: Registry unchanged, skipping write");
+                return true;
+            }
+        }
+
         File.WriteAllText(OutputFile, json);
         ]]>
       </Code>
