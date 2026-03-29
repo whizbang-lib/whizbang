@@ -890,24 +890,30 @@ BEGIN
   -- ========================================
 
   -- Pre-compute work existence flags to avoid redundant subqueries in RETURN QUERY
+  -- Returns ALL owned unprocessed work (not just new/orphaned) to prevent message limbo.
+  -- Stream ordering preserved: messages blocked by an earlier scheduled retry are excluded.
   SELECT EXISTS(
     SELECT 1 FROM wh_outbox o
-    INNER JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
     WHERE o.instance_id = p_instance_id AND o.lease_expiry > p_now AND o.processed_at IS NULL
-    UNION ALL
-    SELECT 1 FROM wh_outbox o
-    INNER JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
-    WHERE o.instance_id = p_instance_id AND o.lease_expiry > p_now AND o.processed_at IS NULL
+      AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
+      AND NOT EXISTS (
+        SELECT 1 FROM wh_outbox blocked
+        WHERE blocked.stream_id = o.stream_id AND blocked.stream_id IS NOT NULL
+          AND blocked.processed_at IS NULL AND blocked.created_at < o.created_at
+          AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
+      )
   ) INTO v_has_outbox_work;
 
   SELECT EXISTS(
     SELECT 1 FROM wh_inbox i
-    INNER JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
     WHERE i.instance_id = p_instance_id AND i.lease_expiry > p_now AND i.processed_at IS NULL
-    UNION ALL
-    SELECT 1 FROM wh_inbox i
-    INNER JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
-    WHERE i.instance_id = p_instance_id AND i.lease_expiry > p_now AND i.processed_at IS NULL
+      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+      AND NOT EXISTS (
+        SELECT 1 FROM wh_inbox blocked
+        WHERE blocked.stream_id = i.stream_id AND blocked.stream_id IS NOT NULL
+          AND blocked.processed_at IS NULL AND blocked.created_at < i.created_at
+          AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
+      )
   ) INTO v_has_inbox_work;
 
   -- DIAGNOSTIC: Log counts before returning results
@@ -932,10 +938,16 @@ BEGIN
     FROM wh_outbox o
     LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
     LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
-    WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-      AND o.instance_id = p_instance_id
+    WHERE o.instance_id = p_instance_id
       AND o.lease_expiry > p_now
       AND o.processed_at IS NULL
+      AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
+      AND NOT EXISTS (
+        SELECT 1 FROM wh_outbox blocked
+        WHERE blocked.stream_id = o.stream_id AND blocked.stream_id IS NOT NULL
+          AND blocked.processed_at IS NULL AND blocked.created_at < o.created_at
+          AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
+      )
   )
   SELECT
     v_rank as instance_rank,
@@ -970,10 +982,16 @@ BEGIN
     FROM wh_inbox i
     LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
     LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
-    WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-      AND i.instance_id = p_instance_id
+    WHERE i.instance_id = p_instance_id
       AND i.lease_expiry > p_now
       AND i.processed_at IS NULL
+      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+      AND NOT EXISTS (
+        SELECT 1 FROM wh_inbox blocked
+        WHERE blocked.stream_id = i.stream_id AND blocked.stream_id IS NOT NULL
+          AND blocked.processed_at IS NULL AND blocked.created_at < i.created_at
+          AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
+      )
   )
   SELECT
     v_rank as instance_rank,

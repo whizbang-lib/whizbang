@@ -642,10 +642,12 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(result1.InboxWork).Count().IsEqualTo(1);
     await Assert.That(result1.InboxWork[0].MessageId).IsEqualTo(messageId);
 
-    // Assert - Second call returns empty (duplicate detected via INSERT ... ON CONFLICT DO NOTHING)
-    await Assert.That(result2.InboxWork).Count().IsEqualTo(0);
+    // Assert - Second call returns the existing message (owned, unprocessed, valid lease)
+    // Dedup prevents a second row, but the owned message is still returned for processing
+    await Assert.That(result2.InboxWork).Count().IsEqualTo(1);
+    await Assert.That(result2.InboxWork[0].MessageId).IsEqualTo(messageId);
 
-    // Verify only one message in database
+    // Verify only one message in database (dedup worked)
     var count = await _countInboxMessagesAsync(messageId);
     await Assert.That(count).IsEqualTo(1);
   }
