@@ -58,7 +58,7 @@
 
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
-    (whizbang-test-postgres, whizbang-test-rabbitmq). Default: $true.
+    (postgres, rabbitmq, servicebus, mssql containers). Default: $true.
     Use -Cleanup:$false to preserve shared containers for faster subsequent runs.
 
 .PARAMETER CleanupOnly
@@ -417,8 +417,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
 
     # Stop and remove Whizbang test containers EXCEPT shared containers which are designed to persist
     # We use name-based filtering with "whizbang-test-" prefix to avoid killing other projects' containers
-    # The whizbang-test-postgres and whizbang-test-rabbitmq containers are intentionally kept running for reuse
-    $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+    # Shared containers are intentionally kept running for reuse (postgres, rabbitmq, servicebus, mssql)
+    $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" -and $_ -notmatch "whizbang-test-servicebus" -and $_ -notmatch "whizbang-test-mssql" } | ForEach-Object { ($_ -split " ")[0] }
     if ($whizbangContainers) {
         $whizbangContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
@@ -449,7 +449,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
     }
 
     # Verify RabbitMQ is responding
-    $mgmtPort = ((docker port whizbang-test-rabbitmq 15672 2>$null) -split "`n")[0] -replace '.*:', ''
+    $portOutput = docker port whizbang-test-rabbitmq 15672 2>$null
+    $mgmtPort = if ($portOutput) { ($portOutput -split "`n")[0] -replace '.*:', '' } else { $null }
     if ($mgmtPort) {
         $maxAttempts = 15
         for ($i = 1; $i -le $maxAttempts; $i++) {
@@ -474,10 +475,9 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         }
     }
 
-    # Ensure shared PostgreSQL container is running (required for Postgres integration tests)
+    # Ensure shared PostgreSQL container is running (shared across all test projects)
     $sharedPgState = docker inspect --format="{{.State.Status}}" whizbang-test-postgres 2>$null
     if (-not $sharedPgState) {
-        # Container doesn't exist - create it
         if (-not $useAiOutput) {
             Write-Host "Starting shared PostgreSQL container..." -ForegroundColor Yellow
         }
@@ -491,7 +491,6 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
             -c max_connections=500 2>&1 | Out-Null
         Start-Sleep -Seconds 5
     } elseif ($sharedPgState -ne "running") {
-        # Container exists but not running - start it
         if (-not $useAiOutput) {
             Write-Host "Starting stopped PostgreSQL container..." -ForegroundColor Yellow
         }
@@ -500,7 +499,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
     }
 
     # Verify PostgreSQL is responding
-    $pgPort = ((docker port whizbang-test-postgres 5432 2>$null) -split "`n")[0] -replace '.*:', ''
+    $portOutput = docker port whizbang-test-postgres 5432 2>$null
+    $pgPort = if ($portOutput) { ($portOutput -split "`n")[0] -replace '.*:', '' } else { $null }
     if ($pgPort) {
         $maxAttempts = 15
         for ($i = 1; $i -le $maxAttempts; $i++) {
@@ -1447,6 +1447,10 @@ try {
         $lineCounter = 0
         $hangWarningShown = $false
 
+        # Stall detection: kill when test counts don't change for 3 minutes
+        $lastCountChangeTime = $startTime
+        $lastCountChangeTotal = 0
+
         # Track completed project results separately (from summary lines)
         $completedPassed = 0
         $completedFailed = 0
@@ -1541,9 +1545,32 @@ try {
                     $lastProgressTime = $now
                 }
 
-                # Hang detection
+                # Hang detection (silent output OR stalled progress)
                 if ($HangTimeout -gt 0 -and ($now - $lastHangCheckTime).TotalSeconds -ge 10) {
                     $lastHangCheckTime = $now
+
+                    # Stall detection: test counts haven't changed for HangTimeout seconds
+                    $stalledSeconds = ($now - $lastCountChangeTime).TotalSeconds
+                    if ($lastCountChangeTotal -gt 0 -and $stalledSeconds -ge $HangTimeout) {
+                        Write-Host ""
+                        Write-Host "=== STALL DETECTED ===" -ForegroundColor Red
+                        Write-Host "Test count stuck at $lastCountChangeTotal for $([Math]::Floor($stalledSeconds)) seconds. Terminating." -ForegroundColor Red
+                        if ($lastTestName) {
+                            Write-Host "Last test seen: $lastTestName" -ForegroundColor Yellow
+                        }
+                        Write-Host ""
+                        try {
+                            $process.Kill($true)
+                        } catch { }
+                        $failFastTriggered = $true
+                        $failedTests += "STALL: Test execution stalled for $([Math]::Floor($stalledSeconds))s at $lastCountChangeTotal tests"
+                        $testDetails["STALL: Test execution stalled"] = @{
+                            "ErrorMessage" = "Test count did not increase for $([Math]::Floor($stalledSeconds)) seconds. A test or fixture is likely hanging."
+                            "StackTrace" = "Last test: $lastTestName"
+                            "Exception" = "StallDetected"
+                        }
+                        break
+                    }
 
                     if ($silentSeconds -ge ($HangTimeout * 2)) {
                         # Hard hang - terminate
@@ -1588,6 +1615,12 @@ try {
                 if ($passed -gt $inProgressPassed) { $inProgressPassed = $passed }
                 if ($failed -gt $inProgressFailed) { $inProgressFailed = $failed }
                 if ($skipped -gt $inProgressSkipped) { $inProgressSkipped = $skipped }
+
+                # Extract currently running test name from progress line:
+                # [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
+                if ($lineStr -match ' - ([^\(]+)\s*\(') {
+                    $lastTestName = $matches[1].Trim()
+                }
             }
             # Capture final summary lines - these are the accurate completed counts
             # Reset in-progress tracking when a project completes to avoid double-counting
@@ -1652,6 +1685,12 @@ try {
                 $lastProgressTime = $now
                 $lastTotalTests = $totalTests
                 $lastTotalFailed = $totalFailed
+
+                # Track when counts actually change (for stall detection)
+                if ($totalTests -ne $lastCountChangeTotal) {
+                    $lastCountChangeTime = $now
+                    $lastCountChangeTotal = $totalTests
+                }
             }
 
             # Track last completed test name from passed/skipped lines for progress display
@@ -2350,8 +2389,8 @@ try {
             # Prune unused volumes (only when doing full cleanup)
             docker volume prune -f 2>&1 | Out-Null
         } else {
-            # Partial cleanup: preserve shared containers (whizbang-test-postgres, whizbang-test-rabbitmq)
-            $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+            # Partial cleanup: preserve shared containers (postgres, rabbitmq, servicebus, mssql)
+            $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" -and $_ -notmatch "whizbang-test-servicebus" -and $_ -notmatch "whizbang-test-mssql" } | ForEach-Object { ($_ -split " ")[0] }
             if ($whizbangContainers) {
                 $whizbangContainers | ForEach-Object {
                     docker stop $_ 2>&1 | Out-Null

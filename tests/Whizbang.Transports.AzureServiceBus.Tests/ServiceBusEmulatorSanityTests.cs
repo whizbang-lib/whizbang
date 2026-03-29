@@ -37,7 +37,7 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
 
     // Create Service Bus client directly from connection string
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain stale messages before test (warmup messages remain from initialization)
     Console.WriteLine("[SANITY TEST] Draining stale messages...");
@@ -117,7 +117,7 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     Console.WriteLine("[SANITY TEST] Testing second generic topic...");
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain stale messages before test (warmup messages remain from initialization)
     Console.WriteLine("[SANITY TEST] Draining stale messages...");
