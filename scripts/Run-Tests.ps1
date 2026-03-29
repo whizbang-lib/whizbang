@@ -1408,6 +1408,10 @@ try {
         $lineCounter = 0
         $hangWarningShown = $false
 
+        # Stall detection: kill when test counts don't change for 3 minutes
+        $lastCountChangeTime = $startTime
+        $lastCountChangeTotal = 0
+
         # Track completed project results separately (from summary lines)
         $completedPassed = 0
         $completedFailed = 0
@@ -1502,9 +1506,32 @@ try {
                     $lastProgressTime = $now
                 }
 
-                # Hang detection
+                # Hang detection (silent output OR stalled progress)
                 if ($HangTimeout -gt 0 -and ($now - $lastHangCheckTime).TotalSeconds -ge 10) {
                     $lastHangCheckTime = $now
+
+                    # Stall detection: test counts haven't changed for HangTimeout seconds
+                    $stalledSeconds = ($now - $lastCountChangeTime).TotalSeconds
+                    if ($lastCountChangeTotal -gt 0 -and $stalledSeconds -ge $HangTimeout) {
+                        Write-Host ""
+                        Write-Host "=== STALL DETECTED ===" -ForegroundColor Red
+                        Write-Host "Test count stuck at $lastCountChangeTotal for $([Math]::Floor($stalledSeconds)) seconds. Terminating." -ForegroundColor Red
+                        if ($lastTestName) {
+                            Write-Host "Last test seen: $lastTestName" -ForegroundColor Yellow
+                        }
+                        Write-Host ""
+                        try {
+                            $process.Kill($true)
+                        } catch { }
+                        $failFastTriggered = $true
+                        $failedTests += "STALL: Test execution stalled for $([Math]::Floor($stalledSeconds))s at $lastCountChangeTotal tests"
+                        $testDetails["STALL: Test execution stalled"] = @{
+                            "ErrorMessage" = "Test count did not increase for $([Math]::Floor($stalledSeconds)) seconds. A test or fixture is likely hanging."
+                            "StackTrace" = "Last test: $lastTestName"
+                            "Exception" = "StallDetected"
+                        }
+                        break
+                    }
 
                     if ($silentSeconds -ge ($HangTimeout * 2)) {
                         # Hard hang - terminate
@@ -1613,6 +1640,12 @@ try {
                 $lastProgressTime = $now
                 $lastTotalTests = $totalTests
                 $lastTotalFailed = $totalFailed
+
+                # Track when counts actually change (for stall detection)
+                if ($totalTests -ne $lastCountChangeTotal) {
+                    $lastCountChangeTime = $now
+                    $lastCountChangeTotal = $totalTests
+                }
             }
 
             # Track last completed test name from passed/skipped lines for progress display
