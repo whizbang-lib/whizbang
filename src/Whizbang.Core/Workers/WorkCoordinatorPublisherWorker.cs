@@ -680,7 +680,10 @@ public partial class WorkCoordinatorPublisherWorker(
 
   private void _trackPublishResult(OutboxWork work, MessagePublishResult result) {
     if (result.Success) {
-      _workChannelWriter.RemoveInFlight(work.MessageId);
+      // DO NOT RemoveInFlight here — message must stay tracked until DB confirms completion.
+      // If removed now, Phase 7 returns it again before the completion is flushed to DB,
+      // causing duplicate publishing. The entry stays in _inFlight (negligible memory)
+      // and prevents re-queuing until the DB clears it via process_work_batch completions.
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
     } else if (result.Reason == MessageFailureReason.TransportException) {

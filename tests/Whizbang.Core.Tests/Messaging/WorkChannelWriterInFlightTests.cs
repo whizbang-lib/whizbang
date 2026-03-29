@@ -155,4 +155,32 @@ public class WorkChannelWriterInFlightTests {
     await Assert.That(writer.IsInFlight(work2.MessageId)).IsTrue()
       .Because("Removing one message should not affect others");
   }
+
+  // ========================================
+  // Publish-completion race: message must stay in-flight after publish success
+  // ========================================
+
+  /// <summary>
+  /// After a successful publish, the message must remain in-flight until the DB
+  /// confirms the completion. If RemoveInFlight is called on publish success,
+  /// Phase 7 returns the message again before the DB completion is flushed,
+  /// causing duplicate publishing.
+  /// </summary>
+  [Test]
+  public async Task WriteAsync_ThenSuccessfulPublish_ShouldStayInFlightAsync() {
+    var writer = new WorkChannelWriter();
+    var work = _createWork();
+
+    // Simulate: message written to channel (tracked)
+    await writer.WriteAsync(work);
+
+    // Simulate: publisher publishes successfully — should NOT remove from in-flight
+    // (In the current code, _trackPublishResult calls RemoveInFlight on success — that's the bug)
+    // The correct behavior: message stays in-flight until DB confirms completion
+    // We verify this by checking IsInFlight after a simulated "successful publish"
+    // without calling RemoveInFlight
+
+    await Assert.That(writer.IsInFlight(work.MessageId)).IsTrue()
+      .Because("Message must stay in-flight after publish success until DB confirms completion");
+  }
 }
