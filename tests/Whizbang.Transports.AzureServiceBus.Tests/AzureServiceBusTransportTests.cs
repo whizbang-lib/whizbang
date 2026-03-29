@@ -151,16 +151,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     await transport.PublishAsync(envelope, destination);
 
-    // Assert - Verify message arrived by receiving it
-    var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
-    try {
-      var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-      await Assert.That(received).IsNotNull();
-      await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
-      await receiver.CompleteMessageAsync(received);
-    } finally {
-      await receiver.DisposeAsync();
-    }
+    // Assert - Verify message arrived by receiving it (session-enabled subscription)
+    await using var receiver = await _fixture.Client.AcceptNextSessionAsync("topic-00", "sub-00-a");
+    var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(received).IsNotNull();
+    await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
+    await receiver.CompleteMessageAsync(received);
   }
 
   [Test]
@@ -359,17 +355,21 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
-    try {
-      for (var i = 0; i < 100; i++) {
-        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-        if (msg == null) {
-          break;
+    // Session-enabled subscriptions require AcceptNextSessionAsync
+    for (var s = 0; s < 10; s++) {
+      try {
+        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
+          topicName, subscriptionName,
+          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+        for (var i = 0; i < 100; i++) {
+          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+          if (msg == null) {
+            break;
+          }
         }
-        await receiver.CompleteMessageAsync(msg);
+      } catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.ServiceTimeout) {
+        break; // No more sessions
       }
-    } finally {
-      await receiver.DisposeAsync();
     }
   }
 

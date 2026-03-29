@@ -22,7 +22,7 @@
                   "MaxDeliveryCount": 3,
                   "ForwardDeadLetteredMessagesTo": "",
                   "ForwardTo": "",
-                  "RequiresSession": false
+                  "RequiresSession": true
                 },
                 "Rules": [
                   {
@@ -52,7 +52,7 @@
                   "MaxDeliveryCount": 3,
                   "ForwardDeadLetteredMessagesTo": "",
                   "ForwardTo": "",
-                  "RequiresSession": false
+                  "RequiresSession": true
                 },
                 "Rules": [
                   {
@@ -82,7 +82,7 @@
                   "MaxDeliveryCount": 3,
                   "ForwardDeadLetteredMessagesTo": "",
                   "ForwardTo": "",
-                  "RequiresSession": false
+                  "RequiresSession": true
                 },
                 "Rules": [
                   {
@@ -105,7 +105,7 @@
                   "MaxDeliveryCount": 3,
                   "ForwardDeadLetteredMessagesTo": "",
                   "ForwardTo": "",
-                  "RequiresSession": false
+                  "RequiresSession": true
                 },
                 "Rules": [
                   {

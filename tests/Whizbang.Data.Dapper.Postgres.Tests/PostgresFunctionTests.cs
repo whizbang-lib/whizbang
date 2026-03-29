@@ -1208,6 +1208,136 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(inboxWork2[0].work_id).IsEqualTo(messageId);
   }
 
+  /// <summary>
+  /// Verifies that completed outbox messages are NOT returned on subsequent calls.
+  /// </summary>
+  /// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:Phase 7</tests>
+  [Test]
+  public async Task ProcessWorkBatch_ProcessedOutbox_NotReturnedAsync() {
+    // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store outbox message
+    var messages = JsonSerializer.Serialize(new[] {
+      new {
+        MessageId = (Guid)messageId,
+        Destination = "test-destination",
+        MessageType = "TestEvent",
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
+        EnvelopeData = "{}",
+        Metadata = "{}",
+        Scope = (string?)null,
+        StreamId = (Guid)streamId,
+        IsEvent = false
+      }
+    });
+
+    await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now,
+        p_new_outbox_messages := @messages::jsonb
+      )",
+      new { instanceId, now, messages });
+
+    // Act — report completion and call again
+    var completions = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, Status = 4 }
+    });
+    var now2 = now.AddSeconds(1);
+
+    var result2 = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now2,
+        p_outbox_completions := @completions::jsonb
+      )",
+      new { instanceId, now2, completions });
+
+    // Assert — completed message must NOT be returned
+    var outboxWork = result2.Where(r => r.source == "outbox").ToList();
+    await Assert.That(outboxWork.Count).IsEqualTo(0)
+      .Because("Completed outbox messages must not be returned as work");
+  }
+
+  /// <summary>
+  /// Verifies that completed inbox messages are NOT returned on subsequent calls.
+  /// </summary>
+  /// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:Phase 7</tests>
+  [Test]
+  public async Task ProcessWorkBatch_ProcessedInbox_NotReturnedAsync() {
+    // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store inbox message
+    var messages = JsonSerializer.Serialize(new[] {
+      new {
+        MessageId = (Guid)messageId,
+        HandlerName = "TestHandler",
+        MessageType = "TestEvent",
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
+        EnvelopeData = "{}",
+        Metadata = "{}",
+        Scope = (string?)null,
+        StreamId = (Guid)streamId,
+        IsEvent = false
+      }
+    });
+
+    await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now,
+        p_new_inbox_messages := @messages::jsonb
+      )",
+      new { instanceId, now, messages });
+
+    // Act — report completion and call again
+    var completions = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, Status = 2 }
+    });
+    var now2 = now.AddSeconds(1);
+
+    var result2 = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now2,
+        p_inbox_completions := @completions::jsonb
+      )",
+      new { instanceId, now2, completions });
+
+    // Assert — completed message must NOT be returned
+    var inboxWork = result2.Where(r => r.source == "inbox").ToList();
+    await Assert.That(inboxWork.Count).IsEqualTo(0)
+      .Because("Completed inbox messages must not be returned as work");
+  }
+
   [Test]
   public async Task ProcessWorkBatch_FailedOutbox_NotReturnedBeforeScheduledTimeAsync() {
     // Arrange

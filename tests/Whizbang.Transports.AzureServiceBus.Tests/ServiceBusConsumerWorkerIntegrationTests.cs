@@ -2,6 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -470,17 +471,21 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
-    try {
-      for (var i = 0; i < 100; i++) {
-        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-        if (msg == null) {
-          break;
+    // Session-enabled subscriptions require AcceptNextSessionAsync
+    for (var s = 0; s < 10; s++) {
+      try {
+        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
+          topicName, subscriptionName,
+          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+        for (var i = 0; i < 100; i++) {
+          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+          if (msg == null) {
+            break;
+          }
         }
-        await receiver.CompleteMessageAsync(msg);
+      } catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.ServiceTimeout) {
+        break; // No more sessions
       }
-    } finally {
-      await receiver.DisposeAsync();
     }
   }
 
