@@ -44,7 +44,7 @@ ON wh_outbox (stream_id, created_at)
 WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_inbox_stream_blocked
-ON wh_inbox (stream_id, created_at)
+ON wh_inbox (stream_id, received_at)
 WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
 
 -- Perspective events processed index: support cleanup/anti-join queries

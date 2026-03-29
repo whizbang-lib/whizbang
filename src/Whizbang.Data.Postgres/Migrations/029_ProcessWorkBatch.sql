@@ -911,7 +911,7 @@ BEGIN
       AND NOT EXISTS (
         SELECT 1 FROM wh_inbox blocked
         WHERE blocked.stream_id = i.stream_id AND blocked.stream_id IS NOT NULL
-          AND blocked.processed_at IS NULL AND blocked.created_at < i.created_at
+          AND blocked.processed_at IS NULL AND blocked.received_at < i.received_at
           AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
       )
   ) INTO v_has_inbox_work;
@@ -989,7 +989,7 @@ BEGIN
       AND NOT EXISTS (
         SELECT 1 FROM wh_inbox blocked
         WHERE blocked.stream_id = i.stream_id AND blocked.stream_id IS NOT NULL
-          AND blocked.processed_at IS NULL AND blocked.created_at < i.created_at
+          AND blocked.processed_at IS NULL AND blocked.received_at < i.received_at
           AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
       )
   )
