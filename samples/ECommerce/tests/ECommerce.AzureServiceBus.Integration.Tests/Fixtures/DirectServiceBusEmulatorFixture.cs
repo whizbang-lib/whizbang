@@ -17,7 +17,7 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   /// <summary>
   /// Creates a fixture using the emulator's default built-in configuration.
   /// </summary>
-  public DirectServiceBusEmulatorFixture() : this(5672, null) {
+  public DirectServiceBusEmulatorFixture() : this(5673, null) {
   }
 
   /// <summary>

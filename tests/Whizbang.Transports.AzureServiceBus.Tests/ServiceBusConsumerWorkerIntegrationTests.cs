@@ -2,7 +2,6 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -36,7 +35,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_ReceivesMessage_ProcessesThroughHandleMessageAsync() {
     // Arrange: Wire up worker with real transport and test strategy
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var capturedInboxMessages = new List<InboxMessage>();
@@ -95,7 +94,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_MessageWithSecurityContext_EstablishesContextDuringHandlingAsync() {
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     IScopeContext? capturedScope = null;
@@ -153,7 +152,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_DuplicateMessage_SkipsSecondProcessingAsync() {
     // Arrange: Strategy returns empty work batch for duplicates
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var processedMessageIds = new List<Guid>();
@@ -204,7 +203,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_StartAndStop_ManagesSubscriptionsCorrectlyAsync() {
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var strategy = new NoOpWorkCoordinatorStrategy();
@@ -242,7 +241,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_PauseAndResume_PausesAndResumesSubscriptionsAsync() {
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var strategy = new NoOpWorkCoordinatorStrategy();
@@ -280,7 +279,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_WithDestinationFilter_CreatesSubscriptionWithFilterAsync() {
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var strategy = new NoOpWorkCoordinatorStrategy();
@@ -316,7 +315,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_MessageWithAggregateId_ExtractsStreamIdFromHopMetadataAsync() {
     // Arrange: Publish message with AggregateId in hop metadata
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var capturedInboxMessages = new List<InboxMessage>();
@@ -367,7 +366,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   public async Task Worker_MessageWithoutAggregateId_FallsBackToMessageIdAsync() {
     // Arrange: Message without AggregateId metadata - should fall back to MessageId
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
+    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
     await transport.InitializeAsync();
 
     var capturedInboxMessages = new List<InboxMessage>();
@@ -474,23 +473,17 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    for (var s = 0; s < 10; s++) {
-      try {
-        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
-          topicName, subscriptionName,
-          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete },
-          cts.Token);
-        for (var i = 0; i < 100; i++) {
-          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-          if (msg == null) {
-            break;
-          }
+    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
+    try {
+      for (var i = 0; i < 100; i++) {
+        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+        if (msg == null) {
+          break;
         }
-      } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.ServiceTimeout }
-                                    or OperationCanceledException) {
-        break;
+        await receiver.CompleteMessageAsync(msg);
       }
+    } finally {
+      await receiver.DisposeAsync();
     }
   }
 
