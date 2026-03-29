@@ -2233,7 +2233,9 @@ try {
         Write-Host ""
     } else {
         # Normal mode: Pass through to native MTP output with built-in progress
-        & dotnet @testArgs
+        # Tee output for failure detection (dotnet test may return 0 despite test failures)
+        & dotnet @testArgs | Tee-Object -Variable _testOutput
+        $script:_normalModeOutput = $_testOutput -join "`n"
     }
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
@@ -2260,7 +2262,17 @@ try {
             $hasErrors = $hasTestFailures -or ($infrastructureErrors -gt 0 -and $totalPassed -eq 0)
         }
     } else {
+        # Check both exit code AND output for failures
+        # dotnet test with --max-parallel-test-modules can return 0 despite test module failures
         $hasErrors = $LASTEXITCODE -ne 0
+        if (-not $hasErrors -and $script:_normalModeOutput) {
+            if ($script:_normalModeOutput -match "failed with \d+ error" -or
+                $script:_normalModeOutput -match "^\s*failed:\s+[1-9]") {
+                $hasErrors = $true
+                Write-Host ""
+                Write-Host "WARNING: dotnet test returned exit code 0 but output contains test failures" -ForegroundColor Yellow
+            }
+        }
     }
 
     # --- Coverage Report Generation (skipped when Run-PR handles it separately) ---
