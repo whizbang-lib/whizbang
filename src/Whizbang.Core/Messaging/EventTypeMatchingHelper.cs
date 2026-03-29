@@ -35,22 +35,63 @@ public static class EventTypeMatchingHelper {
       return assemblyQualifiedTypeName;
     }
 
-    // For generic types like MessageEnvelope`1[[PayloadType, Assembly, Version=..., ...]], OuterAssembly, Version=..., ...
-    // we need to strip version info from BOTH the inner type and the outer type.
-    // Strategy: Use regex to replace ", Version=..., Culture=..., PublicKeyToken=..." patterns anywhere in the string.
+    // Strip ", Version=..., Culture=..., PublicKeyToken=..." segments from assembly-qualified names.
+    // Uses string scanning instead of regex to avoid backtracking timeouts on long/nested generic types.
+    var result = new System.Text.StringBuilder(assemblyQualifiedTypeName.Length);
+    var span = assemblyQualifiedTypeName.AsSpan();
+    var i = 0;
 
-    // Pattern matches: ", Version=X, Culture=Y, PublicKeyToken=Z" or any subset
-    // This works for both simple types and nested generic types
-    // Timeout added to prevent ReDoS attacks (S6444)
-    // Strip version, culture, and public key token info but preserve nested type separators (+)
-    // MessageJsonContextGenerator now uses CLR format (+ for nested types) matching Type.FullName
-    return System.Text.RegularExpressions.Regex.Replace(
-      assemblyQualifiedTypeName,
-      @",\s*Version=[^,\]]+(?:,\s*Culture=[^,\]]+)?(?:,\s*PublicKeyToken=[^,\]]+)?",
-      "",
-      System.Text.RegularExpressions.RegexOptions.None,
-      TimeSpan.FromSeconds(1)
-    );
+    while (i < span.Length) {
+      // Check for ", Version=" pattern (with optional whitespace after comma)
+      if (i + 2 < span.Length && span[i] == ',' && _isVersionStart(span, i)) {
+        // Skip this segment: advance past ", Version=value" and any following ", Culture=value", ", PublicKeyToken=value"
+        i = _skipAssemblyMetadata(span, i);
+      } else {
+        result.Append(span[i]);
+        i++;
+      }
+    }
+
+    return result.ToString();
+  }
+
+  private static bool _isVersionStart(ReadOnlySpan<char> span, int commaIndex) {
+    var j = commaIndex + 1;
+    // Skip whitespace after comma
+    while (j < span.Length && span[j] == ' ') { j++; }
+    // Check for "Version="
+    return j + 8 <= span.Length && span.Slice(j, 8).SequenceEqual("Version=".AsSpan());
+  }
+
+  private static int _skipAssemblyMetadata(ReadOnlySpan<char> span, int start) {
+    // Skip ", Version=value" then optionally ", Culture=value" and ", PublicKeyToken=value"
+    var i = start;
+    // Skip up to 3 metadata segments (Version, Culture, PublicKeyToken)
+    for (var seg = 0; seg < 3 && i < span.Length; seg++) {
+      if (span[i] != ',') { break; }
+      var j = i + 1;
+      while (j < span.Length && span[j] == ' ') { j++; }
+      // Check if this is a known metadata key
+      if (_startsWithMetadataKey(span, j)) {
+        // Skip to end of value (next comma, ']', or end)
+        i = j;
+        while (i < span.Length && span[i] != ',' && span[i] != ']') { i++; }
+      } else {
+        break;
+      }
+    }
+    return i;
+  }
+
+  private static bool _startsWithMetadataKey(ReadOnlySpan<char> span, int pos) {
+    return _startsWith(span, pos, "Version=") ||
+           _startsWith(span, pos, "Culture=") ||
+           _startsWith(span, pos, "PublicKeyToken=");
+  }
+
+  private static bool _startsWith(ReadOnlySpan<char> span, int pos, string prefix) {
+    return pos + prefix.Length <= span.Length &&
+           span.Slice(pos, prefix.Length).SequenceEqual(prefix.AsSpan());
   }
 
   /// <summary>
