@@ -163,10 +163,8 @@ public partial class WorkCoordinatorPublisherWorker(
   private long _totalLeaseRenewals;
   private long _totalBufferedMessages;
 
-  // In-flight tracking: prevents re-queuing messages that are already being processed.
-  // Phase 7 returns ALL owned unprocessed messages on every tick; without this guard,
-  // messages still in the publisher channel or inbox pipeline would be dispatched again.
-  private readonly ConcurrentDictionary<Guid, byte> _inFlightOutbox = new();
+  // Outbox in-flight tracking is now in IWorkChannelWriter (covers flush + polling paths).
+  // Inbox in-flight tracking remains here (inbox has no channel writer).
   private readonly ConcurrentDictionary<Guid, byte> _inFlightInbox = new();
 
   // Work processing state tracking
@@ -432,6 +430,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
   private void _handleBulkBatchException(List<OutboxWork> batch, Exception ex) {
     foreach (var work in batch) {
+      _workChannelWriter.RemoveInFlight(work.MessageId);
       LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "unexpected_exception"));
       _failures.Add(new MessageFailure { MessageId = work.MessageId, CompletedStatus = work.Status, Error = ex.Message, Reason = MessageFailureReason.Unknown });
@@ -484,6 +483,7 @@ public partial class WorkCoordinatorPublisherWorker(
       } catch (ObjectDisposedException) {
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _workChannelWriter.RemoveInFlight(work.MessageId);
         LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
         _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "unexpected_exception"));
 
@@ -664,18 +664,18 @@ public partial class WorkCoordinatorPublisherWorker(
 
   private void _trackPublishResult(OutboxWork work, MessagePublishResult result) {
     if (result.Success) {
-      _inFlightOutbox.TryRemove(work.MessageId, out _);
+      _workChannelWriter.RemoveInFlight(work.MessageId);
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
     } else if (result.Reason == MessageFailureReason.TransportException) {
-      // Keep in _inFlightOutbox — message is re-queued to channel for retry
+      // Keep in-flight — message is re-queued to channel for retry
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
       _transportMetrics?.OutboxPublishRetries.Add(1);
       _leaseRenewals.Add(work.MessageId);
       _workChannelWriter.TryWrite(work);
       LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR);
     } else {
-      _inFlightOutbox.TryRemove(work.MessageId, out _);
+      _workChannelWriter.RemoveInFlight(work.MessageId);
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, result.Reason.ToString()));
       _failures.Add(new MessageFailure {
         MessageId = work.MessageId,
@@ -787,7 +787,7 @@ public partial class WorkCoordinatorPublisherWorker(
       var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
 
       foreach (var work in orderedOutboxWork) {
-        if (_inFlightOutbox.TryAdd(work.MessageId, 0)) {
+        if (!_workChannelWriter.IsInFlight(work.MessageId)) {
           await _workChannelWriter.WriteAsync(work, cancellationToken);
         } else {
           // Already in-flight — renew lease to keep it alive while processing

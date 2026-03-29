@@ -175,6 +175,9 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   private static ServiceInstanceProvider _createTestInstanceProvider() {

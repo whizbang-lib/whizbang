@@ -518,6 +518,9 @@ public class WorkCoordinatorStrategyRegistrationTests {
       return true;
     }
     public void Complete() { }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   private sealed class RegFakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {

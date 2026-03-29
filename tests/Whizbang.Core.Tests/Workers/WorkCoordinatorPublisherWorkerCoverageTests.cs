@@ -304,6 +304,9 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
   }
 
   private sealed class ControlledDatabaseReadinessCheck : IDatabaseReadinessCheck {
