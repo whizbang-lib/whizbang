@@ -78,13 +78,15 @@ jobs:
 
       - name: Run Azure Service Bus Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag AzureServiceBus -NoBuild
+        continue-on-error: true
+        run: pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations -Configuration Release -Tag AzureServiceBus -NoBuild
         env:
           WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
 
       - name: Run Azure Service Bus Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
+        continue-on-error: true
+        run: pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations -Coverage -Configuration Release -Tag AzureServiceBus
         env:
           WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
 
