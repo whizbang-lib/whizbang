@@ -2,6 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -460,6 +461,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
           ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          },
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = userId,
             TenantId = tenantId
@@ -470,17 +474,23 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
-    try {
-      for (var i = 0; i < 100; i++) {
-        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-        if (msg == null) {
-          break;
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    for (var s = 0; s < 10; s++) {
+      try {
+        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
+          topicName, subscriptionName,
+          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete },
+          cts.Token);
+        for (var i = 0; i < 100; i++) {
+          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+          if (msg == null) {
+            break;
+          }
         }
-        await receiver.CompleteMessageAsync(msg);
+      } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.ServiceTimeout }
+                                    or OperationCanceledException) {
+        break;
       }
-    } finally {
-      await receiver.DisposeAsync();
     }
   }
 

@@ -163,6 +163,12 @@ public partial class WorkCoordinatorPublisherWorker(
   private long _totalLeaseRenewals;
   private long _totalBufferedMessages;
 
+  // In-flight tracking: prevents re-queuing messages that are already being processed.
+  // Phase 7 returns ALL owned unprocessed messages on every tick; without this guard,
+  // messages still in the publisher channel or inbox pipeline would be dispatched again.
+  private readonly ConcurrentDictionary<Guid, byte> _inFlightOutbox = new();
+  private readonly ConcurrentDictionary<Guid, byte> _inFlightInbox = new();
+
   // Work processing state tracking
   private int _consecutiveEmptyPolls;
   private bool _isIdle = true;  // Start in idle state
@@ -658,15 +664,18 @@ public partial class WorkCoordinatorPublisherWorker(
 
   private void _trackPublishResult(OutboxWork work, MessagePublishResult result) {
     if (result.Success) {
+      _inFlightOutbox.TryRemove(work.MessageId, out _);
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
     } else if (result.Reason == MessageFailureReason.TransportException) {
+      // Keep in _inFlightOutbox — message is re-queued to channel for retry
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
       _transportMetrics?.OutboxPublishRetries.Add(1);
       _leaseRenewals.Add(work.MessageId);
       _workChannelWriter.TryWrite(work);
       LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR);
     } else {
+      _inFlightOutbox.TryRemove(work.MessageId, out _);
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, result.Reason.ToString()));
       _failures.Add(new MessageFailure {
         MessageId = work.MessageId,
@@ -778,13 +787,29 @@ public partial class WorkCoordinatorPublisherWorker(
       var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
 
       foreach (var work in orderedOutboxWork) {
-        await _workChannelWriter.WriteAsync(work, cancellationToken);
+        if (_inFlightOutbox.TryAdd(work.MessageId, 0)) {
+          await _workChannelWriter.WriteAsync(work, cancellationToken);
+        } else {
+          // Already in-flight — renew lease to keep it alive while processing
+          _leaseRenewals.Add(work.MessageId);
+        }
       }
     }
 
     // Process inbox work (orphaned messages recovered via claim_orphaned_inbox)
     if (workBatch.InboxWork.Count > 0) {
-      await _processInboxWorkAsync(workBatch.InboxWork, cancellationToken);
+      // Filter out messages already being processed from a previous tick
+      List<InboxWork> newInboxWork = [];
+      foreach (var work in workBatch.InboxWork) {
+        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+          newInboxWork.Add(work);
+        } else {
+          _inboxLeaseRenewals.Add(work.MessageId);
+        }
+      }
+      if (newInboxWork.Count > 0) {
+        await _processInboxWorkAsync(newInboxWork, cancellationToken);
+      }
     }
 
     _trackWorkStateTransitions(workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0);
@@ -875,6 +900,7 @@ public partial class WorkCoordinatorPublisherWorker(
         if (work.Attempts >= maxAttempts.Value) {
           // Purge: mark as completed to remove from inbox (dead-letter)
           LogInboxMessagePurged(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
+          _inFlightInbox.TryRemove(work.MessageId, out _);
           _inboxCompletions.Add(new MessageCompletion {
             MessageId = work.MessageId,
             Status = work.Status | MessageProcessingStatus.Published  // Terminal status
@@ -910,9 +936,11 @@ public partial class WorkCoordinatorPublisherWorker(
       workToProcess,
       processor: (_) => Task.FromResult(MessageProcessingStatus.EventStored),
       completionHandler: (msgId, status) => {
+        _inFlightInbox.TryRemove(msgId, out _);
         _inboxCompletions.Add(new MessageCompletion { MessageId = msgId, Status = status });
       },
       failureHandler: (msgId, status, error) => {
+        _inFlightInbox.TryRemove(msgId, out _);
         _inboxFailures.Add(new MessageFailure {
           MessageId = msgId,
           CompletedStatus = status,

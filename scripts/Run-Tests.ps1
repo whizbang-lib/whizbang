@@ -474,6 +474,50 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         }
     }
 
+    # Ensure shared PostgreSQL container is running (required for Postgres integration tests)
+    $sharedPgState = docker inspect --format="{{.State.Status}}" whizbang-test-postgres 2>$null
+    if (-not $sharedPgState) {
+        # Container doesn't exist - create it
+        if (-not $useAiOutput) {
+            Write-Host "Starting shared PostgreSQL container..." -ForegroundColor Yellow
+        }
+        docker run --detach --name whizbang-test-postgres `
+            -e POSTGRES_USER=whizbang_user `
+            -e POSTGRES_PASSWORD=whizbang_pass `
+            -e POSTGRES_DB=whizbang_test `
+            --publish 0:5432 `
+            --restart no `
+            pgvector/pgvector:pg17 `
+            -c max_connections=500 2>&1 | Out-Null
+        Start-Sleep -Seconds 5
+    } elseif ($sharedPgState -ne "running") {
+        # Container exists but not running - start it
+        if (-not $useAiOutput) {
+            Write-Host "Starting stopped PostgreSQL container..." -ForegroundColor Yellow
+        }
+        docker start whizbang-test-postgres 2>&1 | Out-Null
+        Start-Sleep -Seconds 3
+    }
+
+    # Verify PostgreSQL is responding
+    $pgPort = ((docker port whizbang-test-postgres 5432 2>$null) -split "`n")[0] -replace '.*:', ''
+    if ($pgPort) {
+        $maxAttempts = 15
+        for ($i = 1; $i -le $maxAttempts; $i++) {
+            $pgReady = docker exec whizbang-test-postgres pg_isready -U whizbang_user 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if (-not $useAiOutput) {
+                    Write-Host "PostgreSQL container ready on port $pgPort" -ForegroundColor Green
+                }
+                break
+            }
+            if ($i -eq $maxAttempts) {
+                Write-Warning "PostgreSQL container may not be fully ready after $maxAttempts attempts - tests will retry"
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+
     # Stop and remove Testcontainers ryuk (reaper) containers
     $ryukContainers = docker ps -a --filter "ancestor=testcontainers/ryuk" --format "{{.ID}}"
     if ($ryukContainers) {
@@ -1413,6 +1457,9 @@ try {
         $inProgressFailed = 0
         $inProgressSkipped = 0
 
+        # Track the most recently completed test name for progress display
+        $lastTestName = ""
+
         # FailFast tracking (set at outer scope, used here)
         $firstFailureDetails = $null
 
@@ -1485,7 +1532,8 @@ try {
 
                     if ($displayTotal -gt 0) {
                         $failureIndicator = if ($displayFailed -gt 0) { " ⚠️" } else { "" }
-                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                        $currentTestInfo = if ($lastTestName) { " - Current test: $lastTestName" } else { "" }
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)$currentTestInfo" -ForegroundColor Gray
                     } else {
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                     }
@@ -1587,9 +1635,10 @@ try {
                 if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
                     # Show test progress
                     $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
+                    $currentTestInfo = if ($lastTestName) { " - Current test: $lastTestName" } else { "" }
                     # Show running indicator when tests are actively executing
                     if ($inProgressTotal -gt 0) {
-                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)$currentTestInfo" -ForegroundColor Gray
                     } else {
                         # All projects finished — completed counts are authoritative
                         Write-Host "[$($elapsedMinutes)m] Complete: $completedPassed passed, $completedFailed failed, $completedSkipped skipped$failureIndicator" -ForegroundColor Gray
@@ -1605,6 +1654,11 @@ try {
                 $lastTotalFailed = $totalFailed
             }
 
+            # Track last completed test name from passed/skipped lines for progress display
+            if ($lineStr -match "^passed\s+([^\(]+)\s+\(" -or $lineStr -match "^skipped\s+([^\(]+)\s+\(") {
+                $lastTestName = $matches[1].Trim()
+            }
+
             # Capture failed test names (lines starting with "failed " followed by test name)
             # Note: This is an independent if block, not chained to progress display
             if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
@@ -1615,6 +1669,7 @@ try {
                 }
 
                 $testName = $matches[1].Trim()
+                $lastTestName = $testName
                 # Exclude false positives (EF Core logging, etc.)
                 if ($testName -notmatch "executing|DbCommand|Executed") {
                     $failedTests += $testName
