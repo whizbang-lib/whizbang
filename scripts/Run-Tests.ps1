@@ -475,9 +475,48 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         }
     }
 
-    # PostgreSQL containers are now per-project (whizbang-test-postgres-{suffix}).
-    # Each test project creates its own container via SharedPostgresContainer.
-    # No script-level pre-warming needed.
+    # Ensure shared PostgreSQL container is running (shared across all test projects)
+    $sharedPgState = docker inspect --format="{{.State.Status}}" whizbang-test-postgres 2>$null
+    if (-not $sharedPgState) {
+        if (-not $useAiOutput) {
+            Write-Host "Starting shared PostgreSQL container..." -ForegroundColor Yellow
+        }
+        docker run --detach --name whizbang-test-postgres `
+            -e POSTGRES_USER=whizbang_user `
+            -e POSTGRES_PASSWORD=whizbang_pass `
+            -e POSTGRES_DB=whizbang_test `
+            --publish 0:5432 `
+            --restart no `
+            pgvector/pgvector:pg17 `
+            -c max_connections=500 2>&1 | Out-Null
+        Start-Sleep -Seconds 5
+    } elseif ($sharedPgState -ne "running") {
+        if (-not $useAiOutput) {
+            Write-Host "Starting stopped PostgreSQL container..." -ForegroundColor Yellow
+        }
+        docker start whizbang-test-postgres 2>&1 | Out-Null
+        Start-Sleep -Seconds 3
+    }
+
+    # Verify PostgreSQL is responding
+    $portOutput = docker port whizbang-test-postgres 5432 2>$null
+    $pgPort = if ($portOutput) { ($portOutput -split "`n")[0] -replace '.*:', '' } else { $null }
+    if ($pgPort) {
+        $maxAttempts = 15
+        for ($i = 1; $i -le $maxAttempts; $i++) {
+            $pgReady = docker exec whizbang-test-postgres pg_isready -U whizbang_user 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if (-not $useAiOutput) {
+                    Write-Host "PostgreSQL container ready on port $pgPort" -ForegroundColor Green
+                }
+                break
+            }
+            if ($i -eq $maxAttempts) {
+                Write-Warning "PostgreSQL container may not be fully ready after $maxAttempts attempts - tests will retry"
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
 
     # Stop and remove Testcontainers ryuk (reaper) containers
     $ryukContainers = docker ps -a --filter "ancestor=testcontainers/ryuk" --format "{{.ID}}"

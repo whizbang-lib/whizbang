@@ -1,153 +1,97 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-
 using Npgsql;
 using TUnit.Core.Exceptions;
 
 namespace Whizbang.Testing.Containers;
 
 /// <summary>
-/// Provides per-project PostgreSQL containers for test isolation.
-/// Each test assembly gets its own container, eliminating connection contention
-/// when test projects run in parallel.
+/// Provides a shared PostgreSQL container for all tests.
+/// Uses raw Docker commands to ensure container persists across test processes.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Container names are derived from the calling assembly:
-/// <c>whizbang-test-postgres-{assembly-suffix}</c>. Each container uses a
-/// random host port via <c>--publish 0:5432</c>.
+/// This container uses a fixed name ("whizbang-test-postgres") and checks for an existing
+/// running container before creating a new one. This allows multiple test projects running
+/// in parallel to share the same container without race conditions.
 /// </para>
 /// <para>
-/// Containers persist after tests complete for reuse on subsequent runs.
-/// To remove all: <c>docker rm -f $(docker ps -a --filter "name=whizbang-test-postgres-" -q)</c>
+/// The container persists after tests complete - it will be reused on subsequent runs.
+/// To remove it: <c>docker rm -f whizbang-test-postgres</c>
+/// </para>
+/// <para>
+/// Usage:
+/// <code>
+/// [Before(Test)]
+/// public async Task SetupAsync() {
+///   await SharedPostgresContainer.InitializeAsync();
+///   var connectionString = SharedPostgresContainer.ConnectionString;
+/// }
+/// </code>
 /// </para>
 /// </remarks>
 public static class SharedPostgresContainer {
-  private const string CONTAINER_PREFIX = "whizbang-test-postgres";
+  private const string CONTAINER_NAME = "whizbang-test-postgres";
   private const string IMAGE_NAME = "pgvector/pgvector:pg17";
   private const string USERNAME = "whizbang_user";
   private const string PASSWORD = "whizbang_pass";
   private const string DATABASE = "whizbang_test";
   private const int CONTAINER_PORT = 5432;
 
-  /// <summary>
-  /// Per-container state, keyed by container name.
-  /// Each test assembly gets its own entry.
-  /// </summary>
-  private static readonly ConcurrentDictionary<string, ContainerState> _containers = new();
-
-#pragma warning disable CA1001 // ContainerState lives for process lifetime in static dictionary; disposal unnecessary
-  private sealed class ContainerState {
-#pragma warning restore CA1001
-    public readonly SemaphoreSlim InitLock = new(1, 1);
-    public string? ConnectionString;
-    public bool Initialized;
-    public bool InitializationFailed;
+  private static readonly SemaphoreSlim _initLock = new(1, 1);
+  private static string? _connectionString;
+  private static bool _initialized;
+  private static bool _initializationFailed;
 #pragma warning disable S4487 // Written for diagnostics; available in debugger during test failures
-    public Exception? LastInitializationError;
+  private static Exception? _lastInitializationError;
 #pragma warning restore S4487
-  }
-
-  /// <summary>
-  /// Gets the container name for the calling assembly.
-  /// </summary>
-  private static string _getContainerName() {
-    // Walk the call stack to find the test assembly (not Whizbang.Testing itself)
-    var testingAssemblyName = typeof(SharedPostgresContainer).Assembly.GetName().Name;
-    var callingAssembly = System.Reflection.Assembly.GetCallingAssembly();
-
-    // If the caller is this assembly, walk further up the stack
-    if (callingAssembly.GetName().Name == testingAssemblyName) {
-      callingAssembly = System.Reflection.Assembly.GetEntryAssembly() ?? callingAssembly;
-    }
-
-    var assemblyName = callingAssembly.GetName().Name ?? "unknown";
-    // Create a short, Docker-safe suffix from the assembly name
-    var suffix = assemblyName
-      .Replace("Whizbang.", "")
-      .Replace(".Tests", "")
-      .Replace(".", "-")
-      .ToLowerInvariant();
-
-    return $"{CONTAINER_PREFIX}-{suffix}";
-  }
-
-  /// <summary>
-  /// Gets the container name for a specific assembly (used by callers who know their assembly).
-  /// </summary>
-  public static string GetContainerName(System.Reflection.Assembly assembly) {
-    var assemblyName = assembly.GetName().Name ?? "unknown";
-    var suffix = assemblyName
-      .Replace("Whizbang.", "")
-      .Replace(".Tests", "")
-      .Replace(".", "-")
-      .ToLowerInvariant();
-
-    return $"{CONTAINER_PREFIX}-{suffix}";
-  }
 
   /// <summary>
   /// Gets the shared PostgreSQL connection string (base database).
-  /// Uses the entry assembly to determine which container to connect to.
+  /// For test isolation, use <see cref="GetPerTestDatabaseConnectionString"/> instead.
   /// </summary>
   /// <exception cref="InvalidOperationException">Thrown if container is not initialized.</exception>
-  public static string ConnectionString {
-    get {
-      var containerName = _resolveContainerName();
-      var state = _containers.GetValueOrDefault(containerName);
-      return state?.ConnectionString
-        ?? throw new InvalidOperationException(
-          $"Shared PostgreSQL not initialized for '{containerName}'. Call InitializeAsync() first.");
-    }
-  }
+  public static string ConnectionString =>
+    _connectionString ?? throw new InvalidOperationException("Shared PostgreSQL not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets whether the container has been successfully initialized.
   /// </summary>
-  public static bool IsInitialized {
-    get {
-      var containerName = _resolveContainerName();
-      return _containers.TryGetValue(containerName, out var state) && state.Initialized;
-    }
-  }
-
-  /// <summary>
-  /// Resolves the container name from the entry assembly (most reliable for static property access).
-  /// </summary>
-  private static string _resolveContainerName() {
-    var assembly = System.Reflection.Assembly.GetEntryAssembly() ?? System.Reflection.Assembly.GetCallingAssembly();
-    return GetContainerName(assembly);
-  }
+  public static bool IsInitialized => _initialized;
 
   /// <summary>
   /// Attempts to initialize the shared PostgreSQL container.
   /// Returns true if initialization succeeds, false if Docker or PostgreSQL is not available.
+  /// Unlike <see cref="InitializeAsync"/>, this method does not throw on infrastructure unavailability.
   /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True if the container is ready; false if Docker/PostgreSQL is unavailable.</returns>
   public static async Task<bool> TryInitializeAsync(CancellationToken cancellationToken = default) {
-    var containerName = _resolveContainerName();
-    var state = _containers.GetOrAdd(containerName, _ => new ContainerState());
-
-    if (state.Initialized) {
+    if (_initialized) {
       return true;
     }
 
     if (!await SharedRabbitMqContainer.IsDockerAvailableAsync(cancellationToken)) {
-      Console.WriteLine($"[SharedPostgresContainer] Docker is not available - skipping container initialization ({containerName})");
+      Console.WriteLine("[SharedPostgresContainer] Docker is not available - skipping container initialization");
       return false;
     }
 
     try {
-      await _initializeCoreAsync(containerName, state, cancellationToken);
+      await InitializeAsync(cancellationToken);
       return true;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      Console.WriteLine($"[SharedPostgresContainer] Container initialization failed ({containerName}): {ex.Message}");
+      Console.WriteLine($"[SharedPostgresContainer] Container initialization failed: {ex.Message}");
       return false;
     }
   }
 
   /// <summary>
   /// Initializes the shared PostgreSQL container, or skips the test if Docker/PostgreSQL is not available.
+  /// Use this in <c>[Before(Test)]</c> methods for integration tests that require PostgreSQL.
+  /// Throws <see cref="SkipTestException"/> when infrastructure is unavailable, causing TUnit to
+  /// report the test as skipped rather than failed.
   /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="SkipTestException">Thrown when Docker or PostgreSQL is not available.</exception>
   public static async Task InitializeOrSkipAsync(CancellationToken cancellationToken = default) {
     if (!await TryInitializeAsync(cancellationToken)) {
       throw new SkipTestException("PostgreSQL container is not available (Docker may not be running)");
@@ -156,112 +100,132 @@ public static class SharedPostgresContainer {
 
   /// <summary>
   /// Initializes the shared PostgreSQL container.
-  /// Safe to call multiple times - will only initialize once per container.
+  /// Safe to call multiple times - will only initialize once.
+  /// Reuses existing container if one is already running.
   /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="InvalidOperationException">Thrown if initialization fails or has previously failed.</exception>
   public static async Task InitializeAsync(CancellationToken cancellationToken = default) {
-    var containerName = _resolveContainerName();
-    var state = _containers.GetOrAdd(containerName, _ => new ContainerState());
-    await _initializeCoreAsync(containerName, state, cancellationToken);
-  }
-
-  private static async Task _initializeCoreAsync(string containerName, ContainerState state, CancellationToken cancellationToken) {
     // If already initialized successfully, verify the connection is still valid
-    if (state.Initialized) {
+    if (_initialized) {
       try {
-        await using var connection = new NpgsqlConnection(state.ConnectionString);
+        // Quick health check - verify we can still connect
+        await using var connection = new NpgsqlConnection(_connectionString);
         using var healthCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await connection.OpenAsync(healthCheckCts.Token);
-        return;
+        return; // Connection still works, we're good
       } catch {
-        Console.WriteLine($"[SharedPostgresContainer] Existing connection failed for '{containerName}', reinitializing...");
-        state.Initialized = false;
-        state.ConnectionString = null;
+        // Connection failed - container may have been removed
+        // Reset state and reinitialize
+        Console.WriteLine("[SharedPostgresContainer] Existing connection failed, reinitializing...");
+        _initialized = false;
+        _connectionString = null;
       }
     }
 
-    if (state.InitializationFailed) {
-      Console.WriteLine($"[SharedPostgresContainer] Previous initialization failed for '{containerName}', retrying...");
-      state.InitializationFailed = false;
-      state.LastInitializationError = null;
+    // If previous initialization failed, reset and try again (container may have been fixed)
+    if (_initializationFailed) {
+      Console.WriteLine("[SharedPostgresContainer] Previous initialization failed, retrying...");
+      _initializationFailed = false;
+      _lastInitializationError = null;
     }
 
+    // Use default timeout of 120 seconds
     using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
     var ct = linkedCts.Token;
 
-    await state.InitLock.WaitAsync(ct);
+    await _initLock.WaitAsync(ct);
     try {
-      if (state.Initialized) {
+      // Double-check after acquiring lock
+      if (_initialized) {
         return;
       }
 
       Console.WriteLine("================================================================================");
-      Console.WriteLine($"[SharedPostgresContainer] Initializing container '{containerName}'...");
+      Console.WriteLine("[SharedPostgresContainer] Initializing shared PostgreSQL container...");
       Console.WriteLine("================================================================================");
 
       try {
+        // Retry loop to handle race conditions with parallel test processes
         const int MAX_RETRIES = 3;
         for (var attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-          var existingPort = await _getExistingContainerPortAsync(containerName, ct);
+          // Check if container already exists and is running
+          var existingPort = await _getExistingContainerPortAsync(ct);
           if (existingPort.HasValue) {
-            Console.WriteLine($"[SharedPostgresContainer] Found existing container '{containerName}' on port {existingPort.Value}");
-            state.ConnectionString = $"Host=localhost;Port={existingPort.Value};Database={DATABASE};Username={USERNAME};Password={PASSWORD}";
-            await _verifyConnectionAsync(containerName, state.ConnectionString, ct);
+            Console.WriteLine($"[SharedPostgresContainer] Found existing container '{CONTAINER_NAME}' on port {existingPort.Value}");
+            _connectionString = $"Host=localhost;Port={existingPort.Value};Database={DATABASE};Username={USERNAME};Password={PASSWORD}";
+
+            // Verify connection works
+            await _verifyConnectionAsync(ct);
 
             Console.WriteLine("================================================================================");
-            Console.WriteLine($"[SharedPostgresContainer] Reusing existing container '{containerName}'!");
-            Console.WriteLine($"[SharedPostgresContainer] Connection: {state.ConnectionString}");
+            Console.WriteLine("[SharedPostgresContainer] Reusing existing PostgreSQL container!");
+            Console.WriteLine($"[SharedPostgresContainer] Connection: {_connectionString}");
             Console.WriteLine("================================================================================");
             break;
           }
 
-          Console.WriteLine($"[SharedPostgresContainer] Creating '{containerName}'... (attempt {attempt}/{MAX_RETRIES})");
+          // Try to create new container using raw Docker command
+          Console.WriteLine($"[SharedPostgresContainer] No existing container found, creating '{CONTAINER_NAME}'... (attempt {attempt}/{MAX_RETRIES})");
 
           try {
-            var hostPort = await _createContainerWithDockerAsync(containerName, ct);
-            state.ConnectionString = $"Host=localhost;Port={hostPort};Database={DATABASE};Username={USERNAME};Password={PASSWORD}";
-            await _verifyConnectionAsync(containerName, state.ConnectionString, ct);
+            var hostPort = await _createContainerWithDockerAsync(ct);
+            _connectionString = $"Host=localhost;Port={hostPort};Database={DATABASE};Username={USERNAME};Password={PASSWORD}";
+
+            // Verify connection works
+            await _verifyConnectionAsync(ct);
 
             Console.WriteLine("================================================================================");
-            Console.WriteLine($"[SharedPostgresContainer] Container '{containerName}' ready!");
-            Console.WriteLine($"[SharedPostgresContainer] Connection: {state.ConnectionString}");
+            Console.WriteLine("[SharedPostgresContainer] PostgreSQL container ready!");
+            Console.WriteLine($"[SharedPostgresContainer] Connection: {_connectionString}");
             Console.WriteLine("================================================================================");
             break;
           } catch (Exception ex) when (attempt < MAX_RETRIES && ex.Message.Contains("Conflict")) {
-            Console.WriteLine($"[SharedPostgresContainer] Container '{containerName}' was created by another process, retrying...");
+            // Another process created the container - wait and retry detection
+            Console.WriteLine("[SharedPostgresContainer] Container was created by another process, retrying detection...");
             await Task.Delay(2000, ct);
           }
         }
 
-        state.Initialized = true;
+        _initialized = true;
       } catch (Exception ex) {
-        state.InitializationFailed = true;
-        state.LastInitializationError = ex;
+        // Mark initialization as failed
+        _initializationFailed = true;
+        _lastInitializationError = ex;
 
         Console.WriteLine("================================================================================");
-        Console.WriteLine($"[SharedPostgresContainer] Initialization FAILED for '{containerName}': {ex.Message}");
+        Console.WriteLine($"[SharedPostgresContainer] Initialization FAILED: {ex.Message}");
         Console.WriteLine("================================================================================");
 
         throw new InvalidOperationException(
-          $"Failed to initialize PostgreSQL container '{containerName}'. Error: {ex.Message}.",
-          ex);
+          "Failed to initialize shared PostgreSQL container. " +
+          $"Error: {ex.Message}. " +
+          "This is a fatal error - remaining tests will be skipped.",
+          ex
+        );
       }
     } finally {
-      state.InitLock.Release();
+      _initLock.Release();
     }
   }
 
-  private static async Task<int> _createContainerWithDockerAsync(string containerName, CancellationToken ct) {
+  /// <summary>
+  /// Creates the container using raw Docker CLI command (not Testcontainers library).
+  /// This ensures the container persists across test processes.
+  /// </summary>
+  private static async Task<int> _createContainerWithDockerAsync(CancellationToken ct) {
+    // Use docker run with --detach and --publish to create a persistent container
     var psi = new ProcessStartInfo {
       FileName = "docker",
-      Arguments = $"run --detach --name {containerName} " +
+      Arguments = $"run --detach --name {CONTAINER_NAME} " +
                   $"-e POSTGRES_USER={USERNAME} " +
                   $"-e POSTGRES_PASSWORD={PASSWORD} " +
                   $"-e POSTGRES_DB={DATABASE} " +
                   $"--publish 0:{CONTAINER_PORT} " +
                   "--restart no " +
                   $"{IMAGE_NAME} " +
-                  "-c max_connections=200",
+                  "-c max_connections=500",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -276,16 +240,17 @@ public static class SharedPostgresContainer {
     await process.WaitForExitAsync(ct);
 
     if (process.ExitCode != 0) {
-      throw new InvalidOperationException($"Docker run failed for '{containerName}': {stdErr}");
+      throw new InvalidOperationException($"Docker run failed: {stdErr}");
     }
 
-    Console.WriteLine($"[SharedPostgresContainer] Container '{containerName}' created with ID: {stdOut.Trim()[..12]}");
+    Console.WriteLine($"[SharedPostgresContainer] Container created with ID: {stdOut.Trim()[..12]}");
 
+    // Wait for container to be ready and get the port
     await Task.Delay(2000, ct);
 
-    var port = await _getPortAsync(containerName, ct);
+    var port = await _getPortAsync(ct);
     if (!port.HasValue) {
-      throw new InvalidOperationException($"Failed to get port for container '{containerName}' after creation");
+      throw new InvalidOperationException("Failed to get container port after creation");
     }
 
     return port.Value;
@@ -295,44 +260,61 @@ public static class SharedPostgresContainer {
   /// Creates a unique database connection string for a specific test.
   /// Each test gets its own database for complete isolation.
   /// </summary>
+  /// <returns>Connection string pointing to a unique database.</returns>
+  /// <exception cref="InvalidOperationException">Thrown if container is not initialized.</exception>
   public static string GetPerTestDatabaseConnectionString() {
-    var connectionString = ConnectionString; // Throws if not initialized
+    if (!_initialized) {
+      throw new InvalidOperationException("Container must be initialized before creating per-test databases");
+    }
 
+    // Generate unique database name using GUID
     var dbName = $"test_{Guid.NewGuid():N}";
-    var builder = new NpgsqlConnectionStringBuilder(connectionString) {
+
+    // Build connection string with unique database name
+    // IMPORTANT: Use small pool sizes to avoid hitting PostgreSQL's max_connections limit
+    var builder = new NpgsqlConnectionStringBuilder(ConnectionString) {
       Database = dbName,
-      MinPoolSize = 0,
-      MaxPoolSize = 2,
-      ConnectionIdleLifetime = 5,
-      ConnectionPruningInterval = 3
+      MinPoolSize = 0,    // Don't keep idle connections
+      MaxPoolSize = 2,    // Limit max connections per database
+      ConnectionIdleLifetime = 5,  // Close idle connections after 5 seconds
+      ConnectionPruningInterval = 3  // Prune connections every 3 seconds
     };
 
     return builder.ConnectionString;
   }
 
-  private static async Task<int?> _getExistingContainerPortAsync(string containerName, CancellationToken ct) {
+  /// <summary>
+  /// Checks if a container with the expected name exists and is running.
+  /// If it exists but is stopped, starts it first.
+  /// Returns the mapped host port if found, null otherwise.
+  /// </summary>
+  private static async Task<int?> _getExistingContainerPortAsync(CancellationToken ct) {
     try {
-      var state = await _getContainerStateAsync(containerName, ct);
+      // First check if container exists (running or stopped)
+      var state = await _getContainerStateAsync(ct);
       if (state == null) {
-        return null;
+        return null; // Container doesn't exist
       }
 
+      // If container exists but isn't running, start it
       if (state != "running") {
-        Console.WriteLine($"[SharedPostgresContainer] Found stopped container '{containerName}' (state: {state}), starting it...");
-        await _startContainerAsync(containerName, ct);
+        Console.WriteLine($"[SharedPostgresContainer] Found stopped container '{CONTAINER_NAME}' (state: {state}), starting it...");
+        await _startContainerAsync(ct);
+        // Wait a moment for container to be ready
         await Task.Delay(2000, ct);
       }
 
-      return await _getPortAsync(containerName, ct);
+      // Now get the port
+      return await _getPortAsync(ct);
     } catch {
       return null;
     }
   }
 
-  private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {
+  private static async Task<string?> _getContainerStateAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
       FileName = "docker",
-      Arguments = $"inspect --format={{{{.State.Status}}}} {containerName}",
+      Arguments = $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -347,13 +329,17 @@ public static class SharedPostgresContainer {
     var output = await process.StandardOutput.ReadToEndAsync(ct);
     await process.WaitForExitAsync(ct);
 
-    return process.ExitCode != 0 ? null : output.Trim();
+    if (process.ExitCode != 0) {
+      return null; // Container doesn't exist
+    }
+
+    return output.Trim();
   }
 
-  private static async Task _startContainerAsync(string containerName, CancellationToken ct) {
+  private static async Task _startContainerAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
       FileName = "docker",
-      Arguments = $"start {containerName}",
+      Arguments = $"start {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -366,10 +352,10 @@ public static class SharedPostgresContainer {
     }
   }
 
-  private static async Task<int?> _getPortAsync(string containerName, CancellationToken ct) {
+  private static async Task<int?> _getPortAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
       FileName = "docker",
-      Arguments = $"port {containerName} {CONTAINER_PORT}",
+      Arguments = $"port {CONTAINER_NAME} {CONTAINER_PORT}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -388,6 +374,7 @@ public static class SharedPostgresContainer {
       return null;
     }
 
+    // Output is like "0.0.0.0:54321" or "[::]:54321"
     var parts = output.Trim().Split(':');
     if (parts.Length >= 2 && int.TryParse(parts[^1], out var port)) {
       return port;
@@ -396,22 +383,25 @@ public static class SharedPostgresContainer {
     return null;
   }
 
-  private static async Task _verifyConnectionAsync(string containerName, string connectionString, CancellationToken ct) {
+  /// <summary>
+  /// Verifies that the connection string works by attempting to connect.
+  /// </summary>
+  private static async Task _verifyConnectionAsync(CancellationToken ct) {
     using var retryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
     using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, retryTimeout.Token);
 
     Exception? lastException = null;
     for (var attempt = 1; attempt <= 15; attempt++) {
       try {
-        await using var connection = new NpgsqlConnection(connectionString);
+        await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(linked.Token);
-        Console.WriteLine($"[SharedPostgresContainer] Connection verified for '{containerName}' on attempt {attempt}");
-        return;
+        Console.WriteLine($"[SharedPostgresContainer] Connection verified on attempt {attempt}");
+        return; // Success
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-        throw;
+        throw; // Propagate if main token cancelled
       } catch (Exception ex) {
         lastException = ex;
-        Console.WriteLine($"[SharedPostgresContainer] Connection attempt {attempt} failed for '{containerName}': {ex.Message}");
+        Console.WriteLine($"[SharedPostgresContainer] Connection attempt {attempt} failed: {ex.Message}");
       }
 
       if (attempt < 15) {
@@ -420,25 +410,25 @@ public static class SharedPostgresContainer {
     }
 
     throw new InvalidOperationException(
-      $"Could not verify connection to PostgreSQL container '{containerName}' after 15 attempts. Last error: {lastException?.Message}",
+      $"Could not verify connection to PostgreSQL container after 15 attempts. Last error: {lastException?.Message}",
       lastException);
   }
 
   /// <summary>
   /// Resets local state for testing purposes.
-  /// Containers persist for reuse — clean up with:
-  /// <c>docker rm -f $(docker ps -a --filter "name=whizbang-test-postgres-" -q)</c>
+  /// Note: Container is NEVER disposed - it persists for reuse across test processes.
+  /// To stop the container: docker rm -f whizbang-test-postgres
   /// </summary>
   public static Task DisposeAsync() {
-    var containerName = _resolveContainerName();
-    Console.WriteLine($"[SharedPostgresContainer] Keeping container '{containerName}' running for reuse");
+    // NEVER dispose the container - we want it to persist across test processes
+    // The container persists until explicitly removed: docker rm -f whizbang-test-postgres
+    Console.WriteLine("[SharedPostgresContainer] Keeping container running for reuse");
 
-    if (_containers.TryGetValue(containerName, out var state)) {
-      state.ConnectionString = null;
-      state.Initialized = false;
-      state.InitializationFailed = false;
-      state.LastInitializationError = null;
-    }
+    // Reset state to allow reinitialization if needed
+    _connectionString = null;
+    _initialized = false;
+    _initializationFailed = false;
+    _lastInitializationError = null;
 
     return Task.CompletedTask;
   }
