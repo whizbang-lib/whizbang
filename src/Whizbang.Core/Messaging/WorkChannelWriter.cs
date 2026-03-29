@@ -18,7 +18,8 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
 public class WorkChannelWriter : IWorkChannelWriter {
   private readonly Channel<OutboxWork> _channel;
-  private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
+  private readonly ConcurrentDictionary<Guid, DateTimeOffset> _inFlight = new();
+  private static readonly TimeSpan _leaseRenewalThreshold = TimeSpan.FromSeconds(150); // Half of 300s lease
 
   /// <summary>Initializes a new instance of the <see cref="WorkChannelWriter"/> class.</summary>
   public WorkChannelWriter() {
@@ -50,7 +51,7 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
-    _inFlight.TryAdd(work.MessageId, 0);
+    _inFlight.TryAdd(work.MessageId, DateTimeOffset.UtcNow);
     return _channel.Writer.WriteAsync(work, ct);
   }
 
@@ -65,7 +66,7 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.TryWrite</tests>
   public bool TryWrite(OutboxWork work) {
     if (_channel.Writer.TryWrite(work)) {
-      _inFlight.TryAdd(work.MessageId, 0);
+      _inFlight.TryAdd(work.MessageId, DateTimeOffset.UtcNow);
       return true;
     }
     return false;
@@ -90,4 +91,12 @@ public class WorkChannelWriter : IWorkChannelWriter {
 
   /// <inheritdoc />
   public void RemoveInFlight(Guid messageId) => _inFlight.TryRemove(messageId, out _);
+
+  /// <inheritdoc />
+  public bool ShouldRenewLease(Guid messageId) {
+    if (_inFlight.TryGetValue(messageId, out var trackedAt)) {
+      return DateTimeOffset.UtcNow - trackedAt > _leaseRenewalThreshold;
+    }
+    return false;
+  }
 }

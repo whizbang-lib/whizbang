@@ -642,6 +642,7 @@ public class FlushModeTests {
 
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 
   private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
