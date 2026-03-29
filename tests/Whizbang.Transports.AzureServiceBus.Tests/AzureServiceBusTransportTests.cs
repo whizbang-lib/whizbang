@@ -151,12 +151,16 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     await transport.PublishAsync(envelope, destination);
 
-    // Assert - Verify message arrived by receiving it (session-enabled subscription)
-    await using var receiver = await _fixture.Client.AcceptNextSessionAsync("topic-00", "sub-00-a");
-    var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-    await Assert.That(received).IsNotNull();
-    await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
-    await receiver.CompleteMessageAsync(received);
+    // Assert - Verify message arrived by receiving it
+    var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
+    try {
+      var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+      await Assert.That(received).IsNotNull();
+      await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
+      await receiver.CompleteMessageAsync(received);
+    } finally {
+      await receiver.DisposeAsync();
+    }
   }
 
   [Test]
@@ -164,9 +168,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Arrange - use CreateCombinedOptions which includes all registered contexts
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
+    // Non-session subscription (sub-01-a has RequiresSession=false in Config.json)
+    var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
-      jsonOptions
+      jsonOptions,
+      options
     );
 
     await transport.InitializeAsync();
@@ -197,12 +204,13 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     );
 
     try {
-      // Warmup subscription using harness
+      // Warmup subscription — use longer timeout for session processors under parallel load
       await SubscriptionWarmup.WarmupAsync(
         transport,
         publishDestination,
         () => _createTestEnvelopeWithContent(warmupId),
-        warmupAwaiter
+        warmupAwaiter,
+        timeout: TimeSpan.FromSeconds(60)
       );
 
       // Act: Publish the actual test message
@@ -227,9 +235,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       TypeInfoResolver = TestJsonContext.Default
     };
 
+    // Non-session subscription (sub-00-a has RequiresSession=false)
+    var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
-      jsonOptions
+      jsonOptions,
+      options
     );
 
     await transport.InitializeAsync();
@@ -358,25 +369,17 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    // Session-enabled subscriptions require AcceptNextSessionAsync
-    // Use short timeout to avoid blocking when no sessions exist
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    for (var s = 0; s < 10; s++) {
-      try {
-        await using var receiver = await _fixture.Client.AcceptNextSessionAsync(
-          topicName, subscriptionName,
-          new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete },
-          cts.Token);
-        for (var i = 0; i < 100; i++) {
-          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-          if (msg == null) {
-            break;
-          }
+    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
+    try {
+      for (var i = 0; i < 100; i++) {
+        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+        if (msg == null) {
+          break;
         }
-      } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.ServiceTimeout }
-                                    or OperationCanceledException) {
-        break; // No more sessions or timeout
+        await receiver.CompleteMessageAsync(msg);
       }
+    } finally {
+      await receiver.DisposeAsync();
     }
   }
 

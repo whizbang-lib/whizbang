@@ -55,7 +55,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     Console.WriteLine($"[MANUAL TEST] Filtered subscription: {FILTERED_SUBSCRIPTION}");
     Console.WriteLine($"[MANUAL TEST] All-messages subscription: {ALL_MESSAGES_SUBSCRIPTION}");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain any stale messages from previous test runs
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
@@ -123,7 +123,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     Console.WriteLine("[MANUAL TEST] Control test: SqlFilter LIKE pattern with '.' only (no '+')...");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain any stale messages
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
@@ -179,7 +179,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     Console.WriteLine("[MANUAL TEST] Testing multiple '+' characters in Subject...");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
     await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
@@ -231,7 +231,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     Console.WriteLine("[MANUAL TEST] Negative test: Non-matching subject should NOT be received...");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
     await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);

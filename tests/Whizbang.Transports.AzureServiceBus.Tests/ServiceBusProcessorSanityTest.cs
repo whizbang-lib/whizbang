@@ -38,7 +38,7 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
     Console.WriteLine($"[PROCESSOR TEST] Topic: {topicName}, Subscription: {subscriptionName}");
     Console.WriteLine("[PROCESSOR TEST] ==========================================================");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain stale messages
     Console.WriteLine("[PROCESSOR TEST] Draining stale messages...");

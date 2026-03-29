@@ -37,6 +37,16 @@ CREATE INDEX IF NOT EXISTS idx_receptor_processing_claim
 ON wh_receptor_processing (instance_id, lease_expiry)
 WHERE completed_at IS NULL;
 
+-- Stream-blocking indexes: support NOT EXISTS subquery in Phase 7 return queries
+-- Covers the "is there an earlier unprocessed message with scheduled_for > now?" check
+CREATE INDEX IF NOT EXISTS idx_outbox_stream_blocked
+ON wh_outbox (stream_id, created_at)
+WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_inbox_stream_blocked
+ON wh_inbox (stream_id, received_at)
+WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
+
 -- Perspective events processed index: support cleanup/anti-join queries
 CREATE INDEX IF NOT EXISTS idx_perspective_events_processed
 ON wh_perspective_events (stream_id, perspective_name)
