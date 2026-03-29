@@ -58,7 +58,7 @@
 
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
-    (whizbang-test-postgres, whizbang-test-rabbitmq). Default: $true.
+    (postgres, rabbitmq, servicebus, mssql containers). Default: $true.
     Use -Cleanup:$false to preserve shared containers for faster subsequent runs.
 
 .PARAMETER CleanupOnly
@@ -417,8 +417,8 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
 
     # Stop and remove Whizbang test containers EXCEPT shared containers which are designed to persist
     # We use name-based filtering with "whizbang-test-" prefix to avoid killing other projects' containers
-    # The whizbang-test-postgres and whizbang-test-rabbitmq containers are intentionally kept running for reuse
-    $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+    # Shared containers are intentionally kept running for reuse (postgres, rabbitmq, servicebus, mssql)
+    $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" -and $_ -notmatch "whizbang-test-servicebus" -and $_ -notmatch "whizbang-test-mssql" } | ForEach-Object { ($_ -split " ")[0] }
     if ($whizbangContainers) {
         $whizbangContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
@@ -2350,8 +2350,8 @@ try {
             # Prune unused volumes (only when doing full cleanup)
             docker volume prune -f 2>&1 | Out-Null
         } else {
-            # Partial cleanup: preserve shared containers (whizbang-test-postgres, whizbang-test-rabbitmq)
-            $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+            # Partial cleanup: preserve shared containers (postgres, rabbitmq, servicebus, mssql)
+            $whizbangContainers = docker ps -a --filter "name=whizbang-test-" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" -and $_ -notmatch "whizbang-test-rabbitmq" -and $_ -notmatch "whizbang-test-servicebus" -and $_ -notmatch "whizbang-test-mssql" } | ForEach-Object { ($_ -split " ")[0] }
             if ($whizbangContainers) {
                 $whizbangContainers | ForEach-Object {
                     docker stop $_ 2>&1 | Out-Null
