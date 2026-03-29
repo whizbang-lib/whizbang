@@ -64,8 +64,12 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
   public async Task CreateSubscriptionAsync(
     string topicName,
     string subscriptionName,
+    int maxDeliveryCount,
     CancellationToken cancellationToken = default) {
-    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
+      MaxDeliveryCount = maxDeliveryCount
+    };
+    await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -73,9 +77,11 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     string topicName,
     string subscriptionName,
     bool requiresSession,
+    int maxDeliveryCount,
     CancellationToken cancellationToken = default) {
     var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
-      RequiresSession = requiresSession
+      RequiresSession = requiresSession,
+      MaxDeliveryCount = maxDeliveryCount
     };
     await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
   }
