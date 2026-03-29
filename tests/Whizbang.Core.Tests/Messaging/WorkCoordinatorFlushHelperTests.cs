@@ -177,6 +177,48 @@ public class WorkCoordinatorFlushHelperTests {
   }
 
   // ========================================
+  // Gap 1: Flush path must track outbox messages as in-flight
+  // ========================================
+
+  /// <summary>
+  /// Verifies that outbox messages written to the channel via ExecuteFlushAsync
+  /// are tracked as in-flight by the WorkChannelWriter. This is the root cause
+  /// of the ChatService outbox stuck at status=1 — the flush path wrote messages
+  /// without tracking, causing duplicate publishing and stuck completions.
+  /// </summary>
+  [Test]
+  public async Task ExecuteFlushAsync_OutboxWork_TrackedAsInFlightOnChannelWriterAsync() {
+    // Arrange — use REAL WorkChannelWriter (not test double)
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var realChannelWriter = new WorkChannelWriter();
+    var outboxMessage = _buildTestOutboxMessage();
+
+    // Act — flush through the real path
+    var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      new FlushContext(
+        coordinator, ScopeFactory: null, instanceProvider, options, "test",
+        OutboxMessages: [outboxMessage], InboxMessages: [],
+        OutboxCompletions: [], InboxCompletions: [], OutboxFailures: [],
+        InboxFailures: [], WorkBatchOptions.None, LifecycleMessageDeserializer: null,
+        Logger: null, TracingOptions: null, Metrics: null,
+        LifecycleMetrics: null, WorkChannelWriter: realChannelWriter,
+        PendingAuditMessages: null, SkipLifecycle: true),
+      ct: default
+    );
+
+    // Assert — every outbox work item returned must be tracked as in-flight
+    await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
+      .Because("FakeWorkCoordinator should return outbox work");
+
+    foreach (var work in workBatch.OutboxWork) {
+      await Assert.That(realChannelWriter.IsInFlight(work.MessageId)).IsTrue()
+        .Because("Flush path must track outbox messages as in-flight to prevent duplicate publishing");
+    }
+  }
+
+  // ========================================
   // Test Helpers
   // ========================================
 
@@ -219,8 +261,19 @@ public class WorkCoordinatorFlushHelperTests {
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = request.NewOutboxMessages;
+      // Simulate process_work_batch: stored messages are returned as outbox work
+      var outboxWork = request.NewOutboxMessages.Select(m => new OutboxWork {
+        MessageId = m.MessageId,
+        Destination = m.Destination,
+        Envelope = m.Envelope,
+        EnvelopeType = m.EnvelopeType,
+        MessageType = m.MessageType,
+        Status = MessageProcessingStatus.Stored,
+        Attempts = 0
+      }).ToList();
+
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
+        OutboxWork = outboxWork,
         InboxWork = [],
         PerspectiveWork = []
       });
