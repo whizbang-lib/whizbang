@@ -1,0 +1,72 @@
+name: Mutation Testing (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Source project to mutate (e.g., Whizbang.Core)'
+        type: string
+        required: false
+        default: 'Whizbang.Core'
+      mutate-filter:
+        description: 'File glob filter for mutation (empty = all files)'
+        type: string
+        required: false
+        default: ''
+      since-target:
+        description: 'Git target for diff-based mutation (empty = full run)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  mutation:
+    name: Mutation Testing - ${{ inputs.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore Tools
+        run: dotnet tool restore
+
+      - name: Run Mutation Tests
+        shell: pwsh
+        run: |
+          $args = @('-Project', '${{ inputs.project }}')
+
+          if ('${{ inputs.mutate-filter }}') {
+            $args += @('-Mutate', '${{ inputs.mutate-filter }}')
+          }
+
+          if ('${{ inputs.since-target }}') {
+            $args += @('-Since', '${{ inputs.since-target }}')
+          }
+
+          & pwsh scripts/mutation/run-mutation-tests.ps1 @args
+
+      - name: Upload Mutation Report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: mutation-report-${{ inputs.project }}
+          path: '**/StrykerOutput/**/reports/**'
+          retention-days: 7
+          if-no-files-found: ignore

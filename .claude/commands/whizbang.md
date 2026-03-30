@@ -1,5 +1,5 @@
 ---
-argument-hint: test | coverage | format | build | release-check | diagnostics | benchmarks | context-tdd | context-testing | context-generators | context-standards
+argument-hint: test | coverage | mutate | format | build | release-check | diagnostics | benchmarks | context-tdd | context-testing | context-generators | context-standards
 ---
 
 # Whizbang Command Menu
@@ -11,6 +11,7 @@ Welcome to the Whizbang command center! You can run `/whizbang <command>` or jus
 ### Testing & Validation
 - **test** - Run all tests in the solution
 - **coverage** - Run tests with code coverage collection
+- **mutate** - Run Stryker.NET mutation testing
 - **format** - Format code with `dotnet format` (MANDATORY before commit)
 - **build** - Clean and rebuild the entire solution
 - **release-check** - Full release readiness checklist
@@ -65,6 +66,7 @@ Welcome to the Whizbang command center! You can run `/whizbang <command>` or jus
 4. **Checking code quality**:
    ```
    /whizbang coverage
+   /whizbang mutate
    /whizbang diagnostics
    ```
 
@@ -95,6 +97,10 @@ Comprehensive release readiness checklist:
 5. Verify async naming conventions
 6. Check XML documentation
 7. Apply Boy Scout Rule
+
+### /whizbang mutate
+Run Stryker.NET mutation testing. Introduces small bugs into source code and checks if tests catch them.
+Surviving mutants = weak or missing tests. Use `-Mutate "**/FileName.cs"` for faster feedback on specific files.
 
 ### /whizbang diagnostics
 Run diagnostic checks to identify potential issues in the codebase.
