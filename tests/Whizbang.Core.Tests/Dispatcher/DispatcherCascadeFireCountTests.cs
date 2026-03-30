@@ -20,6 +20,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// AND the PreOutbox worker path, causing double (or more) invocations.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
+[NotInParallel("CascadeFireCount")]
 public class DispatcherCascadeFireCountTests {
 
   // ========================================

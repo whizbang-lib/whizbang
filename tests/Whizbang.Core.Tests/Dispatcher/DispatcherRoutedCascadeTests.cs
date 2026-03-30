@@ -152,11 +152,11 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   #region MessageExtractor Tests - Unit Tests for Routing Extraction
 
   /// <summary>
-  /// Verifies that ExtractMessagesWithRouting correctly extracts unwrapped messages with default Outbox routing.
-  /// Default is Outbox for cross-service delivery per routed cascade design.
+  /// Verifies that ExtractMessagesWithRouting correctly extracts unwrapped messages with default Both routing.
+  /// Default is Both for local + cross-service delivery per routed cascade design.
   /// </summary>
   [Test]
-  public async Task ExtractMessagesWithRouting_UnwrappedMessage_DefaultsToOutboxAsync() {
+  public async Task ExtractMessagesWithRouting_UnwrappedMessage_DefaultsToBothAsync() {
     // Arrange
     var evt = new RoutedTestEvent(Guid.NewGuid());
 
@@ -165,8 +165,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Outbox)
-      .Because("Unwrapped messages should default to Outbox routing for cross-service delivery");
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Both)
+      .Because("Unwrapped messages should default to Both routing for local + cross-service delivery");
   }
 
   /// <summary>
