@@ -147,6 +147,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
   private sealed class CoverageTestWorkCoordinator : IWorkCoordinator {
     private int _callCount;
+    private readonly object _callCountLock = new();
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _callCountWaiters = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public List<InboxWork> InboxWorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount => _callCount;
@@ -157,11 +159,30 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     public TaskCompletionSource? CallSignal { get; set; }
     public TaskCompletionSource CompletionReceivedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    public Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_callCountLock) {
+        if (_callCount >= count) {
+          tcs.TrySetResult();
+        } else {
+          _callCountWaiters.Add((count, tcs));
+        }
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       Interlocked.Increment(ref _callCount);
+      lock (_callCountLock) {
+        foreach (var (target, signal) in _callCountWaiters) {
+          if (_callCount >= target) {
+            signal.TrySetResult();
+          }
+        }
+      }
       ReceivedRequests.Add(request);
       OnProcessWorkBatch?.Invoke();
       CallSignal?.TrySetResult();
@@ -313,8 +334,36 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
   }
 
   private sealed class ControlledDatabaseReadinessCheck : IDatabaseReadinessCheck {
+    private int _callCount;
+    private readonly object _lock = new();
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _waiters = [];
+
     public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
+    public int CallCount => _callCount;
+
+    public Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_lock) {
+        if (_callCount >= count) {
+          tcs.TrySetResult();
+        } else {
+          _waiters.Add((count, tcs));
+        }
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _callCount);
+      lock (_lock) {
+        foreach (var (target, signal) in _waiters) {
+          if (_callCount >= target) {
+            signal.TrySetResult();
+          }
+        }
+      }
+      return Task.FromResult(IsReady);
+    }
   }
 
   private sealed class ObjectDisposedPublishStrategy : IMessagePublishStrategy {
@@ -1820,11 +1869,9 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
 
-    // Wait for >10 not-ready checks (exercises LogDatabaseNotReadyWarning)
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (typedWorker.ConsecutiveDatabaseNotReadyChecks < 12 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    // Wait for at least 12 database readiness checks — each cycle increments the counter
+    // Signal-based: deterministic, no spin-loop or sleep
+    await dbCheck.WaitForCallCountAsync(12, TimeSpan.FromSeconds(10));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

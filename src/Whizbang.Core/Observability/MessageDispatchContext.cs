@@ -35,7 +35,29 @@ public sealed record MessageDispatchContext {
   [System.Text.Json.Serialization.JsonPropertyName("s")]
   public required MessageSource Source { get; init; }
 
-  // No default/fallback values. Every construction site must provide definitive Mode + Source.
-  // Event store reads must reconstitute from stored metadata (requires DB schema to include DispatchContext).
-  // Tests/benchmarks must use explicit values matching the scenario under test.
+  /// <summary>
+  /// True when this message is in its default dispatch path (cascade from receptor return).
+  /// When true, only default-stage receptors fire. Explicit [FireAt] receptors are skipped
+  /// by the GetUntypedReceptorPublisher — they fire later via ReceptorInvoker at their
+  /// declared lifecycle stage.
+  /// </summary>
+  [System.Text.Json.Serialization.JsonPropertyName("d")]
+  public bool IsDefaultDispatch { get; init; }
+
+  /// <summary>
+  /// Returns a copy of this context with <see cref="IsDefaultDispatch"/> set to true.
+  /// Used by cascade paths to signal that only default-stage receptors should fire.
+  /// </summary>
+  public MessageDispatchContext WithDefaultDispatch() =>
+    this with { IsDefaultDispatch = true };
+
+  /// <summary>
+  /// Sentinel context used by cascade paths when no source envelope is available.
+  /// Has IsDefaultDispatch = true so that the publisher skips explicit [FireAt] receptors.
+  /// </summary>
+  internal static readonly MessageDispatchContext CascadeDefault = new() {
+    Mode = Dispatch.DispatchModes.Local,
+    Source = MessageSource.Local,
+    IsDefaultDispatch = true
+  };
 }

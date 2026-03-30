@@ -89,11 +89,9 @@ public class DispatcherSnippets {
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
 
-          var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
           var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
-          foreach (var receptor in receptors) {
-            await receptor.HandleAsync(typedEvt);
-          }
+          // PublishAsync is NOT a cascade — it's an explicit publish. All receptors fire (no IsDefaultDispatch filtering).
+          __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
@@ -136,15 +134,10 @@ public class DispatcherSnippets {
             global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
           }
 
-          var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
-          var voidReceptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedEvt = (__MESSAGE_TYPE__)evt;
-          foreach (var receptor in receptors) {
-            await receptor.HandleAsync(typedEvt, cancellationToken);
-          }
-          foreach (var voidReceptor in voidReceptors) {
-            await voidReceptor.HandleAsync(typedEvt, cancellationToken);
-          }
+          // Cascade paths: null envelope OR IsDefaultDispatch flag = default dispatch (skip explicit [FireAt] receptors)
+          var isDefaultDispatch = sourceEnvelope is null || sourceEnvelope.DispatchContext.IsDefaultDispatch;
+          __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
