@@ -2,10 +2,10 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
-using Whizbang.Core.Observability;
-using Whizbang.Core.Policies;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 

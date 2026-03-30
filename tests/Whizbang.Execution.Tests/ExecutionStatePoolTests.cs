@@ -1,12 +1,12 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Pooling;
-using Whizbang.Core.Dispatch;
-using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Execution.Tests;

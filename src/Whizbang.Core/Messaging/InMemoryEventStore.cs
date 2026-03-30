@@ -7,11 +7,11 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Messaging;
 

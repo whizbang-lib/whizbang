@@ -1,11 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

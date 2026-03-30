@@ -1,11 +1,11 @@
 using System.Text.Json;
 using TUnit.Assertions;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Generated;
 

@@ -2,10 +2,10 @@ using System.Collections.Concurrent;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Observability;
-using Whizbang.Core.Transports;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Transports.Tests;
