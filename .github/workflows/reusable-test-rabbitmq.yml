@@ -76,11 +76,8 @@ jobs:
           dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
             -f cobertura -o TestResults/rabbitmq.cobertura.xml
 
-      # TEMPORARY: continue-on-error due to lifecycle tests being skipped for v0.8.5-beta.1
-      # TUnit returns exit code 8 when all tests are skipped, which we treat as success
       - name: Run RabbitMQ Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        continue-on-error: true
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag RabbitMQ -NoBuild
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
@@ -88,7 +85,6 @@ jobs:
 
       - name: Run RabbitMQ Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        continue-on-error: true
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag RabbitMQ
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
