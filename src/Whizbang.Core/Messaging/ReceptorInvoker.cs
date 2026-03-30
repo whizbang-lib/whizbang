@@ -179,11 +179,13 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       }
     }
 
-    // Double-fire prevention placeholder — the actual dedup requires dispatch-mode context
-    // which is not available at the ReceptorInvoker level. The lifecycle tracking system
-    // (LifecycleTrackingState._firedStages) handles this for coordinator-tracked events.
-    // For cascade-path events, the _dispatchByModeAsync mode flags prevent double invocation
-    // by only executing stages matching the dispatch mode (Local vs Outbox vs Both).
+    // Double-fire prevention: if the envelope was dispatched with LocalDispatch flag,
+    // the handler already fired at LocalImmediateInline → skip PreOutboxInline.
+    // Only applies when owned domains are configured (preserves backward compat).
+    if (_ownedDomains.Count > 0 && stage == LifecycleStage.PreOutboxInline && receptors.Count > 0
+        && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
+      return;
+    }
 
     if (receptors.Count == 0) {
       await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
