@@ -23,7 +23,7 @@ namespace Whizbang.Core.Generated;
 /// Generated IReceptorRegistry implementation with zero-reflection routing for {{RECEPTOR_COUNT}} receptor(s).
 /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
 /// - Receptors WITH [FireAt(X)] are registered at stage X only
-/// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, and PostInboxInline
+/// - Receptors WITHOUT [FireAt] are registered at LocalImmediateAsync, PreOutboxAsync, and PostInboxAsync
 /// Also supports runtime registration for integration test synchronization.
 /// </summary>
 /// <remarks>

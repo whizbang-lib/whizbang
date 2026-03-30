@@ -290,19 +290,99 @@ public class ReceptorInvokerOwnedDomainTests {
   }
 
   // ========================================
+  // Async stage variants — same ownership rules apply
+  // ========================================
+
+  [Test]
+  public async Task PreOutboxAsync_OwnedEvent_FiresAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxAsync);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+
+    await invoker.InvokeAsync(
+      _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Outbox),
+      LifecycleStage.PreOutboxAsync);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PreOutboxAsync_OwnedCommand_SkipsAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedCommand>("handler", LifecycleStage.PreOutboxAsync);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+
+    await invoker.InvokeAsync(
+      _wrap(new OwnedCommand("test"), mode: DispatchModes.Outbox),
+      LifecycleStage.PreOutboxAsync);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PostInboxAsync_OwnedEvent_SkipsAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxAsync);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxAsync);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PostInboxAsync_NonOwnedEvent_FiresAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxAsync);
+    var invoker = _createInvoker(registry, ["SomeOther.Namespace"]);
+
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxAsync);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PostInboxAsync_OwnedCommand_FiresAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedCommand>("handler", LifecycleStage.PostInboxAsync);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+
+    await invoker.InvokeAsync(_wrap(new OwnedCommand("test")), LifecycleStage.PostInboxAsync);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PreOutboxAsync_WhenDispatchContextHasLocalDispatch_SkipsAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxAsync);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+
+    await invoker.InvokeAsync(
+      _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Local),
+      LifecycleStage.PreOutboxAsync);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
+  }
+
+  // ========================================
   // No owned domains configured — all stages fire (backward compat)
   // ========================================
 
   [Test]
   public async Task NoOwnedDomains_AllStagesFire_BackwardCompatAsync() {
-    // Without owned domains configured, all stages fire (backward compatibility)
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedEvent>("handler", LifecycleStage.LocalImmediateInline);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxInline);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxInline);
 
-    // No routing options = no owned domains = no filtering
     var sp = new ServiceCollection().BuildServiceProvider();
     var invoker = new ReceptorInvoker(registry, sp);
 

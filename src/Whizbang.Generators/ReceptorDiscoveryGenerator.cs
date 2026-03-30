@@ -1332,7 +1332,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
-  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateAsync, PreOutboxAsync, PostInboxAsync
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
   /// </summary>
   private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
@@ -1433,9 +1433,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors) {
     var defaultStages = new[] {
-      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
-      "global::Whizbang.Core.Messaging.LifecycleStage.PreOutboxInline",
-      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline"
+      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateAsync",
+      "global::Whizbang.Core.Messaging.LifecycleStage.PreOutboxAsync",
+      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxAsync"
     };
 
     var routingEntries = new System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)>();
