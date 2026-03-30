@@ -46,13 +46,14 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
-      if (!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) || iface.TypeArguments.Length < 2) {
+      if ((!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveWithActionsFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveBase", StringComparison.Ordinal)) || iface.TypeArguments.Length < 2) {
         continue;
       }
 
       // TModel is the first type argument
-      var modelType = iface.TypeArguments[0] as INamedTypeSymbol;
-      if (modelType == null) {
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
         continue;
       }
 
@@ -73,73 +74,129 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     }
 
     // Skip system types and types without source
-    if (type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
-        !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal)) {
+    if (_isNonCollectionSystemType(type)) {
       return;
     }
 
     foreach (var member in type.GetMembers().OfType<IPropertySymbol>()) {
-      // Skip static, indexers, and write-only properties
-      if (member.IsStatic || member.IsIndexer || member.IsWriteOnly) {
-        continue;
-      }
+      _checkPropertyForDictionary(context, member, type, visited);
+    }
+  }
 
-      // Skip properties marked as not mapped/ignored by EF Core or JSON serialization
-      if (_isPropertyIgnored(member)) {
-        continue;
-      }
+  /// <summary>
+  /// Checks a single property for Dictionary usage and recursively inspects nested types.
+  /// </summary>
+  private static void _checkPropertyForDictionary(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      HashSet<INamedTypeSymbol> visited) {
 
-      var propType = member.Type as INamedTypeSymbol;
-      if (propType == null) {
-        continue;
-      }
+    if (_shouldSkipProperty(member)) {
+      return;
+    }
 
-      // Check if this property is a Dictionary<,> or IDictionary<,>
-      if (_isDictionaryType(propType)) {
-        var keyType = propType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-        var valueType = propType.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-        var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
+    if (member.Type is not INamedTypeSymbol propType) {
+      return;
+    }
 
-        var diagnostic = Diagnostic.Create(
-            DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
-            member.Locations.FirstOrDefault() ?? Location.None,
-            member.Name,
-            type.Name,
-            keyType,
-            valueType,
-            suggestedType);
-        context.ReportDiagnostic(diagnostic);
-        continue;
-      }
+    // Check if this property is a Dictionary<,> or IDictionary<,>
+    if (_reportDictionaryIfFound(context, member, containingType, propType)) {
+      return;
+    }
 
-      // Recursively check nested class/struct types
-      if (propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) {
-        // Skip common system types that won't contain Dictionary
-        if (!_isSystemPrimitiveType(propType)) {
-          _checkForDictionary(context, propType, visited);
-        }
-      }
+    // Recursively check nested class/struct types
+    _checkNestedTypeForDictionary(context, propType, visited);
 
-      // Check generic type arguments (e.g., List<NestedType> where NestedType has Dictionary)
-      foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-        if (_isDictionaryType(typeArg)) {
-          // Dictionary is inside a collection (e.g., List<Dictionary<string, string>>)
-          var keyType = typeArg.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-          var valueType = typeArg.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-          var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
+    // Check generic type arguments (e.g., List<NestedType> where NestedType has Dictionary)
+    _checkTypeArgumentsForDictionary(context, member, containingType, propType, visited);
+  }
 
-          var diagnostic = Diagnostic.Create(
-              DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
-              member.Locations.FirstOrDefault() ?? Location.None,
-              member.Name,
-              type.Name,
-              keyType,
-              valueType,
-              suggestedType);
-          context.ReportDiagnostic(diagnostic);
-        } else if (!_isSystemPrimitiveType(typeArg)) {
-          _checkForDictionary(context, typeArg, visited);
-        }
+  /// <summary>
+  /// Recursively checks a nested class/struct type for Dictionary properties.
+  /// </summary>
+  private static void _checkNestedTypeForDictionary(
+      SymbolAnalysisContext context,
+      INamedTypeSymbol propType,
+      HashSet<INamedTypeSymbol> visited) {
+
+    if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
+        !_isSystemPrimitiveType(propType)) {
+      _checkForDictionary(context, propType, visited);
+    }
+  }
+
+  /// <summary>
+  /// Checks if a type is a System namespace type that is NOT a collections type.
+  /// </summary>
+  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
+    return type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
+           !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Checks if a property should be skipped during analysis (static, indexer, write-only, or ignored).
+  /// </summary>
+  private static bool _shouldSkipProperty(IPropertySymbol member) {
+    return member.IsStatic || member.IsIndexer || member.IsWriteOnly || _isPropertyIgnored(member);
+  }
+
+  /// <summary>
+  /// Reports a diagnostic if the property type is a Dictionary type. Returns true if it was a dictionary.
+  /// </summary>
+  private static bool _reportDictionaryIfFound(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol propType) {
+
+    if (!_isDictionaryType(propType)) {
+      return false;
+    }
+
+    _reportDictionaryDiagnostic(context, member, containingType, propType);
+    return true;
+  }
+
+  /// <summary>
+  /// Reports a WHIZ810 diagnostic for a Dictionary property.
+  /// </summary>
+  private static void _reportDictionaryDiagnostic(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol dictionaryType) {
+
+    var keyType = dictionaryType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+    var valueType = dictionaryType.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+    var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
+
+    var diagnostic = Diagnostic.Create(
+        DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
+        member.Locations.FirstOrDefault() ?? Location.None,
+        member.Name,
+        containingType.Name,
+        keyType,
+        valueType,
+        suggestedType);
+    context.ReportDiagnostic(diagnostic);
+  }
+
+  /// <summary>
+  /// Checks generic type arguments for Dictionary types or nested types containing dictionaries.
+  /// </summary>
+  private static void _checkTypeArgumentsForDictionary(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol propType,
+      HashSet<INamedTypeSymbol> visited) {
+
+    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
+      if (_isDictionaryType(typeArg)) {
+        _reportDictionaryDiagnostic(context, member, containingType, typeArg);
+      } else if (!_isSystemPrimitiveType(typeArg)) {
+        _checkForDictionary(context, typeArg, visited);
       }
     }
   }

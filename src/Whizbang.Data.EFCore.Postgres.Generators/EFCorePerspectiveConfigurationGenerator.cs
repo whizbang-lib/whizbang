@@ -101,68 +101,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
               .ToList();
 
           // Validate identifier lengths and report diagnostics
-          var validPerspectives = new List<PerspectiveInfo>();
-          foreach (var perspective in allPerspectives) {
-            var hasError = false;
-
-            // Validate table name
-            var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
-            if (tableError is not null) {
-              ctx.ReportDiagnostic(Diagnostic.Create(
-                  DiagnosticDescriptors.TableNameExceedsLimit,
-                  Location.None,
-                  perspective.ModelTypeName,
-                  perspective.TableName,
-                  IdentifierValidation.GetByteCount(perspective.TableName),
-                  limits.ProviderName,
-                  limits.MaxTableNameBytes
-              ));
-              hasError = true;
-            }
-
-            // Validate physical field column and index names
-            foreach (var field in perspective.PhysicalFields) {
-              var columnError = IdentifierValidation.ValidateColumnName(field.ColumnName, limits);
-              if (columnError is not null) {
-                ctx.ReportDiagnostic(Diagnostic.Create(
-                    DiagnosticDescriptors.ColumnNameExceedsLimit,
-                    Location.None,
-                    field.PropertyName,
-                    perspective.ModelTypeName,
-                    field.ColumnName,
-                    IdentifierValidation.GetByteCount(field.ColumnName),
-                    limits.ProviderName,
-                    limits.MaxColumnNameBytes
-                ));
-                hasError = true;
-              }
-
-              // Validate index name if indexed
-              if (field.IsIndexed || field.IsUnique) {
-                var indexName = $"ix_{perspective.TableName}_{field.ColumnName}";
-                var indexError = IdentifierValidation.ValidateIndexName(indexName, limits);
-                if (indexError is not null) {
-                  ctx.ReportDiagnostic(Diagnostic.Create(
-                      DiagnosticDescriptors.IndexNameExceedsLimit,
-                      Location.None,
-                      indexName,
-                      field.PropertyName,
-                      perspective.ModelTypeName,
-                      IdentifierValidation.GetByteCount(indexName),
-                      limits.ProviderName,
-                      limits.MaxIndexNameBytes
-                  ));
-                  hasError = true;
-                }
-              }
-            }
-
-            if (!hasError) {
-              validPerspectives.Add(perspective);
-            }
-          }
-
-          var perspectives = validPerspectives.ToImmutableArray();
+          var perspectives = _validatePerspectiveIdentifiers(ctx, allPerspectives, limits);
 
           // Extract schema from first DbContext (typically one per project)
           // If no DbContext found or no schema specified, defaults to null and generator will derive from namespace
@@ -174,15 +113,107 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Helper class for overriding PostgreSQL limits via MSBuild property.
+  /// Validates identifier lengths for all perspectives and reports diagnostics.
+  /// Returns only perspectives that pass all validation checks.
   /// </summary>
-  private sealed class OverriddenPostgresLimits : IDbProviderLimits {
-    private readonly int _maxLength;
+  private static ImmutableArray<PerspectiveInfo> _validatePerspectiveIdentifiers(
+      SourceProductionContext context,
+      List<PerspectiveInfo> allPerspectives,
+      IDbProviderLimits limits) {
 
-    public OverriddenPostgresLimits(int maxLength) {
-      _maxLength = maxLength;
+    return [.. allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits))];
+  }
+
+  /// <summary>
+  /// Validates a single perspective's identifiers. Returns true if valid (no errors).
+  /// </summary>
+  private static bool _validateSinglePerspective(
+      SourceProductionContext context,
+      PerspectiveInfo perspective,
+      IDbProviderLimits limits) {
+
+    var hasError = false;
+
+    // Validate table name
+    var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
+    if (tableError is not null) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.TableNameExceedsLimit,
+          Location.None,
+          perspective.ModelTypeName,
+          perspective.TableName,
+          IdentifierValidation.GetByteCount(perspective.TableName),
+          limits.ProviderName,
+          limits.MaxTableNameBytes
+      ));
+      hasError = true;
     }
 
+    // Validate physical field column and index names
+    // S3267: Loop has side effects (reporting diagnostics) and must not short-circuit — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var field in perspective.PhysicalFields) {
+      if (_validatePhysicalField(context, perspective, field, limits)) {
+        hasError = true;
+      }
+    }
+#pragma warning restore S3267
+
+    return !hasError;
+  }
+
+  /// <summary>
+  /// Validates a physical field's column and index names. Returns true if any error found.
+  /// </summary>
+  private static bool _validatePhysicalField(
+      SourceProductionContext context,
+      PerspectiveInfo perspective,
+      PhysicalFieldInfo field,
+      IDbProviderLimits limits) {
+
+    var hasError = false;
+
+    var columnError = IdentifierValidation.ValidateColumnName(field.ColumnName, limits);
+    if (columnError is not null) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.ColumnNameExceedsLimit,
+          Location.None,
+          field.PropertyName,
+          perspective.ModelTypeName,
+          field.ColumnName,
+          IdentifierValidation.GetByteCount(field.ColumnName),
+          limits.ProviderName,
+          limits.MaxColumnNameBytes
+      ));
+      hasError = true;
+    }
+
+    if (field.IsIndexed || field.IsUnique) {
+      var indexName = $"ix_{perspective.TableName}_{field.ColumnName}";
+      var indexError = IdentifierValidation.ValidateIndexName(indexName, limits);
+      if (indexError is not null) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.IndexNameExceedsLimit,
+            Location.None,
+            indexName,
+            field.PropertyName,
+            perspective.ModelTypeName,
+            IdentifierValidation.GetByteCount(indexName),
+            limits.ProviderName,
+            limits.MaxIndexNameBytes
+        ));
+        hasError = true;
+      }
+    }
+
+    return hasError;
+  }
+
+  /// <summary>
+  /// Helper class for overriding PostgreSQL limits via MSBuild property.
+  /// </summary>
+  private sealed class OverriddenPostgresLimits(int maxLength) : IDbProviderLimits {
+    private readonly int _maxLength = maxLength;
     public int MaxTableNameBytes => _maxLength;
     public int MaxColumnNameBytes => _maxLength;
     public int MaxIndexNameBytes => _maxLength;
@@ -197,11 +228,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private static string? _extractDbContextSchema(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDecl = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -289,11 +318,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private static PerspectiveCandidate? _extractPerspectiveCandidate(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDecl = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -306,7 +333,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
-             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal);
+             originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
+             originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>" ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal) ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel,", StringComparison.Ordinal) ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel,", StringComparison.Ordinal);
     });
 
     if (perspectiveForInterface is null) {
@@ -360,7 +391,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
     if (modelType is null) {
-      return ImmutableArray<PhysicalFieldInfo>.Empty;
+      return [];
     }
 
     var physicalFields = new List<PhysicalFieldInfo>();
@@ -396,7 +427,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       }
     }
 
-    return physicalFields.ToImmutableArray();
+    return [.. physicalFields];
   }
 
   /// <summary>
@@ -530,7 +561,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var propertyName = property.Name;
 
     // Polymorphic discriminators are always strings (type name discriminator)
-    var typeName = "global::System.String";
+    const string typeName = "global::System.String";
 
     // Extract named arguments
     string? columnName = null;
@@ -575,60 +606,79 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Recursively checks if a type or its nested types contain polymorphic properties.
   /// </summary>
   private static bool _checkForPolymorphicTypes(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
-    // Cycle detection
     if (!visited.Add(type)) {
       return false;
     }
 
-    // Skip system types (except System.Collections)
-    var ns = type.ContainingNamespace?.ToDisplayString();
-    if (ns != null && ns.StartsWith("System", StringComparison.Ordinal) &&
-        !ns.StartsWith("System.Collections", StringComparison.Ordinal)) {
+    if (_isNonCollectionSystemType(type)) {
       return false;
     }
 
-    var properties = type.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => !p.IsStatic && !p.IsIndexer && !p.IsWriteOnly);
+    return type.GetMembers().OfType<IPropertySymbol>()
+        .Where(_isAnalyzableProperty)
+        .Select(p => p.Type)
+        .OfType<INamedTypeSymbol>()
+        .Any(propType => _isPropertyTypePolymorphic(propType, visited));
+  }
 
-    foreach (var property in properties) {
-      // Skip ignored properties
-      if (_isPropertyIgnored(property)) {
-        continue;
-      }
+  /// <summary>
+  /// Checks if a type is a System namespace type that is NOT a collections type.
+  /// </summary>
+  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
+    var ns = type.ContainingNamespace?.ToDisplayString();
+    return ns?.StartsWith("System", StringComparison.Ordinal) == true &&
+           !ns.StartsWith("System.Collections", StringComparison.Ordinal);
+  }
 
-      var propType = property.Type as INamedTypeSymbol;
-      if (propType == null) {
-        continue;
-      }
+  /// <summary>
+  /// Checks if a property should be analyzed (not static, not indexer, not write-only, not ignored).
+  /// </summary>
+  private static bool _isAnalyzableProperty(IPropertySymbol property) {
+    return !property.IsStatic && !property.IsIndexer && !property.IsWriteOnly && !_isPropertyIgnored(property);
+  }
 
-      // Get the element type if this is a collection
-      var elementType = _getCollectionElementType(propType);
-      var typeToCheck = elementType ?? propType;
+  /// <summary>
+  /// Checks if a property type (or its element/argument types) contains polymorphic types.
+  /// </summary>
+  private static bool _isPropertyTypePolymorphic(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
+    var elementType = _getCollectionElementType(propType);
+    var typeToCheck = elementType ?? propType;
 
-      // Check if this type is polymorphic
-      if (_isPolymorphicType(typeToCheck)) {
+    if (_isPolymorphicType(typeToCheck)) {
+      return true;
+    }
+
+    if (_isRecursivelyPolymorphic(typeToCheck, visited)) {
+      return true;
+    }
+
+    return _hasPolymorphicTypeArguments(propType, visited);
+  }
+
+  /// <summary>
+  /// Checks if a class/struct type recursively contains polymorphic properties.
+  /// </summary>
+  private static bool _isRecursivelyPolymorphic(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
+    return (type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct) &&
+           !_isSystemPrimitiveType(type) &&
+           _checkForPolymorphicTypes(type, visited);
+  }
+
+  /// <summary>
+  /// Checks if any generic type arguments of a type are polymorphic or contain polymorphic properties.
+  /// </summary>
+  private static bool _hasPolymorphicTypeArguments(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
+    // S3267: Loop has side effects (mutating visited set via _checkForPolymorphicTypes) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
+      if (_isPolymorphicType(typeArg)) {
         return true;
       }
-
-      // Recursively check nested types
-      if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
-          !_isSystemPrimitiveType(typeToCheck)) {
-        if (_checkForPolymorphicTypes(typeToCheck, visited)) {
-          return true;
-        }
-      }
-
-      // Check generic type arguments
-      foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-        if (_isPolymorphicType(typeArg)) {
-          return true;
-        }
-        if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
-          return true;
-        }
+      if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
+        return true;
       }
     }
+#pragma warning restore S3267
 
     return false;
   }
@@ -734,7 +784,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         if (field.IsUnique) {
           sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
           sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-          sb.AppendLine($"        .IsUnique();");
+          sb.AppendLine("        .IsUnique();");
         } else {
           sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
           sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");
@@ -856,15 +906,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       ImmutableArray<PerspectiveInfo> perspectives,
       string? schema) {
 
-    // Report perspective discovery for diagnostics
-    var debugDescriptor = new DiagnosticDescriptor(
-        id: "WHIZ701",
-        title: "EF Core Perspective Discovery",
-        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
-        category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
-    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length));
+    _reportPerspectiveDiscoveryDiagnostic(context, perspectives.Length);
 
     // Deduplicate perspectives by ModelTypeName (multiple perspectives might use same model type)
     var uniquePerspectives = perspectives
@@ -872,7 +914,40 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         .Select(g => g.First())
         .ToImmutableArray();
 
-    // Report diagnostic about discovery
+    _reportGeneratorExecutedDiagnostic(context, uniquePerspectives.Length, perspectives.Length);
+
+    var assembly = typeof(EFCorePerspectiveConfigurationGenerator).Assembly;
+    var template = _loadAndPrepareTemplate(assembly, uniquePerspectives);
+    var effectiveSchema = schema ?? "public";
+
+    template = _applyPerspectiveConfigurations(template, assembly, uniquePerspectives, effectiveSchema);
+    template = _applyVectorExtensionConfig(template, uniquePerspectives);
+    template = _applyDiagnosticsAndPlaceholders(template, uniquePerspectives, perspectives.Length, effectiveSchema);
+
+    context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
+  }
+
+  /// <summary>
+  /// Reports the WHIZ701 perspective discovery diagnostic.
+  /// </summary>
+  private static void _reportPerspectiveDiscoveryDiagnostic(SourceProductionContext context, int perspectiveCount) {
+    var debugDescriptor = new DiagnosticDescriptor(
+        id: "WHIZ701",
+        title: "EF Core Perspective Discovery",
+        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
+        category: "Whizbang.Generator",
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectiveCount));
+  }
+
+  /// <summary>
+  /// Reports the EFCORE000 generator executed diagnostic.
+  /// </summary>
+  private static void _reportGeneratorExecutedDiagnostic(
+      SourceProductionContext context,
+      int uniqueCount,
+      int totalCount) {
     var runningDescriptor = new DiagnosticDescriptor(
         id: "EFCORE000",
         title: "EF Core Configuration Generator Executed",
@@ -880,96 +955,104 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
+    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, uniqueCount, totalCount));
+  }
 
-    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, uniquePerspectives.Length, perspectives.Length));
-
-    // Load main template
-    var assembly = typeof(EFCorePerspectiveConfigurationGenerator).Assembly;
+  /// <summary>
+  /// Loads the main EF Core configuration template and applies the header and perspective count.
+  /// </summary>
+  private static string _loadAndPrepareTemplate(
+      System.Reflection.Assembly assembly,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives) {
     var template = TemplateUtilities.GetEmbeddedTemplate(
         assembly,
         "EFCoreConfigurationTemplate.cs",
         "Whizbang.Data.EFCore.Postgres.Generators.Templates"
     );
 
-    // Replace header with timestamp
     template = TemplateUtilities.ReplaceRegion(
         template,
         "HEADER",
         $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCorePerspectiveConfigurationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
     );
 
-    // Replace __PERSPECTIVE_COUNT__ placeholder
     template = template.Replace("__PERSPECTIVE_COUNT__", uniquePerspectives.Length.ToString(CultureInfo.InvariantCulture));
+    return template;
+  }
 
-    // Generate perspective configurations
+  /// <summary>
+  /// Generates and applies perspective entity configurations to the template.
+  /// </summary>
+  private static string _applyPerspectiveConfigurations(
+      string template,
+      System.Reflection.Assembly assembly,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives,
+      string effectiveSchema) {
     var perspectiveConfigs = new StringBuilder();
     if (uniquePerspectives.Length > 0) {
       perspectiveConfigs.AppendLine("  // ===== Discovered Perspective Entities =====");
       perspectiveConfigs.AppendLine();
 
       foreach (var perspective in uniquePerspectives) {
-        // Extract perspective entity config snippet - use polymorphic version if model has polymorphic types
-        var snippetName = perspective.HasPolymorphicProperties
-            ? "PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET"
-            : "PERSPECTIVE_ENTITY_CONFIG_SNIPPET";
-        var snippet = TemplateUtilities.ExtractSnippet(
-            assembly,
-            "EFCoreSnippets.cs",
-            snippetName,
-            "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-        );
-
-        // Replace placeholders
-        // Use provided schema, or default to "public" if not specified
-        var effectiveSchema = schema ?? "public";
-
-        // Generate physical field configurations
-        var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
-
-        var config = snippet
-            .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
-            .Replace("__TABLE_NAME__", perspective.TableName)
-            .Replace("__SCHEMA__", effectiveSchema)
-            .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
-
+        var config = _generateSinglePerspectiveConfig(assembly, perspective, effectiveSchema);
         perspectiveConfigs.AppendLine(TemplateUtilities.IndentCode(config, "  "));
         perspectiveConfigs.AppendLine();
       }
     }
 
-    template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
+    return TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
+  }
 
-    // Check if any perspective has vector fields - if so, generate HasPostgresExtension("vector")
-    // This ensures the pgvector extension is automatically created in the database
+  /// <summary>
+  /// Generates the configuration snippet for a single perspective entity.
+  /// </summary>
+  private static string _generateSinglePerspectiveConfig(
+      System.Reflection.Assembly assembly,
+      PerspectiveInfo perspective,
+      string effectiveSchema) {
+    var snippetName = perspective.HasPolymorphicProperties
+        ? "PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET"
+        : "PERSPECTIVE_ENTITY_CONFIG_SNIPPET";
+    var snippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        snippetName,
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+
+    var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
+
+    return snippet
+        .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
+        .Replace("__TABLE_NAME__", perspective.TableName)
+        .Replace("__SCHEMA__", effectiveSchema)
+        .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
+  }
+
+  /// <summary>
+  /// Applies vector extension configuration to the template based on whether any perspectives have vector fields.
+  /// </summary>
+  private static string _applyVectorExtensionConfig(
+      string template,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives) {
     var hasVectorFields = uniquePerspectives.Any(p => p.PhysicalFields.Any(f => f.IsVector));
     var vectorExtensionConfig = hasVectorFields
         ? "    // Auto-configured: pgvector extension required for [VectorField] columns\n    modelBuilder.HasPostgresExtension(\"vector\");\n"
         : "// No vector fields detected - pgvector extension not required\n";
-    template = TemplateUtilities.ReplaceRegion(template, "VECTOR_EXTENSION_CONFIG", vectorExtensionConfig);
+    return TemplateUtilities.ReplaceRegion(template, "VECTOR_EXTENSION_CONFIG", vectorExtensionConfig);
+  }
 
-    // Infrastructure configuration is now handled by static WhizbangModelBuilderExtensions.ConfigureWhizbangInfrastructure()
-    // No need to extract and inject infrastructure snippets here
+  /// <summary>
+  /// Applies diagnostics list and remaining placeholder replacements to the template.
+  /// </summary>
+  private static string _applyDiagnosticsAndPlaceholders(
+      string template,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives,
+      int totalPerspectiveCount,
+      string effectiveSchema) {
+    var diagnosticList = _generateDiagnosticPerspectiveList(uniquePerspectives, totalPerspectiveCount);
+    template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList);
 
-    // Generate diagnostic perspective list
-    var diagnosticList = new StringBuilder();
-    if (uniquePerspectives.Length > 0) {
-      if (uniquePerspectives.Length == perspectives.Length) {
-        diagnosticList.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} perspective(s)\");");
-      } else {
-        diagnosticList.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} unique model type(s) from {perspectives.Length} perspective(s)\");");
-      }
-      diagnosticList.AppendLine("    logger.LogInformation(\"\");");
-
-      foreach (var perspective in uniquePerspectives) {
-        diagnosticList.AppendLine($"    logger.LogInformation(\"  - {perspective.ModelTypeName} (table: {perspective.TableName})\");");
-      }
-    } else {
-      diagnosticList.AppendLine("    logger.LogInformation(\"Discovered Perspectives: 0 perspective(s)\");");
-    }
-
-    template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList.ToString());
-
-    // Replace diagnostic placeholders
     var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
     template = template.Replace("__TIMESTAMP__", timestamp);
 
@@ -978,8 +1061,35 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // CRITICAL: Replace __SCHEMA__ placeholder for infrastructure configuration call
     // Without this, ConfigureWhizbangInfrastructure receives literal "__SCHEMA__" string
-    template = template.Replace("__SCHEMA__", schema ?? "public");
+    template = template.Replace("__SCHEMA__", effectiveSchema);
 
-    context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
+    return template;
+  }
+
+  /// <summary>
+  /// Generates the diagnostic perspective list for logger output in generated code.
+  /// </summary>
+  private static string _generateDiagnosticPerspectiveList(
+      ImmutableArray<PerspectiveInfo> uniquePerspectives,
+      int totalPerspectiveCount) {
+
+    var sb = new StringBuilder();
+
+    if (uniquePerspectives.Length > 0) {
+      if (uniquePerspectives.Length == totalPerspectiveCount) {
+        sb.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} perspective(s)\");");
+      } else {
+        sb.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} unique model type(s) from {totalPerspectiveCount} perspective(s)\");");
+      }
+      sb.AppendLine("    logger.LogInformation(\"\");");
+
+      foreach (var perspective in uniquePerspectives) {
+        sb.AppendLine($"    logger.LogInformation(\"  - {perspective.ModelTypeName} (table: {perspective.TableName})\");");
+      }
+    } else {
+      sb.AppendLine("    logger.LogInformation(\"Discovered Perspectives: 0 perspective(s)\");");
+    }
+
+    return sb.ToString();
   }
 }

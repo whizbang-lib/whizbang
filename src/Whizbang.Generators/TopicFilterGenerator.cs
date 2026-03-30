@@ -25,11 +25,12 @@ namespace Whizbang.Generators;
 /// and generates AOT-compatible topic filter lookup registry.
 /// Uses compile-time extraction of enum Description attributes for type-safe routing.
 /// </summary>
-/// <docs>source-generators/topic-filter-discovery</docs>
+/// <docs>extending/source-generators/topic-filter-discovery</docs>
 [Generator]
 public class TopicFilterGenerator : IIncrementalGenerator {
   private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover ICommand classes with TopicFilter attributes
     var topicFilters = context.SyntaxProvider.CreateSyntaxProvider(
@@ -71,13 +72,11 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   private static ImmutableArray<TopicFilterInfo>? _extractTopicFilters(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
     // Get class symbol
-    var classSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;  // Early exit - Roslyn returned null or not a named type
     }
 

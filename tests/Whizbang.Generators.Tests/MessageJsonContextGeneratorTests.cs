@@ -20,7 +20,7 @@ public class MessageJsonContextGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSingleCommand_GeneratesWhizbangJsonContextAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -37,20 +37,20 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     // Should generate MessageJsonContext for message-specific serialization
     var messageCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(messageCode).IsNotNull();
-    await Assert.That(messageCode!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(messageCode).Contains("namespace TestAssembly.Generated");
     await Assert.That(messageCode).Contains("public partial class MessageJsonContext : JsonSerializerContext");
 
     // Should always generate WhizbangJsonContext facade
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(facadeCode).IsNotNull();
-    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
+    await Assert.That(facadeCode).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCommand_GeneratesMessageEnvelopeFactoryAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -68,7 +68,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate factory for MessageEnvelope<CreateOrder>
-    await Assert.That(code!).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
+    await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
     await Assert.That(code).Contains("CreateMessageEnvelope");
   }
 
@@ -76,7 +76,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleMessages_GeneratesAllFactoriesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands {
@@ -100,7 +100,7 @@ namespace MyApp.Events {
     await Assert.That(code).IsNotNull();
 
     // Should generate factories for all MessageEnvelope<T> types
-    await Assert.That(code!).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
+    await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
     await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.UpdateOrder>");
     await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Events.OrderCreated>");
     await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Events.OrderUpdated>");
@@ -110,7 +110,7 @@ namespace MyApp.Events {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesGetTypeInfoSwitchAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -128,7 +128,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should override GetTypeInfo with switch
-    await Assert.That(code!).Contains("public override JsonTypeInfo? GetTypeInfo(Type type)");
+    await Assert.That(code).Contains("public override JsonTypeInfo? GetTypeInfo(Type type)");
     await Assert.That(code).Contains("if (type == typeof(");
     await Assert.That(code).Contains("return null");
   }
@@ -137,7 +137,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesMessageEnvelopeFactoryMethodAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -156,7 +156,7 @@ public record CreateOrder(string OrderId) : ICommand;
 
     // Should generate specific factory method for MessageEnvelope<CreateOrder>
     // Uses unique identifier from fully qualified name: MyApp.Commands.CreateOrder -> MyApp_Commands_CreateOrder
-    await Assert.That(code!).Contains("CreateMessageEnvelope_MyApp_Commands_CreateOrder");
+    await Assert.That(code).Contains("CreateMessageEnvelope_MyApp_Commands_CreateOrder");
     await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
   }
 
@@ -164,7 +164,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesPropertyHelperMethodAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -182,14 +182,14 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate CreateProperty helper
-    await Assert.That(code!).Contains("CreateProperty<TProperty>");
+    await Assert.That(code).Contains("CreateProperty<TProperty>");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesCoreValueObjectFactoriesAsync() {
     // Arrange - No user message types, but should still generate core types
-    var source = @"
+    const string source = @"
 namespace MyApp;
 
 public class SomeClass { }
@@ -205,7 +205,7 @@ public class SomeClass { }
     await Assert.That(code).IsNotNull();
 
     // Should always generate factories for core Whizbang types
-    await Assert.That(code!).Contains("Create_MessageId");
+    await Assert.That(code).Contains("Create_MessageId");
     await Assert.That(code).Contains("Create_CorrelationId");
   }
 
@@ -213,7 +213,7 @@ public class SomeClass { }
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesGetTypeInfoInternalMethodAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -231,7 +231,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate GetTypeInfoInternal that calls factory methods directly (no caching)
-    await Assert.That(code!).Contains("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options)");
+    await Assert.That(code).Contains("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options)");
     await Assert.That(code).Contains("return Create_MessageId(options);");
     await Assert.That(code).Contains("return Create_CorrelationId(options);");
   }
@@ -246,7 +246,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesPrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -265,7 +265,7 @@ public record CreateOrder(string Name, int Quantity, System.Guid OrderId) : ICom
 
     // Should generate primitive type handling in GetTypeInfoInternal using JsonMetadataServices directly
     // (NOT GetOrCreateTypeInfo to avoid false circular reference detection)
-    await Assert.That(code!).Contains("if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    await Assert.That(code).Contains("if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
     await Assert.That(code).Contains("if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
     await Assert.That(code).Contains("if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
     await Assert.That(code).Contains("if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
@@ -284,7 +284,7 @@ public record CreateOrder(string Name, int Quantity, System.Guid OrderId) : ICom
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesNullablePrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -302,7 +302,7 @@ public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICo
     await Assert.That(code).IsNotNull();
 
     // Should generate nullable primitive type handling that creates underlying type first, then wraps
-    await Assert.That(code!).Contains("if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
     await Assert.That(code).Contains("if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
     await Assert.That(code).Contains("if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
     await Assert.That(code).Contains("if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
@@ -320,7 +320,7 @@ public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICo
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesListOfPrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -339,7 +339,7 @@ public record ProcessData(string Name) : ICommand;
 
     // Should generate List<primitive> handling in GetTypeInfoInternal
     // These enable nested collections like List<List<string>> to work
-    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<string>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<string>))");
     await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<int>))");
     await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<long>))");
     await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<bool>))");
@@ -355,7 +355,7 @@ public record ProcessData(string Name) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_ImplementsIJsonTypeInfoResolverAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -373,7 +373,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should implement IJsonTypeInfoResolver interface
-    await Assert.That(code!).Contains("IJsonTypeInfoResolver");
+    await Assert.That(code).Contains("IJsonTypeInfoResolver");
     await Assert.That(code).Contains("GetTypeInfo(Type type, JsonSerializerOptions options)");
     await Assert.That(code).Contains("GetTypeInfoInternal(type, options)");
   }
@@ -382,7 +382,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_ReportsDiagnostic_ForDiscoveredMessageTypeAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -405,7 +405,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNoMessages_GeneratesOnlyCoreTypesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace MyApp;
 
 public class SomeClass { }
@@ -421,7 +421,7 @@ public class SomeClass { }
     await Assert.That(code).IsNotNull();
 
     // Should generate MessageJsonContext with only core types
-    await Assert.That(code!).Contains("public partial class MessageJsonContext");
+    await Assert.That(code).Contains("public partial class MessageJsonContext");
     await Assert.That(code).Contains("MessageId");
     await Assert.That(code).Contains("CorrelationId");
 
@@ -431,14 +431,14 @@ public class SomeClass { }
     // Should ALWAYS generate WhizbangJsonContext facade (even with no messages)
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(facadeCode).IsNotNull();
-    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
+    await Assert.That(facadeCode).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedNamespaces_GeneratesFullyQualifiedNamesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyCompany.MyApp.Commands.Orders;
@@ -456,14 +456,14 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should use fully qualified names with global:: prefix
-    await Assert.That(code!).Contains("global::MyCompany.MyApp.Commands.Orders.CreateOrder");
+    await Assert.That(code).Contains("global::MyCompany.MyApp.Commands.Orders.CreateOrder");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonMessageType_SkipsAsync() {
     // Arrange - Type with BaseList but not implementing ICommand or IEvent
-    var source = @"
+    const string source = @"
 using System;
 
 namespace MyApp;
@@ -479,14 +479,14 @@ public record OrderDto(string OrderId) : ICloneable {
     // Assert - Should generate context but not include OrderDto
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("OrderDto");
+    await Assert.That(code).DoesNotContain("OrderDto");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithEmptyProject_GeneratesEmptyContextAsync() {
     // Arrange - No message types at all
-    var source = @"
+    const string source = @"
 namespace MyApp;
 
 public class SomeClass {
@@ -500,13 +500,13 @@ public class SomeClass {
     // Assert - Should still generate MessageJsonContext with core types
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("public partial class MessageJsonContext");
+    await Assert.That(code).Contains("public partial class MessageJsonContext");
     await Assert.That(code).Contains("MessageId"); // Core type should be present
 
     // Should ALWAYS generate WhizbangJsonContext facade (even with no messages)
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(facadeCode).IsNotNull();
-    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
+    await Assert.That(facadeCode).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
   }
 
   [Test]
@@ -514,7 +514,7 @@ public class SomeClass {
   public async Task MessageJsonContextGenerator_TypeImplementingBothInterfaces_GeneratesAsCommandAsync() {
     // Arrange - Tests line 53-57, 84: Both isCommand and isEvent = true
     // messageKind ternary chooses "command" when both are true
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -530,7 +530,7 @@ public record HybridMessage : ICommand, IEvent {
     // Assert - Should generate as command (ternary picks command when both true)
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("HybridMessage");
+    await Assert.That(code).Contains("HybridMessage");
 
     // Check diagnostic reports it as command (not event) when both interfaces present
     var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ011");
@@ -542,7 +542,7 @@ public record HybridMessage : ICommand, IEvent {
   [RequiresAssemblyFiles()]
   public async Task MessageJsonContextGenerator_ClassImplementingICommand_GeneratesJsonTypeInfoAsync() {
     // Arrange - Tests line 46-50: Class (not record) in switch expression
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -558,7 +558,7 @@ public class LegacyCommand : ICommand {
     // Assert - Should generate JsonTypeInfo for class-based command
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("LegacyCommand");
+    await Assert.That(code).Contains("LegacyCommand");
 
     // Check diagnostic reports it as command
     var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ011");
@@ -570,7 +570,7 @@ public class LegacyCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_NoMessageTypes_ReportsDiagnosticWithZeroCountAsync() {
     // Arrange - No ICommand or IEvent types
-    var source = """
+    const string source = """
 using System;
 
 namespace MyApp;
@@ -599,7 +599,7 @@ public class RegularClass {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithMultipleProperties_GeneratesValidJsonObjectCreatorAsync() {
     // Arrange - Message with multiple properties to test trailing comma logic
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -617,7 +617,7 @@ public record MultiPropertyCommand(string Prop1, int Prop2, bool Prop3) : IComma
     await Assert.That(code).IsNotNull();
 
     // Verify no trailing comma on last property in constructor
-    await Assert.That(code!).Contains("MultiPropertyCommand");
+    await Assert.That(code).Contains("MultiPropertyCommand");
     await Assert.That(code).Contains("(bool)args[2]"); // Last property without trailing comma
   }
 
@@ -626,7 +626,7 @@ public record MultiPropertyCommand(string Prop1, int Prop2, bool Prop3) : IComma
   public async Task Generator_InternalCommand_SkipsNonPublicTypeAsync() {
     // Arrange - Tests line 54: DeclaredAccessibility != Public check
     // Internal types should be skipped as generated code can't access them
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -643,7 +643,7 @@ internal record InternalCommand(string Data) : ICommand;
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("PublicCommand");
+    await Assert.That(code).Contains("PublicCommand");
     await Assert.That(code).DoesNotContain("InternalCommand");
   }
 
@@ -652,7 +652,7 @@ internal record InternalCommand(string Data) : ICommand;
   public async Task Generator_MessageWithNestedCustomType_DiscoversAndGeneratesForBothAsync() {
     // Arrange - Tests nested type discovery (lines 599-670)
     // Message with List<OrderLineItem> where OrderLineItem is a custom type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -671,7 +671,7 @@ public record CreateOrder(string OrderId, List<OrderLineItem> LineItems) : IComm
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrder");
+    await Assert.That(code).Contains("CreateOrder");
     await Assert.That(code).Contains("OrderLineItem");  // Nested type discovered
     await Assert.That(code).Contains("List<global::MyApp.OrderLineItem>");  // List<T> type generated
   }
@@ -681,7 +681,7 @@ public record CreateOrder(string OrderId, List<OrderLineItem> LineItems) : IComm
   public async Task Generator_MessageWithPrimitiveListProperty_SkipsNestedTypeDiscoveryAsync() {
     // Arrange - Tests line 623-625: IsPrimitiveOrFrameworkType check
     // List<string> should not trigger nested type discovery (string is primitive)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -698,7 +698,7 @@ public record CreateOrder(string OrderId, List<string> Tags) : ICommand;
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrder");
+    await Assert.That(code).Contains("CreateOrder");
     // Generator skips List<primitive> generation - handled by framework
     await Assert.That(code).DoesNotContain("_List_String");  // No List<string> lazy field
   }
@@ -708,7 +708,7 @@ public record CreateOrder(string OrderId, List<string> Tags) : ICommand;
   public async Task Generator_MessageWithInternalNestedType_IncludesReferenceButSkipsFactoryAsync() {
     // Arrange - Tests line 634-636: Skip factory generation for non-public nested types
     // Note: Internal types may still appear in List<T> type references but won't have factories generated
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -728,7 +728,7 @@ public record CreateOrder(string OrderId, List<PublicDetail> PublicItems) : ICom
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrder");
+    await Assert.That(code).Contains("CreateOrder");
     await Assert.That(code).Contains("PublicDetail");
     // PublicDetail should have factory method (uses unique identifier from FQN)
     await Assert.That(code).Contains("Create_MyApp_PublicDetail");
@@ -739,7 +739,7 @@ public record CreateOrder(string OrderId, List<PublicDetail> PublicItems) : ICom
   public async Task Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync() {
     // Arrange - Two types with same SimpleName but different namespaces
     // This would previously cause duplicate field names (_StartCommand) and factory methods
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp.Commands {
@@ -761,7 +761,7 @@ namespace MyApp.Events {
     await Assert.That(code).IsNotNull();
 
     // Both types should be present with fully qualified names
-    await Assert.That(code!).Contains("global::MyApp.Commands.StartCommand");
+    await Assert.That(code).Contains("global::MyApp.Commands.StartCommand");
     await Assert.That(code).Contains("global::MyApp.Events.StartCommand");
 
     // Should have unique field names (not duplicate _StartCommand)
@@ -788,7 +788,7 @@ namespace MyApp.Events {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithDeeplyNestedTypes_DiscoversAllLevelsAsync() {
     // Arrange - Four levels of nesting (Event → Stage → Step → Action)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -823,7 +823,7 @@ public record ActionBlueprint {
     await Assert.That(code).IsNotNull();
 
     // All four levels must be present
-    await Assert.That(code!).Contains("BlueprintCreatedEvent");
+    await Assert.That(code).Contains("BlueprintCreatedEvent");
     await Assert.That(code).Contains("StageBlueprint");
     await Assert.That(code).Contains("StepBlueprint");       // Level 3 - nested-nested
     await Assert.That(code).Contains("ActionBlueprint");     // Level 4 - deeply nested
@@ -837,7 +837,7 @@ public record ActionBlueprint {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithCircularReferences_HandlesWithoutInfiniteLoopAsync() {
     // Arrange - TypeA → TypeB → TypeA (circular)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -866,7 +866,7 @@ public record NodeB {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("NodeA");
+    await Assert.That(code).Contains("NodeA");
     await Assert.That(code).Contains("NodeB");
   }
 
@@ -878,7 +878,7 @@ public record NodeB {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithSelfReferencingType_HandlesCorrectlyAsync() {
     // Arrange - TreeNode references itself
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -902,7 +902,7 @@ public record TreeNode {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("TreeNode");
+    await Assert.That(code).Contains("TreeNode");
   }
 
   /// <summary>
@@ -913,7 +913,7 @@ public record TreeNode {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithMixedNestedAndPrimitiveCollections_SkipsPrimitivesAndDiscoversNestedAsync() {
     // Arrange - Mix of List<CustomType> and List<string>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -945,7 +945,7 @@ public record NestedItem {
     await Assert.That(code).IsNotNull();
 
     // Custom types discovered (including deeply nested NestedItem)
-    await Assert.That(code!).Contains("CustomItem");
+    await Assert.That(code).Contains("CustomItem");
     await Assert.That(code).Contains("NestedItem");
   }
 
@@ -957,7 +957,7 @@ public record NestedItem {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithInternalNestedType_SkipsInternalTypesInRecursionAsync() {
     // Arrange - Public event with internal nested type in recursion
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -987,7 +987,7 @@ internal record InternalItem {
     await Assert.That(code).IsNotNull();
 
     // PublicWrapper should have factory method
-    await Assert.That(code!).Contains("Create_TestApp_PublicWrapper");
+    await Assert.That(code).Contains("Create_TestApp_PublicWrapper");
 
     // InternalItem should NOT have factory method (internal types skipped)
     await Assert.That(code).DoesNotContain("Create_TestApp_InternalItem");
@@ -1001,7 +1001,7 @@ internal record InternalItem {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithNoCollectionProperties_DiscoversNoNestedTypesAsync() {
     // Arrange - Simple event with no collections
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1020,7 +1020,7 @@ public record SimpleEvent : IEvent {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("SimpleEvent");
+    await Assert.That(code).Contains("SimpleEvent");
   }
 
   /// <summary>
@@ -1031,7 +1031,7 @@ public record SimpleEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleEventsWithSameNestedType_DeduplicatesCorrectlyAsync() {
     // Arrange - Two events using the same nested type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1061,7 +1061,7 @@ public record SharedItem {
 
     // Check that SharedItem factory method exists (deduplication ensures one factory per type)
     // Use exact method signature to avoid false positives from CreateList_TestApp_SharedItem
-    await Assert.That(code!).Contains("JsonTypeInfo<global::TestApp.SharedItem> Create_TestApp_SharedItem(JsonSerializerOptions options)");
+    await Assert.That(code).Contains("JsonTypeInfo<global::TestApp.SharedItem> Create_TestApp_SharedItem(JsonSerializerOptions options)");
 
     // Count factory method DEFINITIONS (not calls) - signature pattern is unique
     var factorySignatureCount = code.Split("JsonTypeInfo<global::TestApp.SharedItem> Create_TestApp_SharedItem").Length - 1;
@@ -1079,7 +1079,7 @@ public record SharedItem {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDirectPropertyNestedType_DiscoversNestedTypeAsync() {
     // Arrange - Event with direct property (not a collection) that references a nested type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1102,7 +1102,7 @@ public record ChildModel {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("ParentEvent");
+    await Assert.That(code).Contains("ParentEvent");
     // This is the critical assertion - ChildModel should be discovered
     await Assert.That(code).Contains("ChildModel");
   }
@@ -1115,7 +1115,7 @@ public record ChildModel {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDeepDirectPropertyNesting_DiscoversAllTypesAsync() {
     // Arrange - Event with chain of direct properties: TopMessage → MiddleModel → DeepModel
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1143,7 +1143,7 @@ public record DeepModel {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("TopMessage");
+    await Assert.That(code).Contains("TopMessage");
     await Assert.That(code).Contains("MiddleModel");
     await Assert.That(code).Contains("DeepModel");
   }
@@ -1157,7 +1157,7 @@ public record DeepModel {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedCollectionAndDirectNestedTypes_DiscoversAllTypesAsync() {
     // Arrange - Event with both List<CollectionItem> and DirectItem
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1185,7 +1185,7 @@ public record DirectItem {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("MixedEvent");
+    await Assert.That(code).Contains("MixedEvent");
     await Assert.That(code).Contains("CollectionItem");  // From List<T>
     await Assert.That(code).Contains("DirectItem");      // From direct property
   }
@@ -1203,7 +1203,7 @@ public record DirectItem {
   public async Task Generator_WithSiblingNestedTypes_DiscoversBothTypesAsync() {
     // Arrange - Container class with two nested types: Model (ICommand) and NestedItem (used by Model)
     // This mirrors the real-world scenario: ActiveSessions.ActiveSessionsModel with List<ActiveSessions.Tab>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1233,7 +1233,7 @@ public static class Container {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Container.Model");    // The ICommand nested type
+    await Assert.That(code).Contains("Container.Model");    // The ICommand nested type
     await Assert.That(code).Contains("Container.NestedItem"); // The sibling nested type used in List<>
   }
 
@@ -1249,7 +1249,7 @@ public static class Container {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithGetOnlyProperty_UsesNullSetterAsync() {
     // Arrange - Event with a nested type that has a get-only property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1275,7 +1275,7 @@ public class GetOnlyModel {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
     // Verify it uses null setter, not property assignment
-    await Assert.That(code!).DoesNotContain("GetOnlyModel)obj).Value = ");
+    await Assert.That(code).DoesNotContain("GetOnlyModel)obj).Value = ");
   }
 
   /// <summary>
@@ -1287,7 +1287,7 @@ public class GetOnlyModel {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithRecordStructNestedType_DiscoversStructAsync() {
     // Arrange - Event with record struct direct property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1308,7 +1308,7 @@ public readonly record struct NestedStruct(string Value);
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("NestedStruct");
+    await Assert.That(code).Contains("NestedStruct");
     await Assert.That(code).Contains("Create_TestApp_NestedStruct");
   }
 
@@ -1321,7 +1321,7 @@ public readonly record struct NestedStruct(string Value);
   [RequiresAssemblyFiles()]
   public async Task Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync() {
     // Arrange - Command with readonly record struct property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1343,7 +1343,7 @@ public readonly record struct PermissionValue(string Value);
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
     // Verify constructor-based creation
-    await Assert.That(code!).Contains("new global::TestApp.PermissionValue(");
+    await Assert.That(code).Contains("new global::TestApp.PermissionValue(");
     // Verify no property setter generated
     await Assert.That(code).DoesNotContain("PermissionValue)obj).Value = ");
   }
@@ -1358,7 +1358,7 @@ public readonly record struct PermissionValue(string Value);
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedCollections_SkipsSystemTypesAsync() {
     // Arrange - Event with nested collection (List<List<T>>)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1383,7 +1383,7 @@ public record CustomItem(string Value);
     await Assert.That(code).IsNotNull();
 
     // Should have factory for CustomItem (the innermost custom type)
-    await Assert.That(code!).Contains("CustomItem");
+    await Assert.That(code).Contains("CustomItem");
 
     // Should NOT have factory for List<T> (System.* type)
     await Assert.That(code).DoesNotContain("Create_System_Collections_Generic_List");
@@ -1399,7 +1399,7 @@ public record CustomItem(string Value);
   [RequiresAssemblyFiles()]
   public async Task Generator_WithComputedReadOnlyProperty_ExcludesFromConstructorAsync() {
     // Arrange - Class with computed read-only property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1423,7 +1423,7 @@ public record FileContext : ICommand {
 
     // HasFiles should NOT be in the object initializer (it's computed/read-only and cannot be assigned)
     // The ObjectWithParameterizedConstructorCreator should NOT include: HasFiles = (bool)args[x]
-    await Assert.That(code!).DoesNotContain("HasFiles = (bool)args");
+    await Assert.That(code).DoesNotContain("HasFiles = (bool)args");
 
     // HasFiles should also NOT have a setter lambda
     await Assert.That(code).DoesNotContain("FileContext)obj).HasFiles = ");
@@ -1438,7 +1438,7 @@ public record FileContext : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithAbstractNestedType_SkipsDirectInstantiationAsync() {
     // Arrange - Message with abstract type property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1467,7 +1467,7 @@ public class ConcreteFieldSettings : AbstractFieldSettings {
     await Assert.That(code).IsNotNull();
 
     // Should NOT try to instantiate abstract class with 'new'
-    await Assert.That(code!).DoesNotContain("new global::TestApp.AbstractFieldSettings()");
+    await Assert.That(code).DoesNotContain("new global::TestApp.AbstractFieldSettings()");
     await Assert.That(code).DoesNotContain("new global::TestApp.AbstractFieldSettings(");
   }
 
@@ -1481,7 +1481,7 @@ public class ConcreteFieldSettings : AbstractFieldSettings {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithEnumProperty_DiscoversEnumAsync() {
     // Arrange - Event with direct enum property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1504,7 +1504,7 @@ public record OrderCreatedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Enum should have GetEnumConverter factory method
-    await Assert.That(code!).Contains("OrderStatus");
+    await Assert.That(code).Contains("OrderStatus");
     await Assert.That(code).Contains("GetEnumConverter");
   }
 
@@ -1516,7 +1516,7 @@ public record OrderCreatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_NestedTypeWithEnumProperty_DiscoversEnumAsync() {
     // Arrange - Event → List<Stage> → Stage.StepType enum (the JDNext bug scenario)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1544,7 +1544,7 @@ public record StageBlueprint {
     await Assert.That(code).IsNotNull();
 
     // Nested class discovered
-    await Assert.That(code!).Contains("StageBlueprint");
+    await Assert.That(code).Contains("StageBlueprint");
 
     // Enum used by nested class ALSO discovered
     await Assert.That(code).Contains("StepType");
@@ -1559,7 +1559,7 @@ public record StageBlueprint {
   [RequiresAssemblyFiles()]
   public async Task Generator_DeeplyNestedEnumProperty_DiscoversEnumAsync() {
     // Arrange - Three levels: Event → Stage → Step → ActionType enum
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1592,7 +1592,7 @@ public record Step {
     await Assert.That(code).IsNotNull();
 
     // All nested classes discovered
-    await Assert.That(code!).Contains("Stage");
+    await Assert.That(code).Contains("Stage");
     await Assert.That(code).Contains("Step");
 
     // Deeply nested enum discovered
@@ -1606,7 +1606,7 @@ public record Step {
   [RequiresAssemblyFiles()]
   public async Task Generator_InternalEnum_SkipsEnumAsync() {
     // Arrange - Public event with internal enum property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1629,7 +1629,7 @@ public record EventWithInternalEnum : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Internal enum should not have factory method
-    await Assert.That(code!).DoesNotContain("Create_TestApp_InternalStatus");
+    await Assert.That(code).DoesNotContain("Create_TestApp_InternalStatus");
   }
 
   /// <summary>
@@ -1640,7 +1640,7 @@ public record EventWithInternalEnum : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_FrameworkEnum_SkipsEnumAsync() {
     // Arrange - Event with System.DayOfWeek property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -1662,7 +1662,7 @@ public record ScheduleEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should not have factory for DayOfWeek
-    await Assert.That(code!).DoesNotContain("Create_System_DayOfWeek");
+    await Assert.That(code).DoesNotContain("Create_System_DayOfWeek");
   }
 
   /// <summary>
@@ -1672,7 +1672,7 @@ public record ScheduleEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleEnumsInNestedType_DiscoversAllEnumsAsync() {
     // Arrange - Nested type with multiple enum properties
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -1702,7 +1702,7 @@ public record TaskItem {
     await Assert.That(code).IsNotNull();
 
     // Both enums discovered
-    await Assert.That(code!).Contains("Priority");
+    await Assert.That(code).Contains("Priority");
     await Assert.That(code).Contains("Category");
   }
 
@@ -1716,7 +1716,7 @@ public record TaskItem {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedMessageType_UsesClrFormatWithPlusSignAsync() {
     // Arrange - nested message type in static class
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -1736,7 +1736,7 @@ public static class AuthContracts {
     await Assert.That(code).IsNotNull();
 
     // Should use + for nested type in registration (CLR format)
-    await Assert.That(code!).Contains("MyApp.AuthContracts+LoginCommand, TestAssembly");
+    await Assert.That(code).Contains("MyApp.AuthContracts+LoginCommand, TestAssembly");
 
     // Should NOT use dots for nested type (C# format) in the assembly-qualified name
     await Assert.That(code).DoesNotContain("MyApp.AuthContracts.LoginCommand, TestAssembly");
@@ -1749,7 +1749,7 @@ public static class AuthContracts {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonNestedMessageType_UsesDotSeparatorAsync() {
     // Arrange - non-nested message type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -1767,7 +1767,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should use dots for namespace-qualified name (not nested)
-    await Assert.That(code!).Contains("MyApp.Commands.CreateOrder, TestAssembly");
+    await Assert.That(code).Contains("MyApp.Commands.CreateOrder, TestAssembly");
 
     // Should NOT have any + in the type name (not nested)
     await Assert.That(code).DoesNotContain("MyApp.Commands+CreateOrder");
@@ -1780,7 +1780,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDeeplyNestedType_UsesMultiplePlusSeparatorsAsync() {
     // Arrange - deeply nested message type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -1802,7 +1802,7 @@ public static class Outer {
     await Assert.That(code).IsNotNull();
 
     // Should use + for both nesting levels
-    await Assert.That(code!).Contains("MyApp.Outer+Inner+DeepCommand, TestAssembly");
+    await Assert.That(code).Contains("MyApp.Outer+Inner+DeepCommand, TestAssembly");
 
     // Should NOT use dots for nested types
     await Assert.That(code).DoesNotContain("MyApp.Outer.Inner.DeepCommand, TestAssembly");
@@ -1815,7 +1815,7 @@ public static class Outer {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedType_GeneratesCorrectSwitchCaseAsync() {
     // Arrange - nested message type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -1835,7 +1835,7 @@ public static class Contracts {
     await Assert.That(code).IsNotNull();
 
     // Should use + in switch case for type lookup
-    await Assert.That(code!).Contains("\"MyApp.Contracts+TestCommand, TestAssembly\"");
+    await Assert.That(code).Contains("\"MyApp.Contracts+TestCommand, TestAssembly\"");
   }
 
   /// <summary>
@@ -1845,7 +1845,7 @@ public static class Contracts {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedType_GeneratesCorrectEnvelopeRegistrationAsync() {
     // Arrange - nested message type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace MyApp;
@@ -1865,7 +1865,7 @@ public static class Events {
     await Assert.That(code).IsNotNull();
 
     // Should use + for nested type in MessageEnvelope registration
-    await Assert.That(code!).Contains("MessageEnvelope`1[[MyApp.Events+OrderCreated, TestAssembly]]");
+    await Assert.That(code).Contains("MessageEnvelope`1[[MyApp.Events+OrderCreated, TestAssembly]]");
 
     // Should NOT use dots for nested type in envelope
     await Assert.That(code).DoesNotContain("MessageEnvelope`1[[MyApp.Events.OrderCreated, TestAssembly]]");
@@ -1879,7 +1879,7 @@ public static class Events {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithGlobalNamespaceType_HandlesCorrectlyAsync() {
     // Arrange - type in global namespace
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 public record GlobalCommand(string Data) : ICommand;
@@ -1895,7 +1895,7 @@ public record GlobalCommand(string Data) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should use simple name for global namespace type
-    await Assert.That(code!).Contains("GlobalCommand, TestAssembly");
+    await Assert.That(code).Contains("GlobalCommand, TestAssembly");
   }
 
   // ==================== WhizbangId Skip Tests ====================
@@ -1911,7 +1911,7 @@ public record GlobalCommand(string Data) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync() {
     // Arrange - Message with a property using [WhizbangId] type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1932,7 +1932,7 @@ public record CreateProductCommand(ProductId ProductId, string Name) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // The message itself should be discovered
-    await Assert.That(code!).Contains("CreateProductCommand");
+    await Assert.That(code).Contains("CreateProductCommand");
 
     // ProductId should NOT have a factory method generated
     // (would create incorrect empty-object metadata)
@@ -1948,7 +1948,7 @@ public record CreateProductCommand(ProductId ProductId, string Name) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleWhizbangIdProperties_SkipsAllConvertersAsync() {
     // Arrange - Message with multiple [WhizbangId] types
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -1975,7 +1975,7 @@ public record CreateOrderCommand(OrderId OrderId, CustomerId CustomerId, Product
     await Assert.That(code).IsNotNull();
 
     // The message itself should be discovered
-    await Assert.That(code!).Contains("CreateOrderCommand");
+    await Assert.That(code).Contains("CreateOrderCommand");
 
     // None of the WhizbangId types should have factory methods
     await Assert.That(code).DoesNotContain("Create_TestApp_OrderId");
@@ -1992,7 +1992,7 @@ public record CreateOrderCommand(OrderId OrderId, CustomerId CustomerId, Product
   [RequiresAssemblyFiles()]
   public async Task Generator_WithWhizbangIdInCollection_UsesTypeInfoDelegationAsync() {
     // Arrange - Message with List<WhizbangIdType>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2014,7 +2014,7 @@ public record ProcessItemsCommand(List<ItemId> ItemIds, string BatchName) : ICom
     await Assert.That(code).IsNotNull();
 
     // The message itself should be discovered
-    await Assert.That(code!).Contains("ProcessItemsCommand");
+    await Assert.That(code).Contains("ProcessItemsCommand");
 
     // ItemId should NOT have a direct factory method (Create_TestApp_ItemId)
     // because it has its own converter from WhizbangIdGenerator
@@ -2036,7 +2036,7 @@ public record ProcessItemsCommand(List<ItemId> ItemIds, string BatchName) : ICom
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonWhizbangIdStruct_StillDiscoveredAsync() {
     // Arrange - Message with regular struct (no [WhizbangId])
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -2057,7 +2057,7 @@ public record LocationCommand(GeoCoordinate Location, string Name) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // The message should be discovered
-    await Assert.That(code!).Contains("LocationCommand");
+    await Assert.That(code).Contains("LocationCommand");
 
     // GeoCoordinate SHOULD have a factory (not a WhizbangId)
     await Assert.That(code).Contains("Create_TestApp_GeoCoordinate");
@@ -2074,7 +2074,7 @@ public record LocationCommand(GeoCoordinate Location, string Name) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableGuid_GeneratesListFactoryAsync() {
     // Arrange - Message with List<Guid?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -2095,7 +2095,7 @@ public record ProcessIdsCommand(List<Guid?> OptionalIds) : ICommand;
 
     // List<Guid?> factory method SHOULD be generated
     // ElementUniqueIdentifier: "global::System.Guid?" -> "System_Guid__Nullable"
-    await Assert.That(code!).Contains("List<global::System.Guid?>");
+    await Assert.That(code).Contains("List<global::System.Guid?>");
     await Assert.That(code).Contains("CreateList_System_Guid__Nullable");
   }
 
@@ -2107,7 +2107,7 @@ public record ProcessIdsCommand(List<Guid?> OptionalIds) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableInt_GeneratesListFactoryAsync() {
     // Arrange - Message with List<int?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2127,7 +2127,7 @@ public record ProcessCountsCommand(List<int?> OptionalCounts) : ICommand;
 
     // List<int?> factory method SHOULD be generated
     // Generator normalizes 'int' -> 'global::System.Int32' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Int32?>");
+    await Assert.That(code).Contains("List<global::System.Int32?>");
     await Assert.That(code).Contains("CreateList_System_Int32__Nullable");
   }
 
@@ -2139,7 +2139,7 @@ public record ProcessCountsCommand(List<int?> OptionalCounts) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableDateTime_GeneratesListFactoryAsync() {
     // Arrange - Message with List<DateTime?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -2160,7 +2160,7 @@ public record ProcessDatesCommand(List<DateTime?> OptionalDates) : ICommand;
 
     // List<DateTime?> factory method SHOULD be generated
     // DateTime has no keyword alias - uses fully qualified name
-    await Assert.That(code!).Contains("List<global::System.DateTime?>");
+    await Assert.That(code).Contains("List<global::System.DateTime?>");
     await Assert.That(code).Contains("CreateList_System_DateTime__Nullable");
   }
 
@@ -2172,7 +2172,7 @@ public record ProcessDatesCommand(List<DateTime?> OptionalDates) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableDecimal_GeneratesListFactoryAsync() {
     // Arrange - Message with List<decimal?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2192,7 +2192,7 @@ public record ProcessAmountsCommand(List<decimal?> OptionalAmounts) : ICommand;
 
     // List<decimal?> factory method SHOULD be generated
     // Generator normalizes 'decimal' -> 'global::System.Decimal' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Decimal?>");
+    await Assert.That(code).Contains("List<global::System.Decimal?>");
     await Assert.That(code).Contains("CreateList_System_Decimal__Nullable");
   }
 
@@ -2204,7 +2204,7 @@ public record ProcessAmountsCommand(List<decimal?> OptionalAmounts) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableDateTimeOffset_GeneratesListFactoryAsync() {
     // Arrange - Message with List<DateTimeOffset?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -2225,7 +2225,7 @@ public record ProcessTimestampsCommand(List<DateTimeOffset?> OptionalTimestamps)
 
     // List<DateTimeOffset?> factory method SHOULD be generated
     // DateTimeOffset has no keyword alias - uses fully qualified name
-    await Assert.That(code!).Contains("List<global::System.DateTimeOffset?>");
+    await Assert.That(code).Contains("List<global::System.DateTimeOffset?>");
     await Assert.That(code).Contains("CreateList_System_DateTimeOffset__Nullable");
   }
 
@@ -2237,7 +2237,7 @@ public record ProcessTimestampsCommand(List<DateTimeOffset?> OptionalTimestamps)
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableBool_GeneratesListFactoryAsync() {
     // Arrange - Message with List<bool?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2257,7 +2257,7 @@ public record ProcessFlagsCommand(List<bool?> OptionalFlags) : ICommand;
 
     // List<bool?> factory method SHOULD be generated
     // Generator normalizes 'bool' -> 'global::System.Boolean' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Boolean?>");
+    await Assert.That(code).Contains("List<global::System.Boolean?>");
     await Assert.That(code).Contains("CreateList_System_Boolean__Nullable");
   }
 
@@ -2269,7 +2269,7 @@ public record ProcessFlagsCommand(List<bool?> OptionalFlags) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableLong_GeneratesListFactoryAsync() {
     // Arrange - Message with List<long?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2289,7 +2289,7 @@ public record ProcessLongIdsCommand(List<long?> OptionalIds) : ICommand;
 
     // List<long?> factory method SHOULD be generated
     // Generator normalizes 'long' -> 'global::System.Int64' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Int64?>");
+    await Assert.That(code).Contains("List<global::System.Int64?>");
     await Assert.That(code).Contains("CreateList_System_Int64__Nullable");
   }
 
@@ -2301,7 +2301,7 @@ public record ProcessLongIdsCommand(List<long?> OptionalIds) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableShort_GeneratesListFactoryAsync() {
     // Arrange - Message with List<short?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2321,7 +2321,7 @@ public record ProcessShortValuesCommand(List<short?> OptionalValues) : ICommand;
 
     // List<short?> factory method SHOULD be generated
     // Generator normalizes 'short' -> 'global::System.Int16' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Int16?>");
+    await Assert.That(code).Contains("List<global::System.Int16?>");
     await Assert.That(code).Contains("CreateList_System_Int16__Nullable");
   }
 
@@ -2333,7 +2333,7 @@ public record ProcessShortValuesCommand(List<short?> OptionalValues) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableByte_GeneratesListFactoryAsync() {
     // Arrange - Message with List<byte?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2353,7 +2353,7 @@ public record ProcessBytesCommand(List<byte?> OptionalBytes) : ICommand;
 
     // List<byte?> factory method SHOULD be generated
     // Generator normalizes 'byte' -> 'global::System.Byte' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Byte?>");
+    await Assert.That(code).Contains("List<global::System.Byte?>");
     await Assert.That(code).Contains("CreateList_System_Byte__Nullable");
   }
 
@@ -2365,7 +2365,7 @@ public record ProcessBytesCommand(List<byte?> OptionalBytes) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableFloat_GeneratesListFactoryAsync() {
     // Arrange - Message with List<float?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2385,7 +2385,7 @@ public record ProcessFloatsCommand(List<float?> OptionalFloats) : ICommand;
 
     // List<float?> factory method SHOULD be generated
     // Generator normalizes 'float' -> 'global::System.Single' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Single?>");
+    await Assert.That(code).Contains("List<global::System.Single?>");
     await Assert.That(code).Contains("CreateList_System_Single__Nullable");
   }
 
@@ -2397,7 +2397,7 @@ public record ProcessFloatsCommand(List<float?> OptionalFloats) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableDouble_GeneratesListFactoryAsync() {
     // Arrange - Message with List<double?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2417,7 +2417,7 @@ public record ProcessDoublesCommand(List<double?> OptionalDoubles) : ICommand;
 
     // List<double?> factory method SHOULD be generated
     // Generator normalizes 'double' -> 'global::System.Double' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Double?>");
+    await Assert.That(code).Contains("List<global::System.Double?>");
     await Assert.That(code).Contains("CreateList_System_Double__Nullable");
   }
 
@@ -2429,7 +2429,7 @@ public record ProcessDoublesCommand(List<double?> OptionalDoubles) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableChar_GeneratesListFactoryAsync() {
     // Arrange - Message with List<char?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2449,7 +2449,7 @@ public record ProcessCharsCommand(List<char?> OptionalChars) : ICommand;
 
     // List<char?> factory method SHOULD be generated
     // Generator normalizes 'char' -> 'global::System.Char' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.Char?>");
+    await Assert.That(code).Contains("List<global::System.Char?>");
     await Assert.That(code).Contains("CreateList_System_Char__Nullable");
   }
 
@@ -2461,7 +2461,7 @@ public record ProcessCharsCommand(List<char?> OptionalChars) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleNullableValueTypeLists_GeneratesAllFactoriesAsync() {
     // Arrange - Message with multiple nullable value type lists
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -2486,7 +2486,7 @@ public record ProcessMixedCommand(
     await Assert.That(code).IsNotNull();
 
     // All nullable value type list factories SHOULD be generated with fully qualified names
-    await Assert.That(code!).Contains("List<global::System.Guid?>");
+    await Assert.That(code).Contains("List<global::System.Guid?>");
     await Assert.That(code).Contains("List<global::System.Int32?>");
     await Assert.That(code).Contains("List<global::System.DateTime?>");
     await Assert.That(code).Contains("List<global::System.Decimal?>");
@@ -2500,7 +2500,7 @@ public record ProcessMixedCommand(
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedCollections_StillSkipsCollectionTypesAsync() {
     // Arrange - Message with nested collection (should be skipped)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2520,7 +2520,7 @@ public record MatrixCommand(List<List<int>> Matrix) : ICommand;
 
     // Should NOT have factory for List<List<int>> (nested collections skipped)
     // The element type is System.Collections.Generic.List<int> which should be skipped
-    await Assert.That(code!).DoesNotContain("CreateList_System_Collections_Generic_List");
+    await Assert.That(code).DoesNotContain("CreateList_System_Collections_Generic_List");
   }
 
   /// <summary>
@@ -2531,7 +2531,7 @@ public record MatrixCommand(List<List<int>> Matrix) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableUInt_GeneratesListFactoryAsync() {
     // Arrange - Message with List<uint?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2551,7 +2551,7 @@ public record ProcessUIntCommand(List<uint?> OptionalValues) : ICommand;
 
     // List<uint?> factory method SHOULD be generated
     // Generator normalizes 'uint' -> 'global::System.UInt32' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.UInt32?>");
+    await Assert.That(code).Contains("List<global::System.UInt32?>");
     await Assert.That(code).Contains("CreateList_System_UInt32__Nullable");
   }
 
@@ -2563,7 +2563,7 @@ public record ProcessUIntCommand(List<uint?> OptionalValues) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableULong_GeneratesListFactoryAsync() {
     // Arrange - Message with List<ulong?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2583,7 +2583,7 @@ public record ProcessULongCommand(List<ulong?> OptionalValues) : ICommand;
 
     // List<ulong?> factory method SHOULD be generated
     // Generator normalizes 'ulong' -> 'global::System.UInt64' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.UInt64?>");
+    await Assert.That(code).Contains("List<global::System.UInt64?>");
     await Assert.That(code).Contains("CreateList_System_UInt64__Nullable");
   }
 
@@ -2595,7 +2595,7 @@ public record ProcessULongCommand(List<ulong?> OptionalValues) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableUShort_GeneratesListFactoryAsync() {
     // Arrange - Message with List<ushort?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2615,7 +2615,7 @@ public record ProcessUShortCommand(List<ushort?> OptionalValues) : ICommand;
 
     // List<ushort?> factory method SHOULD be generated
     // Generator normalizes 'ushort' -> 'global::System.UInt16' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.UInt16?>");
+    await Assert.That(code).Contains("List<global::System.UInt16?>");
     await Assert.That(code).Contains("CreateList_System_UInt16__Nullable");
   }
 
@@ -2627,7 +2627,7 @@ public record ProcessUShortCommand(List<ushort?> OptionalValues) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithListOfNullableSByte_GeneratesListFactoryAsync() {
     // Arrange - Message with List<sbyte?> property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -2647,7 +2647,7 @@ public record ProcessSByteCommand(List<sbyte?> OptionalValues) : ICommand;
 
     // List<sbyte?> factory method SHOULD be generated
     // Generator normalizes 'sbyte' -> 'global::System.SByte' for consistent naming
-    await Assert.That(code!).Contains("List<global::System.SByte?>");
+    await Assert.That(code).Contains("List<global::System.SByte?>");
     await Assert.That(code).Contains("CreateList_System_SByte__Nullable");
   }
 
@@ -2659,7 +2659,7 @@ public record ProcessSByteCommand(List<sbyte?> OptionalValues) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMixOfNullableValueTypesAndNestedCollections_HandlesCorrectlyAsync() {
     // Arrange - Message with both nullable value type list AND nested collection
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -2682,7 +2682,7 @@ public record MixedCollectionsCommand(
     await Assert.That(code).IsNotNull();
 
     // List<Guid?> SHOULD be generated (nullable value type)
-    await Assert.That(code!).Contains("List<global::System.Guid?>");
+    await Assert.That(code).Contains("List<global::System.Guid?>");
     await Assert.That(code).Contains("CreateList_System_Guid__Nullable");
 
     // List<List<string>> should NOT have factory (nested collection)
@@ -2700,7 +2700,7 @@ public record MixedCollectionsCommand(
   [RequiresAssemblyFiles()]
   public async Task Generator_WithInheritedProperties_IncludesBaseClassPropertiesAsync() {
     // Arrange - Command that extends a base class with properties
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -2729,7 +2729,7 @@ public class DerivedCommand : BaseCommand, ICommand {
 
     // CRITICAL: All 3 properties should be included - both inherited and direct
     // StreamId from base
-    await Assert.That(code!).Contains("\"StreamId\"");
+    await Assert.That(code).Contains("\"StreamId\"");
     // CorrelationId from base
     await Assert.That(code).Contains("\"CorrelationId\"");
     // Name from derived
@@ -2745,7 +2745,7 @@ public class DerivedCommand : BaseCommand, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithInheritedProperties_BasePropertiesAppearFirstAsync() {
     // Arrange - Command with clear ordering requirement
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -2787,7 +2787,7 @@ public class DerivedCommand : BaseCommand, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultiLevelInheritance_IncludesAllLevelsAsync() {
     // Arrange - Three-level inheritance hierarchy
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -2819,7 +2819,7 @@ public class ChildCommand : ParentCommand, ICommand {
     await Assert.That(code).IsNotNull();
 
     // All 3 properties from all levels should be present
-    await Assert.That(code!).Contains("\"GrandparentId\"");
+    await Assert.That(code).Contains("\"GrandparentId\"");
     await Assert.That(code).Contains("\"ParentProp\"");
     await Assert.That(code).Contains("\"ChildProp\"");
   }
@@ -2833,7 +2833,7 @@ public class ChildCommand : ParentCommand, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithVirtualOverride_UsesOnlyDerivedPropertyAsync() {
     // Arrange - Base with virtual property, derived with override
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -2871,7 +2871,7 @@ public class DerivedWithOverride : BaseWithVirtual, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPropertyHidingNew_UsesOnlyDerivedPropertyAsync() {
     // Arrange - Base with property, derived hides with 'new'
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -2909,7 +2909,7 @@ public class DerivedWithNew : BaseWithProp, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithInheritedStaticProperty_ExcludesStaticAsync() {
     // Arrange - Base with static property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -2934,7 +2934,7 @@ public class DerivedCommand : BaseWithStatic, ICommand {
     await Assert.That(code).IsNotNull();
 
     // Static property should NOT be included
-    await Assert.That(code!).DoesNotContain("\"StaticProp\"");
+    await Assert.That(code).DoesNotContain("\"StaticProp\"");
     // Instance properties should be included
     await Assert.That(code).Contains("\"InstanceProp\"");
     await Assert.That(code).Contains("\"DerivedProp\"");
@@ -2949,7 +2949,7 @@ public class DerivedCommand : BaseWithStatic, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithInheritedNonPublicProperties_ExcludesNonPublicAsync() {
     // Arrange - Base with private and internal properties
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -2976,7 +2976,7 @@ public class DerivedCommand : BaseWithNonPublic, ICommand {
     await Assert.That(code).IsNotNull();
 
     // Only public properties should be included
-    await Assert.That(code!).Contains("\"PublicProp\"");
+    await Assert.That(code).Contains("\"PublicProp\"");
     await Assert.That(code).Contains("\"DerivedProp\"");
     // Non-public properties should NOT be included
     await Assert.That(code).DoesNotContain("\"InternalProp\"");
@@ -2993,7 +2993,7 @@ public class DerivedCommand : BaseWithNonPublic, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithInheritedReadOnlyProperty_IncludesReadOnlyAsync() {
     // Arrange - Base with read-only property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3018,7 +3018,7 @@ public class DerivedCommand : BaseWithReadOnly, ICommand {
     await Assert.That(code).IsNotNull();
 
     // Both read-only and read-write properties should be included
-    await Assert.That(code!).Contains("\"ReadOnlyProp\"");
+    await Assert.That(code).Contains("\"ReadOnlyProp\"");
     await Assert.That(code).Contains("\"ReadWriteProp\"");
     await Assert.That(code).Contains("\"DerivedProp\"");
   }
@@ -3031,7 +3031,7 @@ public class DerivedCommand : BaseWithReadOnly, ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNoInheritance_WorksUnchangedAsync() {
     // Arrange - Simple command without inheritance
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -3053,7 +3053,7 @@ public class SimpleCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Both properties should be included
-    await Assert.That(code!).Contains("\"Id\"");
+    await Assert.That(code).Contains("\"Id\"");
     await Assert.That(code).Contains("\"Name\"");
   }
 
@@ -3066,7 +3066,7 @@ public class SimpleCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithRecordInheritance_IncludesBasePropertiesAsync() {
     // Arrange - Record that inherits from another record
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -3087,7 +3087,7 @@ public record DerivedEvent(Guid EventId, string EventType, string Payload) : Bas
     await Assert.That(code).IsNotNull();
 
     // All properties should be included
-    await Assert.That(code!).Contains("\"EventId\"");
+    await Assert.That(code).Contains("\"EventId\"");
     await Assert.That(code).Contains("\"EventType\"");
     await Assert.That(code).Contains("\"Payload\"");
   }
@@ -3101,7 +3101,7 @@ public record DerivedEvent(Guid EventId, string EventType, string Payload) : Bas
   [RequiresAssemblyFiles()]
   public async Task Generator_StopsAtObjectBaseType_NoObjectPropertiesAsync() {
     // Arrange - Command that directly extends object (implicitly)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3121,7 +3121,7 @@ public class SimpleCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Only our property, not any object internals
-    await Assert.That(code!).Contains("\"Prop\"");
+    await Assert.That(code).Contains("\"Prop\"");
     // System.Object doesn't have public serializable properties, but just verify no weird ones
     await Assert.That(code).DoesNotContain("\"GetType\"");
     await Assert.That(code).DoesNotContain("\"GetHashCode\"");
@@ -3138,7 +3138,7 @@ public class SimpleCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync() {
     // Arrange - Message with polymorphic abstract property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Text.Json.Serialization;
 
@@ -3176,7 +3176,7 @@ public record FormField : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should generate factory methods for concrete derived types
-    await Assert.That(code!).Contains("Create_TestApp_TextFieldSettings");
+    await Assert.That(code).Contains("Create_TestApp_TextFieldSettings");
     await Assert.That(code).Contains("Create_TestApp_NumberFieldSettings");
 
     // Should NOT try to create factory for abstract base type
@@ -3200,7 +3200,7 @@ public record FormField : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync() {
     // Arrange - Derived types only listed in attributes, not used directly
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Text.Json.Serialization;
 
@@ -3236,7 +3236,7 @@ public record ConfigCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should discover and generate for derived types from attributes
-    await Assert.That(code!).Contains("Create_TestApp_ConcreteSetting1");
+    await Assert.That(code).Contains("Create_TestApp_ConcreteSetting1");
     await Assert.That(code).Contains("Create_TestApp_ConcreteSetting2");
   }
 
@@ -3249,7 +3249,7 @@ public record ConfigCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithJsonDerivedTypeInDifferentNamespace_DiscoversAsync() {
     // Arrange - Derived type in different namespace
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Text.Json.Serialization;
 using TestApp.Settings;
@@ -3285,7 +3285,7 @@ public record SetupCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should discover derived type from different namespace
-    await Assert.That(code!).Contains("TestApp_Settings_AdvancedSetting");
+    await Assert.That(code).Contains("TestApp_Settings_AdvancedSetting");
   }
 
   /// <summary>
@@ -3296,7 +3296,7 @@ public record SetupCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithJsonPolymorphicInCollection_DiscoversDerivedTypesAsync() {
     // Arrange - Polymorphic type used in a List
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Text.Json.Serialization;
 using System.Collections.Generic;
@@ -3334,7 +3334,7 @@ public record CreateFormCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should discover derived types from polymorphic base in collection
-    await Assert.That(code!).Contains("Create_TestApp_TextField");
+    await Assert.That(code).Contains("Create_TestApp_TextField");
     await Assert.That(code).Contains("Create_TestApp_CheckboxField");
   }
 
@@ -3346,7 +3346,7 @@ public record CreateFormCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithJsonPolymorphicType_ReportsDiagnosticForDerivedTypesAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Text.Json.Serialization;
 
@@ -3384,7 +3384,7 @@ public record TestCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_EnumProperty_GeneratesNullableEnumFactoryAsync() {
     // Arrange - Event with enum property (discovered enums should get nullable factory too)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3408,7 +3408,7 @@ public record OrderCreatedEvent : IEvent {
 
     // Should have both non-nullable and nullable enum handling
     // Non-nullable: CreateEnum_TestApp_OrderStatus
-    await Assert.That(code!).Contains("CreateEnum_TestApp_OrderStatus");
+    await Assert.That(code).Contains("CreateEnum_TestApp_OrderStatus");
     await Assert.That(code).Contains("GetEnumConverter<global::TestApp.OrderStatus>");
 
     // Nullable: CreateNullableEnum_TestApp_OrderStatus
@@ -3428,7 +3428,7 @@ public record OrderCreatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_NullableEnumProperty_GeneratesBothFactoriesAsync() {
     // Arrange - Event with nullable enum property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3452,7 +3452,7 @@ public record MessageUpdatedEvent : IEvent {
 
     // Should have both non-nullable and nullable enum handling
     // Even though source only has MessageFlags?, both are generated
-    await Assert.That(code!).Contains("CreateEnum_TestApp_MessageFlags");
+    await Assert.That(code).Contains("CreateEnum_TestApp_MessageFlags");
     await Assert.That(code).Contains("CreateNullableEnum_TestApp_MessageFlags");
 
     // Should have GetTypeInfo checks for both
@@ -3470,7 +3470,7 @@ public record MessageUpdatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_NestedPerspectiveModel_IsDiscoveredAsync() {
     // Arrange - Perspective with nested model (the ChatSession pattern)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -3504,11 +3504,60 @@ public class ChatSession : IPerspectiveFor<ChatSession.ChatSessionModel, ChatSes
 
     // The nested model should be discovered because ChatSession implements IPerspectiveFor<ChatSessionModel, ...>
     // Check for the nested type using CLR format (+ for nested types)
-    await Assert.That(code!).Contains("ChatSession");
+    await Assert.That(code).Contains("ChatSession");
     await Assert.That(code).Contains("ChatSessionModel");
 
     // Should have factory method for the nested model
     await Assert.That(code).Contains("Create_TestApp_ChatSession_ChatSessionModel");
+  }
+
+  /// <summary>
+  /// Tests that a nested perspective model discovered through both the model record path
+  /// (syntactic predicate matches nested type) AND the perspective class path
+  /// (_extractPerspectiveModelFromPerspectiveClass) is only registered once.
+  /// Regression test for CS0111 duplicate method errors.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NestedPerspectiveModel_IsNotDuplicatedAsync() {
+    // Arrange - Perspective with nested model (triggers both discovery paths)
+    const string source = """
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestApp;
+
+public class ChatSession : IPerspectiveFor<ChatSession.ChatSessionModel, ChatSession.MessageSent> {
+    public record ChatSessionModel {
+        public string SessionId { get; init; } = "";
+        public string Title { get; init; } = "";
+    }
+
+    public record MessageSent : IEvent {
+        public string SessionId { get; init; } = "";
+    }
+
+    public ChatSessionModel Apply(ChatSessionModel model, MessageSent e) => model;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No generator errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Model should be present
+    await Assert.That(code).Contains("Create_TestApp_ChatSession_ChatSessionModel");
+
+    // Count factory method definitions — must be exactly 1 (not duplicated)
+    var factoryCount = code!.Split("Create_TestApp_ChatSession_ChatSessionModel(JsonSerializerOptions options)").Length - 1;
+    await Assert.That(factoryCount).IsEqualTo(1)
+      .Because("perspective model should not be registered twice via both the nested type path and the perspective class extraction path");
   }
 
   /// <summary>
@@ -3519,7 +3568,7 @@ public class ChatSession : IPerspectiveFor<ChatSession.ChatSessionModel, ChatSes
   [RequiresAssemblyFiles()]
   public async Task Generator_TypeWithWhizbangSerializableAttribute_IsDiscoveredAsync() {
     // Arrange - Type with [WhizbangSerializable] attribute (no base type)
-    var source = """
+    const string source = """
 using Whizbang;
 
 namespace TestApp;
@@ -3541,7 +3590,7 @@ public record ChatMessageDto {
     await Assert.That(code).IsNotNull();
 
     // Type with [WhizbangSerializable] should be discovered for JSON serialization
-    await Assert.That(code!).Contains("ChatMessageDto");
+    await Assert.That(code).Contains("ChatMessageDto");
   }
 
   // ==================== Array Type Discovery Tests ====================
@@ -3554,7 +3603,7 @@ public record ChatMessageDto {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithArrayProperty_DiscoversArrayTypeAsync() {
     // Arrange - Message with string[] property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3572,7 +3621,7 @@ public record ProcessTagsCommand(string[] Tags) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Array type should be discovered and factory generated
-    await Assert.That(code!).Contains("global::System.String[]");
+    await Assert.That(code).Contains("global::System.String[]");
     await Assert.That(code).Contains("CreateArray_System_String");
   }
 
@@ -3585,7 +3634,7 @@ public record ProcessTagsCommand(string[] Tags) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithNullableElementArray_GeneratesArrayFactoryAsync() {
     // Arrange - Message with int?[] property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3604,7 +3653,7 @@ public record ProcessValuesCommand(int?[] OptionalValues) : ICommand;
 
     // Array of nullable int should be discovered
     // Generator normalizes 'int' -> 'global::System.Int32' for consistent naming
-    await Assert.That(code!).Contains("global::System.Int32?[]");
+    await Assert.That(code).Contains("global::System.Int32?[]");
     await Assert.That(code).Contains("CreateArray_System_Int32__Nullable");
   }
 
@@ -3616,7 +3665,7 @@ public record ProcessValuesCommand(int?[] OptionalValues) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithCustomTypeArray_GeneratesArrayFactoryAsync() {
     // Arrange - Message with custom type array
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -3639,7 +3688,7 @@ public record CreateOrderCommand(OrderItem[] Items) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Array of custom type should be discovered
-    await Assert.That(code!).Contains("global::TestApp.OrderItem[]");
+    await Assert.That(code).Contains("global::TestApp.OrderItem[]");
     await Assert.That(code).Contains("CreateArray_TestApp_OrderItem");
   }
 
@@ -3651,7 +3700,7 @@ public record CreateOrderCommand(OrderItem[] Items) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithGuidArray_GeneratesArrayFactoryAsync() {
     // Arrange - Message with Guid[] property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -3670,7 +3719,7 @@ public record ProcessIdsCommand(Guid[] Ids) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Guid[] should be discovered
-    await Assert.That(code!).Contains("global::System.Guid[]");
+    await Assert.That(code).Contains("global::System.Guid[]");
     await Assert.That(code).Contains("CreateArray_System_Guid");
   }
 
@@ -3683,7 +3732,7 @@ public record ProcessIdsCommand(Guid[] Ids) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithGenericTypeArray_GeneratesValidIdentifierAsync() {
     // Arrange - Message with Dictionary<string, string>[] property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -3702,7 +3751,7 @@ public record ProcessMetadataCommand(Dictionary<string, string>[] Metadata) : IC
     await Assert.That(code).IsNotNull();
 
     // Dictionary<string, string>[] should generate valid identifier (no < > , in method names)
-    await Assert.That(code!).Contains("CreateArray_System_Collections_Generic_Dictionary");
+    await Assert.That(code).Contains("CreateArray_System_Collections_Generic_Dictionary");
     // Should NOT contain angle brackets in method names
     await Assert.That(code).DoesNotContain("CreateArray_System_Collections_Generic_Dictionary<");
   }
@@ -3719,7 +3768,7 @@ public record ProcessMetadataCommand(Dictionary<string, string>[] Metadata) : IC
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithTimeSpanProperty_GeneratesValidCodeAsync() {
     // Arrange - Message with TimeSpan and TimeSpan? properties
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -3738,7 +3787,7 @@ public record ScheduleCommand(TimeSpan Duration, TimeSpan? OptionalDelay) : ICom
     await Assert.That(code).IsNotNull();
 
     // TimeSpan should be handled in GetOrCreateTypeInfo (not discovered as a nested type)
-    await Assert.That(code!).Contains("typeof(TimeSpan)");
+    await Assert.That(code).Contains("typeof(TimeSpan)");
   }
 
   /// <summary>
@@ -3748,7 +3797,7 @@ public record ScheduleCommand(TimeSpan Duration, TimeSpan? OptionalDelay) : ICom
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithDateOnlyProperty_GeneratesValidCodeAsync() {
     // Arrange - Message with DateOnly and DateOnly? properties
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -3767,7 +3816,7 @@ public record AppointmentCommand(DateOnly Date, DateOnly? OptionalDate) : IComma
     await Assert.That(code).IsNotNull();
 
     // DateOnly should be handled in GetOrCreateTypeInfo
-    await Assert.That(code!).Contains("typeof(DateOnly)");
+    await Assert.That(code).Contains("typeof(DateOnly)");
   }
 
   /// <summary>
@@ -3777,7 +3826,7 @@ public record AppointmentCommand(DateOnly Date, DateOnly? OptionalDate) : IComma
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithTimeOnlyProperty_GeneratesValidCodeAsync() {
     // Arrange - Message with TimeOnly and TimeOnly? properties
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 
@@ -3796,7 +3845,7 @@ public record MeetingCommand(TimeOnly StartTime, TimeOnly? EndTime) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // TimeOnly should be handled in GetOrCreateTypeInfo
-    await Assert.That(code!).Contains("typeof(TimeOnly)");
+    await Assert.That(code).Contains("typeof(TimeOnly)");
   }
 
   /// <summary>
@@ -3815,7 +3864,7 @@ public record MeetingCommand(TimeOnly StartTime, TimeOnly? EndTime) : ICommand;
     // Arrange - Message with nested type that has TimeSpan? property
     // This simulates the real-world scenario where IntentModel contains
     // List<RecordedFact> and RecordedFact has a TimeSpan? property
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -3839,7 +3888,7 @@ public record IntentUpdated(IntentModel Model) : IEvent;
     await Assert.That(code).IsNotNull();
 
     // RecordedFact should be discovered as a nested type
-    await Assert.That(code!).Contains("RecordedFact");
+    await Assert.That(code).Contains("RecordedFact");
 
     // The generated code should handle TimeSpan via GetOrCreateTypeInfo
     await Assert.That(code).Contains("typeof(TimeSpan)");
@@ -3853,7 +3902,7 @@ public record IntentUpdated(IntentModel Model) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_ListOfNestedTypeWithTimeSpanProperty_GeneratesValidCodeAsync() {
     // Arrange - More complex nested structure
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -3877,7 +3926,7 @@ public record ScheduleCreated(List<DaySchedule> Schedules) : IEvent;
     await Assert.That(code).IsNotNull();
 
     // Both nested types should be discovered
-    await Assert.That(code!).Contains("ScheduleItem");
+    await Assert.That(code).Contains("ScheduleItem");
     await Assert.That(code).Contains("DaySchedule");
 
     // List types should be discovered
@@ -3895,7 +3944,7 @@ public record ScheduleCreated(List<DaySchedule> Schedules) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_RecursiveDiscovery_WithRepeatTypes_DiscoversOnceAsync() {
     // Arrange - Same type (Address) appears in multiple properties and nested types
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -3921,7 +3970,7 @@ public record OrderCreated(Order Order) : IEvent;
     await Assert.That(code).IsNotNull();
 
     // All nested types should be discovered
-    await Assert.That(code!).Contains("Address");
+    await Assert.That(code).Contains("Address");
     await Assert.That(code).Contains("Customer");
     await Assert.That(code).Contains("Order");
 
@@ -3942,7 +3991,7 @@ public record OrderCreated(Order Order) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_RecursiveDiscovery_WithCircularReferences_HandlesGracefullyAsync() {
     // Arrange - Circular reference: Person -> List<Person> (children reference parents)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -3964,7 +4013,7 @@ public record TeamCreated(Person TeamLead) : IEvent;
     await Assert.That(code).IsNotNull();
 
     // Person should be discovered
-    await Assert.That(code!).Contains("Person");
+    await Assert.That(code).Contains("Person");
 
     // Person should only have ONE factory method definition (not duplicates from circular traversal)
     var personFactoryCount = System.Text.RegularExpressions.Regex.Count(
@@ -3984,7 +4033,7 @@ public record TeamCreated(Person TeamLead) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_RecursiveDiscovery_WithSelfReference_HandlesGracefullyAsync() {
     // Arrange - Self-reference: TreeNode references itself for children
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -4006,7 +4055,7 @@ public record TreeCreated(TreeNode Root) : IEvent;
     await Assert.That(code).IsNotNull();
 
     // TreeNode should be discovered once
-    await Assert.That(code!).Contains("TreeNode");
+    await Assert.That(code).Contains("TreeNode");
 
     var treeNodeFactoryCount = System.Text.RegularExpressions.Regex.Count(
         code, @"private JsonTypeInfo<[^>]+> Create_TestApp_TreeNode\(");
@@ -4021,7 +4070,7 @@ public record TreeCreated(TreeNode Root) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_RecursiveDiscovery_WithMutualCircularReferences_HandlesGracefullyAsync() {
     // Arrange - Mutual circular: Department -> List<Employee>, Employee -> Department
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -4045,7 +4094,7 @@ public record OrgCreated(Department RootDepartment) : IEvent;
     await Assert.That(code).IsNotNull();
 
     // Both types should be discovered once
-    await Assert.That(code!).Contains("Employee");
+    await Assert.That(code).Contains("Employee");
     await Assert.That(code).Contains("Department");
 
     var employeeFactoryCount = System.Text.RegularExpressions.Regex.Count(
@@ -4069,7 +4118,7 @@ public record OrgCreated(Department RootDepartment) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_EventWithSelfReferencingCollection_GeneratesCorrectlyAsync() {
     // Arrange - Event with List<SameEvent> property (self-referencing collection)
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4095,7 +4144,7 @@ public record TemplateCreatedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Event factory should be generated
-    await Assert.That(code!).Contains("Create_TestApp_TemplateCreatedEvent");
+    await Assert.That(code).Contains("Create_TestApp_TemplateCreatedEvent");
 
     // List<TemplateCreatedEvent> should also be generated
     await Assert.That(code).Contains("List<global::TestApp.TemplateCreatedEvent>");
@@ -4122,7 +4171,7 @@ public record TemplateCreatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_NestedTypeWithSelfReferencingCollection_GeneratesCorrectlyAsync() {
     // Arrange - NestedType with self-referencing collection
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4149,7 +4198,7 @@ public record HierarchyCreatedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Both types should be generated
-    await Assert.That(code!).Contains("Create_TestApp_NestedNode");
+    await Assert.That(code).Contains("Create_TestApp_NestedNode");
     await Assert.That(code).Contains("Create_TestApp_HierarchyCreatedEvent");
 
     // List<NestedNode> should be generated
@@ -4175,7 +4224,7 @@ public record HierarchyCreatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithUserBaseClass_AutoDiscoversPolymorphicTypesAsync() {
     // Arrange - BaseJdxEvent-like pattern with multiple derived events
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4214,7 +4263,7 @@ public record ProcessSeedBatchCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should generate polymorphic factory for BaseJdxEvent
-    await Assert.That(code!).Contains("CreatePolymorphic_TestApp_BaseJdxEvent");
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_BaseJdxEvent");
 
     // Should include JsonPolymorphismOptions with derived types
     await Assert.That(code).Contains("JsonPolymorphismOptions");
@@ -4232,7 +4281,7 @@ public record ProcessSeedBatchCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithIEventCollection_IncludesAllEventTypesAsync() {
     // Arrange - Multiple events, handler returns List<IEvent>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4266,7 +4315,7 @@ public record GetEventsCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should generate polymorphic factory for IEvent
-    await Assert.That(code!).Contains("CreatePolymorphic_Whizbang_Core_IEvent");
+    await Assert.That(code).Contains("CreatePolymorphic_Whizbang_Core_IEvent");
 
     // Should include all discovered event types as derived
     await Assert.That(code).Contains("OrderCreatedEvent");
@@ -4283,7 +4332,7 @@ public record GetEventsCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithICommandCollection_IncludesAllCommandTypesAsync() {
     // Arrange - Multiple commands, handler returns List<ICommand>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4318,7 +4367,7 @@ public record CommandBatch : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate polymorphic factory for ICommand
-    await Assert.That(code!).Contains("CreatePolymorphic_Whizbang_Core_ICommand");
+    await Assert.That(code).Contains("CreatePolymorphic_Whizbang_Core_ICommand");
 
     // Should include all discovered command types as derived
     await Assert.That(code).Contains("CreateOrderCommand");
@@ -4335,7 +4384,7 @@ public record CommandBatch : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithUserInterface_AutoDiscoversImplementationsAsync() {
     // Arrange - User interface with multiple implementations
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4377,7 +4426,7 @@ public record SendNotificationsCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should generate polymorphic factory for INotification
-    await Assert.That(code!).Contains("CreatePolymorphic_TestApp_INotification");
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_INotification");
 
     // Should include all implementations
     await Assert.That(code).Contains("EmailNotification");
@@ -4397,7 +4446,7 @@ public record SendNotificationsCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDeepInheritance_DiscoversAllLevelsAsync() {
     // Arrange - Three-level inheritance hierarchy
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4439,7 +4488,7 @@ public record GetAuditEventsCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should generate polymorphic factory for DomainEvent
-    await Assert.That(code!).Contains("CreatePolymorphic_TestApp_DomainEvent");
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_DomainEvent");
 
     // Should include all descendants (not just direct children)
     await Assert.That(code).Contains("AuditableEvent");
@@ -4457,7 +4506,7 @@ public record GetAuditEventsCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithExplicitJsonPolymorphic_UsesUserAttributesAsync() {
     // Arrange - Base has [JsonPolymorphic] - user controls derived types
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
@@ -4496,7 +4545,7 @@ public record GetControlledEventsCommand : ICommand {
 
     // Should NOT generate auto-polymorphic factory for ControlledBaseEvent
     // (user has explicit [JsonPolymorphic] so we respect their configuration)
-    await Assert.That(code!).DoesNotContain("CreatePolymorphic_TestApp_ControlledBaseEvent");
+    await Assert.That(code).DoesNotContain("CreatePolymorphic_TestApp_ControlledBaseEvent");
 
     // The explicit [JsonDerivedType] handling should still work
     await Assert.That(code).Contains("SelectedEvent1");
@@ -4511,7 +4560,7 @@ public record GetControlledEventsCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithAbstractDerivedType_ExcludesItAsync() {
     // Arrange - Abstract intermediate class
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4547,7 +4596,7 @@ public record GetBaseEventsCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should include concrete type
-    await Assert.That(code!).Contains("ConcreteEvent");
+    await Assert.That(code).Contains("ConcreteEvent");
 
     // The polymorphic registration should NOT include abstract type
     // (Check that AbstractMiddleEvent is not in DerivedTypes.Add calls)
@@ -4567,7 +4616,7 @@ public record GetBaseEventsCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonPublicDerivedType_ExcludesItAsync() {
     // Arrange - Internal derived type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4602,7 +4651,7 @@ public record GetPublicEventsCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should include public derived type
-    await Assert.That(code!).Contains("PublicDerivedEvent");
+    await Assert.That(code).Contains("PublicDerivedEvent");
 
     // Should NOT include internal derived type in polymorphic registration
     await Assert.That(code).DoesNotContain("InternalDerivedEvent");
@@ -4617,7 +4666,7 @@ public record GetPublicEventsCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithArrayOfBaseType_AutoDiscoversPolymorphicTypesAsync() {
     // Arrange - Array of base type
-    var source = """
+    const string source = """
 using Whizbang.Core;
 
 namespace TestApp;
@@ -4650,7 +4699,7 @@ public record ProcessBatchCommand : ICommand {
     await Assert.That(code).IsNotNull();
 
     // Should generate polymorphic factory for BatchEvent
-    await Assert.That(code!).Contains("CreatePolymorphic_TestApp_BatchEvent");
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_BatchEvent");
 
     // Should include derived types
     await Assert.That(code).Contains("StartBatchEvent");
@@ -4666,7 +4715,7 @@ public record ProcessBatchCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPolymorphicBase_ReportsWHIZ071DiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4718,7 +4767,7 @@ public record TestCommand : ICommand {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithDictionaryProperty_DiscoversValueTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4744,7 +4793,7 @@ public record JobTemplateSeedOrchestrationInitiatedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Value type must be discovered and have JsonTypeInfo generated
-    await Assert.That(code!).Contains("SeedSectionContext");
+    await Assert.That(code).Contains("SeedSectionContext");
     await Assert.That(code).Contains("Create_TestApp_SeedSectionContext");
   }
 
@@ -4759,7 +4808,7 @@ public record JobTemplateSeedOrchestrationInitiatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithNestedDictionaryValue_DiscoversDeepTypesAsync() {
     // Arrange - Dictionary value type has its own nested types
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4789,7 +4838,7 @@ public record ConfigurationEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // All nested levels must be discovered
-    await Assert.That(code!).Contains("OuterConfig");
+    await Assert.That(code).Contains("OuterConfig");
     await Assert.That(code).Contains("InnerDetail");
     await Assert.That(code).Contains("Create_TestApp_OuterConfig");
     await Assert.That(code).Contains("Create_TestApp_InnerDetail");
@@ -4804,7 +4853,7 @@ public record ConfigurationEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithIDictionaryProperty_DiscoversValueTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4829,7 +4878,7 @@ public record MetadataEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("MetadataValue");
+    await Assert.That(code).Contains("MetadataValue");
     await Assert.That(code).Contains("Create_TestApp_MetadataValue");
   }
 
@@ -4842,7 +4891,7 @@ public record MetadataEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithIReadOnlyDictionaryProperty_DiscoversValueTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4867,7 +4916,7 @@ public record CacheSnapshotEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("CacheEntry");
+    await Assert.That(code).Contains("CacheEntry");
     await Assert.That(code).Contains("Create_TestApp_CacheEntry");
   }
 
@@ -4881,7 +4930,7 @@ public record CacheSnapshotEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_DictionaryWithNonStringKey_DiscoversValueTypeOnlyAsync() {
     // Arrange - Dictionary<int, CustomType> - int key handled by STJ, CustomType value needs discovery
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4907,7 +4956,7 @@ public record IndexedCollectionEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Value type should be discovered
-    await Assert.That(code!).Contains("IndexedItem");
+    await Assert.That(code).Contains("IndexedItem");
     await Assert.That(code).Contains("Create_TestApp_IndexedItem");
   }
 
@@ -4921,7 +4970,7 @@ public record IndexedCollectionEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_DictionaryWithNestedGenericValue_DiscoversInnerTypeAsync() {
     // Arrange - Dictionary<string, List<CustomItem>> - need to discover CustomItem through the List
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4946,7 +4995,7 @@ public record GroupedDataEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // GroupedItem should be discovered through List<GroupedItem> which is the Dictionary value
-    await Assert.That(code!).Contains("GroupedItem");
+    await Assert.That(code).Contains("GroupedItem");
     await Assert.That(code).Contains("Create_TestApp_GroupedItem");
   }
 
@@ -4960,7 +5009,7 @@ public record GroupedDataEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_DictionaryWithPrimitiveValue_SkipsNestedDiscoveryAsync() {
     // Arrange - Dictionary<string, int> - no custom type to discover
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -4983,7 +5032,7 @@ public record CounterEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Only the event itself should have factory, no primitive type factories
-    await Assert.That(code!).Contains("CounterEvent");
+    await Assert.That(code).Contains("CounterEvent");
   }
 
   /// <summary>
@@ -4995,7 +5044,7 @@ public record CounterEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_NullableDictionaryProperty_DiscoversValueTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5020,7 +5069,7 @@ public record OptionalDataEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Value type should still be discovered even with nullable Dictionary
-    await Assert.That(code!).Contains("OptionalConfig");
+    await Assert.That(code).Contains("OptionalConfig");
     await Assert.That(code).Contains("Create_TestApp_OptionalConfig");
   }
 
@@ -5034,7 +5083,7 @@ public record OptionalDataEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_NestedDictionaryValue_DiscoversDeepestTypeAsync() {
     // Arrange - Dictionary<string, Dictionary<int, DeepItem>>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5059,7 +5108,7 @@ public record DeepNestedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // DeepItem should be discovered through the nested Dictionary chain
-    await Assert.That(code!).Contains("DeepItem");
+    await Assert.That(code).Contains("DeepItem");
     await Assert.That(code).Contains("Create_TestApp_DeepItem");
   }
 
@@ -5073,7 +5122,7 @@ public record DeepNestedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleDictionaryProperties_DiscoversAllValueTypesAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5109,7 +5158,7 @@ public record SystemStateEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("UserProfile");
+    await Assert.That(code).Contains("UserProfile");
     await Assert.That(code).Contains("Permission");
     await Assert.That(code).Contains("Setting");
     await Assert.That(code).Contains("Create_TestApp_UserProfile");
@@ -5126,7 +5175,7 @@ public record SystemStateEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_BugReport_DictionarySeedSectionContext_DiscoversValueTypeAsync() {
     // Arrange - Exact reproduction of the bug report scenario
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System;
 using System.Collections.Generic;
@@ -5153,7 +5202,7 @@ public record JobTemplateSeedOrchestrationInitiatedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Without the fix, SeedSectionContext would NOT be present, causing runtime NotSupportedException
-    await Assert.That(code!).Contains("SeedSectionContext");
+    await Assert.That(code).Contains("SeedSectionContext");
     await Assert.That(code).Contains("Create_TestApp_Orchestration_SeedSectionContext");
 
     // Also verify the event itself is present
@@ -5170,7 +5219,7 @@ public record JobTemplateSeedOrchestrationInitiatedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_TripleNestedCollections_DiscoversDeepestTypeAsync() {
     // Arrange - Dictionary<string, List<Dictionary<int, TripleNestedItem>>>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5194,7 +5243,7 @@ public record TripleNestedEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("TripleNestedItem");
+    await Assert.That(code).Contains("TripleNestedItem");
     await Assert.That(code).Contains("Create_TestApp_TripleNestedItem");
   }
 
@@ -5208,7 +5257,7 @@ public record TripleNestedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_DictionaryWithArrayValue_DiscoversArrayElementTypeAsync() {
     // Arrange - Dictionary<string, ArrayItem[]>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5232,7 +5281,7 @@ public record ArrayDictEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("ArrayItem");
+    await Assert.That(code).Contains("ArrayItem");
     await Assert.That(code).Contains("Create_TestApp_ArrayItem");
   }
 
@@ -5246,7 +5295,7 @@ public record ArrayDictEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_TripleNestedList_DiscoversDeepestTypeAsync() {
     // Arrange - List<List<List<DeepListItem>>>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5270,7 +5319,7 @@ public record DeepListEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("DeepListItem");
+    await Assert.That(code).Contains("DeepListItem");
     await Assert.That(code).Contains("Create_TestApp_DeepListItem");
   }
 
@@ -5284,7 +5333,7 @@ public record DeepListEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_DictionaryWithIEnumerableValue_DiscoversElementTypeAsync() {
     // Arrange - Dictionary<string, IEnumerable<EnumerableItem>>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5308,7 +5357,7 @@ public record EnumerableDictEvent : IEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("EnumerableItem");
+    await Assert.That(code).Contains("EnumerableItem");
     await Assert.That(code).Contains("Create_TestApp_EnumerableItem");
   }
 
@@ -5322,7 +5371,7 @@ public record EnumerableDictEvent : IEvent {
   public async Task Generator_DictionaryAsDirectProperty_TreatedAsCollectionAsync() {
     // Arrange - Ensure Dictionary is correctly identified as a collection
     // and its value type is discovered, not the Dictionary itself
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5351,7 +5400,7 @@ public record CollectionTypeTestEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // CollectionTestItem should be discovered only once (deduplication)
-    await Assert.That(code!).Contains("CollectionTestItem");
+    await Assert.That(code).Contains("CollectionTestItem");
     await Assert.That(code).Contains("Create_TestApp_CollectionTestItem");
   }
 
@@ -5366,7 +5415,7 @@ public record CollectionTypeTestEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithDictionaryProperty_GeneratesDictionaryFactoryAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5391,7 +5440,7 @@ public record ConfigEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate Dictionary factory
-    await Assert.That(code!).Contains("CreateDictionary_");
+    await Assert.That(code).Contains("CreateDictionary_");
     await Assert.That(code).Contains("Dictionary<string, global::TestApp.SectionConfig>");
 
     // Should also discover and generate factory for value type
@@ -5407,7 +5456,7 @@ public record ConfigEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleDictionaryProperties_GeneratesAllFactoriesAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5432,7 +5481,7 @@ public record MultiDictEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate factories for both Dictionary types
-    await Assert.That(code!).Contains("Dictionary<string, global::TestApp.TypeA>");
+    await Assert.That(code).Contains("Dictionary<string, global::TestApp.TypeA>");
     await Assert.That(code).Contains("Dictionary<global::System.Int32, global::TestApp.TypeB>");
 
     // Both value types should be discovered
@@ -5448,7 +5497,7 @@ public record MultiDictEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_DictionaryWithNestedGenericValue_GeneratesFactoryAsync() {
     // Arrange - Dictionary<string, List<NestedItem>>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5473,7 +5522,7 @@ public record NestedDictEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate Dictionary factory with List value type
-    await Assert.That(code!).Contains("CreateDictionary_");
+    await Assert.That(code).Contains("CreateDictionary_");
     await Assert.That(code).Contains("List<global::TestApp.NestedItem>");
 
     // Should discover NestedItem through the nested List
@@ -5491,7 +5540,7 @@ public record NestedDictEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5516,7 +5565,7 @@ public record CatalogEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate IReadOnlyList factory
-    await Assert.That(code!).Contains("CreateIReadOnlyList_");
+    await Assert.That(code).Contains("CreateIReadOnlyList_");
     await Assert.That(code).Contains("IReadOnlyList<global::TestApp.CatalogItem>");
 
     // Should also discover and generate factory for element type
@@ -5532,7 +5581,7 @@ public record CatalogEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleIReadOnlyListProperties_GeneratesAllFactoriesAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5557,7 +5606,7 @@ public record MultiListEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate factories for both IReadOnlyList types
-    await Assert.That(code!).Contains("IReadOnlyList<global::TestApp.ItemA>");
+    await Assert.That(code).Contains("IReadOnlyList<global::TestApp.ItemA>");
     await Assert.That(code).Contains("IReadOnlyList<global::TestApp.ItemB>");
 
     // Both element types should be discovered
@@ -5573,7 +5622,7 @@ public record MultiListEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_IReadOnlyListWithNestedGenericElement_GeneratesFactoryAsync() {
     // Arrange - IReadOnlyList<List<NestedItem>>
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5598,7 +5647,7 @@ public record NestedListEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate IReadOnlyList factory
-    await Assert.That(code!).Contains("CreateIReadOnlyList_");
+    await Assert.That(code).Contains("CreateIReadOnlyList_");
 
     // Should discover NestedItem through nested extraction
     await Assert.That(code).Contains("Create_TestApp_NestedItem");
@@ -5612,7 +5661,7 @@ public record NestedListEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_BugReport_IReadOnlyListCatalogItem_GeneratesFactoryAsync() {
     // Arrange - Reproduces the actual bug scenario
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5638,7 +5687,7 @@ public record JobTemplateFieldCatalogInitializedEvent : IEvent {
     await Assert.That(code).IsNotNull();
 
     // Should generate IReadOnlyList factory for JobTemplateFieldCatalogItem
-    await Assert.That(code!).Contains("CreateIReadOnlyList_");
+    await Assert.That(code).Contains("CreateIReadOnlyList_");
     await Assert.That(code).Contains("IReadOnlyList<global::JDX.Contracts.Job.JobTemplateFieldCatalogItem>");
 
     // Should generate type info check for IReadOnlyList
@@ -5655,7 +5704,7 @@ public record JobTemplateFieldCatalogInitializedEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_IReadOnlyListFactory_DoesNotUseCreateListInfoAsync() {
     // Arrange
-    var source = """
+    const string source = """
 using Whizbang.Core;
 using System.Collections.Generic;
 
@@ -5682,7 +5731,7 @@ public record CatalogEvent : IEvent {
 
     // The IReadOnlyList factory should NOT use CreateListInfo (IList<T> constraint violation)
     // It should use CreateIEnumerableInfo or similar API for read-only collections
-    await Assert.That(code!).DoesNotContain("CreateListInfo<global::System.Collections.Generic.IReadOnlyList<");
+    await Assert.That(code).DoesNotContain("CreateListInfo<global::System.Collections.Generic.IReadOnlyList<");
 
     // Should use the correct API for IReadOnlyList
     await Assert.That(code).Contains("CreateIReadOnlyList_");
@@ -5696,7 +5745,7 @@ public record CatalogEvent : IEvent {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithEvent_GeneratesDerivedTypeRegistrationAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Events;
@@ -5713,14 +5762,14 @@ public record OrderPlaced(Guid OrderId) : IEvent;
     // Should generate MessageJsonContextInitializer with derived type registration
     var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
     await Assert.That(initializerCode).IsNotNull();
-    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCommand_GeneratesDerivedTypeRegistrationAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -5737,14 +5786,14 @@ public record CreateOrder(Guid OrderId, string CustomerName) : ICommand;
     // Should generate MessageJsonContextInitializer with derived type registration
     var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
     await Assert.That(initializerCode).IsNotNull();
-    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.Commands.CreateOrder>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.Commands.CreateOrder>");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleEvents_GeneratesAllDerivedTypeRegistrationsAsync() {
     // Arrange - multiple event types
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Events;
@@ -5764,7 +5813,7 @@ public record OrderDelivered(Guid OrderId) : IEvent;
     await Assert.That(initializerCode).IsNotNull();
 
     // Should register all event types
-    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
     await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderShipped>");
     await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderDelivered>");
   }
@@ -5773,7 +5822,7 @@ public record OrderDelivered(Guid OrderId) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedMessageTypes_GeneratesCorrectBaseTypeRegistrationsAsync() {
     // Arrange - mix of commands and events
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp;
@@ -5792,7 +5841,7 @@ public record OrderCreated(Guid OrderId) : IEvent;
     await Assert.That(initializerCode).IsNotNull();
 
     // Should register command with ICommand base type
-    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.CreateOrder>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.CreateOrder>");
 
     // Should register event with IEvent base type
     await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.OrderCreated>");
@@ -5802,7 +5851,7 @@ public record OrderCreated(Guid OrderId) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_DerivedTypeRegistration_UsesFullyQualifiedNameAsDiscriminatorAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Events;
@@ -5820,14 +5869,14 @@ public record OrderPlaced(Guid OrderId) : IEvent;
     await Assert.That(initializerCode).IsNotNull();
 
     // Should use fully qualified type name as discriminator to avoid collisions
-    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>(\"MyApp.Events.OrderPlaced\")");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>(\"MyApp.Events.OrderPlaced\")");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_Initializer_HasModuleInitializerAttributeAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Events;
@@ -5845,7 +5894,7 @@ public record OrderPlaced(Guid OrderId) : IEvent;
     await Assert.That(initializerCode).IsNotNull();
 
     // Should have ModuleInitializer attribute
-    await Assert.That(initializerCode!).Contains("[ModuleInitializer]");
+    await Assert.That(initializerCode).Contains("[ModuleInitializer]");
     await Assert.That(initializerCode).Contains("public static void Initialize()");
   }
 
@@ -5861,7 +5910,7 @@ public record OrderPlaced(Guid OrderId) : IEvent;
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesListOfListOfStringHandlingAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -5879,7 +5928,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate List<List<string>> handling for deeply nested collections
-    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>))");
     await Assert.That(code).Contains("CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>, global::System.Collections.Generic.List<string>>");
   }
 
@@ -5890,7 +5939,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesListOfListOfIntHandlingAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -5908,7 +5957,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate List<List<int>> handling
-    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>))");
     await Assert.That(code).Contains("CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>, global::System.Collections.Generic.List<int>>");
   }
 
@@ -5919,7 +5968,7 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesAllListOfListOfPrimitiveTypesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace MyApp.Commands;
@@ -5937,7 +5986,7 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate List<List<T>> handling for all primitive types
-    await Assert.That(code!).Contains("List<global::System.Collections.Generic.List<string>>"); // string
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<string>>"); // string
     await Assert.That(code).Contains("List<global::System.Collections.Generic.List<int>>"); // int
     await Assert.That(code).Contains("List<global::System.Collections.Generic.List<long>>"); // long
     await Assert.That(code).Contains("List<global::System.Collections.Generic.List<bool>>"); // bool
@@ -5945,6 +5994,47 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).Contains("List<global::System.Collections.Generic.List<decimal>>"); // decimal
     await Assert.That(code).Contains("List<global::System.Collections.Generic.List<double>>"); // double
     await Assert.That(code).Contains("List<global::System.Collections.Generic.List<float>>"); // float
+  }
+
+  #endregion
+
+  #region IPerspectiveWithActionsFor event type discovery
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync() {
+    // Arrange — Perspective using only IPerspectiveWithActionsFor (Purge pattern)
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestApp {
+  public record PurgeEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record PurgeModel {
+    [StreamId]
+    public Guid Id { get; init; }
+    public string Name { get; init; } = """";
+  }
+
+  public class PurgePerspective : IPerspectiveWithActionsFor<PurgeModel, PurgeEvent> {
+    public ApplyResult<PurgeModel> Apply(PurgeModel current, PurgeEvent @event)
+      => ApplyResult<PurgeModel>.Purge();
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert — PurgeModel must be discovered and included in JSON context
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("PurgeModel")
+      .Because("IPerspectiveWithActionsFor models must be included in MessageJsonContext for serialization");
   }
 
   #endregion

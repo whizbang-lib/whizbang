@@ -20,7 +20,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public static class AutoPopulateRegistry {
   /// <summary>
   /// Register an assembly's auto-populate registry.
@@ -44,6 +44,27 @@ public static class AutoPopulateRegistry {
     foreach (var registry in AssemblyRegistry<IAutoPopulateRegistry>.GetOrderedContributions()) {
       foreach (var registration in registry.GetRegistrationsFor(messageType)) {
         yield return registration;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Find registrations by message type name (AOT-safe, avoids Type.GetType()).
+  /// Matches against FullName, AssemblyQualifiedName, or prefix of the type name.
+  /// </summary>
+  /// <param name="messageTypeName">The type name to search for.</param>
+  /// <returns>All matching registrations across all registered assemblies.</returns>
+  public static IEnumerable<AutoPopulateRegistration> FindRegistrationsByTypeName(string messageTypeName) {
+    foreach (var registry in AssemblyRegistry<IAutoPopulateRegistry>.GetOrderedContributions()) {
+      foreach (var registration in registry.GetAllRegistrations()) {
+        var fullName = registration.MessageType.FullName;
+        var assemblyQualifiedName = registration.MessageType.AssemblyQualifiedName;
+
+        if (fullName == messageTypeName ||
+            assemblyQualifiedName == messageTypeName ||
+            (fullName != null && messageTypeName.StartsWith(fullName, StringComparison.Ordinal))) {
+          yield return registration;
+        }
       }
     }
   }

@@ -1,3 +1,4 @@
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 
@@ -21,7 +22,7 @@ namespace Whizbang.Core.Configuration;
 /// </code>
 /// </example>
 /// </remarks>
-/// <docs>configuration/whizbang-options</docs>
+/// <docs>operations/configuration/whizbang-options</docs>
 /// <tests>Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs</tests>
 public sealed class WhizbangCoreOptions {
   /// <summary>
@@ -50,7 +51,7 @@ public sealed class WhizbangCoreOptions {
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>observability/tracing#configuration</docs>
+  /// <docs>operations/observability/tracing#configuration</docs>
   public TracingOptions Tracing { get; } = new();
 
   /// <summary>
@@ -69,7 +70,7 @@ public sealed class WhizbangCoreOptions {
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>configuration/service-registration-options</docs>
+  /// <docs>operations/configuration/service-registration-options</docs>
   public ServiceRegistrationOptions Services { get; } = new();
 
   /// <summary>
@@ -96,12 +97,38 @@ public sealed class WhizbangCoreOptions {
   /// </para>
   /// </remarks>
   public TagProcessingMode TagProcessingMode { get; set; } = TagProcessingMode.AfterReceptorCompletion;
+
+  /// <summary>
+  /// Gets or sets the default query scope used by <see cref="ILensQuery{TModel}.DefaultScope"/>.
+  /// Controls the default level of scope filtering applied to lens queries.
+  /// Default: <see cref="QueryScope.Tenant"/>.
+  /// </summary>
+  /// <remarks>
+  /// This setting determines how lens queries filter data when the caller uses
+  /// <c>.DefaultScope.Query</c> or <c>.DefaultScope.GetByIdAsync()</c> without
+  /// explicitly choosing a scope level.
+  /// </remarks>
+  /// <docs>fundamentals/lenses/scoped-queries#default-scope</docs>
+  public QueryScope DefaultQueryScope { get; set; } = QueryScope.Tenant;
+
+  /// <summary>
+  /// Warning threshold for ImmediateAsync chain depth. Logs a warning when exceeded.
+  /// No hard limit — chains run until the queue is empty.
+  /// Default: 10.
+  /// </summary>
+  /// <remarks>
+  /// ImmediateAsync receptors may dispatch further events that themselves have ImmediateAsync
+  /// receptors, creating chains. This threshold triggers a warning log when chain depth
+  /// reaches a multiple of this value, helping identify potentially unbounded chains.
+  /// </remarks>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
+  public int ImmediateAsyncChainWarningThreshold { get; set; } = 10;
 }
 
 /// <summary>
 /// Defines when tag processing occurs in the message dispatch pipeline.
 /// </summary>
-/// <docs>configuration/whizbang-options#tag-processing-mode</docs>
+/// <docs>operations/configuration/whizbang-options#tag-processing-mode</docs>
 public enum TagProcessingMode {
   /// <summary>
   /// Process tags immediately after receptor completes (default).

@@ -12,6 +12,5 @@ namespace Whizbang.Core;
 /// <item><description>Custom message types - Any application-specific message</description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/messages</docs>
-public interface IMessage {
-}
+/// <docs>fundamentals/messages/messages</docs>
+public interface IMessage;

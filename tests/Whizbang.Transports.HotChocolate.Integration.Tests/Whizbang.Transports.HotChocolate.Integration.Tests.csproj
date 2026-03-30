@@ -21,6 +21,7 @@
     <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <ProjectReference Include="../Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />

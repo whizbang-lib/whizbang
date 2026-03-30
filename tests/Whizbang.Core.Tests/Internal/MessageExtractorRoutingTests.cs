@@ -39,7 +39,7 @@ public class MessageExtractorRoutingTests {
     // Assert - Default is Outbox for cross-service delivery per routed cascade design
     await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results[0].Message).IsEqualTo(evt);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -52,8 +52,8 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -66,8 +66,8 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   #endregion
@@ -84,7 +84,7 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(1);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -96,7 +96,7 @@ public class MessageExtractorRoutingTests {
     var results = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -108,7 +108,7 @@ public class MessageExtractorRoutingTests {
     var results = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Both);
   }
 
   #endregion
@@ -125,8 +125,8 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -139,8 +139,8 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   #endregion
@@ -160,8 +160,8 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);   // Collection default
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);  // Individual override
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);   // Collection default
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);  // Individual override
   }
 
   [Test]
@@ -178,9 +178,9 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(3);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);  // Individual
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Local);   // Collection
-    await Assert.That(results[2].Mode).IsEqualTo(DispatchMode.Both);    // Individual
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);  // Individual
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Local);   // Collection
+    await Assert.That(results[2].Mode).IsEqualTo(DispatchModes.Both);    // Individual
   }
 
   #endregion
@@ -201,9 +201,9 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(3);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);
-    await Assert.That(results[2].Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);
+    await Assert.That(results[2].Mode).IsEqualTo(DispatchModes.Both);
   }
 
   #endregion
@@ -218,10 +218,10 @@ public class MessageExtractorRoutingTests {
     // Act - Pass receptor default
     var results = MessageExtractor.ExtractMessagesWithRouting(
       routed,
-      receptorDefault: DispatchMode.Local).ToList();
+      receptorDefault: DispatchModes.Local).ToList();
 
     // Assert - Receptor wins over wrapper
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -232,11 +232,11 @@ public class MessageExtractorRoutingTests {
     // Act - Receptor says Outbox
     var results = MessageExtractor.ExtractMessagesWithRouting(
       routed,
-      receptorDefault: DispatchMode.Outbox).ToList();
+      receptorDefault: DispatchModes.Outbox).ToList();
 
     // Assert - All items get receptor default
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -248,7 +248,7 @@ public class MessageExtractorRoutingTests {
     var results = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert - Wrapper is used
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   #endregion
@@ -257,17 +257,17 @@ public class MessageExtractorRoutingTests {
 
   [Test]
   public async Task ExtractMessagesWithRouting_MessageAttribute_OverridesAllAsync() {
-    // Arrange - LocalRoutedEvent has [DefaultRouting(DispatchMode.Local)]
+    // Arrange - LocalRoutedEvent has [DefaultRouting(DispatchModes.Local)]
     var evt = new LocalRoutedEvent();
     var routed = Route.Outbox(evt);  // Wrapper says Outbox
 
     // Act
     var results = MessageExtractor.ExtractMessagesWithRouting(
       routed,
-      receptorDefault: DispatchMode.Both).ToList();  // Receptor says Both
+      receptorDefault: DispatchModes.Both).ToList();  // Receptor says Both
 
     // Assert - Message attribute wins
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -278,10 +278,10 @@ public class MessageExtractorRoutingTests {
     // Act - Receptor says Outbox
     var results = MessageExtractor.ExtractMessagesWithRouting(
       evt,
-      receptorDefault: DispatchMode.Outbox).ToList();
+      receptorDefault: DispatchModes.Outbox).ToList();
 
     // Assert - Message attribute wins
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -296,8 +296,8 @@ public class MessageExtractorRoutingTests {
     var results = MessageExtractor.ExtractMessagesWithRouting(tuple).ToList();
 
     // Assert
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);   // From attribute
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);  // System default (Outbox)
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);   // From attribute
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);  // System default (Outbox)
   }
 
   [Test]
@@ -312,8 +312,8 @@ public class MessageExtractorRoutingTests {
     var results = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);   // Attribute wins
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);  // Collection default
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);   // Attribute wins
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);  // Collection default
   }
 
   #endregion
@@ -333,9 +333,9 @@ public class MessageExtractorRoutingTests {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(3);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Local);   // Individual wrapper
-    await Assert.That(results[1].Mode).IsEqualTo(DispatchMode.Outbox);  // System default (Outbox)
-    await Assert.That(results[2].Mode).IsEqualTo(DispatchMode.Outbox);  // System default (Outbox)
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Local);   // Individual wrapper
+    await Assert.That(results[1].Mode).IsEqualTo(DispatchModes.Outbox);  // System default (Outbox)
+    await Assert.That(results[2].Mode).IsEqualTo(DispatchModes.Outbox);  // System default (Outbox)
   }
 
   #endregion
@@ -356,7 +356,7 @@ public class MessageExtractorRoutingTests {
 
     // Assert - Only the event is extracted
     await Assert.That(results).Count().IsEqualTo(1);
-    await Assert.That(results[0].Mode).IsEqualTo(DispatchMode.Outbox);  // System default (Outbox)
+    await Assert.That(results[0].Mode).IsEqualTo(DispatchModes.Outbox);  // System default (Outbox)
   }
 
   #endregion
@@ -470,7 +470,7 @@ public class MessageExtractorRoutingTests {
 
   private sealed record TestEvent(string Name) : IEvent;
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   private sealed record LocalRoutedEvent : IEvent;
 
   #endregion

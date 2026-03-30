@@ -24,7 +24,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var insertSql = @"
+    const string insertSql = @"
       INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, stream_id, partition_number)
       VALUES
         (@id1, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', @stream_id, 0),
@@ -38,7 +38,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await insertCmd.ExecuteNonQueryAsync();
 
     // Get original lease expiry times
-    var selectSql = "SELECT message_id, lease_expiry FROM wh_outbox WHERE message_id = ANY(@ids)";
+    const string selectSql = "SELECT message_id, lease_expiry FROM wh_outbox WHERE message_id = ANY(@ids)";
     await using var selectCmd = new NpgsqlCommand(selectSql, connection);
     selectCmd.Parameters.AddWithValue("ids", new[] { messageId1, messageId2 });
     var originalLeases = new Dictionary<Guid, DateTimeOffset>();
@@ -50,28 +50,27 @@ public class LeaseRenewalTests : EFCoreTestBase {
 
     // Act - Call process_work_batch with lease renewal
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-    await coordinator.ProcessWorkBatchAsync(
-      instanceId: instanceId,
-      serviceName: "TestService",
-      hostName: "localhost",
-      processId: 12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [messageId1, messageId2],  // NEW PARAMETER
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300,  // 5 minutes
-      staleThresholdSeconds: 600,
-      cancellationToken: default
-    );
+    await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      InstanceId: instanceId,
+      ServiceName: "TestService",
+      HostName: "localhost",
+      ProcessId: 12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [messageId1, messageId2],  // NEW PARAMETER
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300,  // 5 minutes
+      StaleThresholdSeconds: 600
+    ));
 
     // Assert - Verify leases were renewed
     await using var verifyCmd = new NpgsqlCommand(selectSql, connection);
@@ -105,7 +104,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var insertSql = @"
+    const string insertSql = @"
       INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, instance_id, lease_expiry, stream_id, partition_number)
       VALUES (@id, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', @stream_id, 0)";
 
@@ -115,35 +114,34 @@ public class LeaseRenewalTests : EFCoreTestBase {
     insertCmd.Parameters.AddWithValue("stream_id", streamId);
     await insertCmd.ExecuteNonQueryAsync();
 
-    var selectSql = "SELECT lease_expiry AT TIME ZONE 'UTC' FROM wh_inbox WHERE message_id = @id";
+    const string selectSql = "SELECT lease_expiry AT TIME ZONE 'UTC' FROM wh_inbox WHERE message_id = @id";
     await using var selectCmd = new NpgsqlCommand(selectSql, connection);
     selectCmd.Parameters.AddWithValue("id", messageId);
     var originalExpiry = new DateTimeOffset((DateTime)(await selectCmd.ExecuteScalarAsync())!, TimeSpan.Zero);
 
     // Act
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-    await coordinator.ProcessWorkBatchAsync(
-      instanceId: instanceId,
-      serviceName: "TestService",
-      hostName: "localhost",
-      processId: 12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [messageId],  // NEW PARAMETER
-      leaseSeconds: 300,
-      staleThresholdSeconds: 600,
-      cancellationToken: default
-    );
+    await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      InstanceId: instanceId,
+      ServiceName: "TestService",
+      HostName: "localhost",
+      ProcessId: 12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [messageId],  // NEW PARAMETER
+      LeaseSeconds: 300,
+      StaleThresholdSeconds: 600
+    ));
 
     // Assert
     await using var verifyCmd = new NpgsqlCommand(selectSql, connection);
@@ -160,8 +158,9 @@ public class LeaseRenewalTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ProcessWorkBatch_RenewLease_DoesNotReturnMessageAsWorkAsync() {
-    // Arrange - Message with valid lease should NOT be returned as work when lease is just being renewed
+  public async Task ProcessWorkBatch_RenewLease_ReturnsMessageAsWorkWithOrphanedFlagAsync() {
+    // Arrange - Lease-renewed messages must be returned as work to avoid message loss
+    // (if the client crashes after renewing but before processing, the message needs to be re-dispatched)
     await using var dbContext = CreateDbContext();
     var instanceId = Guid.NewGuid();
     var messageId = Guid.NewGuid();
@@ -170,14 +169,14 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Register service instance first (required for foreign key)
-    var registerInstanceSql = @"
+    const string registerInstanceSql = @"
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
       VALUES (@instance_id, 'TestService', 'localhost', 12345, NOW(), NOW())";
     await using var registerCmd = new NpgsqlCommand(registerInstanceSql, connection);
     registerCmd.Parameters.AddWithValue("instance_id", instanceId);
     await registerCmd.ExecuteNonQueryAsync();
 
-    var insertSql = @"
+    const string insertSql = @"
       INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, partition_number)
       VALUES (@id, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', 0)";
 
@@ -187,38 +186,41 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await insertCmd.ExecuteNonQueryAsync();
 
     // Claim partition for this instance
-    var claimSql = "INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat) VALUES (0, @instance_id, NOW(), NOW())";
+    const string claimSql = "INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat) VALUES (0, @instance_id, NOW(), NOW())";
     await using var claimCmd = new NpgsqlCommand(claimSql, connection);
     claimCmd.Parameters.AddWithValue("instance_id", instanceId);
     await claimCmd.ExecuteNonQueryAsync();
 
     // Act - Renew lease without marking complete/failed
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
-    var workBatch = await coordinator.ProcessWorkBatchAsync(
-      instanceId: instanceId,
-      serviceName: "TestService",
-      hostName: "localhost",
-      processId: 12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [messageId],
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300,
-      staleThresholdSeconds: 600,
-      cancellationToken: default
-    );
+    var workBatch = await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      InstanceId: instanceId,
+      ServiceName: "TestService",
+      HostName: "localhost",
+      ProcessId: 12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [messageId],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300,
+      StaleThresholdSeconds: 600
+    ));
 
-    // Assert - Message should NOT be returned as work (lease is still valid)
-    await Assert.That(workBatch.OutboxWork).IsEmpty();
+    // Assert - Lease-renewed message must be returned as work with Orphaned flag
+    await Assert.That(workBatch.OutboxWork.Count).IsEqualTo(1)
+      .Because("Lease-renewed outbox messages must be returned as work to avoid message loss");
+    await Assert.That(workBatch.OutboxWork[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(workBatch.OutboxWork[0].Flags.HasFlag(WorkBatchOptions.Orphaned)).IsTrue()
+      .Because("Lease-renewed messages are returned via the orphaned work path");
 
     // Cleanup
     await using var deleteCmd = new NpgsqlCommand("DELETE FROM wh_outbox WHERE message_id = @id", connection);

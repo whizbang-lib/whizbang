@@ -93,8 +93,7 @@ public class UserScenarioReproductionTests {
         mockCoordinator,
         new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
         NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
       // Signal that sync is about to start waiting
       syncWaitingStarted.SetResult();
@@ -176,8 +175,7 @@ public class UserScenarioReproductionTests {
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: singletonTracker);
+      singletonTracker);
 
     // Act - wait with short timeout (perspective never calls MarkProcessed)
     var result = await awaiter.WaitForStreamAsync(
@@ -217,8 +215,7 @@ public class UserScenarioReproductionTests {
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: singletonTracker);
+      singletonTracker);
 
     // Act - no events tracked, should sync immediately
     var result = await awaiter.WaitForStreamAsync(
@@ -227,9 +224,9 @@ public class UserScenarioReproductionTests {
       eventTypes: [typeof(UserScenarioEventB)],
       timeout: TimeSpan.FromSeconds(5));
 
-    // Assert - should sync immediately (no pending events)
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("Sync should complete immediately when no events are pending");
+    // Assert - with empty tracker and no tracked events, returns NoPendingEvents
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
 
     // Cleanup
     SyncEventTypeRegistrations.Clear();
@@ -245,14 +242,9 @@ internal sealed class UserScenarioPerspectiveC { }
 /// Mock work coordinator that integrates with the singleton tracker.
 /// Returns synced when all tracked events have been marked as processed.
 /// </summary>
-internal sealed class MockWorkCoordinatorWithTracker : IWorkCoordinator {
-  private readonly ISyncEventTracker _tracker;
-  private readonly string _perspectiveName;
-
-  public MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, string perspectiveName) {
-    _tracker = tracker;
-    _perspectiveName = perspectiveName;
-  }
+internal sealed class MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, string perspectiveName) : IWorkCoordinator {
+  private readonly ISyncEventTracker _tracker = tracker;
+  private readonly string _perspectiveName = perspectiveName;
 
   public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
     // Check if there are any pending events for any of the sync inquiries
@@ -286,15 +278,15 @@ internal sealed class MockWorkCoordinatorWithTracker : IWorkCoordinator {
     });
   }
 
-  public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+  public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+  public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-    return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+  public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    return Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 }

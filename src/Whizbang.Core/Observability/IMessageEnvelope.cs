@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -10,7 +11,7 @@ namespace Whizbang.Core.Observability;
 /// Use this for heterogeneous collections of envelopes with different payload types.
 /// Use <see cref="IMessageEnvelope{TMessage}"/> when you need strongly-typed access to the payload.
 /// </summary>
-/// <docs>core-concepts/observability</docs>
+/// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
 public interface IMessageEnvelope {
@@ -18,6 +19,7 @@ public interface IMessageEnvelope {
   /// Unique identifier for this specific message.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
+  [JsonPropertyName("id")]
   MessageId MessageId { get; }
 
   /// <summary>
@@ -25,12 +27,14 @@ public interface IMessageEnvelope {
   /// For strongly-typed access, use <see cref="IMessageEnvelope{TMessage}.Payload"/>.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
+  [JsonPropertyName("p")]
   object Payload { get; }
 
   /// <summary>
   /// Hops this message has taken through the system.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
+  [JsonPropertyName("h")]
   List<MessageHop> Hops { get; }
 
   /// <summary>
@@ -71,6 +75,15 @@ public interface IMessageEnvelope {
   JsonElement? GetMetadata(string key);
 
   /// <summary>
+  /// Gets the current scope by walking forward through current message hops and merging deltas.
+  /// Each hop's ScopeDelta is applied to build the full ScopeContext.
+  /// Filters to only HopType.Current hops (ignores causation hops).
+  /// </summary>
+  /// <returns>The merged ScopeContext from all current hops, or null if no hops have scope deltas</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
+  ScopeContext? GetCurrentScope();
+
+  /// <summary>
   /// Gets the current security context by walking backwards through current message hops until a non-null value is found.
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
@@ -78,6 +91,7 @@ public interface IMessageEnvelope {
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_ReturnsNull_WhenNoHopsAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_ReturnsMostRecentNonNullValueAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_IgnoresCausationHopsAsync</tests>
+  [Obsolete("Use GetCurrentScope() instead. This method returns the old SecurityContext type.")]
   SecurityContext? GetCurrentSecurityContext();
 }
 
@@ -94,5 +108,6 @@ public interface IMessageEnvelope<out TMessage> : IMessageEnvelope {
   /// Hides the base interface's object Payload property to provide strong typing.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
+  [JsonPropertyName("p")]
   new TMessage Payload { get; }
 }

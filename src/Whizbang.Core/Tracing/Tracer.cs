@@ -24,12 +24,19 @@ namespace Whizbang.Core.Tracing;
 /// <item><description><see cref="TracingOptions.EnableStructuredLogging"/> - Whether to emit log messages</description></item>
 /// </list>
 /// </remarks>
-/// <docs>observability/tracing#tracer</docs>
+/// <docs>operations/observability/tracing#tracer</docs>
 /// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
-public sealed partial class Tracer : ITracer {
-  private readonly ILogger<Tracer> _logger;
-  private readonly IOptionsMonitor<TracingOptions> _options;
+/// <remarks>
+/// Initializes a new instance of the <see cref="Tracer"/> class.
+/// </remarks>
+/// <param name="logger">Logger for structured logging output.</param>
+/// <param name="options">Tracing options monitor for runtime configuration.</param>
+public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<TracingOptions> options) : ITracer {
+#pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
+  private readonly ILogger<Tracer> _logger = logger;
+#pragma warning restore S4487
+  private readonly IOptionsMonitor<TracingOptions> _options = options;
 
   // Thread-local storage for current activity (to match Begin/End calls)
   private static readonly AsyncLocal<Activity?> _currentActivity = new();
@@ -37,39 +44,30 @@ public sealed partial class Tracer : ITracer {
   // Thread-local storage to track if current trace is explicit (elevated)
   private static readonly AsyncLocal<bool> _isExplicitTrace = new();
 
-  /// <summary>
-  /// Initializes a new instance of the <see cref="Tracer"/> class.
-  /// </summary>
-  /// <param name="logger">Logger for structured logging output.</param>
-  /// <param name="options">Tracing options monitor for runtime configuration.</param>
-  public Tracer(ILogger<Tracer> logger, IOptionsMonitor<TracingOptions> options) {
-    _logger = logger;
-    _options = options;
-  }
-
+  /// <inheritdoc/>
   public void BeginHandlerTrace(string handlerName, string messageTypeName, int handlerCount, bool isExplicit) {
-    var options = _options.CurrentValue;
+    var tracingOptions = _options.CurrentValue;
 
     // Check if tracing is completely off
-    if (options.Verbosity == TraceVerbosity.Off) {
+    if (tracingOptions.Verbosity == TraceVerbosity.Off) {
       return;
     }
 
     // Check if Handlers component is enabled
-    if (!options.IsEnabled(TraceComponents.Handlers)) {
+    if (!tracingOptions.IsEnabled(TraceComponents.Handlers)) {
       return;
     }
 
     // Determine if this trace is elevated (explicit via config or attribute)
     var isElevated = isExplicit ||
-                     _matchesTracedHandler(handlerName, options) ||
-                     _matchesTracedMessage(messageTypeName, options);
+                     _matchesTracedHandler(handlerName, tracingOptions) ||
+                     _matchesTracedMessage(messageTypeName, tracingOptions);
 
     // Store the elevated state for EndHandlerTrace
     _isExplicitTrace.Value = isElevated;
 
     // Emit OpenTelemetry span if enabled
-    if (options.EnableOpenTelemetry) {
+    if (tracingOptions.EnableOpenTelemetry) {
       var activity = WhizbangActivitySource.Tracing.StartActivity(
         $"Handler: {_extractShortHandlerName(handlerName)}",
         ActivityKind.Internal);
@@ -85,7 +83,7 @@ public sealed partial class Tracer : ITracer {
     }
 
     // Emit structured log if enabled
-    if (options.EnableStructuredLogging) {
+    if (tracingOptions.EnableStructuredLogging) {
       if (isElevated) {
         LogExplicitHandlerBegin(handlerName, messageTypeName, handlerCount);
       } else {
@@ -94,6 +92,7 @@ public sealed partial class Tracer : ITracer {
     }
   }
 
+  /// <inheritdoc/>
   public void EndHandlerTrace(
     string handlerName,
     string messageTypeName,
@@ -103,20 +102,20 @@ public sealed partial class Tracer : ITracer {
     long endTimestamp,
     Exception? exception) {
 
-    var options = _options.CurrentValue;
+    var tracingOptions = _options.CurrentValue;
 
     // Check if tracing is completely off
-    if (options.Verbosity == TraceVerbosity.Off) {
+    if (tracingOptions.Verbosity == TraceVerbosity.Off) {
       return;
     }
 
     // Check if Handlers component is enabled
-    if (!options.IsEnabled(TraceComponents.Handlers)) {
+    if (!tracingOptions.IsEnabled(TraceComponents.Handlers)) {
       return;
     }
 
     var activity = _currentActivity.Value;
-    if (activity != null && options.EnableOpenTelemetry) {
+    if (activity != null && tracingOptions.EnableOpenTelemetry) {
       activity.SetTag("whizbang.handler.status", status.ToString());
       activity.SetTag("whizbang.handler.duration_ms", durationMs);
 
@@ -138,7 +137,7 @@ public sealed partial class Tracer : ITracer {
     }
 
     // Emit structured log if enabled
-    if (options.EnableStructuredLogging) {
+    if (tracingOptions.EnableStructuredLogging) {
       var isExplicit = _isExplicitTrace.Value;
       var statusString = status.ToString();
 
@@ -159,24 +158,14 @@ public sealed partial class Tracer : ITracer {
   /// Checks if a handler name matches any pattern in TracedHandlers configuration.
   /// </summary>
   private static bool _matchesTracedHandler(string handlerName, TracingOptions options) {
-    foreach (var pattern in options.TracedHandlers.Keys) {
-      if (_matchesPattern(handlerName, pattern)) {
-        return true;
-      }
-    }
-    return false;
+    return options.TracedHandlers.Keys.Any(pattern => _matchesPattern(handlerName, pattern));
   }
 
   /// <summary>
   /// Checks if a message type name matches any pattern in TracedMessages configuration.
   /// </summary>
   private static bool _matchesTracedMessage(string messageTypeName, TracingOptions options) {
-    foreach (var pattern in options.TracedMessages.Keys) {
-      if (_matchesPattern(messageTypeName, pattern)) {
-        return true;
-      }
-    }
-    return false;
+    return options.TracedMessages.Keys.Any(pattern => _matchesPattern(messageTypeName, pattern));
   }
 
   /// <summary>
@@ -224,10 +213,8 @@ public sealed partial class Tracer : ITracer {
   /// <summary>
   /// Extracts the short name (class name only) from a fully qualified name.
   /// </summary>
-  private static string _extractShortName(string fullName) {
-    var lastDot = fullName.LastIndexOf('.');
-    return lastDot >= 0 ? fullName[(lastDot + 1)..] : fullName;
-  }
+  private static string _extractShortName(string fullName) =>
+    TypeNameFormatter.GetSimpleName(fullName);
 
   private static string _extractShortHandlerName(string fullName) {
     // Extract just the class.method name from fully qualified name
@@ -241,18 +228,23 @@ public sealed partial class Tracer : ITracer {
     return fullName;
   }
 
+  /// <summary>Logs the start of an explicitly traced handler invocation.</summary>
   [LoggerMessage(Level = LogLevel.Information, Message = "[TRACE] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers) - explicit via [WhizbangTrace]")]
   private partial void LogExplicitHandlerBegin(string handlerName, string messageType, int handlerCount);
 
+  /// <summary>Logs the start of a handler invocation at debug verbosity.</summary>
   [LoggerMessage(Level = LogLevel.Debug, Message = "[trace] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers)")]
   private partial void LogHandlerBegin(string handlerName, string messageType, int handlerCount);
 
+  /// <summary>Logs the completion of an explicitly traced handler.</summary>
   [LoggerMessage(Level = LogLevel.Information, Message = "[TRACE] Handler completed: {HandlerName} for {MessageType} - {Status} in {DurationMs:F2}ms - explicit")]
   private partial void LogExplicitHandlerEnd(string handlerName, string messageType, string status, double durationMs);
 
+  /// <summary>Logs the completion of a handler at debug verbosity.</summary>
   [LoggerMessage(Level = LogLevel.Debug, Message = "[trace] Handler completed: {HandlerName} for {MessageType} - {Status} in {DurationMs:F2}ms")]
   private partial void LogHandlerEnd(string handlerName, string messageType, string status, double durationMs);
 
+  /// <summary>Logs a handler failure with exception details.</summary>
   [LoggerMessage(Level = LogLevel.Error, Message = "[TRACE] Handler FAILED: {HandlerName} for {MessageType} after {DurationMs:F2}ms")]
   private partial void LogHandlerFailed(string handlerName, string messageType, double durationMs, Exception exception);
 }

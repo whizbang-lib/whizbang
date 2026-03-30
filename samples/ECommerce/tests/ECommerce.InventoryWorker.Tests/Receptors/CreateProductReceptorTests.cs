@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
 using ECommerce.InventoryWorker.Receptors;
@@ -206,6 +207,11 @@ internal class TestDispatcher : IDispatcher {
   public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
     throw new NotImplementedException();
 
+  public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotImplementedException();
+  public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
+  public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotImplementedException();
+  public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotImplementedException();
+
   // DispatchOptions overloads
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull =>
     throw new NotImplementedException();
@@ -219,10 +225,30 @@ internal class TestDispatcher : IDispatcher {
     throw new NotImplementedException();
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
     throw new NotImplementedException();
-  public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+  public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
-  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
+
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
+    throw new NotImplementedException();
+  }
+
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) {
+    throw new NotImplementedException();
+  }
+
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
+    throw new NotImplementedException();
+  }
+
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+    throw new NotImplementedException();
+  }
+
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
+    throw new NotImplementedException();
+  }
 }
 
 /// <summary>

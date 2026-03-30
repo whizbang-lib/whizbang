@@ -16,6 +16,7 @@ using Npgsql;
 using Testcontainers.MsSql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -239,17 +240,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
-      options.UseNpgsql(inventoryDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
 
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -260,6 +255,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
@@ -325,7 +325,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
         sp.GetRequiredService<ITransport>(),
@@ -375,17 +375,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-    // This registers WhizbangId JSON converters for JSONB serialization
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
 
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -396,6 +390,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -451,7 +450,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -723,7 +722,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Performs SQL diagnostics for event and perspective checkpoint debugging.
-  /// Queries inbox, event store, and perspective checkpoints for a specific event type.
+  /// Queries inbox, event store, and perspective cursors for a specific event type.
   /// Controlled by WHIZBANG_DEBUG environment variable or debug parameter.
   /// </summary>
   /// <param name="eventTypeName">Simple event type name (e.g., "InventoryRestockedEvent")</param>
@@ -787,12 +786,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 3: Check perspective checkpoints (should exist for streams that have events)
+    // Query 3: Check perspective cursors (should exist for streams that have events)
     if (eventStoreResults.Count > 0) {
       var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
       var checkpointQuery = $@"
         SELECT perspective_name, stream_id, last_event_id, status
-        FROM inventory.wh_perspective_checkpoints
+        FROM inventory.wh_perspective_cursors
         WHERE stream_id IN ({streamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -832,12 +831,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 5: Check BFF perspective checkpoints
+    // Query 5: Check BFF perspective cursors
     if (bffEventStoreResults.Count > 0) {
       var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
       var bffCheckpointQuery = $@"
         SELECT perspective_name, stream_id, last_event_id, status
-        FROM bff.wh_perspective_checkpoints
+        FROM bff.wh_perspective_cursors
         WHERE stream_id IN ({bffStreamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -845,12 +844,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         .SqlQueryRaw<CheckpointDiagnosticResult>(bffCheckpointQuery)
         .ToListAsync(cancellationToken);
 
-      logger.LogDebug("[SQL Diagnostic] BFF perspective checkpoints for streams with {EventType}: {Count} checkpoints found",
-        eventTypeName, bffCheckpointResults.Count);
+      if (logger.IsEnabled(LogLevel.Debug)) {
+        logger.LogDebug("[SQL Diagnostic] BFF perspective cursors for streams with {EventType}: {Count} checkpoints found",
+          eventTypeName, bffCheckpointResults.Count);
 
-      foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        foreach (var row in bffCheckpointResults) {
+          logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+            row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        }
       }
     }
   }
@@ -876,7 +877,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         DO $$
         BEGIN
           -- Truncate core infrastructure tables
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
 
           -- Truncate all perspective tables (pattern: wh_per_*)
           -- This clears materialized views from both InventoryWorker and BFF
@@ -968,7 +969,7 @@ internal class EventStoreDiagnosticResult {
 
 /// <summary>
 /// Diagnostic result type for perspective checkpoint queries.
-/// Maps to wh_perspective_checkpoints table columns for perspective processing debugging.
+/// Maps to wh_perspective_cursors table columns for perspective processing debugging.
 /// </summary>
 internal class CheckpointDiagnosticResult {
   public string PerspectiveName { get; set; } = string.Empty;

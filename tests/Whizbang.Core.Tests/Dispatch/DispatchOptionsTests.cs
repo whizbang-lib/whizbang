@@ -120,10 +120,10 @@ public class DispatchOptionsTests {
   public async Task CancellationToken_PropertySetter_WorksAsync() {
     // Arrange
     using var cts = new CancellationTokenSource();
-    var options = new DispatchOptions();
-
-    // Act
-    options.CancellationToken = cts.Token;
+    var options = new DispatchOptions {
+      // Act
+      CancellationToken = cts.Token
+    };
 
     // Assert
     await Assert.That(options.CancellationToken).IsEqualTo(cts.Token);
@@ -133,10 +133,10 @@ public class DispatchOptionsTests {
   public async Task Timeout_PropertySetter_WorksAsync() {
     // Arrange
     var timeout = TimeSpan.FromSeconds(10);
-    var options = new DispatchOptions();
-
-    // Act
-    options.Timeout = timeout;
+    var options = new DispatchOptions {
+      // Act
+      Timeout = timeout
+    };
 
     // Assert
     await Assert.That(options.Timeout).IsEqualTo(timeout);
@@ -220,10 +220,10 @@ public class DispatchOptionsTests {
   [Test]
   public async Task WaitForPerspectives_PropertySetter_WorksAsync() {
     // Arrange
-    var options = new DispatchOptions();
-
-    // Act
-    options.WaitForPerspectives = true;
+    var options = new DispatchOptions {
+      // Act
+      WaitForPerspectives = true
+    };
 
     // Assert
     await Assert.That(options.WaitForPerspectives).IsTrue();

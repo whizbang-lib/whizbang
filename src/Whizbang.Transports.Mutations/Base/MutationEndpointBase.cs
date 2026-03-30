@@ -10,7 +10,7 @@ namespace Whizbang.Transports.Mutations;
 /// </summary>
 /// <typeparam name="TCommand">The command type that implements <see cref="ICommand"/>.</typeparam>
 /// <typeparam name="TResult">The result type returned after command execution.</typeparam>
-/// <docs>mutations/hooks</docs>
+/// <docs>apis/mutations/hooks</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs</tests>
 /// <example>
 /// // User's partial class for customization
@@ -41,7 +41,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="context">The mutation context with cancellation token and shared items.</param>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>A <see cref="ValueTask"/> that completes when pre-processing is done.</returns>
-  /// <docs>mutations/hooks#before</docs>
+  /// <docs>apis/mutations/hooks#before</docs>
   protected virtual ValueTask OnBeforeExecuteAsync(
       TCommand command,
       IMutationContext context,
@@ -57,7 +57,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="context">The mutation context with cancellation token and shared items.</param>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>A <see cref="ValueTask"/> that completes when post-processing is done.</returns>
-  /// <docs>mutations/hooks#after</docs>
+  /// <docs>apis/mutations/hooks#after</docs>
   protected virtual ValueTask OnAfterExecuteAsync(
       TCommand command,
       TResult result,
@@ -76,7 +76,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <returns>
   /// A result to return instead of throwing, or null to rethrow the exception.
   /// </returns>
-  /// <docs>mutations/hooks#error</docs>
+  /// <docs>apis/mutations/hooks#error</docs>
   protected virtual ValueTask<TResult?> OnErrorAsync(
       TCommand command,
       Exception ex,
@@ -94,12 +94,12 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <exception cref="NotImplementedException">
   /// Thrown when RequestType is specified but this method is not overridden.
   /// </exception>
-  /// <docs>mutations/custom-request-dto#mapping</docs>
+  /// <docs>apis/mutations/custom-request-dto#mapping</docs>
   protected virtual ValueTask<TCommand> MapRequestToCommandAsync<TRequest>(
       TRequest request,
       CancellationToken ct) where TRequest : notnull {
     throw new NotImplementedException(
-        $"When using a custom RequestType, you must override MapRequestToCommandAsync " +
+        "When using a custom RequestType, you must override MapRequestToCommandAsync " +
         $"in your partial class to map {typeof(TRequest).Name} to {typeof(TCommand).Name}.");
   }
 
@@ -110,7 +110,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="command">The command to dispatch.</param>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>The result from the command handler.</returns>
-  /// <docs>mutations/command-endpoints#dispatch</docs>
+  /// <docs>apis/mutations/command-endpoints#dispatch</docs>
   protected abstract ValueTask<TResult> DispatchCommandAsync(
       TCommand command,
       CancellationToken ct);
@@ -125,7 +125,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="command">The command to execute.</param>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>The result from command execution.</returns>
-  /// <docs>mutations/hooks#lifecycle</docs>
+  /// <docs>apis/mutations/hooks#lifecycle</docs>
   protected async ValueTask<TResult> ExecuteAsync(TCommand command, CancellationToken ct) {
     ct.ThrowIfCancellationRequested();
 
@@ -156,7 +156,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
   /// <param name="request">The incoming request.</param>
   /// <param name="ct">The cancellation token.</param>
   /// <returns>The result from command execution.</returns>
-  /// <docs>mutations/custom-request-dto#execution</docs>
+  /// <docs>apis/mutations/custom-request-dto#execution</docs>
   protected async ValueTask<TResult> ExecuteWithRequestAsync<TRequest>(
       TRequest request,
       CancellationToken ct) where TRequest : notnull {

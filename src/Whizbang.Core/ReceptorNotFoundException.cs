@@ -12,20 +12,28 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoReceptor_ShouldThrowReceptorNotFoundExceptionAsync</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs:Integration_UnregisteredMessage_ShouldThrowReceptorNotFoundAsync</tests>
 [Serializable]
+#pragma warning disable S3925 // ISerializable not needed — binary serialization is deprecated in modern .NET
 public class ReceptorNotFoundException(Type messageType) : Exception(_formatMessage(messageType)) {
+#pragma warning restore S3925
+  /// <summary>Initializes a new instance of the <see cref="ReceptorNotFoundException"/> class with a default message type.</summary>
   public ReceptorNotFoundException() : this(typeof(object)) {
   }
 
+  /// <summary>Initializes a new instance of the <see cref="ReceptorNotFoundException"/> class with a message string.</summary>
+  /// <param name="message">The error message (unused; message is generated from the default type).</param>
   public ReceptorNotFoundException(string? message) : this(typeof(object)) {
   }
 
+  /// <summary>Initializes a new instance of the <see cref="ReceptorNotFoundException"/> class with a message and inner exception.</summary>
+  /// <param name="message">The error message (unused; message is generated from the default type).</param>
+  /// <param name="innerException">The inner exception (unused; delegates to primary constructor).</param>
   public ReceptorNotFoundException(string? message, Exception? innerException) : this(typeof(object)) {
   }
 
   /// <summary>
   /// The type of message that has no receptor.
   /// </summary>
-  public Type MessageType { get; } = messageType;
+  public Type MessageType => messageType;
 
   private static string _formatMessage(Type messageType) {
     return $@"No receptor found for message type '{messageType.FullName}'.

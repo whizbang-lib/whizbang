@@ -8,7 +8,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Azure Service Bus implementation of IInfrastructureProvisioner.
 /// Creates topics for owned domains at worker startup.
 /// </summary>
-/// <docs>core-concepts/routing#domain-topic-provisioning</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisioner {
@@ -37,18 +37,23 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsEmptySetDoesNothingAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCancellationRequestedThrowsAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsTopicAlreadyExistsHandlesRaceAsync</tests>
-  public async Task ProvisionOwnedDomainsAsync(
+  public Task ProvisionOwnedDomainsAsync(
       IReadOnlySet<string> ownedDomains,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ownedDomains);
 
     if (ownedDomains.Count == 0) {
       _logger.LogDebug("No owned domains to provision");
-      return;
+      return Task.CompletedTask;
     }
 
     cancellationToken.ThrowIfCancellationRequested();
+    return _provisionOwnedDomainsCoreAsync(ownedDomains, cancellationToken);
+  }
 
+  private async Task _provisionOwnedDomainsCoreAsync(
+      IReadOnlySet<string> ownedDomains,
+      CancellationToken cancellationToken) {
     if (_logger.IsEnabled(LogLevel.Information)) {
       var count = ownedDomains.Count;
       _logger.LogInformation(
@@ -58,46 +63,49 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
 
     foreach (var domain in ownedDomains) {
       cancellationToken.ThrowIfCancellationRequested();
+      await _ensureTopicAsync(domain.ToLowerInvariant(), cancellationToken);
+    }
+  }
 
-      var topicName = domain.ToLowerInvariant();
+  /// <inheritdoc />
+  /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
+  public Task EnsureTopicExistsAsync(
+      string topicName,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(topicName);
+    return _ensureTopicAsync(topicName.ToLowerInvariant(), cancellationToken);
+  }
 
-      try {
-        // Check if topic already exists
-        if (await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var topic = topicName;
-            _logger.LogDebug(
-              "Topic '{Topic}' already exists, skipping",
-              topic);
-          }
-          continue;
-        }
-
+  /// <summary>
+  /// Shared logic for ensuring a single topic exists.
+  /// Handles check-exists-then-create with 409 race condition tolerance.
+  /// </summary>
+  private async Task _ensureTopicAsync(string topicName, CancellationToken cancellationToken) {
+    try {
+      if (await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          var topic = topicName;
-          var dom = domain;
-          _logger.LogDebug(
-            "Creating topic '{Topic}' for owned domain '{Domain}'",
-            topic,
-            dom);
+          _logger.LogDebug("Topic '{Topic}' already exists, skipping", topicName);
         }
+        return;
+      }
 
-        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Creating topic '{Topic}'", topicName);
+      }
 
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          var topic = topicName;
-          _logger.LogInformation(
-            "Provisioned topic '{Topic}' for owned domain",
-            topic);
-        }
-      } catch (RequestFailedException ex) when (ex.Status == 409) {
-        // Race condition - topic created by another instance between exists check and create
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          var topic = topicName;
-          _logger.LogDebug(
-            "Topic '{Topic}' already exists (race condition), skipping",
-            topic);
-        }
+      await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation("Provisioned topic '{Topic}'", topicName);
+      }
+    } catch (RequestFailedException ex) when (ex.Status == 409) {
+      // Race condition - topic created by another instance between exists check and create
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(ex, "Topic '{Topic}' already exists (race condition), skipping", topicName);
       }
     }
   }

@@ -19,28 +19,22 @@ namespace ECommerce.Integration.Tests.Infrastructure;
 /// Tests run sequentially to avoid ServiceBus topic conflicts.
 /// </summary>
 [NotInParallel("ServiceBus")]
-[Skip("Service Bus emulator connection instability - HTTP connections end prematurely. Needs emulator fix or retry improvements.")]
+[Timeout(150_000)]
 public class ServiceBusIntegrationFixtureSanityTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var testIndex = 99; // Use high index to avoid conflicts with workflow tests
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-
-    // Create fixture with shared client
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-    }
+    // Don't dispose - shared fixture is reused across tests
   }
 
   /// <summary>
@@ -121,7 +115,6 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// Tests that perspective workers process events and create perspective rows.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task InventoryWorker_Perspectives_MaterializeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -172,7 +165,6 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// If this fails, we know the Service Bus message delivery is broken.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task BFF_Perspectives_MaterializeFromServiceBusAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -250,7 +242,6 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// This tests that when we send InitialStock=15, the event in wh_event_store contains 15.
   /// </summary>
   [Test]
-  [Timeout(150_000)]  // 150 seconds: fixture init (~60s) + product waiter (45s) + restock waiter (45s)
   public async Task EventStore_ContainsCorrectEventDataAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -322,7 +313,6 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// This tests the END-TO-END data flow from command to materialized perspective.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task Perspective_ContainsCorrectDataAfterMaterializationAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -466,11 +456,10 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// Tests that the emulator has the expected topic/subscription structure.
   /// </summary>
   [Test]
-  [Timeout(20_000)]
   public async Task ServiceBus_TopicsAndSubscriptions_AreConfiguredAsync() {
     // Arrange
-    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(99);
+    _ = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var (_, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(99);
 
     Console.WriteLine("[SANITY] Inspecting Service Bus emulator configuration...");
 

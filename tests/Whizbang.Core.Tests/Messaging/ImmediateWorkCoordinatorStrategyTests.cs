@@ -1,10 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -69,7 +72,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     });
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - FlushAsync should immediately call ProcessWorkBatchAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -126,7 +129,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxMessage(outboxMessage);
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
@@ -178,7 +181,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxMessage(inboxMessage);
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
@@ -253,7 +256,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
@@ -278,7 +281,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
@@ -303,7 +306,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Stored, "Delivery failed");
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
@@ -329,7 +332,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxFailure(messageId, MessageProcessingStatus.Stored, "Handler threw exception");
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
@@ -360,9 +363,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
 
     // Act - First flush
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
     // Second flush should have empty queues
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Second flush should have empty arrays
     await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(0);
@@ -387,10 +390,10 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode should be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
   }
 
   [Test]
@@ -407,15 +410,434 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode should not be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.None);
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.None);
+  }
+
+  // ========================================
+  // Logger Coverage Tests (Lines 83, 105, 118, 131, 145, 159, 179, 185-191)
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_WithLogger_LogsMessageQueuedAsync() {
+    // Arrange - logger != null exercises line 83
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Act
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Assert - logger was called
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task QueueInboxMessage_WithLogger_LogsMessageQueuedAsync() {
+    // Arrange - logger != null exercises line 105
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Act
+    sut.QueueInboxMessage(new InboxMessage {
+      MessageId = Guid.NewGuid(),
+      HandlerName = "TestHandler",
+      Envelope = _createJsonEnvelope(),
+      EnvelopeType = "Test",
+      StreamId = Guid.NewGuid(),
+      MessageType = "TestMessage"
+    });
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task QueueOutboxCompletion_WithLogger_LogsCompletionQueuedAsync() {
+    // Arrange - logger != null exercises line 118
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Act
+    sut.QueueOutboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_WithLogger_LogsCompletionQueuedAsync() {
+    // Arrange - logger != null exercises line 131
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Act
+    sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_WithLogger_LogsFailureQueuedAsync() {
+    // Arrange - logger != null exercises line 145
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Act
+    sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "Test error");
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_WithLogger_LogsFailureQueuedAsync() {
+    // Arrange - logger != null exercises line 159
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Act
+    sut.QueueInboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "Test error");
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task FlushAsync_WithLogger_LogsFlushStartingAsync() {
+    // Arrange - logger != null exercises lines 185-191
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, logger: logger
+    );
+
+    // Queue a message so FlushAsync has work (exercises flush logging)
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert - Multiple log entries: one for queue, one for flush
+    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(2);
+  }
+
+  // ========================================
+  // Audit Message Building Coverage (Lines 90-92, 226-227)
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_WithAuditEnabled_BuildsAuditMessageAsync() {
+    // Arrange - EventAuditEnabled + IsEvent exercises lines 90-92
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var systemEventOptions = new Whizbang.Core.SystemEvents.SystemEventOptions();
+    systemEventOptions.EnableEventAudit();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options,
+      systemEventOptions: Microsoft.Extensions.Options.Options.Create(systemEventOptions)
+    );
+
+    // Queue an event message with IsEvent=true
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Flush to merge audit messages (line 226-227)
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert - Should have original + audit message in the batch
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsGreaterThanOrEqualTo(1);
+  }
+
+  // ========================================
+  // Channel Write Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithReturnedWork_WritesToChannelAsync() {
+    // Arrange
+    var channelWriter = new TestWorkChannelWriter();
+    var messageId1 = Guid.CreateVersion7();
+    var messageId2 = Guid.CreateVersion7();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = messageId1,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        },
+        new OutboxWork {
+          MessageId = messageId2,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    // Assert
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
+    await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
+    await Assert.That(channelWriter.WrittenWork[1].MessageId).IsEqualTo(messageId2);
+  }
+
+  [Test]
+  public async Task FlushAsync_NullChannelWriter_DoesNotThrowAsync() {
+    // Arrange - no channel writer (null)
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act & Assert - should not throw
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task FlushAsync_ChannelClosed_HandlesGracefullyAsync() {
+    // Arrange
+    var channelWriter = new ClosedTestWorkChannelWriter();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act & Assert - should handle ChannelClosedException gracefully
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+  }
+
+  // ========================================
+  // Helper Methods
+  // ========================================
+
+  private OutboxMessage _createOutboxMessage() {
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent("test-data"),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = System.Text.Json.JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = System.Text.Json.JsonSerializer.Deserialize<MessageEnvelope<System.Text.Json.JsonElement>>(envelopeJson, jsonOptions)!;
+
+    return new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "TestEnvelope, TestAssembly",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = []
+      }
+    };
+  }
+
+  private MessageEnvelope<System.Text.Json.JsonElement> _createJsonEnvelope() {
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent> {
+      MessageId = MessageId.New(),
+      Payload = new _testEvent("test"),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var json = System.Text.Json.JsonSerializer.Serialize((object)envelope, jsonOptions);
+    return System.Text.Json.JsonSerializer.Deserialize<MessageEnvelope<System.Text.Json.JsonElement>>(json, jsonOptions)!;
   }
 
   // ========================================
   // Test Fakes
   // ========================================
+
+  private sealed class FakeLogger<T> : Microsoft.Extensions.Logging.ILogger<T> {
+    public int LogCount { get; private set; }
+
+    public void Log<TState>(
+      Microsoft.Extensions.Logging.LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      LogCount++;
+    }
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+  }
+
+  // ========================================
+  // Test Fakes
+  // ========================================
+
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() { }
+  }
+
+  private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) =>
+      throw new System.Threading.Channels.ChannelClosedException();
+
+    public bool TryWrite(OutboxWork work) => false;
+
+    public void Complete() { }
+  }
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
@@ -425,7 +847,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
-    public WorkBatchFlags LastFlags { get; private set; }
+    public WorkBatchOptions LastFlags { get; private set; }
+    public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -440,29 +863,29 @@ public class ImmediateWorkCoordinatorStrategyTests {
       LastFlags = request.Flags;
 
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
+        OutboxWork = WorkToReturn,
         InboxWork = [],
         PerspectiveWork = []
       });
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 

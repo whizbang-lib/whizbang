@@ -75,8 +75,8 @@ public class WhizbangIdProviderTests {
     await Assert.That(result.IsTimeOrdered).IsTrue();
     await Assert.That(result.SubMillisecondPrecision).IsTrue();
     await Assert.That(result.IsTracking).IsTrue();
-    await Assert.That((result.Metadata & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((result.Metadata & GuidMetadata.SourceMedo) != 0).IsTrue();
+    await Assert.That((result.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((result.Metadata & GuidMetadatas.SourceMedo) != 0).IsTrue();
   }
 
   [Test]
@@ -175,14 +175,10 @@ public class WhizbangIdProviderTests {
   }
 
   // Custom test provider for testing
-  private sealed class TestIdProvider : IWhizbangIdProvider {
-    private readonly Guid _fixedGuid;
-
-    public TestIdProvider(Guid fixedGuid) {
-      _fixedGuid = fixedGuid;
-    }
+  private sealed class TestIdProvider(Guid fixedGuid) : IWhizbangIdProvider {
+    private readonly Guid _fixedGuid = fixedGuid;
 
     public TrackedGuid NewGuid() =>
-        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);
+        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadatas.Version7 | GuidMetadatas.SourceMedo);
   }
 }

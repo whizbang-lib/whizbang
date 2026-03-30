@@ -4,6 +4,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Observability.Hooks;
 
@@ -72,9 +74,12 @@ public class OpenTelemetrySpanHookTests {
     var attribute = new TelemetryTagAttribute { Tag = "test-tag" };
     var message = new TestEvent { Id = Guid.NewGuid(), Name = "Test" };
     var payload = JsonSerializer.SerializeToElement(message);
-    var scope = new Dictionary<string, object?> {
-      { "TenantId", "tenant-123" },
-      { "UserId", "user-456" }
+    var scope = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "tenant-123", UserId = "user-456" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
     var context = new TagContext<TelemetryTagAttribute> {
       Attribute = attribute,

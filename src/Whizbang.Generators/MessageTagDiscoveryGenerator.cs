@@ -15,21 +15,26 @@ namespace Whizbang.Generators;
 /// and generates a MessageTagRegistry for AOT-compatible tag discovery.
 /// Also generates MessageTagHookDispatcher for custom attribute types to enable AOT-compatible hook invocation.
 /// </summary>
-/// <docs>core-concepts/message-tags#registry</docs>
+/// <docs>fundamentals/messages/message-tags#registry</docs>
 /// <tests>Whizbang.Generators.Tests/MessageTagDiscoveryGeneratorTests.cs</tests>
 [Generator]
 public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   private const string MESSAGE_TAG_ATTRIBUTE = "Whizbang.Core.Attributes.MessageTagAttribute";
+  private const string XML_DOC_SUMMARY_OPEN = "/// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE = "/// </summary>";
+  private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
   // Built-in attribute types that are handled directly by MessageTagProcessor
   // Custom attributes (those not in this set) require generated dispatchers
-  private static readonly HashSet<string> _builtInAttributeTypes = new() {
+  private static readonly HashSet<string> _builtInAttributeTypes = [
     "global::Whizbang.Core.Attributes.MessageTagAttribute",
     "global::Whizbang.Core.Attributes.SignalTagAttribute",
     "global::Whizbang.Core.Attributes.TelemetryTagAttribute",
     "global::Whizbang.Core.Attributes.MetricTagAttribute",
-  };
+  ];
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with [MessageTag] or derived attributes
     // FIX: Use SelectMany to flatten multiple MessageTagInfo per type
@@ -154,23 +159,23 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated registry of message types with tag attributes.");
     sb.AppendLine("/// Implements <see cref=\"IMessageTagRegistry\"/> for AOT-compatible tag discovery.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine("/// <remarks>");
     sb.AppendLine("/// This registry is automatically registered via [ModuleInitializer] before Main() runs.");
     sb.AppendLine("/// No manual registration is required.");
     sb.AppendLine("/// </remarks>");
     sb.AppendLine($"internal sealed class {className} : IMessageTagRegistry {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Singleton instance of the generated registry.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  internal static readonly {className} Instance = new();");
     sb.AppendLine();
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// All registered message tag entries.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  private static readonly MessageTagRegistration[] _tags = new MessageTagRegistration[] {");
 
     foreach (var tag in validTags) {
@@ -189,14 +194,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine("}");
     sb.AppendLine();
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-registers the generated message tag registry with the assembly registry.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine($"internal static class {initializerClassName} {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Module initializer that registers the tag registry.");
     sb.AppendLine("  /// Called automatically before any code in the assembly runs.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("  internal static void Initialize() {");
     sb.AppendLine("    // Register with priority 100 (contracts assemblies are tried first)");
@@ -245,15 +250,17 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("using System.Text.Json;");
     sb.AppendLine("using System.Threading;");
     sb.AppendLine("using System.Threading.Tasks;");
+    sb.AppendLine("using Whizbang.Core.Messaging;");
+    sb.AppendLine("using Whizbang.Core.Security;");
     sb.AppendLine("using Whizbang.Core.Tags;");
     sb.AppendLine("using Whizbang.Core.Attributes;");
     sb.AppendLine();
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated dispatcher for custom MessageTagAttribute types.");
     sb.AppendLine("/// Implements <see cref=\"IMessageTagHookDispatcher\"/> for AOT-compatible hook invocation.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine("/// <remarks>");
     sb.AppendLine("/// This dispatcher handles the following custom attribute types:");
     foreach (var attrType in customAttributeTypes) {
@@ -261,9 +268,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine("/// </remarks>");
     sb.AppendLine($"internal sealed class {className} : IMessageTagHookDispatcher {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Singleton instance of the generated dispatcher.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  internal static readonly {className} Instance = new();");
     sb.AppendLine();
 
@@ -275,19 +282,21 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      object message,");
     sb.AppendLine("      Type messageType,");
     sb.AppendLine("      JsonElement payload,");
-    sb.AppendLine("      IReadOnlyDictionary<string, object?>? scope) {");
+    sb.AppendLine("      IScopeContext? scope,");
+    sb.AppendLine("      LifecycleStage stage) {");
     sb.AppendLine();
 
     foreach (var attrType in customAttributeTypes) {
       sb.AppendLine($"    if (attributeType == typeof({attrType})) {{");
       sb.AppendLine($"      return new TagContext<{attrType}> {{");
       sb.AppendLine($"        Attribute = ({attrType})attribute,");
-      sb.AppendLine($"        Message = message,");
-      sb.AppendLine($"        MessageType = messageType,");
-      sb.AppendLine($"        Payload = payload,");
-      sb.AppendLine($"        Scope = scope,");
-      sb.AppendLine($"      }};");
-      sb.AppendLine($"    }}");
+      sb.AppendLine("        Message = message,");
+      sb.AppendLine("        MessageType = messageType,");
+      sb.AppendLine("        Payload = payload,");
+      sb.AppendLine("        Scope = scope,");
+      sb.AppendLine("        Stage = stage,");
+      sb.AppendLine("      };");
+      sb.AppendLine("    }");
       sb.AppendLine();
     }
 
@@ -305,11 +314,16 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     foreach (var attrType in customAttributeTypes) {
+      var id = _sanitizeIdentifier(attrType);
       sb.AppendLine($"    if (attributeType == typeof({attrType}) &&");
-      sb.AppendLine($"        hookInstance is IMessageTagHook<{attrType}> hook_{_sanitizeIdentifier(attrType)} &&");
-      sb.AppendLine($"        context is TagContext<{attrType}> ctx_{_sanitizeIdentifier(attrType)}) {{");
-      sb.AppendLine($"      return await hook_{_sanitizeIdentifier(attrType)}.OnTaggedMessageAsync(ctx_{_sanitizeIdentifier(attrType)}, ct);");
-      sb.AppendLine($"    }}");
+      sb.AppendLine($"        hookInstance is IMessageTagHook<{attrType}> hook_{id} &&");
+      sb.AppendLine($"        context is TagContext<{attrType}> ctx_{id}) {{");
+      sb.AppendLine("      // Establish ambient scope from TagContext so hooks can access ScopeContextAccessor.CurrentContext");
+      sb.AppendLine($"      if (ctx_{id}.Scope is not null) {{");
+      sb.AppendLine($"        ScopeContextAccessor.CurrentContext = ctx_{id}.Scope;");
+      sb.AppendLine("      }");
+      sb.AppendLine($"      return await hook_{id}.OnTaggedMessageAsync(ctx_{id}, ct);");
+      sb.AppendLine("    }");
       sb.AppendLine();
     }
 
@@ -319,14 +333,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Generate module initializer
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-registers the generated message tag hook dispatcher with the registry.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine($"internal static class {initializerClassName} {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Module initializer that registers the hook dispatcher.");
     sb.AppendLine("  /// Called automatically before any code in the assembly runs.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("  internal static void Initialize() {");
     sb.AppendLine("    // Register with priority 100 (contracts assemblies are tried first)");
@@ -338,12 +352,12 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   }
 
   private static void _generateRegistration(StringBuilder sb, MessageTagInfo tag) {
-    sb.AppendLine($"    new MessageTagRegistration {{");
+    sb.AppendLine("    new MessageTagRegistration {");
     sb.AppendLine($"      MessageType = typeof({tag.TypeFullName}),");
     sb.AppendLine($"      AttributeType = typeof({tag.AttributeFullName}),");
     sb.AppendLine($"      Tag = \"{_escapeString(tag.Tag)}\",");
 
-    if (tag.Properties is not null && tag.Properties.Length > 0) {
+    if (tag.Properties?.Length > 0) {
       sb.AppendLine($"      Properties = new[] {{ {string.Join(", ", tag.Properties.Select(p => $"\"{p}\""))} }},");
     }
 
@@ -354,41 +368,44 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Generate PayloadBuilder
-    sb.AppendLine($"      PayloadBuilder = msg => {{");
+    sb.AppendLine("      PayloadBuilder = msg => {");
     sb.AppendLine($"        var e = ({tag.TypeFullName})msg;");
-    sb.AppendLine($"        var dict = new Dictionary<string, object?>();");
+    sb.AppendLine("        var dict = new Dictionary<string, object?>();");
 
     // Extract specified properties, or all properties if none specified
-    var propsToExtract = tag.Properties is not null && tag.Properties.Length > 0
+    var propsToExtract = tag.Properties?.Length > 0
         ? tag.Properties
         : tag.TypeProperties;
 
+    // S3267: Loop has side effects (appending to StringBuilder) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var prop in propsToExtract) {
       if (tag.TypeProperties.Contains(prop)) {
         sb.AppendLine($"        dict[\"{prop}\"] = e.{prop};");
       }
     }
+#pragma warning restore S3267
 
     // Include full event if requested
     if (tag.IncludeEvent) {
-      sb.AppendLine($"        dict[\"__event\"] = e;");
+      sb.AppendLine("        dict[\"__event\"] = e;");
     }
 
     // Merge extra JSON if present
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
       sb.AppendLine($"        // Merge extra JSON: {_escapeString(tag.ExtraJson)}");
       sb.AppendLine($"        var extra = JsonDocument.Parse(\"\"\"{_escapeString(tag.ExtraJson)}\"\"\");");
-      sb.AppendLine($"        foreach (var prop in extra.RootElement.EnumerateObject()) {{");
-      sb.AppendLine($"          dict[prop.Name] = prop.Value.Clone();");
-      sb.AppendLine($"        }}");
+      sb.AppendLine("        foreach (var prop in extra.RootElement.EnumerateObject()) {");
+      sb.AppendLine("          dict[prop.Name] = prop.Value.Clone();");
+      sb.AppendLine("        }");
     }
 
-    sb.AppendLine($"        return JsonSerializer.SerializeToElement(dict);");
-    sb.AppendLine($"      }},");
+    sb.AppendLine("        return JsonSerializer.SerializeToElement(dict);");
+    sb.AppendLine("      },");
 
     // Generate AttributeFactory
     sb.AppendLine($"      AttributeFactory = () => new {tag.AttributeFullName}() {{ Tag = \"{_escapeString(tag.Tag)}\" }}");
-    sb.AppendLine($"    }},");
+    sb.AppendLine("    },");
   }
 
   private static string _escapeString(string? s) {

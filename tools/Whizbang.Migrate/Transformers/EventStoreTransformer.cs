@@ -151,8 +151,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
           expr.Expression.ToString().Contains(".Events.Append")) {
         consecutiveAppends++;
         firstAppend ??= expr;
-      } else if (consecutiveAppends > 1 && firstAppend != null) {
-        var lineNumber = firstAppend.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+      } else if (consecutiveAppends > 1) {
+        // firstAppend is guaranteed non-null when consecutiveAppends > 1 (assigned via ??= on first match)
+        var lineNumber = firstAppend!.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
         warnings.Add($"Line {lineNumber}: Multiple consecutive Append calls detected. Consider using " +
             "batch append with AppendBatchAsync for better performance, or use IDispatcher.PublishAsync " +
             "for each event to leverage the built-in outbox.");
@@ -164,8 +165,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
       }
     }
     // Check final batch
-    if (consecutiveAppends > 1 && firstAppend != null) {
-      var lineNumber = firstAppend.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+    // firstAppend is guaranteed non-null when consecutiveAppends > 1 (assigned via ??= on first match)
+    if (consecutiveAppends > 1) {
+      var lineNumber = firstAppend!.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
       warnings.Add($"Line {lineNumber}: Multiple consecutive Append calls detected. Consider using " +
           "batch append with AppendBatchAsync for better performance.");
     }
@@ -212,8 +214,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -263,7 +264,8 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     }
 
     // If no Marten using was found but we have patterns, add Whizbang.Core.Messaging
-    if (!removedMarten && !addedWhizbangMessaging) {
+    // addedWhizbangMessaging is only set true inside the removedMarten path, so it's always false here
+    if (!removedMarten) {
       var whizbangUsing = SyntaxFactory.UsingDirective(
           SyntaxFactory.ParseName("Whizbang.Core.Messaging")
               .WithLeadingTrivia(SyntaxFactory.Space))
@@ -304,14 +306,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms IDocumentStore to IEventStore.
   /// </summary>
-  private sealed class DocumentStoreTypeRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public DocumentStoreTypeRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class DocumentStoreTypeRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node) {
       if (node.Identifier.Text == "IDocumentStore") {
@@ -366,14 +363,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms Marten event operations to Whizbang patterns.
   /// </summary>
-  private sealed class EventOperationRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public EventOperationRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class EventOperationRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var expressionText = node.Expression.ToString();
@@ -444,18 +436,16 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that removes session variable declarations.
   /// </summary>
-  private sealed class SessionDeclarationRemover : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public SessionDeclarationRemover(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class SessionDeclarationRemover(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node) {
       var declarationText = node.Declaration.ToString();
 
+#pragma warning disable S125 // Documents Marten patterns this rewriter detects and removes, not dead code
       // Remove: await using var session = _store.LightweightSession();
       // Remove: await using var session = _store.QuerySession();
+#pragma warning restore S125
       if (declarationText.Contains("LightweightSession") ||
           declarationText.Contains("QuerySession") ||
           declarationText.Contains("OpenSession")) {
@@ -466,7 +456,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
             node.ToString().Trim(),
             ""));
 
-        // Return null to remove the node entirely
+        // Remove this node from the syntax tree
         return null;
       }
 
@@ -477,18 +467,16 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that removes SaveChangesAsync calls.
   /// </summary>
-  private sealed class SaveChangesRemover : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public SaveChangesRemover(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class SaveChangesRemover(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitExpressionStatement(ExpressionStatementSyntax node) {
       var expressionText = node.Expression.ToString();
 
+#pragma warning disable S125 // Documents Marten patterns this rewriter detects and removes, not dead code
       // Remove: await session.SaveChangesAsync();
       // Remove: await session.SaveChangesAsync(ct);
+#pragma warning restore S125
       if (expressionText.Contains("SaveChangesAsync")) {
         _changes.Add(new CodeChange(
             node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
@@ -497,7 +485,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
             node.ToString().Trim(),
             ""));
 
-        // Return null to remove the node entirely
+        // Remove this node from the syntax tree
         return null;
       }
 

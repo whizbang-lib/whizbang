@@ -12,7 +12,7 @@ namespace Whizbang.Core.Perspectives;
 /// temporal perspectives INSERT a new row for each event, creating an append-only log.
 /// </summary>
 /// <typeparam name="TModel">The log entry model type that this perspective produces</typeparam>
-/// <docs>perspectives/temporal</docs>
+/// <docs>fundamentals/perspectives/temporal</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
 /// <remarks>
 /// <para>
@@ -68,7 +68,7 @@ public interface ITemporalPerspectiveFor<TModel> where TModel : class {
 /// </summary>
 /// <typeparam name="TModel">The log entry model type</typeparam>
 /// <typeparam name="TEvent1">The event type this perspective handles</typeparam>
-/// <docs>perspectives/temporal</docs>
+/// <docs>fundamentals/perspectives/temporal</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
 public interface ITemporalPerspectiveFor<TModel, TEvent1> : ITemporalPerspectiveFor<TModel>
   where TModel : class
@@ -89,7 +89,9 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2> : ITemporalPe
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
 }
 
@@ -101,8 +103,11 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> : IT
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
 }
 
@@ -115,9 +120,13 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
 }
 
@@ -131,10 +140,15 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent3 : IEvent
   where TEvent4 : IEvent
   where TEvent5 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent5 eventData);
 }
 
@@ -149,11 +163,17 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent4 : IEvent
   where TEvent5 : IEvent
   where TEvent6 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent5 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent6 eventData);
 }
 
@@ -169,12 +189,19 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent5 : IEvent
   where TEvent6 : IEvent
   where TEvent7 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent5 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent6 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent7 eventData);
 }
 
@@ -191,13 +218,21 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent6 : IEvent
   where TEvent7 : IEvent
   where TEvent8 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent5 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent6 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent7 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent8 eventData);
 }
 
@@ -215,14 +250,23 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent7 : IEvent
   where TEvent8 : IEvent
   where TEvent9 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent5 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent6 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent7 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent8 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent9 eventData);
 }
 
@@ -241,14 +285,24 @@ public interface ITemporalPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEve
   where TEvent8 : IEvent
   where TEvent9 : IEvent
   where TEvent10 : IEvent {
+  /// <inheritdoc/>
   TModel? Transform(TEvent1 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent2 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent3 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent4 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent5 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent6 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent7 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent8 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent9 eventData);
+  /// <inheritdoc/>
   TModel? Transform(TEvent10 eventData);
 }

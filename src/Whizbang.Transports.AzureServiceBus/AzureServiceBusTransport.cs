@@ -165,15 +165,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <inheritdoc />
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithEnableSessions_IncludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithoutEnableSessions_ExcludesOrderedAsync</tests>
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
-    TransportCapabilities.Ordered;
+    TransportCapabilities.BulkPublish |
+    (_options.EnableSessions ? TransportCapabilities.Ordered : TransportCapabilities.None);
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
-  public async Task PublishAsync(
+  public Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
@@ -182,11 +184,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
+    return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
+  }
 
+  private async Task _publishCoreAsync(
+    IMessageEnvelope envelope,
+    TransportDestination destination,
+    string? envelopeType,
+    CancellationToken cancellationToken
+  ) {
     try {
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to get sender for {Destination}", destination.Address);
       var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Got sender for {Destination}", destination.Address);
 
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
@@ -219,13 +227,23 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ContentType = "application/json"
       };
 
-      // DIAGNOSTIC: Log the Subject being set (WARNING level to always show)
-      _logger.LogWarning(
-        "DIAGNOSTIC [PublishAsync]: Setting Subject={Subject} on message {MessageId} to topic {TopicName} (RoutingKey={RoutingKey})",
-        message.Subject,
-        envelope.MessageId,
-        destination.Address,
-        destination.RoutingKey ?? "(null)");
+      // Set SessionId for FIFO ordering when StreamId is carried in destination metadata
+      // TransportPublishStrategy adds StreamId to metadata for transports that support ordering
+      if (destination.Metadata?.TryGetValue("StreamId", out var streamIdElement) == true) {
+        var streamIdStr = _convertJsonElementToAmqpValue(streamIdElement)?.ToString();
+        if (!string.IsNullOrEmpty(streamIdStr)) {
+          message.SessionId = streamIdStr;
+        }
+      }
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "[Publish] Setting Subject={Subject} on message {MessageId} to topic {TopicName} (RoutingKey={RoutingKey})",
+          message.Subject,
+          envelope.MessageId,
+          destination.Address,
+          destination.RoutingKey ?? "(null)");
+      }
 
       // DIAGNOSTIC: Log the Service Bus message ID to compare
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -258,8 +276,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         }
       }
 
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to send message {MessageId} to {Destination}", envelope.MessageId, destination.Address);
-
       // WORKAROUND: Azure Service Bus Emulator sometimes hangs on first send
       // Use a task-based timeout instead of CancellationToken (which also hangs)
       // Increased to 30 seconds for emulator (originally 5s, too short for slow emulator with many topics)
@@ -274,7 +290,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
 
       await sendTask; // Re-await to propagate exceptions
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Message sent successfully {MessageId}", envelope.MessageId);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var messageId = envelope.MessageId;
@@ -287,6 +302,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subject
         );
       }
+#pragma warning disable S2139 // Intentional log-and-rethrow: transport errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
       _logger.LogError(
         ex,
@@ -295,12 +311,150 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         destination.Address
       );
       throw;
+#pragma warning restore S2139
     }
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+    IReadOnlyList<BulkPublishItem> items,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(items);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    if (items.Count == 0) {
+      return [];
+    }
+
+    var results = new List<BulkPublishItemResult>(items.Count);
+    var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
+
+    // Group items by StreamId to ensure messages in the same session go into the same batch.
+    // ASB requires all messages in a ServiceBusMessageBatch to have the same SessionId
+    // when sessions are enabled. Null StreamId items group together (no session requirement).
+    var streamGroups = items
+      .Select((item, index) => (Item: item, OriginalIndex: index))
+      .GroupBy(x => x.Item.StreamId);
+
+    foreach (var streamGroup in streamGroups) {
+      var groupItems = streamGroup.ToList();
+
+      var currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+      var batchItemIds = new List<Guid>();
+
+      foreach (var (item, _) in groupItems) {
+        try {
+          var message = _createServiceBusMessage(item, destination);
+
+          if (!currentBatch.TryAddMessage(message)) {
+            // Current batch is full -- send and start new
+            await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
+            currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+            batchItemIds = [];
+
+            if (!currentBatch.TryAddMessage(message)) {
+              results.Add(new BulkPublishItemResult {
+                MessageId = item.MessageId,
+                Success = false,
+                Error = $"Message {item.MessageId} exceeds maximum batch message size"
+              });
+              continue;
+            }
+          }
+
+          batchItemIds.Add(item.MessageId);
+        } catch (Exception ex) {
+          results.Add(new BulkPublishItemResult {
+            MessageId = item.MessageId,
+            Success = false,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
+        }
+      }
+
+      // Send remaining batch for this stream group
+      await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
+    }
+
+    return results;
+  }
+
+  private static async Task _sendAndRecordBatchAsync(
+    ServiceBusSender sender,
+    ServiceBusMessageBatch batch,
+    List<Guid> batchItemIds,
+    List<BulkPublishItemResult> results,
+    CancellationToken cancellationToken) {
+
+    if (batch.Count == 0) {
+      return;
+    }
+
+    try {
+      await sender.SendMessagesAsync(batch, cancellationToken);
+      foreach (var id in batchItemIds) {
+        results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
+      }
+    } catch (Exception ex) {
+      foreach (var id in batchItemIds) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = id,
+          Success = false,
+          Error = $"{ex.GetType().Name}: {ex.Message}"
+        });
+      }
+    }
+  }
+
+  private ServiceBusMessage _createServiceBusMessage(BulkPublishItem item, TransportDestination destination) {
+    var envelope = item.Envelope;
+    var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+
+    var envelopeRuntimeType = envelope.GetType();
+    var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+    var json = JsonSerializer.Serialize(envelope, typeInfo);
+
+    var message = new ServiceBusMessage(json) {
+      MessageId = envelope.MessageId.Value.ToString(),
+      Subject = item.RoutingKey ?? destination.RoutingKey ?? "message",
+      ContentType = "application/json"
+    };
+
+    // Set SessionId for FIFO ordering when StreamId is present
+    // ASB delivers messages with the same SessionId in order to a single consumer
+    if (item.StreamId.HasValue) {
+      message.SessionId = item.StreamId.Value.ToString();
+    }
+
+    message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
+
+    var correlationId = envelope.GetCorrelationId();
+    if (correlationId != null) {
+      message.CorrelationId = correlationId.Value.Value.ToString();
+    }
+
+    var causationId = envelope.GetCausationId();
+    if (causationId != null) {
+      message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
+    }
+
+    if (destination.Metadata != null) {
+      foreach (var (key, value) in destination.Metadata) {
+        message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
+      }
+    }
+
+    return message;
+  }
+
+  /// <inheritdoc />
   /// <tests>No tests found</tests>
-  public async Task<ISubscription> SubscribeAsync(
+  public Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
@@ -308,7 +462,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(handler);
     ArgumentNullException.ThrowIfNull(destination);
+    return _subscribeCoreAsync(handler, destination, cancellationToken);
+  }
 
+  private async Task<ISubscription> _subscribeCoreAsync(
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination,
+    CancellationToken cancellationToken
+  ) {
     try {
       var topicName = destination.Address;
 
@@ -319,278 +480,85 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Ensure infrastructure exists when auto-provisioning is enabled
       await _ensureInfrastructureExistsAsync(topicName, subscriptionName, cancellationToken);
 
-      // DIAGNOSTIC: Log metadata to trace RoutingPatterns flow
-      _logger.LogWarning(
-        "DIAGNOSTIC [SubscribeAsync]: Topic={TopicName}, Subscription={SubscriptionName}, MetadataNull={MetadataNull}, MetadataKeys=[{MetadataKeys}]",
-        topicName,
-        subscriptionName,
-        destination.Metadata == null,
-        destination.Metadata != null ? string.Join(", ", destination.Metadata.Keys) : "N/A");
+      // Apply routing and correlation filters from metadata
+      await _applySubscriptionFiltersAsync(destination, topicName, subscriptionName, cancellationToken);
 
-      if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) == true) {
-        _logger.LogWarning(
-          "DIAGNOSTIC [SubscribeAsync]: Found RoutingPatterns! ValueKind={ValueKind}, RawText={RawText}",
-          routingPatternsElement.ValueKind,
-          routingPatternsElement.GetRawText());
-      } else {
-        _logger.LogWarning(
-          "DIAGNOSTIC [SubscribeAsync]: RoutingPatterns NOT FOUND in metadata for {TopicName}/{SubscriptionName}",
+      AzureServiceBusSubscription subscription;
+
+      if (_options.EnableSessions) {
+        // Create session processor for FIFO ordering
+        var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
+          MaxConcurrentSessions = _options.MaxConcurrentSessions,
+          MaxConcurrentCallsPerSession = 1, // Strict FIFO within each session
+          AutoCompleteMessages = false,
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+        };
+
+        var sessionProcessor = _client.CreateSessionProcessor(
           topicName,
-          subscriptionName);
-      }
-
-      // Apply routing pattern filter if RoutingPatterns metadata exists (inbox pattern)
-      if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsElem) == true &&
-          patternsElem.ValueKind == JsonValueKind.Array) {
-        var patterns = new List<string>();
-        foreach (var pattern in patternsElem.EnumerateArray()) {
-          if (pattern.ValueKind == JsonValueKind.String) {
-            var patternStr = pattern.GetString();
-            if (!string.IsNullOrWhiteSpace(patternStr)) {
-              patterns.Add(patternStr);
-            }
-          }
-        }
-        if (patterns.Count > 0) {
-          await _applyRoutingPatternFilterAsync(topicName, subscriptionName, patterns, cancellationToken);
-        }
-      }
-
-      // Apply CorrelationFilter if specified in metadata (production without Aspire)
-      // Skip if emulator (filters provisioned by Aspire AppHost)
-      if (!_isEmulator &&
-          destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterElem) == true &&
-          destinationFilterElem.ValueKind == JsonValueKind.String) {
-
-        var destinationFilter = destinationFilterElem.GetString();
-        if (!string.IsNullOrWhiteSpace(destinationFilter)) {
-
-          if (_adminClient != null) {
-            try {
-              await _applyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
-            } catch (Exception ex) {
-              _logger.LogWarning(
-                ex,
-                "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
-                destinationFilter,
-                topicName,
-                subscriptionName
-              );
-            }
-          } else {
-            _logger.LogWarning(
-              "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
-              destinationFilter,
-              topicName,
-              subscriptionName
-            );
-          }
-        }
-      }
-
-      // Create processor for the topic/subscription
-      var processorOptions = new ServiceBusProcessorOptions {
-        MaxConcurrentCalls = _options.MaxConcurrentCalls,
-        AutoCompleteMessages = false, // We'll complete manually after successful handling
-        MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
-      };
-
-      var processor = _client.CreateProcessor(
-        topicName,
-        subscriptionName,
-        processorOptions
-      );
-
-      var subscription = new AzureServiceBusSubscription(processor, _logger);
-
-      // Configure message handler
-      processor.ProcessMessageAsync += async args => {
-        Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessMessageAsync invoked! MessageId={args.Message.MessageId}, IsActive={subscription.IsActive}");
-
-        if (!subscription.IsActive) {
-          Console.WriteLine("[TRANSPORT DIAGNOSTIC] Subscription NOT active - abandoning message");
-          _logger.LogWarning(
-            "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
-            args.Message.MessageId,
-            destination.Address,
-            destination.RoutingKey ?? _options.DefaultSubscriptionName
-          );
-          // If paused, abandon the message so it can be reprocessed
-          await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          return;
-        }
-
-        try {
-          // Get envelope type from message metadata
-          if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
-              envelopeTypeObj is not string envelopeTypeName) {
-            Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Missing EnvelopeType metadata! MessageId={args.Message.MessageId}");
-            _logger.LogWarning(
-              "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "MissingEnvelopeType",
-              "Message does not contain EnvelopeType metadata",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] EnvelopeType={envelopeTypeName}");
-
-          // Deserialize envelope using AOT-compatible JsonContextRegistry
-          // Use JsonContextRegistry.GetTypeInfoByName() instead of Type.GetType() to support
-          // cross-assembly generic types like MessageEnvelope<TEvent> where TEvent is from a different assembly
-          var json = args.Message.Body.ToString();
-
-          // DIAGNOSTIC: Log the JSON and Service Bus MessageId before deserializing
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var serviceBusMessageId = args.Message.MessageId;
-            var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
-            _logger.LogDebug(
-              "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
-              serviceBusMessageId,
-              jsonPreview
-            );
-          }
-
-          // Resolve JsonTypeInfo for the envelope type using JsonContextRegistry
-          // This supports fuzzy matching and cross-assembly type resolution
-          var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
-          if (typeInfo == null) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
-              envelopeTypeName,
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "MissingJsonTypeInfo",
-              $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-
-          if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              envelopeTypeName,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "DeserializationFailed",
-              "Could not deserialize message envelope",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-
-          // DIAGNOSTIC: Log the deserialized MessageId to see if it survived
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var messageId = envelope.MessageId.Value;
-            _logger.LogDebug(
-              "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
-              messageId
-            );
-          }
-
-          // Invoke handler with envelope type metadata
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Invoking handler for MessageId={envelope.MessageId.Value}");
-          await handler(envelope, envelopeTypeName, args.CancellationToken);
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Handler completed, completing message MessageId={envelope.MessageId.Value}");
-
-          // Complete the message
-          await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Message completed MessageId={envelope.MessageId.Value}");
-
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var messageId = args.Message.MessageId;
-            var topicName = destination.Address;
-            var subscriptionName = destination.RoutingKey ?? _options.DefaultSubscriptionName;
-            _logger.LogDebug(
-              "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
-              messageId,
-              topicName,
-              subscriptionName
-            );
-          }
-        } catch (Exception ex) {
-          _logger.LogError(
-            ex,
-            "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
-            args.Message.MessageId,
-            destination.Address,
-            destination.RoutingKey ?? _options.DefaultSubscriptionName
-          );
-
-          // Check retry count
-          var deliveryCount = args.Message.DeliveryCount;
-          if (deliveryCount >= _options.MaxDeliveryAttempts) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName}. Exception: {ExceptionType}: {ExceptionMessage}",
-              deliveryCount,
-              _options.MaxDeliveryAttempts,
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName,
-              ex.GetType().Name,
-              ex.Message
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "MaxDeliveryAttemptsExceeded",
-              ex.Message,
-              cancellationToken: args.CancellationToken
-            );
-          } else {
-            _logger.LogWarning(
-              "ABANDON reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
-              deliveryCount,
-              _options.MaxDeliveryAttempts,
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName,
-              ex.GetType().Name,
-              ex.Message
-            );
-            // Abandon to retry
-            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          }
-        }
-      };
-
-      // Configure error handler
-      processor.ProcessErrorAsync += async args => {
-        Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessErrorAsync invoked! ErrorSource={args.ErrorSource}, Exception={args.Exception.Message}");
-        _logger.LogError(
-          args.Exception,
-          "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
-          destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName,
-          args.ErrorSource
+          subscriptionName,
+          sessionProcessorOptions
         );
 
-        // If this is a connection-level error, trigger recovery handler
-        if (_isConnectionError(args.Exception)) {
-          _logger.LogWarning(
-            "Detected connection-level error in Service Bus processor, triggering recovery: {ErrorReason}",
-            (args.Exception as ServiceBusException)?.Reason
-          );
-          await _invokeRecoveryHandlerAsync();
-        }
-      };
+        subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
-      // Start processing
-      await processor.StartProcessingAsync(cancellationToken);
+        sessionProcessor.ProcessMessageAsync += async args => {
+          if (!subscription.IsActive) {
+            _logger.LogWarning(
+              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
+            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            return;
+          }
+
+          await _processReceivedMessageAsync(args, handler, destination);
+        };
+
+        sessionProcessor.ProcessErrorAsync += async args => {
+          await _handleProcessorErrorAsync(args, destination);
+        };
+
+        await sessionProcessor.StartProcessingAsync(cancellationToken);
+      } else {
+        // Create standard processor (no session/FIFO guarantees)
+        var processorOptions = new ServiceBusProcessorOptions {
+          MaxConcurrentCalls = _options.MaxConcurrentCalls,
+          AutoCompleteMessages = false,
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+        };
+
+        var processor = _client.CreateProcessor(
+          topicName,
+          subscriptionName,
+          processorOptions
+        );
+
+        subscription = new AzureServiceBusSubscription(processor, _logger);
+
+        processor.ProcessMessageAsync += async args => {
+          if (!subscription.IsActive) {
+            _logger.LogWarning(
+              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
+            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            return;
+          }
+
+          await _processReceivedMessageAsync(args, handler, destination);
+        };
+
+        processor.ProcessErrorAsync += async args => {
+          await _handleProcessorErrorAsync(args, destination);
+        };
+
+        await processor.StartProcessingAsync(cancellationToken);
+      }
 
       if (_logger.IsEnabled(LogLevel.Information)) {
         var topic = destination.Address;
@@ -603,6 +571,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
 
       return subscription;
+#pragma warning disable S2139 // Intentional log-and-rethrow: subscription failures cross async/worker boundaries where the original exception context may be lost.
     } catch (Exception ex) {
       _logger.LogError(
         ex,
@@ -611,6 +580,338 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         destination.RoutingKey ?? _options.DefaultSubscriptionName
       );
       throw;
+#pragma warning restore S2139
+    }
+  }
+
+  private async Task _processReceivedMessageAsync(
+    ProcessMessageEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination
+      ) {
+    try {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(args, destination);
+      if (envelope is null) {
+        return; // Message was dead-lettered by _deserializeReceivedMessageAsync
+      }
+
+      await handler(envelope, envelopeTypeName, args.CancellationToken);
+      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+    } catch (Exception ex) {
+      await _handleMessageProcessingErrorAsync(args, ex, destination);
+    }
+  }
+
+  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedMessageAsync(
+    ProcessMessageEventArgs args,
+    TransportDestination destination
+  ) {
+    // Get envelope type from message metadata
+    if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+        envelopeTypeObj is not string envelopeTypeName) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MissingEnvelopeType",
+        "Message does not contain EnvelopeType metadata",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, null);
+    }
+
+    var json = args.Message.Body.ToString();
+
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
+      _logger.LogDebug(
+        "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
+        args.Message.MessageId,
+        jsonPreview
+      );
+    }
+
+    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    if (typeInfo == null) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
+        envelopeTypeName,
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MissingJsonTypeInfo",
+        $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, envelopeTypeName);
+    }
+
+    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
+        args.Message.MessageId,
+        envelopeTypeName,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "DeserializationFailed",
+        "Could not deserialize message envelope",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, envelopeTypeName);
+    }
+
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
+        "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
+        envelope.MessageId.Value
+      );
+    }
+
+    return (envelope, envelopeTypeName);
+  }
+
+  // ========================================
+  // SESSION MESSAGE PROCESSING OVERLOADS
+  // ProcessSessionMessageEventArgs does not inherit from ProcessMessageEventArgs,
+  // so we need separate overloads for session-aware message handling.
+  // ========================================
+
+  private async Task _processReceivedMessageAsync(
+    ProcessSessionMessageEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination
+  ) {
+    try {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+      if (envelope is null) {
+        return;
+      }
+
+      await handler(envelope, envelopeTypeName, args.CancellationToken);
+      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "Processed session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+    } catch (Exception ex) {
+      await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
+    }
+  }
+
+  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedSessionMessageAsync(
+    ProcessSessionMessageEventArgs args,
+    TransportDestination destination
+  ) {
+    if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+        envelopeTypeObj is not string envelopeTypeName) {
+      if (_logger.IsEnabled(LogLevel.Warning)) {
+        _logger.LogWarning(
+          "DEAD-LETTER reason: Missing EnvelopeType metadata for session message {MessageId} from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MissingEnvelopeType",
+        "Message does not contain EnvelopeType metadata",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, null);
+    }
+
+    var json = args.Message.Body.ToString();
+
+    try {
+      var type = Type.GetType(envelopeTypeName);
+      if (type is null) {
+        if (_logger.IsEnabled(LogLevel.Warning)) {
+          _logger.LogWarning(
+            "DEAD-LETTER reason: Cannot resolve type {EnvelopeTypeName} for session message {MessageId}",
+            envelopeTypeName,
+            args.Message.MessageId
+          );
+        }
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          "UnresolvableType",
+          $"Cannot resolve type: {envelopeTypeName}",
+          cancellationToken: args.CancellationToken
+        );
+        return (null, null);
+      }
+
+      var typeInfo = _jsonOptions.GetTypeInfo(type);
+      if (typeInfo is null) {
+        if (_logger.IsEnabled(LogLevel.Warning)) {
+          _logger.LogWarning(
+            "DEAD-LETTER reason: No JsonTypeInfo for {TypeName} for session message {MessageId}",
+            type.Name,
+            args.Message.MessageId
+          );
+        }
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          "MissingJsonTypeInfo",
+          $"No JsonTypeInfo for {type.Name}",
+          cancellationToken: args.CancellationToken
+        );
+        return (null, null);
+      }
+
+      var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
+      if (envelope is null) {
+        if (_logger.IsEnabled(LogLevel.Warning)) {
+          _logger.LogWarning(
+            "DEAD-LETTER reason: Failed to deserialize session message {MessageId} as IMessageEnvelope",
+            args.Message.MessageId
+          );
+        }
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          "DeserializationFailed",
+          "Deserialized object is not IMessageEnvelope",
+          cancellationToken: args.CancellationToken
+        );
+        return (null, null);
+      }
+
+      return (envelope, envelopeTypeName);
+    } catch (Exception ex) {
+      if (_logger.IsEnabled(LogLevel.Warning)) {
+        _logger.LogWarning(
+          ex,
+          "DEAD-LETTER reason: Deserialization exception for session message {MessageId}",
+          args.Message.MessageId
+        );
+      }
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "DeserializationException",
+        ex.Message,
+        cancellationToken: args.CancellationToken
+      );
+      return (null, null);
+    }
+  }
+
+  private async Task _handleSessionMessageProcessingErrorAsync(
+    ProcessSessionMessageEventArgs args,
+    Exception ex,
+    TransportDestination destination
+  ) {
+    _logger.LogError(
+      ex,
+      "Error processing session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+      args.Message.MessageId,
+      args.SessionId,
+      destination.Address,
+      destination.RoutingKey ?? _options.DefaultSubscriptionName
+    );
+
+    var deliveryCount = args.Message.DeliveryCount;
+    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MaxDeliveryAttemptsExceeded",
+        ex.Message,
+        cancellationToken: args.CancellationToken
+      );
+    } else {
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    }
+  }
+
+  private async Task _handleMessageProcessingErrorAsync(
+    ProcessMessageEventArgs args,
+    Exception ex,
+    TransportDestination destination
+  ) {
+    _logger.LogError(
+      ex,
+      "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
+      args.Message.MessageId,
+      destination.Address,
+      destination.RoutingKey ?? _options.DefaultSubscriptionName
+    );
+
+    var deliveryCount = args.Message.DeliveryCount;
+    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName}. Exception: {ExceptionType}: {ExceptionMessage}",
+        deliveryCount,
+        _options.MaxDeliveryAttempts,
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        ex.GetType().Name,
+        ex.Message
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MaxDeliveryAttemptsExceeded",
+        ex.Message,
+        cancellationToken: args.CancellationToken
+      );
+    } else {
+      _logger.LogWarning(
+        "ABANDON reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+        deliveryCount,
+        _options.MaxDeliveryAttempts,
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        ex.GetType().Name,
+        ex.Message
+      );
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    }
+  }
+
+  private async Task _handleProcessorErrorAsync(
+    ProcessErrorEventArgs args,
+    TransportDestination destination
+  ) {
+    _logger.LogError(
+      args.Exception,
+      "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
+      destination.Address,
+      destination.RoutingKey ?? _options.DefaultSubscriptionName,
+      args.ErrorSource
+    );
+
+    if (_isConnectionError(args.Exception)) {
+      _logger.LogWarning(
+        "Detected connection-level error in Service Bus processor, triggering recovery: {ErrorReason}",
+        (args.Exception as ServiceBusException)?.Reason
+      );
+      await _invokeRecoveryHandlerAsync();
     }
   }
 
@@ -630,6 +931,104 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       "Request/response pattern is not supported by Azure Service Bus transport. " +
       "Use IRequestResponseStore with publish/subscribe instead."
     );
+  }
+
+  private async Task _applySubscriptionFiltersAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    // DIAGNOSTIC: Log metadata to trace RoutingPatterns flow
+    _logger.LogWarning(
+      "DIAGNOSTIC [SubscribeAsync]: Topic={TopicName}, Subscription={SubscriptionName}, MetadataNull={MetadataNull}, MetadataKeys=[{MetadataKeys}]",
+      topicName,
+      subscriptionName,
+      destination.Metadata == null,
+      destination.Metadata != null ? string.Join(", ", destination.Metadata.Keys) : "N/A");
+
+    // Apply routing pattern filter if RoutingPatterns metadata exists
+    await _applyRoutingPatternsFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+
+    // Apply CorrelationFilter if specified in metadata (production without Aspire)
+    await _applyCorrelationFilterFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+  }
+
+  private async Task _applyRoutingPatternsFromMetadataAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) != true) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "[Subscribe] RoutingPatterns not found in metadata for {TopicName}/{SubscriptionName}",
+          topicName,
+          subscriptionName);
+      }
+      return;
+    }
+
+    if (routingPatternsElement.ValueKind != JsonValueKind.Array) {
+      return;
+    }
+
+    var patterns = new List<string>();
+    foreach (var pattern in routingPatternsElement.EnumerateArray()) {
+      if (pattern.ValueKind == JsonValueKind.String) {
+        var patternStr = pattern.GetString();
+        if (!string.IsNullOrWhiteSpace(patternStr)) {
+          patterns.Add(patternStr);
+        }
+      }
+    }
+    if (patterns.Count > 0) {
+      await _applyRoutingPatternFilterAsync(topicName, subscriptionName, patterns, cancellationToken);
+    }
+  }
+
+  private async Task _applyCorrelationFilterFromMetadataAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    // Skip if emulator (filters provisioned by Aspire AppHost)
+    if (_isEmulator) {
+      return;
+    }
+
+    if (destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterElem) != true ||
+        destinationFilterElem.ValueKind != JsonValueKind.String) {
+      return;
+    }
+
+    var destinationFilter = destinationFilterElem.GetString();
+    if (string.IsNullOrWhiteSpace(destinationFilter)) {
+      return;
+    }
+
+    if (_adminClient != null) {
+      try {
+        await _applyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
+      } catch (Exception ex) {
+        _logger.LogWarning(
+          ex,
+          "DestinationFilter '{DestinationFilter}' for {TopicName}/{SubscriptionName}: failed to apply, proceeding without filter",
+          destinationFilter,
+          topicName,
+          subscriptionName
+        );
+      }
+    } else if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
+        "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
+        destinationFilter,
+        topicName,
+        subscriptionName
+      );
+    }
   }
 
   /// <summary>
@@ -672,6 +1071,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Remove default rule if it exists
       var rules = _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken);
       var deletedRules = 0;
+      // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
       await foreach (var rule in rules) {
         if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
           await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
@@ -689,6 +1090,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
         }
       }
+#pragma warning restore S3267
       activity?.SetTag("servicebus.rules_deleted", deletedRules);
 
       // Create new rule with CorrelationFilter on Destination application property
@@ -713,6 +1115,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subscription
         );
       }
+#pragma warning disable S2139 // Intentional log-and-rethrow: infrastructure provisioning errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
       activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       _logger.LogError(
@@ -723,6 +1126,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscriptionName
       );
       throw;
+#pragma warning restore S2139
     }
   }
 
@@ -736,7 +1140,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="destination">The transport destination containing metadata.</param>
   /// <param name="topicName">The topic name being subscribed to.</param>
   /// <returns>A valid Azure Service Bus subscription name.</returns>
-  /// <docs>components/transports/azure-service-bus#subscription-naming</docs>
+  /// <docs>messaging/transports/azure-service-bus#subscription-naming</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
   private string _deriveSubscriptionName(TransportDestination destination, string topicName) {
     // Try to get SubscriberName from metadata (set by TransportSubscriptionBuilder)
@@ -801,7 +1205,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="topicName">The topic name.</param>
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>components/transports/azure-service-bus#auto-provisioning</docs>
+  /// <docs>messaging/transports/azure-service-bus#auto-provisioning</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
   private async Task _ensureInfrastructureExistsAsync(
     string topicName,
@@ -813,32 +1217,39 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
 
     // Ensure topic exists
-    try {
-      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation("Creating topic {TopicName}", topicName);
-        }
-        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
-      }
-    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
-      // Race condition - topic created by another instance, safe to ignore
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Topic {TopicName} already exists (409 conflict)", topicName);
-      }
-    }
+    await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
 
-    // Ensure subscription exists
+    // Ensure subscription exists (with session auto-migration when EnableSessions is true)
     try {
-      if (!await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken)) {
+      var subscriptionExists = await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken);
+
+      if (subscriptionExists && _options.EnableSessions) {
+        // Check if existing subscription needs migration to sessions
+        var properties = await _adminClient.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+        if (!properties.RequiresSession) {
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            _logger.LogInformation(
+              "Auto-migrating subscription {TopicName}/{SubscriptionName} to require sessions (FIFO ordering). " +
+              "Deleting and recreating because ASB does not allow toggling RequiresSession.",
+              topicName, subscriptionName);
+          }
+          await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+        }
+      } else if (!subscriptionExists) {
         if (_logger.IsEnabled(LogLevel.Information)) {
           _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
         }
-        await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+        if (_options.EnableSessions) {
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+        } else {
+          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, cancellationToken);
+        }
       }
     } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
       // Race condition - subscription created by another instance, safe to ignore
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
+        _logger.LogDebug(ex, "Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
       }
     }
   }
@@ -851,7 +1262,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="routingPatterns">The routing patterns to filter by.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>components/transports/azure-service-bus#routing-filters</docs>
+  /// <docs>messaging/transports/azure-service-bus#routing-filters</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
   private async Task _applyRoutingPatternFilterAsync(
     string topicName,
@@ -879,30 +1290,26 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     try {
       // Delete existing rules (including $Default)
       var deletedRules = new List<string>();
+      // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
       await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
         await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
         deletedRules.Add(rule.Name);
       }
-
-      // Log deleted rules at WARNING level for diagnostic visibility
-      _logger.LogWarning(
-        "DIAGNOSTIC [SqlFilter]: Deleted {RuleCount} existing rules from {TopicName}/{SubscriptionName}: [{DeletedRules}]",
-        deletedRules.Count,
-        topicName,
-        subscriptionName,
-        string.Join(", ", deletedRules));
+#pragma warning restore S3267
 
       // Create SqlFilter rule
       var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
       await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
 
-      // Log at WARNING level for diagnostic visibility
-      _logger.LogWarning(
-        "DIAGNOSTIC [SqlFilter]: Applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
-        sqlExpression,
-        topicName,
-        subscriptionName
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "[SqlFilter] Deleted {RuleCount} existing rules and applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
+          deletedRules.Count,
+          sqlExpression,
+          topicName,
+          subscriptionName);
+      }
     } catch (Exception ex) {
       _logger.LogWarning(
         ex,
@@ -934,35 +1341,56 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     };
   }
 
+  /// <summary>
+  /// Ensures a topic exists via the admin client, handling race conditions gracefully.
+  /// Shared by both subscribe-path and publish-path auto-provisioning.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
+  private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
+    if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
+      return;
+    }
+
+    try {
+      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
+        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation("Auto-created topic '{TopicName}'", topicName);
+        }
+      }
+    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
+      // Race condition — another instance created it, safe to ignore
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(ex, "Topic '{TopicName}' already exists (race condition)", topicName);
+      }
+    }
+  }
+
   private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Using existing sender for {TopicName}", topicName);
       return existingSender;
     }
 
-    _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Waiting for semaphore for {TopicName}", topicName);
     await _senderLock.WaitAsync(cancellationToken);
-    _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Acquired semaphore for {TopicName}", topicName);
     try {
       // Double-check after acquiring lock
       if (_senders.TryGetValue(topicName, out existingSender)) {
-        _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Found existing sender after lock for {TopicName}", topicName);
         return existingSender;
       }
 
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Creating sender for {TopicName}", topicName);
+      // Ensure topic exists before creating sender (on-demand provisioning)
+      // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
+      await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
+
       var sender = _client.CreateSender(topicName);
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Sender created, adding to dictionary for {TopicName}", topicName);
       _senders[topicName] = sender;
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var topic = topicName;
-        _logger.LogDebug("Created sender for topic {TopicName}", topic);
+        _logger.LogDebug("Created sender for topic {TopicName}", topicName);
       }
 
       return sender;
     } finally {
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Releasing semaphore for {TopicName}", topicName);
       _senderLock.Release();
     }
   }

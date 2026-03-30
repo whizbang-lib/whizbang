@@ -47,6 +47,7 @@
     <Project Path="src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
     <Project Path="src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <Project Path="src/Whizbang.Hosting.AspNet/Whizbang.Hosting.AspNet.csproj" />
     <Project Path="src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
     <Project Path="src/Whizbang.Hosting.RabbitMQ/Whizbang.Hosting.RabbitMQ.csproj" />
     <Project Path="src/Whizbang.Observability/Whizbang.Observability.csproj" />
@@ -72,7 +73,9 @@
     <Project Path="tests/Whizbang.Documentation.Tests/Whizbang.Documentation.Tests.csproj" />
     <Project Path="tests/Whizbang.Execution.Tests/Whizbang.Execution.Tests.csproj" />
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
+    <Project Path="tests/Whizbang.Hosting.AspNet.Tests/Whizbang.Hosting.AspNet.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.LanguageServer.Tests/Whizbang.LanguageServer.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
@@ -88,6 +91,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+    <Project Path="tools/Whizbang.LanguageServer/Whizbang.LanguageServer.csproj" />
     <Project Path="tools/Whizbang.Migrate/Whizbang.Migrate.csproj" />
   </Folder>
 </Solution>

@@ -1,0 +1,206 @@
+name: Git Flow Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  validate-branch-direction:
+    name: Validate Branch Direction
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Git Flow Rules
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Checking PR #$PR_NUMBER"
+          echo "Source branch: $HEAD_REF"
+          echo "Target branch: $BASE_REF"
+          echo ""
+
+          # Define allowed patterns
+          # Format: "source_pattern:target_pattern"
+          ALLOWED_PATTERNS=(
+            # Feature branches → develop
+            "feature/*:develop"
+            "feat/*:develop"
+            "fix/*:develop"
+            "chore/*:develop"
+            "docs/*:develop"
+            "refactor/*:develop"
+            "test/*:develop"
+            "perf/*:develop"
+            "ci/*:develop"
+            "build/*:develop"
+            "style/*:develop"
+
+            # Release branches → main
+            "release/*:main"
+            "releases/*:main"
+
+            # Hotfix branches → main OR develop
+            "hotfix/*:main"
+            "hotfix/*:develop"
+
+            # Bugfix branches → develop OR release/*
+            "bugfix/*:develop"
+            "bugfix/*:release/*"
+
+            # Dependabot → develop (configured in dependabot.yml)
+            "dependabot/*:develop"
+
+            # Main → develop (sync after release)
+            "main:develop"
+
+            # Develop → release/* (should use workflow, but allow manual)
+            "develop:release/*"
+          )
+
+          # Function to check if source matches pattern
+          matches_pattern() {
+            local value="$1"
+            local pattern="$2"
+
+            # Convert glob pattern to regex
+            local regex="^${pattern//\*/.*}$"
+            [[ "$value" =~ $regex ]]
+          }
+
+          # Check if this PR matches any allowed pattern
+          VALID=false
+          MATCHED_PATTERN=""
+
+          for pattern in "${ALLOWED_PATTERNS[@]}"; do
+            SOURCE_PATTERN="${pattern%%:*}"
+            TARGET_PATTERN="${pattern##*:}"
+
+            if matches_pattern "$HEAD_REF" "$SOURCE_PATTERN" && matches_pattern "$BASE_REF" "$TARGET_PATTERN"; then
+              VALID=true
+              MATCHED_PATTERN="$pattern"
+              break
+            fi
+          done
+
+          if [ "$VALID" = true ]; then
+            echo "✅ Valid Git Flow direction: $HEAD_REF → $BASE_REF"
+            echo "   Matched pattern: $MATCHED_PATTERN"
+            exit 0
+          fi
+
+          # Invalid - provide helpful error message
+          echo ""
+          echo "❌ INVALID BRANCH DIRECTION"
+          echo ""
+          echo "   $HEAD_REF → $BASE_REF is not allowed by Git Flow rules."
+          echo ""
+
+          # Provide specific guidance based on branch type
+          if [[ "$HEAD_REF" == feature/* ]] || [[ "$HEAD_REF" == feat/* ]] || [[ "$HEAD_REF" == fix/* ]]; then
+            echo "📌 Feature/fix branches must merge into 'develop', not '$BASE_REF'."
+            echo ""
+            echo "   To fix this PR:"
+            echo "   1. Close this PR"
+            echo "   2. Create a new PR targeting 'develop'"
+            echo ""
+            echo "   Or change the base branch in the PR settings above."
+
+          elif [[ "$HEAD_REF" == release/* ]] && [[ "$BASE_REF" == develop ]]; then
+            echo "📌 Release branches merge into 'main', not 'develop'."
+            echo ""
+            echo "   After a release is merged to main, main automatically syncs to develop."
+            echo "   You don't need to create a PR from release/* to develop."
+
+          elif [[ "$HEAD_REF" == develop ]] && [[ "$BASE_REF" == main ]]; then
+            echo "📌 Don't merge 'develop' directly into 'main'."
+            echo ""
+            echo "   Use the release workflow instead:"
+            echo "   1. Go to Actions → Start Release"
+            echo "   2. Run the workflow to create a release branch"
+            echo "   3. The workflow will create a proper release PR"
+
+          elif [[ "$HEAD_REF" == hotfix/* ]]; then
+            echo "📌 Hotfix branches can merge into 'main' or 'develop'."
+            echo ""
+            echo "   Current target: $BASE_REF"
+            echo "   Allowed targets: main, develop"
+
+          else
+            echo "📌 This branch direction is not recognized."
+            echo ""
+            echo "   Common patterns:"
+            echo "   • feature/* → develop"
+            echo "   • release/* → main"
+            echo "   • hotfix/* → main or develop"
+            echo "   • main → develop (sync)"
+          fi
+
+          echo ""
+          echo "📚 See the full branching guide:"
+          echo "   https://github.com/$REPO/blob/main/.github/BRANCHING.md"
+          echo ""
+
+          exit 1
+
+      - name: Add PR Comment on Failure
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const head = context.payload.pull_request.head.ref;
+            const base = context.payload.pull_request.base.ref;
+
+            // Check if we already commented
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.data.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('Git Flow Branch Direction Error')
+            );
+
+            if (botComment) {
+              // Already commented, don't spam
+              return;
+            }
+
+            let suggestion = '';
+            if (head.startsWith('feature/') || head.startsWith('feat/') || head.startsWith('fix/')) {
+              suggestion = `Feature and fix branches should target \`develop\`, not \`${base}\`.
+
+**To fix:** Change the base branch to \`develop\` using the "Edit" button above.`;
+            } else if (head.startsWith('release/') && base === 'develop') {
+              suggestion = `Release branches should target \`main\`, not \`develop\`.
+
+After merging to main, changes automatically sync back to develop.`;
+            } else if (head === 'develop' && base === 'main') {
+              suggestion = `Don't merge \`develop\` directly to \`main\`.
+
+**Instead:** Use the [Start Release workflow](../../actions/workflows/start-release.yml) to create a proper release.`;
+            } else {
+              suggestion = `This branch direction doesn't match our Git Flow rules.`;
+            }
+
+            const body = `## ❌ Git Flow Branch Direction Error
+
+**\`${head}\` → \`${base}\`** is not an allowed branch direction.
+
+${suggestion}
+
+📚 **[Read the full branching guide](.github/BRANCHING.md)**
+
+---
+<sub>This check ensures we follow Git Flow for clean releases. If you believe this is incorrect, please contact a maintainer.</sub>`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });

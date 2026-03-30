@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -115,8 +116,8 @@ public class MessageContextTests {
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
     var timestamp = DateTimeOffset.UtcNow.AddHours(-1);
-    var userId = "user123";
-    var tenantId = "tenant-456";
+    const string userId = "user123";
+    const string tenantId = "tenant-456";
 
     // Act
     var context = new MessageContext {
@@ -156,8 +157,8 @@ public class MessageContextTests {
   [Test]
   public async Task New_WithScopeContext_InheritsUserIdAndTenantIdAsync() {
     // Arrange - Set scope context with security
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     var scopeContext = new TestScopeContext(testUserId, testTenantId);
     ScopeContextAccessor.CurrentContext = scopeContext;
@@ -181,7 +182,7 @@ public class MessageContextTests {
   [Test]
   public async Task New_WithScopeContextButNoUserId_InheritsTenantIdOnlyAsync() {
     // Arrange - Set scope context with only TenantId
-    var testTenantId = "test-tenant-123";
+    const string testTenantId = "test-tenant-123";
 
     var scopeContext = new TestScopeContext(userId: null, testTenantId);
     ScopeContextAccessor.CurrentContext = scopeContext;
@@ -197,6 +198,117 @@ public class MessageContextTests {
       // Cleanup
       ScopeContextAccessor.CurrentContext = null;
     }
+  }
+
+  // ========================================
+  // Create(CascadeContext) TESTS
+  // ========================================
+
+  [Test]
+  public async Task Create_WithCascadeContext_CopiesCorrelationIdAsync() {
+    // Arrange
+    var correlationId = CorrelationId.New();
+    var cascade = new CascadeContext {
+      CorrelationId = correlationId,
+      CausationId = MessageId.New()
+    };
+
+    // Act
+    var context = MessageContext.Create(cascade);
+
+    // Assert
+    await Assert.That(context.CorrelationId).IsEqualTo(correlationId);
+  }
+
+  [Test]
+  public async Task Create_WithCascadeContext_UsesCascadeCausationIdAsContextCausationIdAsync() {
+    // Arrange
+    var causationId = MessageId.New();
+    var cascade = new CascadeContext {
+      CorrelationId = CorrelationId.New(),
+      CausationId = causationId
+    };
+
+    // Act
+    var context = MessageContext.Create(cascade);
+
+    // Assert
+    await Assert.That(context.CausationId).IsEqualTo(causationId);
+  }
+
+  [Test]
+  public async Task Create_WithCascadeContext_GeneratesNewMessageIdAsync() {
+    // Arrange
+    var cascade = new CascadeContext {
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New()
+    };
+
+    // Act
+    var context = MessageContext.Create(cascade);
+
+    // Assert
+    await Assert.That(context.MessageId.Value).IsNotEqualTo(Guid.Empty);
+    await Assert.That(context.MessageId).IsNotEqualTo(cascade.CausationId);
+  }
+
+  [Test]
+  public async Task Create_WithCascadeContext_CopiesSecurityContextAsync() {
+    // Arrange
+    var securityContext = new SecurityContext { UserId = "user-123", TenantId = "tenant-abc" };
+    var cascade = new CascadeContext {
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New(),
+      SecurityContext = securityContext
+    };
+
+    // Act
+    var context = MessageContext.Create(cascade);
+
+    // Assert
+    await Assert.That(context.UserId).IsEqualTo("user-123");
+    await Assert.That(context.TenantId).IsEqualTo("tenant-abc");
+  }
+
+  [Test]
+  public async Task Create_WithCascadeContext_WithNullSecurityContext_SetsNullSecurityAsync() {
+    // Arrange
+    var cascade = new CascadeContext {
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New(),
+      SecurityContext = null
+    };
+
+    // Act
+    var context = MessageContext.Create(cascade);
+
+    // Assert
+    await Assert.That(context.UserId).IsNull();
+    await Assert.That(context.TenantId).IsNull();
+  }
+
+  [Test]
+  public async Task Create_WithCascadeContext_ThrowsOnNullCascadeAsync() {
+    // Arrange & Act & Assert
+    await Assert.That(() => MessageContext.Create((CascadeContext)null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Create_WithCascadeContext_GeneratesUniqueMessageIds_AcrossMultipleCallsAsync() {
+    // Arrange
+    var cascade = new CascadeContext {
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New()
+    };
+
+    // Act
+    var context1 = MessageContext.Create(cascade);
+    var context2 = MessageContext.Create(cascade);
+
+    // Assert
+    await Assert.That(context1.MessageId).IsNotEqualTo(context2.MessageId);
+    // But they share the same CorrelationId
+    await Assert.That(context1.CorrelationId).IsEqualTo(context2.CorrelationId);
   }
 
   /// <summary>
@@ -228,5 +340,161 @@ public class MessageContextTests {
     public bool HasAnyRole(params string[] roles) => false;
     public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => false;
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
+  }
+
+  // ========================================
+  // ScopeContext OWNERSHIP TESTS
+  // ========================================
+
+  [Test]
+  public async Task ScopeContext_IsNullByDefaultAsync() {
+    // Arrange & Act
+    var context = new MessageContext();
+
+    // Assert
+    await Assert.That(context.ScopeContext).IsNull();
+  }
+
+  [Test]
+  public async Task ScopeContext_CanBeSetViaInitializerAsync() {
+    // Arrange
+    var scopeContext = new TestScopeContext("user-123", "tenant-abc");
+
+    // Act
+    var context = new MessageContext {
+      ScopeContext = scopeContext
+    };
+
+    // Assert - Message OWNS the scope context
+    await Assert.That(object.ReferenceEquals(context.ScopeContext, scopeContext)).IsTrue();
+  }
+
+  [Test]
+  public async Task New_CapturesScopeContextFromAmbientAsync() {
+    // Arrange - Set ambient scope context
+    var scopeContext = new TestScopeContext("user-123", "tenant-abc");
+    ScopeContextAccessor.CurrentContext = scopeContext;
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+
+    try {
+      // Act
+      var context = MessageContext.New();
+
+      // Assert - Message captures and OWNS the scope context
+      await Assert.That(object.ReferenceEquals(context.ScopeContext, scopeContext)).IsTrue();
+      await Assert.That(context.UserId).IsEqualTo("user-123");
+      await Assert.That(context.TenantId).IsEqualTo("tenant-abc");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task New_CapturesScopeContextFromInitiatingContextAsync() {
+    // Arrange - Set initiating context with scope
+    var scopeContext = new TestScopeContext("initiating-user", "initiating-tenant");
+    var initiatingContext = new MessageContext {
+      UserId = "initiating-user",
+      TenantId = "initiating-tenant",
+      ScopeContext = scopeContext
+    };
+    ScopeContextAccessor.CurrentInitiatingContext = initiatingContext;
+    ScopeContextAccessor.CurrentContext = null;
+
+    try {
+      // Act
+      var context = MessageContext.New();
+
+      // Assert - Message captures scope from initiating context
+      await Assert.That(object.ReferenceEquals(context.ScopeContext, scopeContext)).IsTrue();
+      await Assert.That(context.UserId).IsEqualTo("initiating-user");
+      await Assert.That(context.TenantId).IsEqualTo("initiating-tenant");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  public async Task New_InitiatingContextTakesPrecedenceOverAmbientForScopeContextAsync() {
+    // Arrange - Set both initiating and ambient contexts
+    var initiatingScope = new TestScopeContext("initiating-user", "initiating-tenant");
+    var ambientScope = new TestScopeContext("ambient-user", "ambient-tenant");
+
+    var initiatingContext = new MessageContext {
+      UserId = "initiating-user",
+      TenantId = "initiating-tenant",
+      ScopeContext = initiatingScope
+    };
+    ScopeContextAccessor.CurrentInitiatingContext = initiatingContext;
+    ScopeContextAccessor.CurrentContext = ambientScope;
+
+    try {
+      // Act
+      var context = MessageContext.New();
+
+      // Assert - Initiating context takes precedence
+      await Assert.That(object.ReferenceEquals(context.ScopeContext, initiatingScope)).IsTrue();
+      await Assert.That(context.UserId).IsEqualTo("initiating-user");
+      await Assert.That(context.TenantId).IsEqualTo("initiating-tenant");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task MessageContextOwnsScope_AsyncLocalReadsFromItAsync() {
+    // Arrange - Create message context with scope
+    var scopeContext = new TestScopeContext("message-owner", "message-tenant");
+    var messageContext = new MessageContext {
+      UserId = "message-owner",
+      TenantId = "message-tenant",
+      ScopeContext = scopeContext
+    };
+
+    // Act - Set as initiating context in AsyncLocal
+    ScopeContextAccessor.CurrentInitiatingContext = messageContext;
+    ScopeContextAccessor.CurrentContext = null; // No ambient fallback
+
+    try {
+      // Assert - AsyncLocal reads FROM the message context's scope
+      var currentScope = ScopeContextAccessor.CurrentContext;
+      await Assert.That(object.ReferenceEquals(currentScope, scopeContext)).IsTrue();
+      await Assert.That(ScopeContextAccessor.CurrentUserId).IsEqualTo("message-owner");
+      await Assert.That(ScopeContextAccessor.CurrentTenantId).IsEqualTo("message-tenant");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  // ==========================================================================
+  // CallerInfo
+  // ==========================================================================
+
+  [Test]
+  public async Task CallerInfo_IsNullByDefaultAsync() {
+    var context = new MessageContext();
+    await Assert.That(context.CallerInfo).IsNull();
+  }
+
+  [Test]
+  public async Task New_CallerInfo_IsNullAsync() {
+    var context = MessageContext.New();
+    await Assert.That(context.CallerInfo).IsNull();
+  }
+
+  [Test]
+  public async Task CallerInfo_CanBeSetViaInitializerAsync() {
+    var callerInfo = new CallerInfo("TestMethod", "/test/file.cs", 42);
+    var context = new MessageContext { CallerInfo = callerInfo };
+
+    await Assert.That(context.CallerInfo).IsNotNull();
+    await Assert.That(context.CallerInfo!.CallerMemberName).IsEqualTo("TestMethod");
+    await Assert.That(context.CallerInfo.CallerFilePath).IsEqualTo("/test/file.cs");
+    await Assert.That(context.CallerInfo.CallerLineNumber).IsEqualTo(42);
   }
 }

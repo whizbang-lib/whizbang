@@ -3,8 +3,11 @@ using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Generated;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Observability.Tests;
@@ -170,13 +173,21 @@ public class MessageHopTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      SecurityContext = securityContext
+      Scope = ScopeDelta.FromSecurityContext(securityContext)
     };
 
+    // Create an envelope to use GetCurrentScope()
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "test",
+      Hops = [hop]
+    };
+    var scope = envelope.GetCurrentScope();
+
     // Assert
-    await Assert.That(hop.SecurityContext).IsNotNull();
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user123");
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("tenant456");
+    await Assert.That(hop.Scope).IsNotNull();
+    await Assert.That(scope?.Scope?.UserId).IsEqualTo("user123");
+    await Assert.That(scope?.Scope?.TenantId).IsEqualTo("tenant456");
   }
 
   [Test]
@@ -264,5 +275,203 @@ public class MessageHopTests {
     await Assert.That(copy.ServiceInstance.ServiceName).IsEqualTo("ModifiedService");
     await Assert.That(copy.Topic).IsEqualTo("ModifiedTopic");
     await Assert.That(copy.ExecutionStrategy).IsEqualTo("SerialExecutor"); // Unchanged property carried over
+  }
+
+  // =============================================================================
+  // JSON Serialization Backwards Compatibility Tests
+  // =============================================================================
+  // These tests ensure that MessageHop can be deserialized from JSON with either
+  // short property names (new format) or long property names (legacy format in
+  // existing database records).
+
+  [Test]
+  public async Task MessageHop_Deserialize_ShortPropertyNames_WorksAsync() {
+    // Arrange - JSON with short property names (new format)
+    // Short names: si=ServiceInstance, sn=ServiceName, ii=InstanceId, hn=HostName, pi=ProcessId
+    //              to=Topic, st=StreamId, es=ExecutionStrategy
+    var instanceId = Guid.NewGuid();
+    var json = $$"""
+    {
+      "si": {
+        "sn": "TestService",
+        "ii": "{{instanceId}}",
+        "hn": "test-host",
+        "pi": 12345
+      },
+      "to": "TestTopic",
+      "st": "TestStream",
+      "es": "SerialExecutor"
+    }
+    """;
+
+    // Act
+    var options = InfrastructureJsonContext.Default.Options;
+    var hop = JsonSerializer.Deserialize<MessageHop>(json, options);
+
+    // Assert
+    await Assert.That(hop).IsNotNull();
+    await Assert.That(hop!.ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(hop.ServiceInstance.InstanceId).IsEqualTo(instanceId);
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("test-host");
+    await Assert.That(hop.ServiceInstance.ProcessId).IsEqualTo(12345);
+    await Assert.That(hop.Topic).IsEqualTo("TestTopic");
+    await Assert.That(hop.StreamId).IsEqualTo("TestStream");
+    await Assert.That(hop.ExecutionStrategy).IsEqualTo("SerialExecutor");
+  }
+
+  [Test]
+  public async Task MessageHop_Deserialize_LongPropertyNames_WorksAsync() {
+    // Arrange - JSON with long property names (legacy format in existing database)
+    // This is what existing data in JDNext looks like
+    var instanceId = Guid.NewGuid();
+    var json = $$"""
+    {
+      "ServiceInstance": {
+        "ServiceName": "TestService",
+        "InstanceId": "{{instanceId}}",
+        "HostName": "test-host",
+        "ProcessId": 12345
+      },
+      "Topic": "TestTopic",
+      "StreamId": "TestStream",
+      "ExecutionStrategy": "SerialExecutor",
+      "Type": 0
+    }
+    """;
+
+    // Act
+    var options = InfrastructureJsonContext.Default.Options;
+    var hop = JsonSerializer.Deserialize<MessageHop>(json, options);
+
+    // Assert - Should successfully deserialize legacy format
+    await Assert.That(hop).IsNotNull();
+    await Assert.That(hop!.ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(hop.ServiceInstance.InstanceId).IsEqualTo(instanceId);
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("test-host");
+    await Assert.That(hop.ServiceInstance.ProcessId).IsEqualTo(12345);
+    await Assert.That(hop.Topic).IsEqualTo("TestTopic");
+    await Assert.That(hop.StreamId).IsEqualTo("TestStream");
+    await Assert.That(hop.ExecutionStrategy).IsEqualTo("SerialExecutor");
+    await Assert.That(hop.Type).IsEqualTo(HopType.Current);
+  }
+
+  [Test]
+  public async Task MessageHop_Deserialize_MixedPropertyNames_WorksAsync() {
+    // Arrange - JSON with a mix of short and long property names
+    // Could happen during transition period
+    var instanceId = Guid.NewGuid();
+    var json = $$"""
+    {
+      "ServiceInstance": {
+        "sn": "TestService",
+        "ii": "{{instanceId}}",
+        "HostName": "test-host",
+        "pi": 12345
+      },
+      "to": "TestTopic",
+      "StreamId": "TestStream"
+    }
+    """;
+
+    // Act
+    var options = InfrastructureJsonContext.Default.Options;
+    var hop = JsonSerializer.Deserialize<MessageHop>(json, options);
+
+    // Assert - Should handle mixed property names
+    await Assert.That(hop).IsNotNull();
+    await Assert.That(hop!.ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(hop.ServiceInstance.InstanceId).IsEqualTo(instanceId);
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("test-host");
+    await Assert.That(hop.ServiceInstance.ProcessId).IsEqualTo(12345);
+    await Assert.That(hop.Topic).IsEqualTo("TestTopic");
+    await Assert.That(hop.StreamId).IsEqualTo("TestStream");
+  }
+
+  [Test]
+  public async Task MessageHop_Serialize_UsesShortPropertyNamesAsync() {
+    // Arrange
+    var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Topic = "TestTopic",
+      StreamId = "TestStream",
+      ExecutionStrategy = "SerialExecutor"
+    };
+
+    // Act
+    var options = InfrastructureJsonContext.Default.Options;
+    var json = JsonSerializer.Serialize(hop, options);
+
+    // Assert - Should use short property names
+    await Assert.That(json).Contains("\"si\":");
+    await Assert.That(json).Contains("\"sn\":");
+    await Assert.That(json).Contains("\"to\":");
+    await Assert.That(json).Contains("\"st\":");
+    await Assert.That(json).Contains("\"es\":");
+    // Should NOT contain long property names
+    await Assert.That(json).DoesNotContain("\"ServiceInstance\":");
+    await Assert.That(json).DoesNotContain("\"ServiceName\":");
+    await Assert.That(json).DoesNotContain("\"Topic\":");
+    await Assert.That(json).DoesNotContain("\"StreamId\":");
+    await Assert.That(json).DoesNotContain("\"ExecutionStrategy\":");
+  }
+
+  [Test]
+  public async Task MessageHop_RoundTrip_WithAllProperties_PreservesDataAsync() {
+    // Arrange
+    var causationId = MessageId.New();
+    var correlationId = CorrelationId.New();
+    var timestamp = DateTimeOffset.UtcNow;
+    var original = new MessageHop {
+      Type = HopType.Causation,
+      CausationId = causationId,
+      CorrelationId = correlationId,
+      CausationType = "ParentMessage",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Timestamp = timestamp,
+      Topic = "TestTopic",
+      StreamId = "TestStream",
+      PartitionIndex = 5,
+      SequenceNumber = 100,
+      ExecutionStrategy = "ParallelExecutor",
+      CallerMemberName = "TestMethod",
+      CallerFilePath = "/test/path.cs",
+      CallerLineNumber = 42,
+      Duration = TimeSpan.FromSeconds(2.5),
+      TraceParent = "00-traceid-spanid-01"
+    };
+
+    // Act - Serialize then deserialize
+    var options = InfrastructureJsonContext.Default.Options;
+    var json = JsonSerializer.Serialize(original, options);
+    var deserialized = JsonSerializer.Deserialize<MessageHop>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Type).IsEqualTo(HopType.Causation);
+    await Assert.That(deserialized.CausationId).IsEqualTo(causationId);
+    await Assert.That(deserialized.CorrelationId).IsEqualTo(correlationId);
+    await Assert.That(deserialized.CausationType).IsEqualTo("ParentMessage");
+    await Assert.That(deserialized.ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(deserialized.Timestamp).IsEqualTo(timestamp);
+    await Assert.That(deserialized.Topic).IsEqualTo("TestTopic");
+    await Assert.That(deserialized.StreamId).IsEqualTo("TestStream");
+    await Assert.That(deserialized.PartitionIndex).IsEqualTo(5);
+    await Assert.That(deserialized.SequenceNumber).IsEqualTo(100L);
+    await Assert.That(deserialized.ExecutionStrategy).IsEqualTo("ParallelExecutor");
+    await Assert.That(deserialized.CallerMemberName).IsEqualTo("TestMethod");
+    await Assert.That(deserialized.CallerFilePath).IsEqualTo("/test/path.cs");
+    await Assert.That(deserialized.CallerLineNumber).IsEqualTo(42);
+    await Assert.That(deserialized.Duration).IsEqualTo(TimeSpan.FromSeconds(2.5));
+    await Assert.That(deserialized.TraceParent).IsEqualTo("00-traceid-spanid-01");
   }
 }

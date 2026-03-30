@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -241,17 +242,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
       new TestRabbitMqRoutingStrategy(_testId));
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // Each host gets its own database to eliminate lock contention
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_inventoryPostgresConnection);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options => {
-      options.UseNpgsql(inventoryDataSource);
-    });
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
 
     // CRITICAL: Register IDatabaseReadinessCheck that always returns true
     // The fixture ensures the database schema is created before starting hosts,
@@ -262,17 +257,29 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
+
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Configure security to allow anonymous messages for testing
@@ -357,7 +364,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetRequiredService<ILifecycleInvoker>(),
+        sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -405,16 +412,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
       new TestRabbitMqRoutingStrategy(_testId));
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // Each host gets its own database to eliminate lock contention
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_bffPostgresConnection);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
 
     // CRITICAL: Register IDatabaseReadinessCheck that always returns true
     // The fixture ensures the database schema is created before starting hosts,
@@ -425,16 +427,23 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // See comment in _createInventoryHost() for full explanation.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
 
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
+
     // Register lifecycle services for Distribute stage support
-    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Configure security to allow anonymous messages for testing
@@ -528,7 +537,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetRequiredService<ILifecycleInvoker>(),
+        sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -688,8 +697,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     int bffPerspectives)
     where TEvent : IEvent {
 
-    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
+    var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
 
     return new PerspectiveCompletionWaiter<TEvent>(
       inventoryRegistry,

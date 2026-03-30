@@ -104,8 +104,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -209,7 +208,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
 
     warnings.Add(
         $"MANUAL CONVERSION REQUIRED: {className}.{methodName}() has [{attrName}(\"{route}\")] - " +
-        $"Convert to FastEndpoints Endpoint<TRequest, TResponse> class with Configure() and HandleAsync() methods.");
+        "Convert to FastEndpoints Endpoint<TRequest, TResponse> class with Configure() and HandleAsync() methods.");
 
     changes.Add(new CodeChange(
         lineNumber,
@@ -237,7 +236,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
   }
 
   /// <summary>
-  /// Rewriter that removes Wolverine HTTP attributes and adds TODO comments.
+  /// Rewriter that removes Wolverine HTTP attributes and adds action-needed comments.
   /// </summary>
   private sealed class WolverineHttpAttributeRemover : CSharpSyntaxRewriter {
 
@@ -280,7 +279,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
         }
       }
 
-      // Add TODO comment - attrName is guaranteed non-null when hasWolverineHttpAttr is true
+      // Add action-needed comment - attrName is guaranteed non-null when hasWolverineHttpAttr is true
       var httpMethod = attrName!.Replace("Wolverine", "").ToUpperInvariant();
       var todoComment = SyntaxFactory.Comment(
           $"// TODO: Convert to FastEndpoints - Create Endpoint<TRequest, TResponse> class with {httpMethod}(\"{route}\") in Configure()\n");

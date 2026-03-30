@@ -413,7 +413,7 @@ public class ReceptorInvokerTests {
     private readonly List<IMessage> _cascadedMessages = [];
     public List<IMessage> CascadedMessages => _cascadedMessages;
 
-    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
       // Extract messages from result (using same logic as DispatcherEventCascader)
       foreach (var (message, _) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
         _cascadedMessages.Add(message);
@@ -426,13 +426,9 @@ public class ReceptorInvokerTests {
   /// Test registry implementation that mimics source-generated behavior.
   /// Receptors are registered at specific stages - the compile-time categorization is simulated.
   /// </summary>
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly InvocationTracker _tracker;
+  private sealed class TestReceptorRegistry(ReceptorInvokerTests.InvocationTracker tracker) : IReceptorRegistry {
+    private readonly InvocationTracker _tracker = tracker;
     private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) {
       var key = (typeof(TMessage), stage);
@@ -444,7 +440,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           // sp is the scoped service provider (not used in tests)
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
@@ -470,7 +466,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(returnValue);
         }
@@ -499,7 +495,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, ct) => {
+          (sp, msg, envelope, callerInfo, ct) => {
             callback();
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -523,7 +519,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, ct) => {
+          (sp, msg, envelope, callerInfo, ct) => {
             checkCallback(sp);
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -548,13 +544,18 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, ct) => {
+          (sp, msg, envelope, callerInfo, ct) => {
             callOrderCallback?.Invoke([$"ReceptorInvoked:{receptorId}"]);
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
           },
           SyncAttributes: syncAttributes));
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   // ========================================
@@ -766,19 +767,13 @@ public class ReceptorInvokerTests {
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly Action? _onEstablish;
-    private readonly IScopeContext? _returns;
-    private readonly Action<IMessageEnvelope>? _captureEnvelope;
-
-    public TestSecurityContextProvider(
-        Action? onEstablish = null,
-        IScopeContext? returns = null,
-        Action<IMessageEnvelope>? captureEnvelope = null) {
-      _onEstablish = onEstablish;
-      _returns = returns;
-      _captureEnvelope = captureEnvelope;
-    }
+  private sealed class TestSecurityContextProvider(
+      Action? onEstablish = null,
+      IScopeContext? returns = null,
+      Action<IMessageEnvelope>? captureEnvelope = null) : IMessageSecurityContextProvider {
+    private readonly Action? _onEstablish = onEstablish;
+    private readonly IScopeContext? _returns = returns;
+    private readonly Action<IMessageEnvelope>? _captureEnvelope = captureEnvelope;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -795,6 +790,8 @@ public class ReceptorInvokerTests {
     public IScopeContext? LastSetContext { get; private set; }
 
     private IScopeContext? _current;
+    private IMessageContext? _initiatingContext;
+
     public IScopeContext? Current {
       get => _current;
       set {
@@ -802,6 +799,11 @@ public class ReceptorInvokerTests {
         LastSetContext = value;
         _current = value;
       }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => _initiatingContext;
+      set => _initiatingContext = value;
     }
   }
 
@@ -912,7 +914,7 @@ public class ReceptorInvokerTests {
     var exception = await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () =>
         await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline));
 
-    await Assert.That(exception!.PerspectiveType!).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(exception!.PerspectiveType).IsEqualTo(typeof(TestPerspective));
     await Assert.That(exception.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(5000));
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0); // Receptor not invoked
   }
@@ -1049,15 +1051,16 @@ public class ReceptorInvokerTests {
 
     // Assert - Options are correct
     await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(1);
-    var call = syncAwaiter.WaitCalls[0];
-    await Assert.That(call.Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
-    await Assert.That(call.Options.Filter).IsTypeOf<EventTypeFilter>();
+    var (_, Options) = syncAwaiter.WaitCalls[0];
+    await Assert.That(Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
+    await Assert.That(Options.Filter).IsTypeOf<EventTypeFilter>();
   }
 
   /// <summary>
   /// Test sync awaiter that tracks wait calls.
   /// </summary>
   private sealed class TestSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitCalls { get; } = [];
     public List<string> CallOrder { get; } = [];
     public bool SimulateTimeout { get; set; }
@@ -1266,13 +1269,18 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessage),
             "CaptureReceptor",
-            (sp, msg, ct) => {
+            (sp, msg, envelope, callerInfo, ct) => {
               ReceivedMessage = msg;
               return ValueTask.FromResult<object?>(null);
             })];
       }
       return [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   #endregion
@@ -1501,10 +1509,8 @@ public class ReceptorInvokerTests {
   /// <summary>
   /// Test implementation of IStreamIdExtractor that returns a configured StreamId.
   /// </summary>
-  private sealed class TestStreamIdExtractor : IStreamIdExtractor {
-    private readonly Guid _streamId;
-
-    public TestStreamIdExtractor(Guid streamId) => _streamId = streamId;
+  private sealed class TestStreamIdExtractor(Guid streamId) : IStreamIdExtractor {
+    private readonly Guid _streamId = streamId;
 
     public Guid? ExtractStreamId(object message, Type messageType) => _streamId;
   }
@@ -1512,26 +1518,20 @@ public class ReceptorInvokerTests {
   /// <summary>
   /// Custom registry that captures SyncContext when receptor is invoked.
   /// </summary>
-  private sealed class ContextCapturingRegistry : IReceptorRegistry {
-    private readonly string _receptorId;
-    private readonly IReadOnlyList<ReceptorSyncAttributeInfo> _syncAttributes;
-    private readonly Action<SyncContext?> _contextCallback;
-
-    public ContextCapturingRegistry(
-        string receptorId,
-        IReadOnlyList<ReceptorSyncAttributeInfo> syncAttributes,
-        Action<SyncContext?> contextCallback) {
-      _receptorId = receptorId;
-      _syncAttributes = syncAttributes;
-      _contextCallback = contextCallback;
-    }
+  private sealed class ContextCapturingRegistry(
+      string receptorId,
+      IReadOnlyList<ReceptorSyncAttributeInfo> syncAttributes,
+      Action<SyncContext?> contextCallback) : IReceptorRegistry {
+    private readonly string _receptorId = receptorId;
+    private readonly IReadOnlyList<ReceptorSyncAttributeInfo> _syncAttributes = syncAttributes;
+    private readonly Action<SyncContext?> _contextCallback = contextCallback;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType == typeof(TestMessageWithStreamId) && stage == LifecycleStage.PostInboxInline) {
         return [new ReceptorInfo(
             typeof(TestMessageWithStreamId),
             _receptorId,
-            (sp, msg, ct) => {
+            (sp, msg, envelope, callerInfo, ct) => {
               // Try to get SyncContext from accessor (AsyncLocal pattern)
               _contextCallback(SyncContextAccessor.CurrentContext);
               return ValueTask.FromResult<object?>(null);
@@ -1540,27 +1540,27 @@ public class ReceptorInvokerTests {
       }
       return [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   /// <summary>
   /// Sync awaiter that tracks calls to WaitAsync and WaitForStreamAsync separately.
   /// </summary>
-  private sealed class StreamIdTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
-    private readonly Guid _expectedStreamId;
-    private readonly bool _simulateTimeout;
-    private readonly TimeSpan _elapsedTime;
+  private sealed class StreamIdTrackingSyncAwaiter(
+      Guid streamId,
+      bool simulateTimeout = false,
+      TimeSpan? elapsedTime = null) : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+    private readonly Guid _expectedStreamId = streamId;
+    private readonly bool _simulateTimeout = simulateTimeout;
+    private readonly TimeSpan _elapsedTime = elapsedTime ?? TimeSpan.FromMilliseconds(100);
 
     public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitAsyncCalls { get; } = [];
     public List<(Type PerspectiveType, Guid StreamId, Type[]? EventTypes, TimeSpan Timeout)> WaitForStreamCalls { get; } = [];
-
-    public StreamIdTrackingSyncAwaiter(
-        Guid streamId,
-        bool simulateTimeout = false,
-        TimeSpan? elapsedTime = null) {
-      _expectedStreamId = streamId;
-      _simulateTimeout = simulateTimeout;
-      _elapsedTime = elapsedTime ?? TimeSpan.FromMilliseconds(100);
-    }
 
     public Task<SyncResult> WaitAsync(
         Type perspectiveType,
@@ -1664,6 +1664,57 @@ public class ReceptorInvokerTests {
   }
 
   /// <summary>
+  /// CRITICAL: Verifies that ScopeContext is set on MessageContext when envelope has scope.
+  /// This was a bug where ScopeContext was not being propagated, causing
+  /// IMessageContext.ScopeContext to return null even when envelope had scope information.
+  /// </summary>
+  /// <tests>ReceptorInvoker.InvokeAsync</tests>
+  [Test]
+  public async Task InvokeAsync_WithEnvelopeScope_SetsScopeContextOnMessageContextAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    const string expectedUserId = "user-scope-test";
+    const string expectedTenantId = "tenant-scope-test";
+
+    // Create envelope with scope information in hops
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("scope-context-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
+            UserId = expectedUserId,
+            TenantId = expectedTenantId
+          })
+        }
+      ]
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert - ScopeContext should NOT be null when envelope has scope information
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.ScopeContext).IsNotNull()
+      .Because("ScopeContext must be propagated from envelope hops to MessageContext");
+    await Assert.That(accessor.LastSetContext.ScopeContext!.Scope.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(accessor.LastSetContext.ScopeContext.Scope.TenantId).IsEqualTo(expectedTenantId);
+  }
+
+  /// <summary>
   /// Verifies that receptor exceptions propagate correctly.
   /// </summary>
   [Test]
@@ -1748,10 +1799,104 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessage),
             "ThrowingReceptor",
-            (sp, msg, ct) => throw new InvalidOperationException("Test exception"))];
+            (sp, msg, envelope, callerInfo, ct) => throw new InvalidOperationException("Test exception"))];
       }
       return [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  #endregion
+
+  // ========================================
+  // CALLER INFO POPULATION TESTS
+  // ========================================
+
+  #region CallerInfo Tests
+
+  /// <summary>
+  /// Verifies that CallerInfo is populated from the first Current hop with CallerMemberName.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_PopulatesCallerInfo_FromFirstCurrentHopAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("caller-info-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          CallerMemberName = "HandleOrderAsync",
+          CallerFilePath = "/src/Orders/OrderHandler.cs",
+          CallerLineNumber = 42
+        }
+      ]
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.CallerInfo).IsNotNull();
+    await Assert.That(accessor.LastSetContext.CallerInfo!.CallerMemberName).IsEqualTo("HandleOrderAsync");
+    await Assert.That(accessor.LastSetContext.CallerInfo.CallerFilePath).IsEqualTo("/src/Orders/OrderHandler.cs");
+    await Assert.That(accessor.LastSetContext.CallerInfo.CallerLineNumber).IsEqualTo(42);
+  }
+
+  /// <summary>
+  /// Verifies that CallerInfo is null when no hops have CallerMemberName.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_CallerInfoIsNull_WhenNoHopsHaveCallerMemberNameAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("no-caller-info-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown
+          // No CallerMemberName set
+        }
+      ]
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.CallerInfo).IsNull();
   }
 
   #endregion

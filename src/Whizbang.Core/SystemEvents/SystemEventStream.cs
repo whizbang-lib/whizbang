@@ -14,7 +14,7 @@ namespace Whizbang.Core.SystemEvents;
 /// This keeps system events isolated from domain event streams.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#stream</docs>
+/// <docs>fundamentals/events/system-events#stream</docs>
 public static class SystemEventStreams {
   /// <summary>
   /// The name of the dedicated system event stream.

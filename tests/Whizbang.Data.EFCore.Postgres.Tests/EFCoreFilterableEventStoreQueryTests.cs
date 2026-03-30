@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Integration tests for EFCoreFilterableEventStoreQuery with scope filtering.
 /// Tests all supported filter combinations: tenant, user, and global access.
-/// Note: EventStoreRecord.Scope (MessageScope) only supports TenantId and UserId filtering.
+/// Note: EventStoreRecord.Scope (PerspectiveScope) supports TenantId, UserId, OrganizationId, and CustomerId filtering.
 /// </summary>
 [Category("Integration")]
 [Category("EventStoreQuery")]
@@ -44,7 +44,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
         MessageId = MessageId.From(eventId),
         Hops = []
       },
-      Scope = new MessageScope {
+      Scope = new PerspectiveScope {
         TenantId = tenantId,
         UserId = userId
       },
@@ -72,7 +72,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
 
     // Apply empty filter (no filtering - global access)
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.None,
+      Filters = ScopeFilters.None,
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
 
@@ -100,7 +100,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
     await _seedEventAsync(context, event3Id, streamId, "Event3", 3, tenantId: "tenant-2");
 
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant,
+      Filters = ScopeFilters.Tenant,
       TenantId = "tenant-1",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
@@ -130,7 +130,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
     await _seedEventAsync(context, event3Id, streamId, "Event3", 3, tenantId: "tenant-2", userId: "user-alice");
 
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant | ScopeFilter.User,
+      Filters = ScopeFilters.Tenant | ScopeFilters.User,
       TenantId = "tenant-1",
       UserId = "user-alice",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
@@ -161,7 +161,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
     await _seedEventAsync(context, event2Id, streamId, "Event2", 2, tenantId: "tenant-1");
 
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.None,
+      Filters = ScopeFilters.None,
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
 
@@ -187,7 +187,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
     await _seedEventAsync(context, _idProvider.NewGuid(), stream1Id, "Event2", 2, tenantId: "tenant-2");
 
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant,
+      Filters = ScopeFilters.Tenant,
       TenantId = "tenant-1",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
@@ -214,7 +214,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
     await _seedEventAsync(context, _idProvider.NewGuid(), streamId, "OrderPlaced", 3, tenantId: "tenant-1");
 
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.None,
+      Filters = ScopeFilters.None,
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });
 
@@ -260,7 +260,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
 
     // Apply tenant filter
     query.ApplyFilter(new ScopeFilterInfo {
-      Filters = ScopeFilter.Tenant,
+      Filters = ScopeFilters.Tenant,
       TenantId = "tenant-1",
       SecurityPrincipals = new HashSet<SecurityPrincipalId>()
     });

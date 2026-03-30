@@ -20,6 +20,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Extract perspective info or warning for models missing StreamId
     var perspectiveResults = context.SyntaxProvider.CreateSyntaxProvider(
@@ -139,7 +140,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var mustExistEventTypes = _extractMustExistEventTypes(classSymbol, eventTypes);
 
     // Extract return types for each Apply method
-    var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes, modelType);
+    var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
 
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -156,10 +157,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             SimpleName: simpleName,
             ClrTypeName: clrTypeName,
             InterfaceTypeArguments: typeArguments,
-            EventTypes: eventTypes.ToArray(),
+            EventTypes: [.. eventTypes],
             MessageTypeNames: messageTypeNames,
             StreamIdPropertyName: streamKeyPropertyName,
-            EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
+            EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null
@@ -237,8 +238,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var modelSimpleName = TypeNameUtilities.GetSimpleName(modelTypeName);
 
     // Generate AOT-compatible switch cases for event application
-    var mustExistEvents = perspective.MustExistEventTypes ?? Array.Empty<string>();
-    var eventReturnTypes = perspective.EventReturnTypes ?? Array.Empty<EventReturnTypeInfo>();
+    var mustExistEvents = perspective.MustExistEventTypes ?? [];
+    var eventReturnTypes = perspective.EventReturnTypes ?? [];
     var returnTypeLookup = eventReturnTypes.ToDictionary(x => x.EventTypeName, x => x.ReturnType);
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
@@ -250,8 +251,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
       applyCases.AppendLine($"        case {eventType} typedEvent:");
       if (isMustExist) {
-        applyCases.AppendLine($"          if (currentModel == null)");
-        applyCases.AppendLine($"            throw new global::System.InvalidOperationException(");
+        applyCases.AppendLine("          if (currentModel == null)");
+        applyCases.AppendLine("            throw new global::System.InvalidOperationException(");
         applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
       }
 
@@ -263,25 +264,25 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         case ApplyReturnType.Model:
           // Standard return: TModel - wrap with None action
           // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
-          applyCases.AppendLine($"          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          applyCases.AppendLine("          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
           break;
 
         case ApplyReturnType.NullableModel:
           // Nullable return: TModel? - null means no change, wrap with None action
           // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
-          applyCases.AppendLine($"          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          applyCases.AppendLine("          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
           break;
 
         case ApplyReturnType.Action:
           // Action return: ModelAction - keep current model, return the action
           // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
-          applyCases.AppendLine($"          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
+          applyCases.AppendLine("          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
           break;
 
         case ApplyReturnType.Tuple:
           // Tuple return: (TModel?, ModelAction) - return as-is
           // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine($"          return perspective.Apply(currentModel!, typedEvent);");
+          applyCases.AppendLine("          return perspective.Apply(currentModel!, typedEvent);");
           break;
 
         case ApplyReturnType.ApplyResult:
@@ -309,12 +310,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var extractStreamIdMethods = new StringBuilder();
     if (perspective.EventStreamIds != null) {
       foreach (var eventStreamId in perspective.EventStreamIds) {
-        extractStreamIdMethods.AppendLine($"  /// <summary>");
+        extractStreamIdMethods.AppendLine("  /// <summary>");
         extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
-        extractStreamIdMethods.AppendLine($"  /// </summary>");
+        extractStreamIdMethods.AppendLine("  /// </summary>");
         extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
         extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
-        extractStreamIdMethods.AppendLine($"  }}");
+        extractStreamIdMethods.AppendLine("  }");
         extractStreamIdMethods.AppendLine();
       }
     }
@@ -327,6 +328,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "REPLAY_EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
@@ -348,14 +350,23 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
 
     if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
-      // No physical fields - use simple UpsertAsync
+      // No physical fields - use simple UpsertAsync with scope
       sb.AppendLine("    // Upsert model (insert or update)");
       sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
-      sb.AppendLine("    await _perspectiveStore.UpsertAsync(");
-      sb.AppendLine("        streamId,");
-      sb.AppendLine("        model,");
-      sb.AppendLine("        cancellationToken");
-      sb.AppendLine("    );");
+      sb.AppendLine("    if (scope != null) {");
+      sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+      sb.AppendLine("          streamId,");
+      sb.AppendLine("          model,");
+      sb.AppendLine("          scope,");
+      sb.AppendLine("          cancellationToken");
+      sb.AppendLine("      );");
+      sb.AppendLine("    } else {");
+      sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+      sb.AppendLine("          streamId,");
+      sb.AppendLine("          model,");
+      sb.AppendLine("          cancellationToken");
+      sb.AppendLine("      );");
+      sb.AppendLine("    }");
     } else {
       // Has physical fields - extract values and use UpsertWithPhysicalFieldsAsync
       sb.AppendLine("    // Extract physical field values from model (including vector fields)");
@@ -399,28 +410,26 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Extracts single-stream IPerspectiveFor interfaces from a class symbol.
   /// </summary>
   private static List<INamedTypeSymbol> _extractSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
-        })
-        .ToList();
+        })];
   }
 
   /// <summary>
   /// Extracts global IGlobalPerspectiveFor interfaces from a class symbol.
   /// </summary>
   private static List<INamedTypeSymbol> _extractGlobalInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
-        })
-        .ToList();
+        })];
   }
 
   /// <summary>
@@ -428,14 +437,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// These interfaces return ApplyResult&lt;TModel&gt; instead of TModel, supporting Delete/Purge operations.
   /// </summary>
   private static List<INamedTypeSymbol> _extractWithActionsInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Match IPerspectiveWithActionsFor<TModel, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
-        })
-        .ToList();
+        })];
   }
 
   /// <summary>
@@ -525,7 +533,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Builds message type names in database format (TypeName, AssemblyName).
   /// </summary>
   private static string[] _buildMessageTypeNames(List<ITypeSymbol> eventTypeSymbols) {
-    return eventTypeSymbols
+    return [.. eventTypeSymbols
         .Select(t => {
           var typeName = t.ToDisplayString(new SymbolDisplayFormat(
               typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
@@ -533,8 +541,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ));
           var assemblyName = t.ContainingAssembly.Name;
           return $"{typeName}, {assemblyName}";
-        })
-        .ToArray();
+        })];
   }
 
   /// <summary>
@@ -560,7 +567,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
-    return mustExistEvents.ToArray();
+    return [.. mustExistEvents];
   }
 
   /// <summary>
@@ -569,11 +576,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static EventReturnTypeInfo[] _extractEventReturnTypes(
       INamedTypeSymbol classSymbol,
-      List<string> eventTypes,
-      ITypeSymbol modelType) {
+      List<string> eventTypes
+      ) {
 
     var returnTypes = new List<EventReturnTypeInfo>();
-    var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Use shared utility to include inherited Apply methods from base classes
     foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
@@ -587,17 +593,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var returnType = _classifyReturnType(method.ReturnType, modelTypeName);
+      var returnType = _classifyReturnType(method.ReturnType);
       returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
     }
 
-    return returnTypes.ToArray();
+    return [.. returnTypes];
   }
 
   /// <summary>
   /// Classifies the return type of an Apply method.
   /// </summary>
-  private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType, string modelTypeName) {
+  private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType) {
     var returnTypeName = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Check for ModelAction
@@ -644,49 +650,58 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// These fields need to be extracted and passed to UpsertWithPhysicalFieldsAsync.
   /// </summary>
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
-    const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
-    const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+    if (modelType is not INamedTypeSymbol namedModelType) {
+      return [];
+    }
 
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 
-    // Use shared utility to include inherited properties from base model classes
-    if (modelType is not INamedTypeSymbol namedModelType) {
-      return physicalFields.ToArray();
-    }
-
     foreach (var property in namedModelType.GetAllProperties()) {
-
-      string? columnName = null;
-      bool isVectorField = false;
-
-      foreach (var attribute in property.GetAttributes()) {
-        var attrClassName = attribute.AttributeClass?.ToDisplayString();
-
-        if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE || attrClassName == VECTOR_FIELD_ATTRIBUTE) {
-          isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
-
-          // Extract ColumnName from named argument if provided
-          foreach (var namedArg in attribute.NamedArguments) {
-            if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
-              columnName = cn;
-              break;
-            }
-          }
-
-          // Default column name is snake_case of property name
-          columnName ??= NamingConventionUtilities.ToSnakeCase(property.Name);
-
-          physicalFields.Add(new PhysicalFieldInfoCompact(
-              PropertyName: property.Name,
-              ColumnName: columnName,
-              IsVectorField: isVectorField
-          ));
-          break;  // Only one attribute per property
-        }
+      var fieldInfo = _tryExtractPhysicalField(property);
+      if (fieldInfo is not null) {
+        physicalFields.Add(fieldInfo);
       }
     }
 
-    return physicalFields.ToArray();
+    return [.. physicalFields];
+  }
+
+  /// <summary>
+  /// Tries to extract physical field info from a property's attributes.
+  /// Returns null if the property has no [PhysicalField] or [VectorField] attribute.
+  /// </summary>
+  private static PhysicalFieldInfoCompact? _tryExtractPhysicalField(IPropertySymbol property) {
+    const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+    const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+
+    foreach (var attribute in property.GetAttributes()) {
+      var attrClassName = attribute.AttributeClass?.ToDisplayString();
+
+      if (attrClassName != PHYSICAL_FIELD_ATTRIBUTE && attrClassName != VECTOR_FIELD_ATTRIBUTE) {
+        continue;
+      }
+
+      var isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
+
+      // Extract ColumnName from named argument if provided
+      string? columnName = null;
+      foreach (var namedArg in attribute.NamedArguments) {
+        if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
+          columnName = cn;
+          break;
+        }
+      }
+
+      columnName ??= NamingConventionUtilities.ToSnakeCase(property.Name);
+
+      return new PhysicalFieldInfoCompact(
+          PropertyName: property.Name,
+          ColumnName: columnName,
+          IsVectorField: isVectorField
+      );
+    }
+
+    return null;
   }
 
 }

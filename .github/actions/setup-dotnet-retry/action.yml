@@ -1,0 +1,53 @@
+name: 'Setup .NET with Retry'
+description: 'Installs .NET SDK with retry logic to handle transient network failures'
+
+inputs:
+  dotnet-version:
+    description: '.NET SDK version to install (e.g., "10.0.x", "9.0.x")'
+    required: false
+    default: '10.0.x'
+  max-attempts:
+    description: 'Maximum number of retry attempts'
+    required: false
+    default: '3'
+  retry-wait-seconds:
+    description: 'Seconds to wait between retry attempts'
+    required: false
+    default: '30'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup .NET (with retry)
+      uses: nick-invision/retry@7152eba30c6575329ac0576536151aca5a72780e # v3.0.0
+      with:
+        timeout_minutes: 5
+        max_attempts: ${{ inputs.max-attempts }}
+        retry_wait_seconds: ${{ inputs.retry-wait-seconds }}
+        shell: bash
+        command: |
+          # Read SDK version from global.json to determine the correct feature band
+          # This avoids installing a broken SDK from a newer feature band
+          if [ -f "global.json" ]; then
+            SDK_VERSION=$(python3 -c "import json; print(json.load(open('global.json'))['sdk']['version'])" 2>/dev/null || echo "")
+          fi
+
+          if [ -n "$SDK_VERSION" ]; then
+            # Convert version (e.g., "10.0.100") to feature band channel (e.g., "10.0.1xx")
+            FEATURE_BAND="${SDK_VERSION%[0-9][0-9]}"xx
+            echo "Installing .NET SDK feature band: $FEATURE_BAND (from global.json version $SDK_VERSION)"
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$FEATURE_BAND" --install-dir "$HOME/.dotnet"
+          else
+            # Fall back to channel-based install from input
+            DOTNET_CHANNEL="${{ inputs.dotnet-version }}"
+            DOTNET_CHANNEL="${DOTNET_CHANNEL%.x}"  # Remove trailing .x if present
+            echo "Installing .NET SDK channel: $DOTNET_CHANNEL"
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$DOTNET_CHANNEL" --install-dir "$HOME/.dotnet"
+          fi
+
+          # Add to PATH for subsequent steps
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+          # Verify installation
+          "$HOME/.dotnet/dotnet" --version

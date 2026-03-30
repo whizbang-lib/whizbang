@@ -79,7 +79,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
     /// Use List of AttributeEntry instead of Dictionary for key-value metadata.
     /// This is fully supported by EF Core's ComplexProperty().ToJson().
     /// </summary>
-    public List<AttributeEntry> Attributes { get; set; } = new();
+    public List<AttributeEntry> Attributes { get; set; } = [];
 
     public DateTimeOffset? AuthorizedOn { get; set; }
     public TenantStatus Status { get; set; }
@@ -96,7 +96,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
     public string Name { get; set; } = string.Empty;
 
     /// <summary>List of AttributeEntry for key-value metadata (NOT Dictionary).</summary>
-    public List<AttributeEntry> StringMetadata { get; set; } = new();
+    public List<AttributeEntry> StringMetadata { get; set; } = [];
 
     /// <summary>Nullable Guid for optional references.</summary>
     public Guid? OptionalReference { get; set; }
@@ -108,10 +108,10 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
     public int? OptionalCount { get; set; }
 
     /// <summary>List of Guids for testing collection serialization.</summary>
-    public List<Guid> RelatedIds { get; set; } = new();
+    public List<Guid> RelatedIds { get; set; } = [];
 
     /// <summary>List of nullable Guids for testing complex collections.</summary>
-    public List<Guid?> OptionalRelatedIds { get; set; } = new();
+    public List<Guid?> OptionalRelatedIds { get; set; } = [];
 
     /// <summary>Enum property for status tracking.</summary>
     public TenantStatus Status { get; set; }
@@ -121,10 +121,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
   /// DbContext using ComplexProperty().ToJson() for JSONB columns.
   /// Uses List&lt;AttributeEntry&gt; instead of Dictionary&lt;K,V&gt; which is NOT supported.
   /// </summary>
-  private sealed class ComplexTypesDbContext : DbContext {
-    public ComplexTypesDbContext(DbContextOptions<ComplexTypesDbContext> options)
-        : base(options) { }
-
+  private sealed class ComplexTypesDbContext(DbContextOptions<PerspectiveModelComplexTypesTests.ComplexTypesDbContext> options) : DbContext(options) {
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) {
       // Enable TrackedGuid support for queries using Uuid7IdProvider
       configurationBuilder.UseTrackedGuidConversion();
@@ -278,11 +275,11 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
       Id = rowId,
       TenantId = tenantId,
       Name = "Test Tenant",
-      Attributes = new List<AttributeEntry> {
+      Attributes = [
         new() { Key = "Region", Value = "US-West" },
         new() { Key = "Tier", Value = "Premium" },
         new() { Key = "Feature_BetaAccess", Value = "true" }
-      },
+      ],
       Status = TenantStatus.Active,
       AuthorizedOn = DateTimeOffset.UtcNow,
       CreatedAt = DateTimeOffset.UtcNow,
@@ -336,7 +333,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
       Id = rowId,
       TenantId = _newGuid(),
       Name = "Empty Attributes Tenant",
-      Attributes = new List<AttributeEntry>(), // Empty list
+      Attributes = [], // Empty list
       Status = TenantStatus.Pending,
       CreatedAt = DateTimeOffset.UtcNow,
       UpdatedAt = DateTimeOffset.UtcNow
@@ -385,7 +382,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
       Id = rowId1,
       TenantId = _newGuid(),
       Name = "Authorized Tenant",
-      Attributes = new List<AttributeEntry>(),
+      Attributes = [],
       Status = TenantStatus.Active,
       AuthorizedOn = now, // Has value
       CreatedAt = DateTimeOffset.UtcNow,
@@ -398,7 +395,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
       Id = rowId2,
       TenantId = _newGuid(),
       Name = "Pending Tenant",
-      Attributes = new List<AttributeEntry>(),
+      Attributes = [],
       Status = TenantStatus.Pending,
       AuthorizedOn = null, // No value
       CreatedAt = DateTimeOffset.UtcNow,
@@ -478,7 +475,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
     var model = new ComplexModel {
       Id = rowId,
       Name = "With Nullable Guid List",
-      OptionalRelatedIds = new List<Guid?> { guid1, null, guid2, null },
+      OptionalRelatedIds = [guid1, null, guid2, null],
       Status = TenantStatus.Active
     };
 
@@ -521,7 +518,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
         Id = rowId,
         TenantId = _newGuid(),
         Name = $"Tenant with {status} status",
-        Attributes = new List<AttributeEntry>(),
+        Attributes = [],
         Status = status,
         CreatedAt = DateTimeOffset.UtcNow,
         UpdatedAt = DateTimeOffset.UtcNow
@@ -562,15 +559,15 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
     var model = new ComplexModel {
       Id = rowId,
       Name = "Complex Model",
-      StringMetadata = new List<AttributeEntry> {
+      StringMetadata = [
         new() { Key = "Key1", Value = "Value1" },
         new() { Key = "Key2", Value = "Value2" }
-      },
+      ],
       OptionalReference = guid1,
       OptionalTimestamp = now,
       OptionalCount = 42,
-      RelatedIds = new List<Guid> { guid1, guid2 },
-      OptionalRelatedIds = new List<Guid?> { guid1, null },
+      RelatedIds = [guid1, guid2],
+      OptionalRelatedIds = [guid1, null],
       Status = TenantStatus.Active
     };
 

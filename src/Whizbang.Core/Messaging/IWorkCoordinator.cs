@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 
@@ -84,18 +85,25 @@ public sealed record ProcessWorkBatchRequest {
   public required ReceptorProcessingFailure[] ReceptorFailures { get; init; }
 
   /// <summary>
-  /// Array of perspective checkpoint completions (read model projection checkpoints).
+  /// Array of perspective cursor completions (read model projection cursors).
   /// Tracks last processed event per stream.
   /// Empty array if no completions.
   /// </summary>
-  public required PerspectiveCheckpointCompletion[] PerspectiveCompletions { get; init; }
+  public required PerspectiveCursorCompletion[] PerspectiveCompletions { get; init; }
 
   /// <summary>
-  /// Array of perspective checkpoint failures (read model projection failures).
+  /// Array of perspective event completions (work IDs to delete from wh_perspective_events).
+  /// Used to clean up ephemeral event tracking rows after processing.
+  /// Empty array if no completions.
+  /// </summary>
+  public required PerspectiveEventCompletion[] PerspectiveEventCompletions { get; init; }
+
+  /// <summary>
+  /// Array of perspective cursor failures (read model projection failures).
   /// Includes error details and last attempted event.
   /// Empty array if no failures.
   /// </summary>
-  public required PerspectiveCheckpointFailure[] PerspectiveFailures { get; init; }
+  public required PerspectiveCursorFailure[] PerspectiveFailures { get; init; }
 
   /// <summary>
   /// Array of new outbox messages to store.
@@ -130,7 +138,7 @@ public sealed record ProcessWorkBatchRequest {
   /// Results are returned in WorkBatch.SyncInquiryResults.
   /// Null if no sync inquiries.
   /// </summary>
-  /// <docs>perspectives/sync</docs>
+  /// <docs>fundamentals/perspectives/sync</docs>
   public SyncInquiry[]? PerspectiveSyncInquiries { get; init; }
 
   /// <summary>
@@ -138,7 +146,7 @@ public sealed record ProcessWorkBatchRequest {
   /// Examples: SkipNewWork, ForceClaimAll.
   /// Defaults to None for normal operation.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; } = WorkBatchFlags.None;
+  public WorkBatchOptions Flags { get; init; } = WorkBatchOptions.None;
 
   /// <summary>
   /// Total number of virtual partitions for consistent hashing (default: 10,000).
@@ -237,7 +245,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
@@ -253,8 +261,8 @@ public interface IWorkCoordinator {
   );
 
   /// <summary>
-  /// Reports perspective checkpoint completion or failure directly (out-of-band).
-  /// This lightweight method ONLY updates the perspective checkpoint without affecting
+  /// Reports perspective cursor completion or failure directly (out-of-band).
+  /// This lightweight method ONLY updates the perspective cursor without affecting
   /// heartbeats, work claiming, or other coordination operations.
   /// </summary>
   /// <param name="completion">Perspective checkpoint completion to report</param>
@@ -265,16 +273,16 @@ public interface IWorkCoordinator {
   /// should be persisted immediately without waiting for the next work batch cycle.
   /// This calls the complete_perspective_checkpoint_work SQL function directly.
   /// </remarks>
-  /// <docs>workers/perspective-worker</docs>
+  /// <docs>operations/workers/perspective-worker</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
   Task ReportPerspectiveCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Reports perspective checkpoint failure directly (out-of-band).
-  /// This lightweight method ONLY updates the perspective checkpoint without affecting
+  /// Reports perspective cursor failure directly (out-of-band).
+  /// This lightweight method ONLY updates the perspective cursor without affecting
   /// heartbeats, work claiming, or other coordination operations.
   /// </summary>
   /// <param name="failure">Perspective checkpoint failure to report</param>
@@ -285,11 +293,11 @@ public interface IWorkCoordinator {
   /// should be persisted immediately without waiting for the next work batch cycle.
   /// This calls the complete_perspective_checkpoint_work SQL function directly.
   /// </remarks>
-  /// <docs>workers/perspective-worker</docs>
+  /// <docs>operations/workers/perspective-worker</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
   Task ReportPerspectiveFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -304,17 +312,17 @@ public interface IWorkCoordinator {
   /// Used by PerspectiveWorker to determine where to start reading events when processing
   /// grouped work items for a stream/perspective pair.
   /// </remarks>
-  Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+  Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
     Guid streamId,
     string perspectiveName,
     CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Information about a perspective checkpoint.
+/// Information about a perspective cursor.
 /// Used by PerspectiveWorker to determine where to start reading events.
 /// </summary>
-public record PerspectiveCheckpointInfo {
+public record PerspectiveCursorInfo {
   /// <summary>
   /// Stream ID for the checkpoint.
   /// </summary>
@@ -335,6 +343,12 @@ public record PerspectiveCheckpointInfo {
   /// Current processing status.
   /// </summary>
   public PerspectiveProcessingStatus Status { get; init; }
+
+  /// <summary>
+  /// The event ID that triggered a rewind (set when status has RewindRequired flag).
+  /// NULL when no rewind is needed.
+  /// </summary>
+  public Guid? RewindTriggerEventId { get; init; }
 }
 
 /// <summary>
@@ -363,7 +377,7 @@ public record WorkBatch {
   /// Contains pending counts for each perspective/stream combination queried.
   /// Null if no sync inquiries were passed in the request.
   /// </summary>
-  /// <docs>perspectives/sync</docs>
+  /// <docs>fundamentals/perspectives/sync</docs>
   public List<SyncInquiryResult>? SyncInquiryResults { get; init; }
 }
 
@@ -416,6 +430,12 @@ public record OutboxMessage {
   public bool IsEvent { get; init; }
 
   /// <summary>
+  /// Multi-tenancy and security scope extracted from the envelope.
+  /// Stored in the dedicated scope JSONB column for query filtering.
+  /// </summary>
+  public PerspectiveScope? Scope { get; init; }
+
+  /// <summary>
   /// Assembly-qualified name of the message payload type (e.g., "MyApp.Commands.CreateProductCommand, MyApp").
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>
@@ -461,6 +481,12 @@ public record InboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// Multi-tenancy and security scope extracted from the envelope.
+  /// Stored in the dedicated scope JSONB column for query filtering.
+  /// </summary>
+  public PerspectiveScope? Scope { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the message payload type (e.g., "MyApp.Events.ProductCreatedEvent, MyApp").
@@ -528,20 +554,19 @@ public record MessageFailure {
 }
 
 /// <summary>
-/// Legacy: Represents a failed message with error information.
-/// Deprecated - use MessageFailure instead for better status tracking.
+/// Shared constraint for work items that expose a MessageId and Status.
+/// Used by <see cref="OrderedStreamProcessor"/> to generically process inbox and outbox messages.
 /// </summary>
-[Obsolete("Use MessageFailure instead for granular status tracking")]
-public record FailedMessage {
+public interface IHasMessageIdAndStatus {
   /// <summary>
-  /// Message ID that failed.
+  /// Unique message ID.
   /// </summary>
-  public required Guid MessageId { get; init; }
+  Guid MessageId { get; }
 
   /// <summary>
-  /// Error message or exception details.
+  /// Current processing status flags.
   /// </summary>
-  public required string Error { get; init; }
+  MessageProcessingStatus Status { get; }
 }
 
 /// <summary>
@@ -549,7 +574,7 @@ public record FailedMessage {
 /// Includes both new pending messages and messages with expired leases (orphaned).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record OutboxWork {
+public record OutboxWork : IHasMessageIdAndStatus {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -609,7 +634,7 @@ public record OutboxWork {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -625,7 +650,7 @@ public record OutboxWork {
 /// From the application's perspective, these are the next messages to handle.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record InboxWork {
+public record InboxWork : IHasMessageIdAndStatus {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -657,6 +682,12 @@ public record InboxWork {
   public int? PartitionNumber { get; init; }
 
   /// <summary>
+  /// Number of previous processing attempts.
+  /// Used for retry logic, poison message detection, and MaxInboxAttempts purge.
+  /// </summary>
+  public int Attempts { get; init; }
+
+  /// <summary>
   /// Current processing status flags.
   /// Indicates which stages have been completed (e.g., Stored, EventStored).
   /// </summary>
@@ -666,7 +697,7 @@ public record InboxWork {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -724,10 +755,10 @@ public record ReceptorProcessingFailure {
 }
 
 /// <summary>
-/// Represents a perspective checkpoint completion.
+/// Represents a perspective cursor completion.
 /// Indicates successful processing of an event by a perspective (read model projection).
 /// </summary>
-public record PerspectiveCheckpointCompletion {
+public record PerspectiveCursorCompletion {
   /// <summary>
   /// Stream ID being processed.
   /// </summary>
@@ -760,10 +791,10 @@ public record PerspectiveCheckpointCompletion {
 }
 
 /// <summary>
-/// Represents a perspective checkpoint failure.
+/// Represents a perspective cursor failure.
 /// Indicates failed processing of an event by a perspective (read model projection).
 /// </summary>
-public record PerspectiveCheckpointFailure {
+public record PerspectiveCursorFailure {
   /// <summary>
   /// Stream ID being processed.
   /// </summary>
@@ -792,10 +823,16 @@ public record PerspectiveCheckpointFailure {
 }
 
 /// <summary>
-/// Represents perspective checkpoint work that needs to be processed.
+/// Represents perspective cursor work that needs to be processed.
 /// Each item indicates a stream that has new events for a specific perspective to process.
 /// </summary>
 public record PerspectiveWork {
+  /// <summary>
+  /// Work ID from wh_perspective_events (event_work_id).
+  /// Used to report completion and trigger deletion of the event row.
+  /// </summary>
+  public Guid WorkId { get; init; }
+
   /// <summary>
   /// Stream ID to process.
   /// </summary>
@@ -828,7 +865,7 @@ public record PerspectiveWork {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewCheckpoint (first time processing stream), CatchingUp, Orphaned.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -839,60 +876,84 @@ public record PerspectiveWork {
 }
 
 /// <summary>
+/// Represents a perspective event completion (used to delete processed wh_perspective_events rows).
+/// Property names match the SQL function's expected JSONB format (EventWorkId, StatusFlags).
+/// </summary>
+public record PerspectiveEventCompletion {
+  /// <summary>
+  /// Work ID from wh_perspective_events (event_work_id).
+  /// </summary>
+  public required Guid EventWorkId { get; init; }
+
+  /// <summary>
+  /// Status flags to set on the event (e.g., Completed = 2).
+  /// </summary>
+  public int StatusFlags { get; init; } = (int)PerspectiveProcessingStatus.Completed;
+}
+
+/// <summary>
+/// Groups the parameters for <see cref="WorkCoordinatorExtensions.ProcessWorkBatchAsync"/>
+/// to avoid S107 (too many parameters). Maps directly to <see cref="ProcessWorkBatchRequest"/>.
+/// </summary>
+public readonly record struct ProcessWorkBatchContext(
+  Guid InstanceId,
+  string ServiceName,
+  string HostName,
+  int ProcessId,
+  Dictionary<string, JsonElement>? Metadata,
+  MessageCompletion[] OutboxCompletions,
+  MessageFailure[] OutboxFailures,
+  MessageCompletion[] InboxCompletions,
+  MessageFailure[] InboxFailures,
+  ReceptorProcessingCompletion[] ReceptorCompletions,
+  ReceptorProcessingFailure[] ReceptorFailures,
+  PerspectiveCursorCompletion[] PerspectiveCompletions,
+  PerspectiveCursorFailure[] PerspectiveFailures,
+  OutboxMessage[] NewOutboxMessages,
+  InboxMessage[] NewInboxMessages,
+  Guid[] RenewOutboxLeaseIds,
+  Guid[] RenewInboxLeaseIds,
+  WorkBatchOptions Flags = WorkBatchOptions.None,
+  int PartitionCount = 10_000,
+  int LeaseSeconds = 300,
+  int StaleThresholdSeconds = 600);
+
+/// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
 /// </summary>
 public static class WorkCoordinatorExtensions {
   /// <summary>
-  /// Backwards-compatible overload using positional parameters.
+  /// Backwards-compatible overload using a context record.
   /// Converts to ProcessWorkBatchRequest internally.
   /// </summary>
   public static Task<WorkBatch> ProcessWorkBatchAsync(
     this IWorkCoordinator coordinator,
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchContext context,
     CancellationToken cancellationToken = default
   ) {
     var request = new ProcessWorkBatchRequest {
-      InstanceId = instanceId,
-      ServiceName = serviceName,
-      HostName = hostName,
-      ProcessId = processId,
-      Metadata = metadata,
-      OutboxCompletions = outboxCompletions,
-      OutboxFailures = outboxFailures,
-      InboxCompletions = inboxCompletions,
-      InboxFailures = inboxFailures,
-      ReceptorCompletions = receptorCompletions,
-      ReceptorFailures = receptorFailures,
-      PerspectiveCompletions = perspectiveCompletions,
-      PerspectiveFailures = perspectiveFailures,
-      NewOutboxMessages = newOutboxMessages,
-      NewInboxMessages = newInboxMessages,
-      RenewOutboxLeaseIds = renewOutboxLeaseIds,
-      RenewInboxLeaseIds = renewInboxLeaseIds,
-      Flags = flags,
-      PartitionCount = partitionCount,
-      LeaseSeconds = leaseSeconds,
-      StaleThresholdSeconds = staleThresholdSeconds
+      InstanceId = context.InstanceId,
+      ServiceName = context.ServiceName,
+      HostName = context.HostName,
+      ProcessId = context.ProcessId,
+      Metadata = context.Metadata,
+      OutboxCompletions = context.OutboxCompletions,
+      OutboxFailures = context.OutboxFailures,
+      InboxCompletions = context.InboxCompletions,
+      InboxFailures = context.InboxFailures,
+      ReceptorCompletions = context.ReceptorCompletions,
+      ReceptorFailures = context.ReceptorFailures,
+      PerspectiveCompletions = context.PerspectiveCompletions,
+      PerspectiveEventCompletions = [],
+      PerspectiveFailures = context.PerspectiveFailures,
+      NewOutboxMessages = context.NewOutboxMessages,
+      NewInboxMessages = context.NewInboxMessages,
+      RenewOutboxLeaseIds = context.RenewOutboxLeaseIds,
+      RenewInboxLeaseIds = context.RenewInboxLeaseIds,
+      Flags = context.Flags,
+      PartitionCount = context.PartitionCount,
+      LeaseSeconds = context.LeaseSeconds,
+      StaleThresholdSeconds = context.StaleThresholdSeconds
     };
     return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
   }

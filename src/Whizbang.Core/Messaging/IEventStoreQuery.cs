@@ -8,7 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// <para>
 /// <strong>Scope Filtering:</strong> When used via <see cref="Lenses.IScopedLensFactory"/>,
 /// scope filters (tenant, user, principal) are automatically applied based on the current context.
-/// Use <see cref="Lenses.ScopeFilter.None"/> for global/admin access.
+/// Use <see cref="Lenses.ScopeFilters.None"/> for global/admin access.
 /// </para>
 ///
 /// <para>
@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// or <see cref="IEventStoreQueryFactory"/> (manual scope control).
 /// </para>
 /// </summary>
-/// <docs>core-concepts/event-store-query</docs>
+/// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs</tests>
 public interface IEventStoreQuery {
   /// <summary>

@@ -72,9 +72,8 @@ public class TracingCorrelationTests {
 
     // Act - Create nested activities
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("ParentSpan")) {
-      using (var child = WhizbangActivitySource.Tracing.StartActivity("ChildSpan")) {
-        using (WhizbangActivitySource.Tracing.StartActivity("GrandchildSpan")) { }
-      }
+      using var child = WhizbangActivitySource.Tracing.StartActivity("ChildSpan");
+      using (WhizbangActivitySource.Tracing.StartActivity("GrandchildSpan")) { }
     }
 
     // Assert
@@ -283,9 +282,8 @@ public class TracingCorrelationTests {
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
       using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { }
-      using (var child2 = WhizbangActivitySource.Tracing.StartActivity("Child2")) {
-        using (WhizbangActivitySource.Tracing.StartActivity("Grandchild")) { }
-      }
+      using var child2 = WhizbangActivitySource.Tracing.StartActivity("Child2");
+      using (WhizbangActivitySource.Tracing.StartActivity("Grandchild")) { }
     }
 
     // Act

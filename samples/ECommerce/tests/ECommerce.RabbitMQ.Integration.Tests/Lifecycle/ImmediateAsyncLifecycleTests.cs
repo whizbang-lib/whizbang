@@ -114,7 +114,7 @@ public class ImmediateAsyncLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
     try {
@@ -171,7 +171,7 @@ public class ImmediateAsyncLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
     try {
@@ -193,6 +193,9 @@ public class ImmediateAsyncLifecycleTests {
 
   /// <summary>
   /// Verifies that ImmediateAsync fires with correct lifecycle context metadata.
+  /// Uses the WaitForImmediateAsyncAsync helper for deterministic synchronization:
+  /// the helper registers the receptor with expectedStage filtering, starts the
+  /// completion wait concurrently, and handles unregistration atomically.
   /// </summary>
   [Test]
   public async Task ImmediateAsync_ProvidesCorrectLifecycleContext_CompletesAsync() {
@@ -207,14 +210,17 @@ public class ImmediateAsyncLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor and dispatch command
+    // Act - Use WaitFor helper (proven non-flaky pattern):
+    // 1. Registers receptor with expectedStage=ImmediateAsync before dispatch
+    // 2. Awaits completion concurrently with dispatch
+    // 3. Handles unregistration in finally block
     var receptorTask = fixture.InventoryHost.WaitForImmediateAsyncAsync<CreateProductCommand>(
       timeoutMilliseconds: 5000);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
 
-    // Assert - Verify receptor captured the message
+    // Assert - Verify receptor captured the message with correct data
     await Assert.That(receptor.LastMessage).IsNotNull();
     await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
 
@@ -243,7 +249,7 @@ public class ImmediateAsyncLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
     try {

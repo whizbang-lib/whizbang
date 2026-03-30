@@ -11,7 +11,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_ConvertsSingleStreamProjectionToIPerspectiveFor_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -36,7 +36,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_ConvertsMultipleEventTypes_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -62,7 +62,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_UpdatesUsingDirectives_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -85,7 +85,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_ConvertsMultiStreamProjectionToIGlobalPerspectiveFor_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderSummaryProjection : MultiStreamProjection<OrderSummary, Guid> {
@@ -108,7 +108,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_TracksChanges_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -131,7 +131,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_PreservesApplyMethodBody_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -157,7 +157,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_NoProjections_ReturnsUnchanged_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void Process() { }
       }
@@ -175,7 +175,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_PreservesNamespace_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       namespace MyApp.Projections;
@@ -199,7 +199,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_HandlesMultipleProjectionsInFile_Async() {
     // Arrange
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -232,7 +232,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P01_SingleStreamProjectionWithMultipleEvents_TransformsToIPerspectiveForAsync() {
     // Arrange - P01: Marten SingleStreamProjection with multiple event handlers
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<OrderModel> {
@@ -273,7 +273,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P02_MultiStreamProjection_TransformsToIGlobalPerspectiveForAsync() {
     // Arrange - P02: Marten MultiStreamProjection for cross-stream aggregation
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class DailySalesProjection : MultiStreamProjection<DailySalesModel, DateTime> {
@@ -309,7 +309,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P03_IdentityPartitionKey_TransformsToPartitionKeyExtractorAsync() {
     // Arrange - P03: Marten Identity<T>(e => e.Key) for partition key extraction
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class CustomerOrdersProjection : MultiStreamProjection<CustomerOrdersModel, Guid> {
@@ -350,7 +350,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P04_NestedModelAndProjection_TransformsToFlatPerspectiveAsync() {
     // Arrange - P04: Nested Model + Projection classes (common pattern in larger codebases)
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public static class OrderViews {
@@ -385,7 +385,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P05_ProjectionModelWithVersionProperty_TransformsWithVersionWarningAsync() {
     // Arrange - P05: Model with Version property for optimistic concurrency
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderModel {
@@ -419,7 +419,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P06_ProjectionWithShouldDelete_TransformsToModelActionAsync() {
     // Arrange - P06: Marten projection with ShouldDelete method
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderModel {
@@ -460,7 +460,7 @@ public class ProjectionToPerspectiveTransformerTests {
   public async Task TransformAsync_P07_CrossServiceDuplicateProjections_EmitsWarningAsync() {
     // Arrange - P07: Cross-service duplicate projections (common anti-pattern in microservices)
     var transformer = new ProjectionToPerspectiveTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       // This projection exists in multiple services with slightly different implementations

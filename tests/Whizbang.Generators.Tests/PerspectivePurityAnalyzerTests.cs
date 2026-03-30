@@ -23,7 +23,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonPureServiceInjection_ReportsWHIZ105WarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -75,7 +75,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_PureServiceInjection_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Perspectives;
@@ -129,7 +129,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NoDependencies_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -168,7 +168,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ValueTypeParameter_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -212,7 +212,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ClassImplementingPureServiceInterface_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Perspectives;
@@ -267,7 +267,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonPerspectiveClass_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -305,7 +305,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GlobalPerspectiveWithNonPureService_ReportsWHIZ105Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -358,7 +358,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_AsyncApplyMethod_ReportsWHIZ100ErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading.Tasks;
             using Whizbang.Core.Perspectives;
@@ -401,7 +401,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DateTimeUtcNowUsage_ReportsWHIZ104WarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -430,5 +430,44 @@ public class PerspectivePurityAnalyzerTests {
     var whiz104 = diagnostics.Where(d => d.Id == "WHIZ104").ToArray();
     await Assert.That(whiz104.Length).IsEqualTo(1);
     await Assert.That(whiz104[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Analyzer_IPerspectiveWithActionsFor_DetectsImpureApplyAsync() {
+    // Arrange — IPerspectiveWithActionsFor with impure Apply (uses DateTime.UtcNow)
+    // Matches format of existing purity tests
+    const string source = """
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public record DeletedEvent : IEvent {
+              [StreamId]
+              public Guid Id { get; init; }
+            }
+
+            public record OrderModel {
+              [StreamId]
+              public Guid Id { get; init; }
+              public DateTimeOffset DeletedAt { get; init; }
+            }
+
+            public class ImpureWithActionsPerspective : IPerspectiveWithActionsFor<OrderModel, DeletedEvent> {
+              public ApplyResult<OrderModel> Apply(OrderModel current, DeletedEvent @event) {
+                return new OrderModel { Id = current.Id, DeletedAt = DateTime.UtcNow };
+              }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert — Purity analyzer must detect DateTime.UtcNow in WithActionsFor Apply methods (WHIZ104)
+    var whiz104 = diagnostics.Where(d => d.Id == "WHIZ104").ToArray();
+    await Assert.That(whiz104.Length).IsGreaterThanOrEqualTo(1)
+      .Because("IPerspectiveWithActionsFor Apply methods must be checked for purity — DateTime.UtcNow is impure");
   }
 }

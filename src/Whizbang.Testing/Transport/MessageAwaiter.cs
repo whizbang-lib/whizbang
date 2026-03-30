@@ -1,5 +1,8 @@
+using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Transport;
 
@@ -23,31 +26,28 @@ namespace Whizbang.Testing.Transport;
 /// </para>
 /// </remarks>
 /// <typeparam name="TResult">The type of result to extract from received messages.</typeparam>
-public sealed class MessageAwaiter<TResult> where TResult : notnull {
+/// <remarks>
+/// Creates a new message awaiter.
+/// </remarks>
+/// <param name="resultExtractor">
+/// Function to extract the result from a received envelope.
+/// Return null to skip the message (e.g., warmup messages).
+/// </param>
+/// <param name="filter">
+/// Optional predicate to filter which messages to process.
+/// If null, all messages are processed.
+/// </param>
+public sealed class MessageAwaiter<TResult>(
+  Func<IMessageEnvelope, TResult?> resultExtractor,
+  Predicate<IMessageEnvelope>? filter = null
+  ) : IAwaiterIdentity where TResult : notnull {
   private readonly TaskCompletionSource<TResult> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  private readonly Func<IMessageEnvelope, TResult?> _resultExtractor;
-  private readonly Predicate<IMessageEnvelope>? _filter;
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  /// <summary>
-  /// Creates a new message awaiter.
-  /// </summary>
-  /// <param name="resultExtractor">
-  /// Function to extract the result from a received envelope.
-  /// Return null to skip the message (e.g., warmup messages).
-  /// </param>
-  /// <param name="filter">
-  /// Optional predicate to filter which messages to process.
-  /// If null, all messages are processed.
-  /// </param>
-  public MessageAwaiter(
-    Func<IMessageEnvelope, TResult?> resultExtractor,
-    Predicate<IMessageEnvelope>? filter = null
-  ) {
-    _resultExtractor = resultExtractor ?? throw new ArgumentNullException(nameof(resultExtractor));
-    _filter = filter;
-  }
+  private readonly Func<IMessageEnvelope, TResult?> _resultExtractor = resultExtractor ?? throw new ArgumentNullException(nameof(resultExtractor));
+  private readonly Predicate<IMessageEnvelope>? _filter = filter;
 
   /// <summary>
   /// Gets whether a result has been received.
@@ -58,7 +58,7 @@ public sealed class MessageAwaiter<TResult> where TResult : notnull {
   /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
-    async (envelope, envelopeType, ct) => {
+    async (envelope, _, _) => {
       // Apply filter if specified
       if (_filter != null && !_filter(envelope)) {
         return;
@@ -81,14 +81,8 @@ public sealed class MessageAwaiter<TResult> where TResult : notnull {
   /// <returns>The extracted result.</returns>
   /// <exception cref="TimeoutException">Thrown if no message is received within the timeout.</exception>
   public async Task<TResult> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      return await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"No message received within {timeout}");
-    }
+    return await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout, $"No message received within {timeout}", cancellationToken);
   }
 
   /// <summary>
@@ -106,9 +100,11 @@ public sealed class MessageAwaiter<TResult> where TResult : notnull {
 /// A simple string-based message awaiter for common test scenarios.
 /// Extracts MessageId as the result.
 /// </summary>
-public sealed class MessageIdAwaiter {
+public sealed class MessageIdAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<string> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
   /// <summary>
   /// Gets whether a message has been received.
@@ -119,7 +115,7 @@ public sealed class MessageIdAwaiter {
   /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
-    async (envelope, envelopeType, ct) => {
+    async (envelope, _, _) => {
       _tcs.TrySetResult(envelope.MessageId.ToString());
       await Task.CompletedTask;
     };
@@ -132,14 +128,8 @@ public sealed class MessageIdAwaiter {
   /// <returns>The message ID as a string.</returns>
   /// <exception cref="TimeoutException">Thrown if no message is received within the timeout.</exception>
   public async Task<string> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      return await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"No message received within {timeout}");
-    }
+    return await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout, $"No message received within {timeout}", cancellationToken);
   }
 }
 
@@ -147,11 +137,12 @@ public sealed class MessageIdAwaiter {
 /// A counting message awaiter that waits for a specific number of messages.
 /// Thread-safe and uses RunContinuationsAsynchronously to prevent deadlocks.
 /// </summary>
-public sealed class CountingMessageAwaiter {
+public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<bool> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  private readonly int _expectedCount;
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+
   private int _receivedCount;
 
   /// <summary>
@@ -160,7 +151,7 @@ public sealed class CountingMessageAwaiter {
   /// <param name="expectedCount">Number of messages to wait for.</param>
   public CountingMessageAwaiter(int expectedCount) {
     ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedCount);
-    _expectedCount = expectedCount;
+    ExpectedCount = expectedCount;
   }
 
   /// <summary>
@@ -171,7 +162,7 @@ public sealed class CountingMessageAwaiter {
   /// <summary>
   /// Gets the expected message count.
   /// </summary>
-  public int ExpectedCount => _expectedCount;
+  public int ExpectedCount { get; }
 
   /// <summary>
   /// Gets whether all expected messages have been received.
@@ -182,8 +173,8 @@ public sealed class CountingMessageAwaiter {
   /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
-    async (envelope, envelopeType, ct) => {
-      if (Interlocked.Increment(ref _receivedCount) >= _expectedCount) {
+    async (_, _, _) => {
+      if (Interlocked.Increment(ref _receivedCount) >= ExpectedCount) {
         _tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
@@ -196,13 +187,9 @@ public sealed class CountingMessageAwaiter {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown if not all messages are received within the timeout.</exception>
   public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"Expected {_expectedCount} messages but only received {_receivedCount} within {timeout}");
-    }
+    await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout,
+        $"Expected {ExpectedCount} messages but only received {_receivedCount} within {timeout}",
+        cancellationToken);
   }
 }

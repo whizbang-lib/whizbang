@@ -33,12 +33,11 @@ public static class GeneratorTestHelpers {
 
     return await Task.FromResult(new GeneratorResult {
       Compilation = compilation,
-      GeneratedSources = runResult.GeneratedTrees
+      GeneratedSources = [.. runResult.GeneratedTrees
         .Select(t => new GeneratedSource {
           HintName = _getHintName(runResult, t),
           SourceText = t.GetText()
-        })
-        .ToImmutableArray(),
+        })],
       Diagnostics = runResult.Diagnostics
     });
   }
@@ -64,12 +63,11 @@ public static class GeneratorTestHelpers {
 
     return await Task.FromResult(new GeneratorResult {
       Compilation = compilation,
-      GeneratedSources = runResult.GeneratedTrees
+      GeneratedSources = [.. runResult.GeneratedTrees
         .Select(t => new GeneratedSource {
           HintName = _getHintName(runResult, t),
           SourceText = t.GetText()
-        })
-        .ToImmutableArray(),
+        })],
       Diagnostics = runResult.Diagnostics
     });
   }
@@ -95,12 +93,11 @@ public static class GeneratorTestHelpers {
 
     return await Task.FromResult(new GeneratorResult {
       Compilation = compilation,
-      GeneratedSources = runResult.GeneratedTrees
+      GeneratedSources = [.. runResult.GeneratedTrees
         .Select(t => new GeneratedSource {
           HintName = _getHintName(runResult, t),
           SourceText = t.GetText()
-        })
-        .ToImmutableArray(),
+        })],
       Diagnostics = runResult.Diagnostics
     });
   }
@@ -122,7 +119,7 @@ public static class GeneratorTestHelpers {
 
     return CSharpCompilation.Create(
       assemblyName: "TestAssembly",
-      syntaxTrees: new[] { syntaxTree },
+      syntaxTrees: [syntaxTree],
       references: references,
       options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -148,7 +145,7 @@ public static class GeneratorTestHelpers {
 
     return CSharpCompilation.Create(
       assemblyName: "TestAssembly",
-      syntaxTrees: new[] { syntaxTree },
+      syntaxTrees: [syntaxTree],
       references: references,
       options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Extension methods for registering message security services.
 /// </summary>
-/// <docs>core-concepts/message-security#registration</docs>
+/// <docs>fundamentals/security/message-security#registration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityServiceCollectionExtensionsTests.cs</tests>
 public static class MessageSecurityServiceCollectionExtensions {
   /// <summary>
@@ -21,6 +21,7 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// This method registers:
   /// - IMessageSecurityContextProvider (DefaultMessageSecurityContextProvider)
   /// - IScopeContextAccessor (scoped)
+  /// - IScopeContext (scoped factory) - directly injectable, reads from accessor
   /// - IMessageContextAccessor (scoped) - provides access to current message context
   /// - IMessageContext (scoped) - injectable message context with UserId from security context
   /// - MessageHopSecurityExtractor (default extractor, priority 100)
@@ -53,11 +54,23 @@ public static class MessageSecurityServiceCollectionExtensions {
     var options = new MessageSecurityOptions();
     configure?.Invoke(options);
 
-    // Register options as singleton
-    services.AddSingleton(options);
+    // Register options as singleton (TryAdd so first registration wins)
+    // This allows user-configured options (e.g., ExemptMessageTypes) to take precedence
+    // over the default options registered by AddWhizbang()/AddWhizbangDispatcher()
+    services.TryAddSingleton(options);
 
     // Register scoped IScopeContextAccessor
     services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+
+    // Register IScopeContext as factory that reads from accessor (enables direct DI injection)
+    services.TryAddScoped<IScopeContext>(sp => {
+      var accessor = sp.GetRequiredService<IScopeContextAccessor>();
+      return accessor.Current
+        ?? throw new InvalidOperationException(
+          "IScopeContext is not available. This service can only be injected within a message " +
+          "processing context (receptors, handlers, workers). For services that may run outside " +
+          "message context, inject IScopeContextAccessor instead and check .Current for null.");
+    });
 
     // Register scoped IMessageContextAccessor for accessing current message context
     services.TryAddScoped<IMessageContextAccessor, MessageContextAccessor>();

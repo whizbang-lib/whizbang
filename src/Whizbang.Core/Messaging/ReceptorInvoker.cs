@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
@@ -38,14 +39,15 @@ namespace Whizbang.Core.Messaging;
 /// these events are cascaded (published) via the optional <see cref="IEventCascader"/>.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
-/// <docs>observability/tracing#parent-context</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
-public sealed class ReceptorInvoker : IReceptorInvoker {
+public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
   private readonly IEventCascader? _eventCascader;
   private readonly IPerspectiveSyncAwaiter? _syncAwaiter;
+  private ILogger? _logger;
 
   /// <summary>
   /// Creates a new ReceptorInvoker.
@@ -79,7 +81,7 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
   /// This enables scoped services (like UserContextManager) to access security information during receptor execution.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/message-security#lifecycle-receptors</docs>
+  /// <docs>fundamentals/security/message-security#lifecycle-receptors</docs>
   public ReceptorInvoker(
     IReceptorRegistry registry,
     IServiceProvider scopedProvider,
@@ -94,7 +96,7 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
   /// <param name="scopedProvider">The scoped service provider (ambient scope from worker).</param>
   /// <param name="eventCascader">Optional cascader for publishing events returned by receptors.</param>
   /// <param name="syncAwaiter">Optional sync awaiter for [AwaitPerspectiveSync] attribute handling.</param>
-  /// <docs>core-concepts/perspectives/perspective-sync</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync</docs>
   public ReceptorInvoker(
     IReceptorRegistry registry,
     IServiceProvider scopedProvider,
@@ -116,186 +118,407 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
-    // Context provides metadata about the invocation (stream ID, event ID, message source, etc.)
-    // Used for perspective sync to pass the incoming event's ID for cross-scope sync
-
-    // Extract payload from envelope - this is what receptors receive
-    var message = envelope.Payload;
-
-    // Unwrap Routed<T> if the payload contains a routing wrapper
-    // This ensures receptors receive the actual message type, not the dispatch wrapper
-    if (message is Dispatch.IRouted routed) {
-      if (routed.Mode == Dispatch.DispatchMode.None || routed.Value == null) {
-        // RoutedNone should not be in an envelope - skip silently
-        return;
-      }
-      message = routed.Value;
+    // Extract payload from envelope, unwrapping Routed<T> wrappers
+    var message = _extractMessage(envelope);
+    if (message is null) {
+      return;
     }
 
     // GetType() is AOT-safe - returns the runtime type
     var messageType = message.GetType();
 
+    // Establish security context from the envelope BEFORE checking for receptors
+    var securityContext = await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
+
+    // Extract caller info from the first Current hop (captured at dispatch time)
+    var callerInfo = _extractCallerInfo(envelope);
+
+    // Set message context from envelope for injectable IMessageContext
+    // CRITICAL: This must happen BEFORE early return to ensure InitiatingContext is always set
+    var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
+    if (messageContextAccessor is not null) {
+      await _setMessageContextAsync(messageContextAccessor, envelope, securityContext, callerInfo, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Extract both trace context and scope from envelope hops.
+    // MUST happen before the early-return for receptors.Count == 0 so that tag hooks
+    // at terminal stages (PostAllPerspectivesAsync, PostLifecycleAsync, etc.) — which have
+    // no registered receptors — still receive ambient scope via AsyncLocal.
+    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
+    var parentContext = extracted.TraceContext;
+
+    // Establish ambient scope context from envelope data (security propagation via AsyncLocal)
+    if (extracted.Scope is not null) {
+      ScopeContextAccessor.CurrentContext = extracted.Scope;
+    }
+
     // Registry already has categorized receptors at compile time
-    // Just get receptors for this type/stage combination and invoke them
     var receptors = _registry.GetReceptorsFor(messageType, stage);
 
+    // Resolve scope for tag processing — use security context or extracted scope from hops
+    var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
+
     if (receptors.Count == 0) {
-      // No receptors registered for this message type and stage - this is normal
+      await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
       return;
     }
 
-    // Use the injected scoped provider directly - no CreateScope needed
-    // This invoker is registered as scoped and uses the ambient scope from the worker
-    var securityProvider = _scopedProvider.GetService<IMessageSecurityContextProvider>();
-
-    // Establish security context from the envelope before invoking receptors
-    // This enables scoped services (like UserContextManager) to access security information
-    if (securityProvider is not null) {
-      var securityContext = await securityProvider
-        .EstablishContextAsync(envelope, _scopedProvider, cancellationToken)
-        .ConfigureAwait(false);
-
-      if (securityContext is not null) {
-        var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
-        if (accessor is not null) {
-          accessor.Current = securityContext;
-        }
-      }
-    }
-
-    // Set message context from envelope for injectable IMessageContext
-    // This enables receptors to inject IMessageContext and access MessageId, CorrelationId, UserId, TenantId, etc.
-    var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
-    if (messageContextAccessor is not null) {
-      var securityContext = envelope.GetCurrentSecurityContext();
-      messageContextAccessor.Current = new MessageContext {
-        MessageId = envelope.MessageId,
-        CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
-        CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
-        Timestamp = envelope.GetMessageTimestamp(),
-        UserId = securityContext?.UserId,
-        TenantId = securityContext?.TenantId
-      };
+    // Suppress receptors during replay/rebuild unless they opt in with [FireDuringReplay]
+    receptors = _filterForReplayMode(receptors, context);
+    if (receptors.Count == 0) {
+      return;
     }
 
     // Try to get stream ID extractor for stream-based sync
     var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
 
-    // Extract parent context from envelope hops for trace correlation
-    // This ensures receptor spans are parented to the original request even on background threads
-    var parentContext = _extractParentContext(envelope.Hops);
-
+    var invocationCtx = new ReceptorInvocationContext(message, messageType, envelope, stage, context, callerInfo, extractedStreamId, parentContext);
     foreach (var receptor in receptors) {
-      // Start activity for this receptor invocation - enables per-handler tracing
-      // Pass parentContext to ensure proper parenting when Activity.Current is null (background threads)
-      using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
-        $"Receptor {receptor.ReceptorId}",
-        ActivityKind.Internal,
-        parentContext: parentContext);
-      receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
-      receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
-      receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
-
-      try {
-        // Check for [AwaitPerspectiveSync] attributes and await sync if needed
-        if (_syncAwaiter is not null && receptor.SyncAttributes is { Count: > 0 }) {
-          foreach (var syncAttr in receptor.SyncAttributes) {
-            var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
-            SyncResult syncResult;
-
-            // Use stream-based sync when stream ID extractor is available
-            if (extractedStreamId.HasValue) {
-              var eventTypes = syncAttr.EventTypes?.ToArray();
-              // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
-              // Without this, WaitForStreamAsync has no way to know what event to wait for
-              // when the event was emitted in a different scope (e.g., command handler)
-              syncResult = await _syncAwaiter.WaitForStreamAsync(
-                  syncAttr.PerspectiveType,
-                  extractedStreamId.Value,
-                  eventTypes,
-                  timeout,
-                  eventIdToAwait: context?.EventId,
-                  cancellationToken).ConfigureAwait(false);
-
-              // Create and set SyncContext for receptor access via AsyncLocal
-              var syncContext = new SyncContext {
-                StreamId = extractedStreamId.Value,
-                PerspectiveType = syncAttr.PerspectiveType,
-                Outcome = syncResult.Outcome,
-                EventsAwaited = syncResult.EventsAwaited,
-                ElapsedTime = syncResult.ElapsedTime,
-                FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
-              };
-              SyncContextAccessor.CurrentContext = syncContext;
-            } else {
-              // Fall back to scope-based sync when no stream ID extractor
-              var syncOptions = syncAttr.EventTypes is { Count: > 0 }
-                  ? SyncFilter.ForEventTypes(syncAttr.EventTypes.ToArray()).WithTimeout(timeout).Build()
-                  : SyncFilter.CurrentScope().WithTimeout(timeout).Build();
-
-              syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
-            }
-
-            // If FireBehavior is FireOnSuccess and we timed out, throw an exception
-            if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
-              throw new PerspectiveSyncTimeoutException(
-                  syncAttr.PerspectiveType,
-                  timeout,
-                  $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
-            }
-            // FireBehavior.FireAlways continues regardless of timeout
-            // FireBehavior.FireOnEachEvent is future functionality
-          }
-        }
-
-        // InvokeAsync is a pre-compiled delegate (no reflection)
-        // Pass the scoped provider so receptor can be resolved with its dependencies
-        var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);
-
-        receptorActivity?.SetStatus(ActivityStatusCode.Ok);
-        receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);
-
-        // Cascade any IMessage instances (events and commands) from the receptor's return value
-        // Handles tuples, arrays, Route wrappers via IEventCascader
-        // Pass source envelope so cascaded messages can inherit SecurityContext
-        // Note: Receptor default routing not passed through - routing is determined by
-        // message attributes, Route wrappers, or system default (Outbox)
-        if (result is not null && _eventCascader is not null) {
-          await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
-        }
-      } catch (Exception ex) {
-        receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-        receptorActivity?.SetTag("exception.type", ex.GetType().FullName);
-        receptorActivity?.SetTag("exception.message", ex.Message);
-        throw;
-      }
+      await _invokeReceptorAsync(receptor, invocationCtx, cancellationToken).ConfigureAwait(false);
     }
 
     // Process message tags after all receptors complete at the current lifecycle stage
-    // This enables notification hooks to fire when events are consumed from transport
-    // (e.g., BffService consuming AccountCreatedEvent from UserService)
-    var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
-    if (tagProcessor is not null) {
-      Console.WriteLine($"[RECEPTOR INVOKER] Processing tags for {messageType.Name} at stage {stage}");
-      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope: null, cancellationToken).ConfigureAwait(false);
+    await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Extracts the payload from an envelope, unwrapping Routed&lt;T&gt; wrappers.
+  /// Returns null if the message should be skipped (RoutedNone or null value).
+  /// </summary>
+  private static object? _extractMessage(IMessageEnvelope envelope) {
+    var message = envelope.Payload;
+
+    // Unwrap Routed<T> if the payload contains a routing wrapper
+    if (message is Dispatch.IRouted routed) {
+      if (routed.Mode == Dispatch.DispatchModes.None || routed.Value == null) {
+        return null;
+      }
+      message = routed.Value;
+    }
+
+    return message;
+  }
+
+  /// <summary>
+  /// Establishes security context from the envelope via the registered security provider.
+  /// Sets the scope context accessor if security context is established.
+  /// </summary>
+  private async ValueTask<IScopeContext?> _establishSecurityContextAsync(
+      IMessageEnvelope envelope,
+      CancellationToken cancellationToken) {
+    var securityProvider = _scopedProvider.GetService<IMessageSecurityContextProvider>();
+    if (securityProvider is null) {
+      return null;
+    }
+
+    var securityContext = await securityProvider
+      .EstablishContextAsync(envelope, _scopedProvider, cancellationToken)
+      .ConfigureAwait(false);
+
+    if (securityContext is not null) {
+      var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
+      if (accessor is not null) {
+        accessor.Current = securityContext;
+      }
+    }
+
+    return securityContext;
+  }
+
+  /// <summary>
+  /// Extracts caller info from the first Current hop in the envelope (captured at dispatch time).
+  /// </summary>
+  private static CallerInfo? _extractCallerInfo(IMessageEnvelope envelope) {
+    if (envelope.Hops is not { Count: > 0 }) {
+      return null;
+    }
+
+    for (int i = 0; i < envelope.Hops.Count; i++) {
+      var hop = envelope.Hops[i];
+      if (hop.Type == HopType.Current && hop.CallerMemberName is not null) {
+        return new CallerInfo(
+            hop.CallerMemberName,
+            hop.CallerFilePath ?? string.Empty,
+            hop.CallerLineNumber ?? 0);
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Sets message context from envelope for injectable IMessageContext.
+  /// Establishes ImmutableScopeContext with propagation when security extraction failed but envelope has scope.
+  /// </summary>
+  private async ValueTask _setMessageContextAsync(
+      IMessageContextAccessor messageContextAccessor,
+      IMessageEnvelope envelope,
+      IScopeContext? securityContext,
+      CallerInfo? callerInfo,
+      CancellationToken cancellationToken) {
+    IScopeContext? scopeForContext = securityContext ?? envelope.GetCurrentScope();
+
+    // When extraction fails but envelope has scope, wrap in ImmutableScopeContext with propagation
+    if (securityContext is null && scopeForContext is not null) {
+      scopeForContext = await _promoteScopeWithPropagationAsync(scopeForContext, envelope, cancellationToken).ConfigureAwait(false);
+    }
+
+    var messageContext = new MessageContext {
+      MessageId = envelope.MessageId,
+      CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
+      CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
+      Timestamp = envelope.GetMessageTimestamp(),
+      UserId = scopeForContext?.Scope?.UserId,
+      TenantId = scopeForContext?.Scope?.TenantId,
+      ScopeContext = scopeForContext,
+      CallerInfo = callerInfo
+    };
+    messageContextAccessor.Current = messageContext;
+
+    // Set InitiatingContext on IScopeContextAccessor - establishes IMessageContext as SOURCE OF TRUTH
+    var scopeContextAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
+    if (scopeContextAccessor is not null) {
+      scopeContextAccessor.InitiatingContext = messageContext;
     }
   }
 
   /// <summary>
-  /// Extracts parent ActivityContext from message hops for trace correlation.
-  /// Uses the last hop's TraceParent to link receptor spans to the original HTTP request.
+  /// Wraps an existing scope in ImmutableScopeContext with ShouldPropagate=true so that
+  /// CascadeContext.GetSecurityFromAmbient() can find it when receptors return events.
+  /// Also invokes security callbacks.
   /// </summary>
-  private static ActivityContext _extractParentContext(System.Collections.Generic.IReadOnlyList<MessageHop> hops) {
-    var traceParent = hops
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
+  private async ValueTask<IScopeContext> _promoteScopeWithPropagationAsync(
+      IScopeContext scopeForContext,
+      IMessageEnvelope envelope,
+      CancellationToken cancellationToken) {
+    var extraction = new SecurityExtraction {
+      Scope = scopeForContext.Scope,
+      Roles = scopeForContext.Roles,
+      Permissions = scopeForContext.Permissions,
+      SecurityPrincipals = scopeForContext.SecurityPrincipals,
+      Claims = scopeForContext.Claims,
+      ActualPrincipal = scopeForContext.ActualPrincipal,
+      EffectivePrincipal = scopeForContext.EffectivePrincipal,
+      ContextType = scopeForContext.ContextType,
+      Source = "EnvelopeHop"
+    };
+    var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
 
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      return parentContext;
+    // Set on accessor so GetSecurityFromAmbient() can find it
+    var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
+    if (accessor is not null) {
+      accessor.Current = immutableScope;
     }
 
-    return default;
+    // Invoke security callbacks so JDNext's UserContextManagerCallback sets TenantContext
+    var callbacks = _scopedProvider.GetServices<ISecurityContextCallback>();
+    foreach (var callback in callbacks) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await callback.OnContextEstablishedAsync(immutableScope, envelope, _scopedProvider, cancellationToken)
+        .ConfigureAwait(false);
+    }
+
+    return immutableScope;
+  }
+
+  /// <summary>
+  /// Filters receptors during replay/rebuild mode, keeping only those with [FireDuringReplay].
+  /// Returns the original list if not in replay/rebuild mode.
+  /// </summary>
+  private static IReadOnlyList<ReceptorInfo> _filterForReplayMode(
+      IReadOnlyList<ReceptorInfo> receptors,
+      ILifecycleContext? context) {
+    var processingMode = context?.ProcessingMode;
+    if (processingMode is not (ProcessingMode.Replay or ProcessingMode.Rebuild)) {
+      return receptors;
+    }
+
+    var filtered = new List<ReceptorInfo>(receptors.Count);
+    for (int i = 0; i < receptors.Count; i++) {
+      if (receptors[i].FireDuringReplay) {
+        filtered.Add(receptors[i]);
+      }
+    }
+    return filtered;
+  }
+
+  /// <summary>
+  /// Groups parameters for a single receptor invocation to reduce parameter count.
+  /// </summary>
+  private readonly record struct ReceptorInvocationContext(
+    object Message,
+    Type MessageType,
+    IMessageEnvelope Envelope,
+    LifecycleStage Stage,
+    ILifecycleContext? LifecycleContext,
+    CallerInfo? CallerInfo,
+    Guid? ExtractedStreamId,
+    ActivityContext ParentContext);
+
+  /// <summary>
+  /// Invokes a single receptor with tracing, sync awaiting, and event cascading.
+  /// </summary>
+  private async ValueTask _invokeReceptorAsync(
+      ReceptorInfo receptor,
+      ReceptorInvocationContext ctx,
+      CancellationToken cancellationToken) {
+    using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
+      $"Receptor {receptor.ReceptorId}",
+      ActivityKind.Internal,
+      parentContext: ctx.ParentContext);
+    receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
+    receptorActivity?.SetTag("whizbang.receptor.message_type", ctx.MessageType.FullName);
+    receptorActivity?.SetTag("whizbang.lifecycle.stage", ctx.Stage.ToString());
+
+    try {
+      // Await perspective sync if needed - returns SyncContext to set in THIS execution context
+      // (AsyncLocal values set inside child async methods don't flow back to the parent)
+      var syncContext = await _awaitPerspectiveSyncAsync(receptor, ctx.ExtractedStreamId, ctx.LifecycleContext, cancellationToken).ConfigureAwait(false);
+      if (syncContext is not null) {
+        SyncContextAccessor.CurrentContext = syncContext;
+      }
+
+      // Set lifecycle context for runtime-registered receptors (IAcceptsLifecycleContext support)
+      if (ctx.LifecycleContext is not null) {
+        var lifecycleContextAccessor = _scopedProvider.GetService<ILifecycleContextAccessor>();
+        if (lifecycleContextAccessor is not null) {
+          lifecycleContextAccessor.Current = ctx.LifecycleContext;
+        }
+      }
+
+      _logCallerInfo(receptor, ctx.CallerInfo);
+
+      // InvokeAsync is a pre-compiled delegate (no reflection)
+      var result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
+
+      receptorActivity?.SetStatus(ActivityStatusCode.Ok);
+      receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);
+
+      // Cascade any IMessage instances from the receptor's return value
+      if (result is not null && _eventCascader is not null) {
+        await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+      }
+    } catch (Exception ex) {
+      receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      receptorActivity?.SetTag("exception.type", ex.GetType().FullName);
+      receptorActivity?.SetTag("exception.message", ex.Message);
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Checks for [AwaitPerspectiveSync] attributes and awaits sync if needed.
+  /// Returns the last SyncContext so the caller can set it on the ambient AsyncLocal
+  /// (AsyncLocal values set inside child async methods don't flow back to the parent).
+  /// </summary>
+  private async ValueTask<SyncContext?> _awaitPerspectiveSyncAsync(
+      ReceptorInfo receptor,
+      Guid? extractedStreamId,
+      ILifecycleContext? context,
+      CancellationToken cancellationToken) {
+    if (_syncAwaiter is null || receptor.SyncAttributes is not { Count: > 0 }) {
+      return null;
+    }
+
+    SyncContext? lastSyncContext = null;
+    foreach (var syncAttr in receptor.SyncAttributes) {
+      var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
+      SyncResult syncResult;
+
+      if (extractedStreamId.HasValue) {
+        (syncResult, lastSyncContext) = await _awaitStreamSyncAsync(syncAttr, extractedStreamId.Value, timeout, context, cancellationToken).ConfigureAwait(false);
+      } else {
+        // Fall back to scope-based sync when no stream ID extractor
+        var syncOptions = syncAttr.EventTypes is { Count: > 0 }
+            ? SyncFilter.ForEventTypes([.. syncAttr.EventTypes]).WithTimeout(timeout).Build()
+            : SyncFilter.CurrentScope().WithTimeout(timeout).Build();
+
+        syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
+      }
+
+      // If FireBehavior is FireOnSuccess and we timed out, throw an exception
+      if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
+        throw new PerspectiveSyncTimeoutException(
+            syncAttr.PerspectiveType,
+            timeout,
+            $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
+      }
+    }
+
+    return lastSyncContext;
+  }
+
+  /// <summary>
+  /// Awaits stream-based sync and creates SyncContext for receptor access.
+  /// Returns both the SyncResult and the SyncContext so the caller can set it
+  /// on the ambient AsyncLocal in the correct execution context.
+  /// </summary>
+  private async ValueTask<(SyncResult Result, SyncContext Context)> _awaitStreamSyncAsync(
+      ReceptorSyncAttributeInfo syncAttr,
+      Guid streamId,
+      TimeSpan timeout,
+      ILifecycleContext? context,
+      CancellationToken cancellationToken) {
+    var eventTypes = syncAttr.EventTypes?.ToArray();
+    // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
+    var syncResult = await _syncAwaiter!.WaitForStreamAsync(
+        syncAttr.PerspectiveType,
+        streamId,
+        eventTypes,
+        timeout,
+        eventIdToAwait: context?.EventId,
+        cancellationToken).ConfigureAwait(false);
+
+    // Create SyncContext - caller sets it on AsyncLocal to ensure it flows to receptor
+    var syncContext = new SyncContext {
+      StreamId = streamId,
+      PerspectiveType = syncAttr.PerspectiveType,
+      Outcome = syncResult.Outcome,
+      EventsAwaited = syncResult.EventsAwaited,
+      ElapsedTime = syncResult.ElapsedTime,
+      FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
+    };
+
+    return (syncResult, syncContext);
+  }
+
+  /// <summary>
+  /// Logs caller info for debugging dispatch-to-receptor traceability.
+  /// </summary>
+  private void _logCallerInfo(ReceptorInfo receptor, CallerInfo? callerInfo) {
+    if (callerInfo is null) {
+      return;
+    }
+
+    _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");
+    if (_logger is not null) {
+      var callerInfoString = callerInfo.ToString();
+      Log.ReceptorInvokedFromCaller(_logger, receptor.ReceptorId, callerInfoString);
+    }
+  }
+
+  /// <summary>
+  /// Processes message tags after all receptors complete at the current lifecycle stage.
+  /// </summary>
+  private async ValueTask _processTagsAsync(
+      object message,
+      Type messageType,
+      LifecycleStage stage,
+      IScopeContext? scope,
+      CancellationToken cancellationToken) {
+    var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
+    if (tagProcessor is not null) {
+      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  private static partial class Log {
+    [LoggerMessage(
+      EventId = 1,
+      Level = LogLevel.Debug,
+      Message = "Invoking receptor {ReceptorId} called from {CallerInfo}")]
+    public static partial void ReceptorInvokedFromCaller(ILogger logger, string receptorId, string callerInfo);
   }
 }
 

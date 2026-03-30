@@ -12,7 +12,7 @@ TUnit is a modern, source-generation-based testing framework that works fundamen
 2. [TUnit Test Patterns](#tunit-test-patterns)
 3. [Rocks Mocking Library](#rocks-mocking-library)
 4. [Bogus Fake Data Generation](#bogus-fake-data-generation)
-5. [Common Mistakes](#common-mistakes)
+5. [Common Mistakes](#common-mistakes) (includes **Mistake 7: NEVER use Task.Delay in tests**)
 
 ---
 
@@ -571,6 +571,43 @@ var order = new Order { Id = Guid.NewGuid() };
 // CORRECT - UUIDv7 is time-ordered, database-friendly
 var order = new Order { Id = Guid.CreateVersion7() };
 ```
+
+### ❌ Mistake 7: Using Task.Delay or polling in async tests (CRITICAL)
+
+**NEVER use `Task.Delay`, `Thread.Sleep`, or polling loops to wait for async operations in tests.** These create race conditions that cause flaky failures under CI load. Increasing timeouts is NOT a fix — it masks the problem.
+
+**Always use proper synchronization primitives** in test fakes/helpers:
+
+```csharp
+// ❌ WRONG - Flaky under load, race condition
+sut.QueueMessage(message);
+await Task.Delay(500); // Hope the timer fires in time
+await Assert.That(fakeCoordinator.CallCount).IsGreaterThanOrEqualTo(1);
+
+// ❌ ALSO WRONG - Polling is just Task.Delay with extra steps
+await AsyncTestHelpers.WaitForConditionAsync(
+  () => fakeCoordinator.CallCount >= 1,
+  TimeSpan.FromSeconds(5));
+
+// ✅ CORRECT - Deterministic completion signal
+// In the test fake:
+public class FakeCoordinator {
+  private readonly SemaphoreSlim _called = new(0, 1);
+  public Task WaitForCallAsync(TimeSpan timeout) => _called.WaitAsync(timeout);
+  public Task ProcessWorkBatchAsync(...) {
+    // ... do work ...
+    _called.Release();
+    return Task.CompletedTask;
+  }
+}
+
+// In the test:
+sut.QueueMessage(message);
+await fakeCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(10)); // Signal, not delay
+await Assert.That(fakeCoordinator.CallCount).IsGreaterThanOrEqualTo(1);
+```
+
+**Boy Scout Rule applies**: when encountering existing tests that use `Task.Delay` or polling, refactor them to use completion signals.
 
 ---
 

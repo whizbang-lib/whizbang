@@ -13,19 +13,33 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_DisposeMultipleTimes_DoesNotThrowAsync</tests>
+/// <remarks>
+/// Initializes a new instance of AzureServiceBusSubscription.
+/// </remarks>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Subscription lifecycle logging - infrequent pause/resume/dispose operations")]
-public class AzureServiceBusSubscription : ISubscription {
-  private readonly ServiceBusProcessor _processor;
+public sealed class AzureServiceBusSubscription : ISubscription {
+  private readonly ServiceBusProcessor? _processor;
+  private readonly ServiceBusSessionProcessor? _sessionProcessor;
   private readonly ILogger _logger;
   private bool _isDisposed;
 
   /// <summary>
-  /// Initializes a new instance of AzureServiceBusSubscription.
+  /// Creates a subscription wrapping a standard (non-session) processor.
   /// </summary>
   public AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) {
     _processor = processor ?? throw new ArgumentNullException(nameof(processor));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   }
+
+  /// <summary>
+  /// Creates a subscription wrapping a session processor for FIFO ordering.
+  /// </summary>
+  public AzureServiceBusSubscription(ServiceBusSessionProcessor sessionProcessor, ILogger logger) {
+    _sessionProcessor = sessionProcessor ?? throw new ArgumentNullException(nameof(sessionProcessor));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  }
+
+  private bool _isProcessing => _processor?.IsProcessing ?? _sessionProcessor?.IsProcessing ?? false;
 
   /// <inheritdoc />
   /// <remarks>
@@ -107,11 +121,19 @@ public class AzureServiceBusSubscription : ISubscription {
     IsActive = false;
 
     // Stop processing and dispose
-    if (_processor.IsProcessing) {
-      _processor.StopProcessingAsync().GetAwaiter().GetResult();
+    if (_isProcessing) {
+      if (_processor is not null) {
+        _processor.StopProcessingAsync().GetAwaiter().GetResult();
+      } else if (_sessionProcessor is not null) {
+        _sessionProcessor.StopProcessingAsync().GetAwaiter().GetResult();
+      }
     }
 
-    _processor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    if (_processor is not null) {
+      _processor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    } else if (_sessionProcessor is not null) {
+      _sessionProcessor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
 
     _logger.LogInformation("Disposed Service Bus subscription");
 

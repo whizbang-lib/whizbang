@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
@@ -7,7 +8,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <summary>
 /// Handles RabbitMQ connection establishment with retry and exponential backoff.
 /// </summary>
-/// <docs>components/transports/rabbitmq#connection-retry</docs>
+/// <docs>messaging/transports/rabbitmq#connection-retry</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs</tests>
 public sealed partial class RabbitMQConnectionRetry {
   private readonly RabbitMQOptions _options;
@@ -73,7 +74,6 @@ public sealed partial class RabbitMQConnectionRetry {
     ArgumentNullException.ThrowIfNull(factory);
 
     var currentDelay = _options.InitialRetryDelay;
-    Exception? lastException = null;
     var attempt = 0;
 
     while (true) {
@@ -81,43 +81,74 @@ public sealed partial class RabbitMQConnectionRetry {
       cancellationToken.ThrowIfCancellationRequested();
 
       try {
-        if (_logger is not null) {
-          LogConnectionAttempt(_logger, attempt);
-        }
-
+        _logConnectionAttempt(attempt);
         var connection = await factory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        if (attempt > 1 && _logger is not null) {
-          LogConnectionEstablished(_logger, attempt);
-        }
-
+        _logConnectionSuccess(attempt);
         return connection;
       } catch (BrokerUnreachableException ex) {
-        lastException = ex;
-
-        // During initial retry phase, log each failure as warning
-        if (attempt <= _options.InitialRetryAttempts) {
-          if (_logger is not null) {
-            LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
-          }
-        } else if (!_options.RetryIndefinitely) {
-          // Not retrying indefinitely - throw after initial attempts
-          if (_logger is not null) {
-            LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
-          }
-          throw;
-        } else {
-          // Retrying indefinitely - log less frequently (every 10 attempts)
-          if (_logger is not null && attempt % 10 == 0) {
-            LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
-          }
-        }
-
+        _handleRetryOrRethrow(ex, attempt, currentDelay);
         await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
-
-        // Calculate next delay with exponential backoff (capped at MaxRetryDelay)
         currentDelay = CalculateNextDelay(currentDelay);
       }
+    }
+  }
+
+  /// <summary>
+  /// Logs a connection attempt if a logger is available.
+  /// </summary>
+  private void _logConnectionAttempt(int attempt) {
+    if (_logger is not null) {
+      LogConnectionAttempt(_logger, attempt);
+    }
+  }
+
+  /// <summary>
+  /// Logs a successful connection if it took more than one attempt.
+  /// </summary>
+  private void _logConnectionSuccess(int attempt) {
+    if (attempt > 1 && _logger is not null) {
+      LogConnectionEstablished(_logger, attempt);
+    }
+  }
+
+  /// <summary>
+  /// Handles retry logic: logs and optionally rethrows based on retry configuration.
+  /// </summary>
+  private void _handleRetryOrRethrow(BrokerUnreachableException ex, int attempt, TimeSpan currentDelay) {
+    if (attempt <= _options.InitialRetryAttempts) {
+      _logRetryAttempt(ex, attempt, currentDelay);
+    } else if (!_options.RetryIndefinitely) {
+      _logAndRethrowConnectionFailure(ex);
+    } else {
+      _logIndefiniteRetry(attempt, currentDelay);
+    }
+  }
+
+  /// <summary>
+  /// Logs a retry attempt during the initial retry window.
+  /// </summary>
+  private void _logRetryAttempt(BrokerUnreachableException ex, int attempt, TimeSpan currentDelay) {
+    if (_logger is not null) {
+      LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
+    }
+  }
+
+  /// <summary>
+  /// Logs the final failure and rethrows when not retrying indefinitely.
+  /// </summary>
+  private void _logAndRethrowConnectionFailure(BrokerUnreachableException ex) {
+    if (_logger is not null) {
+      LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
+    }
+    ExceptionDispatchInfo.Throw(ex);
+  }
+
+  /// <summary>
+  /// Logs periodic status updates during indefinite retry.
+  /// </summary>
+  private void _logIndefiniteRetry(int attempt, TimeSpan currentDelay) {
+    if (_logger is not null && attempt % 10 == 0) {
+      LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
     }
   }
 

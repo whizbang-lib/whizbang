@@ -129,22 +129,22 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -212,10 +212,17 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
 
   private sealed class SynchronizedDatabaseReadinessCheck : IDatabaseReadinessCheck {
     private readonly TaskCompletionSource _becameReadySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _notReadyCheckReceivedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool IsReady { get; set; } = true;
 
     public Task BecameReady => _becameReadySignal.Task;
+
+    /// <summary>
+    /// Task that completes when IsReadyAsync has been called at least once while not ready.
+    /// Use this instead of Task.Delay to verify the worker has polled during the not-ready state.
+    /// </summary>
+    public Task NotReadyCheckReceived => _notReadyCheckReceivedSignal.Task;
 
     public void SetReady() {
       IsReady = true;
@@ -223,6 +230,9 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
     }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      if (!IsReady) {
+        _notReadyCheckReceivedSignal.TrySetResult();
+      }
       return Task.FromResult(IsReady);
     }
   }
@@ -464,8 +474,8 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
     // Act - start worker (database NOT ready)
     var workerTask = worker.StartAsync(cts.Token);
 
-    // Give worker time to try processing - nothing should happen
-    await Task.Delay(500, cancellationToken);
+    // Wait for the worker to poll database readiness at least once while not ready
+    await databaseReadiness.NotReadyCheckReceived;
     await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(0)
       .Because("No messages should be published while database is not ready");
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
@@ -503,7 +513,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
+      Flags = WorkBatchOptions.None,
     };
   }
 

@@ -11,6 +11,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_failures(
 DECLARE
   v_failure RECORD;
 BEGIN
+  IF jsonb_array_length(p_failures) = 0 THEN RETURN; END IF;
+
   FOR v_failure IN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,
@@ -25,8 +27,8 @@ BEGIN
         error = v_failure.error_message,
         failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
         attempts = o.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1)
-        scheduled_for = p_now + (INTERVAL '30 seconds' * POWER(2, o.attempts + 1)),
+        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
+        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(o.attempts + 1, 10)), 10)),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE o.message_id = v_failure.msg_id;
@@ -35,4 +37,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.process_outbox_failures IS
-'Processes outbox message failures. Sets Failed flag, records error details, increments attempts, and schedules retry with exponential backoff. Releases lease for reclaiming by other instances.';
+'Processes outbox message failures. Sets Failed flag, records error details, increments attempts, and schedules retry with exponential backoff (capped at 5 minutes). Releases lease for reclaiming by other instances.';

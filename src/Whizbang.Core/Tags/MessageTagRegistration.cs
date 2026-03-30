@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tags;
 /// It provides pre-compiled payload builders for efficient runtime execution.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#registration</docs>
+/// <docs>fundamentals/messages/message-tags#registration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagRegistrationTests.cs</tests>
 public sealed record MessageTagRegistration {
   /// <summary>

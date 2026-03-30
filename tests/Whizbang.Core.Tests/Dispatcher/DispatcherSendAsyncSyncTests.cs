@@ -138,12 +138,9 @@ public class DispatcherSendAsyncSyncTests {
   /// <summary>
   /// Test sync awaiter that tracks when WaitForStreamAsync is called.
   /// </summary>
-  private sealed class TestTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
-    private readonly Func<SyncResult> _onWaitForStreamAsync;
-
-    public TestTrackingSyncAwaiter(Func<SyncResult> onWaitForStreamAsync) {
-      _onWaitForStreamAsync = onWaitForStreamAsync;
-    }
+  private sealed class TestTrackingSyncAwaiter(Func<SyncResult> onWaitForStreamAsync) : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+    private readonly Func<SyncResult> _onWaitForStreamAsync = onWaitForStreamAsync;
 
     public Task<SyncResult> WaitAsync(Type perspectiveType, PerspectiveSyncOptions options, CancellationToken ct = default) {
       return Task.FromResult(_onWaitForStreamAsync());
@@ -167,12 +164,8 @@ public class DispatcherSendAsyncSyncTests {
   /// <summary>
   /// Test receptor registry that returns a receptor with SyncAttributes.
   /// </summary>
-  private sealed class TestSyncReceptorRegistry : IReceptorRegistry {
-    private readonly Action _onInvoke;
-
-    public TestSyncReceptorRegistry(Action onInvoke) {
-      _onInvoke = onInvoke;
-    }
+  private sealed class TestSyncReceptorRegistry(Action onInvoke) : IReceptorRegistry {
+    private readonly Action _onInvoke = onInvoke;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType == typeof(TestSyncCommand) &&
@@ -181,7 +174,7 @@ public class DispatcherSendAsyncSyncTests {
           new ReceptorInfo(
             MessageType: typeof(TestSyncCommand),
             ReceptorId: "TestSyncReceptor",
-            InvokeAsync: (sp, msg, ct) => {
+            InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
               _onInvoke();
               return ValueTask.FromResult<object?>(new TestSyncResult(true));
             },
@@ -198,6 +191,11 @@ public class DispatcherSendAsyncSyncTests {
       }
       return [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   /// <summary>

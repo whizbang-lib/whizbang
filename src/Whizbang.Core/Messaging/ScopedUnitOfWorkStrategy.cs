@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
-public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
+public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private DispatchUnitOfWork? _currentUnit;
   private bool _disposed;
 
@@ -61,7 +61,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
     if (_currentUnit?.UnitId == unitId) {
       return _currentUnit.Messages.AsReadOnly();
     }
-    return Array.Empty<object>();
+    return [];
   }
 
   /// <inheritdoc />
@@ -82,7 +82,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
     }
 
     // Flush current unit if it has messages
-    if (_currentUnit != null && _currentUnit.Messages.Count > 0) {
+    if (_currentUnit?.Messages.Count > 0) {
       if (OnFlushRequested != null) {
         try {
           await OnFlushRequested.Invoke(_currentUnit.UnitId, CancellationToken.None);

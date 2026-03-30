@@ -45,7 +45,7 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// Event returned from command handler - will be cascaded.
   /// Uses [DefaultRouting(Outbox)] to go through outbox storage path.
   /// </summary>
-  [DefaultRouting(DispatchMode.Outbox)]
+  [DefaultRouting(DispatchModes.Outbox)]
   public record CascadeTestEvent([property: StreamId] Guid StreamId, string ProcessedData) : IEvent;
 
   /// <summary>
@@ -79,12 +79,8 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// Command handler that returns an event to be cascaded.
   /// Captures the scope context during execution.
   /// </summary>
-  public class CascadeTestCommandReceptor : IReceptor<CascadeTestCommand, (CascadeTestResult, CascadeTestEvent)> {
-    private readonly IScopeContextAccessor _scopeContextAccessor;
-
-    public CascadeTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) {
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  public class CascadeTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<CascadeTestCommand, (CascadeTestResult, CascadeTestEvent)> {
+    private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<(CascadeTestResult, CascadeTestEvent)> HandleAsync(
       CascadeTestCommand message,
@@ -118,7 +114,7 @@ public class DispatcherCascadeSecurityPropagationTests {
     var command = new CascadeTestCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with explicit tenant
-    await dispatcher.AsSystem().WithTenant("target-tenant-123").SendAsync(command);
+    await dispatcher.AsSystem().ForTenant("target-tenant-123").SendAsync(command);
 
     // Assert - Handler should have seen the scope context with TenantId
     await Assert.That(CascadeSecurityTracker.WasCalled).IsTrue();
@@ -126,7 +122,7 @@ public class DispatcherCascadeSecurityPropagationTests {
     await Assert.That(CascadeSecurityTracker.CapturedScopeContext!.Scope.TenantId)
       .IsEqualTo("target-tenant-123");
 
-    // Assert - The cascaded event should have TenantId in the envelope's hop SecurityContext
+    // Assert - The cascaded event should have TenantId in the envelope's hop Scope
     await Assert.That(outboxCapture.CapturedMessages).Count().IsGreaterThanOrEqualTo(1);
 
     var outboxMsg = outboxCapture.CapturedMessages[0];
@@ -134,8 +130,9 @@ public class DispatcherCascadeSecurityPropagationTests {
     await Assert.That(outboxMsg.Metadata.Hops).Count().IsGreaterThanOrEqualTo(1);
 
     var hop = outboxMsg.Metadata.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNotNull();
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("target-tenant-123");
+    await Assert.That(hop.Scope).IsNotNull();
+    var firstHopScope = hop.Scope?.ApplyTo(null);
+    await Assert.That(firstHopScope?.Scope?.TenantId).IsEqualTo("target-tenant-123");
   }
 
   /// <summary>
@@ -153,7 +150,7 @@ public class DispatcherCascadeSecurityPropagationTests {
     var command = new CascadeTestCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with tenant and user
-    await dispatcher.RunAs("user@example.com").WithTenant("tenant-456").SendAsync(command);
+    await dispatcher.RunAs("user@example.com").ForTenant("tenant-456").SendAsync(command);
 
     // Assert - Handler should have seen the scope context
     await Assert.That(CascadeSecurityTracker.WasCalled).IsTrue();
@@ -163,16 +160,17 @@ public class DispatcherCascadeSecurityPropagationTests {
     await Assert.That(CascadeSecurityTracker.CapturedScopeContext!.Scope.UserId)
       .IsEqualTo("user@example.com");
 
-    // Assert - The cascaded event should have both TenantId and UserId in SecurityContext
+    // Assert - The cascaded event should have both TenantId and UserId in Scope
     await Assert.That(outboxCapture.CapturedMessages).Count().IsGreaterThanOrEqualTo(1);
 
     var outboxMsg = outboxCapture.CapturedMessages[0];
     await Assert.That(outboxMsg.Metadata).IsNotNull();
 
     var hop = outboxMsg.Metadata.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNotNull();
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("tenant-456");
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user@example.com");
+    await Assert.That(hop.Scope).IsNotNull();
+    var firstHopScope = hop.Scope?.ApplyTo(null);
+    await Assert.That(firstHopScope?.Scope?.TenantId).IsEqualTo("tenant-456");
+    await Assert.That(firstHopScope?.Scope?.UserId).IsEqualTo("user@example.com");
   }
 
   /// <summary>
@@ -180,11 +178,12 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// cascaded events should still work (no security context).
   /// </summary>
   [Test]
-  public async Task NoSecurityContext_CascadedEvents_HaveNullSecurityContextAsync() {
+  public async Task NoSecurityContext_CascadedEvents_HaveNullScopeAsync() {
     // Arrange
     CascadeSecurityTracker.Reset();
-    var scopeContextAccessor = new ScopeContextAccessor();
-    scopeContextAccessor.Current = null; // No security context
+    var scopeContextAccessor = new ScopeContextAccessor {
+      Current = null // No security context
+    };
     var outboxCapture = new OutboxMessageCapture();
     var (dispatcher, _) = _createDispatcherWithOutboxCapture(scopeContextAccessor, outboxCapture);
 
@@ -196,23 +195,23 @@ public class DispatcherCascadeSecurityPropagationTests {
     // Assert - Handler ran
     await Assert.That(CascadeSecurityTracker.WasCalled).IsTrue();
 
-    // Assert - The cascaded event should have null SecurityContext
+    // Assert - The cascaded event should have null Scope
     await Assert.That(outboxCapture.CapturedMessages).Count().IsGreaterThanOrEqualTo(1);
 
     var outboxMsg = outboxCapture.CapturedMessages[0];
     await Assert.That(outboxMsg.Metadata).IsNotNull();
 
     var hop = outboxMsg.Metadata.Hops[0];
-    // SecurityContext should be null when no context was set
-    await Assert.That(hop.SecurityContext).IsNull();
+    // Scope should be null when no context was set
+    await Assert.That(hop.Scope).IsNull();
   }
 
   /// <summary>
   /// When using ambient scope context (not DispatcherSecurityBuilder),
-  /// cascaded events should still inherit the SecurityContext.
+  /// cascaded events should still inherit the Scope.
   /// </summary>
   [Test]
-  public async Task AmbientScopeContext_CascadedEvents_InheritSecurityContextAsync() {
+  public async Task AmbientScopeContext_CascadedEvents_InheritScopeAsync() {
     // Arrange
     CascadeSecurityTracker.Reset();
     var scopeContextAccessor = new ScopeContextAccessor();
@@ -232,14 +231,15 @@ public class DispatcherCascadeSecurityPropagationTests {
     // Act - Dispatch using ambient context
     await dispatcher.SendAsync(command);
 
-    // Assert - The cascaded event should have SecurityContext from ambient
+    // Assert - The cascaded event should have Scope from ambient
     await Assert.That(outboxCapture.CapturedMessages).Count().IsGreaterThanOrEqualTo(1);
 
     var outboxMsg = outboxCapture.CapturedMessages[0];
     var hop = outboxMsg.Metadata.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNotNull();
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("ambient-tenant");
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("ambient-user");
+    await Assert.That(hop.Scope).IsNotNull();
+    var firstHopScope = hop.Scope?.ApplyTo(null);
+    await Assert.That(firstHopScope?.Scope?.TenantId).IsEqualTo("ambient-tenant");
+    await Assert.That(firstHopScope?.Scope?.UserId).IsEqualTo("ambient-user");
   }
 
   // ============================================
@@ -252,12 +252,12 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// </summary>
   public class OutboxMessageCapture : IWorkCoordinatorStrategy {
     private readonly List<OutboxMessage> _capturedMessages = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public IReadOnlyList<OutboxMessage> CapturedMessages {
       get {
         lock (_lock) {
-          return _capturedMessages.ToList();
+          return [.. _capturedMessages];
         }
       }
     }
@@ -288,7 +288,7 @@ public class DispatcherCascadeSecurityPropagationTests {
       // Not needed for these tests
     }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       // Return empty work batch - we just want to capture the messages
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }

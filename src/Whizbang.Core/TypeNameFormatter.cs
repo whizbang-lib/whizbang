@@ -90,4 +90,73 @@ public static class TypeNameFormatter {
       return false;
     }
   }
+
+  /// <summary>
+  /// Extracts the full type name (namespace + type) without assembly qualifier or global:: prefix.
+  /// Handles all common formats: assembly-qualified, global:: prefixed, simple names.
+  /// </summary>
+  /// <example>
+  /// "MyApp.Events.OrderCreated, MyApp" → "MyApp.Events.OrderCreated"
+  /// "global::MyApp.Events.OrderCreated" → "MyApp.Events.OrderCreated"
+  /// "MyApp.Events.OrderCreated" → "MyApp.Events.OrderCreated"
+  /// </example>
+  public static string GetFullName(string typeName) {
+    if (string.IsNullOrEmpty(typeName)) {
+      return typeName;
+    }
+
+    var result = typeName;
+
+    // Strip global:: prefix
+    if (result.StartsWith("global::", StringComparison.Ordinal)) {
+      result = result[8..];
+    }
+
+    // Strip assembly qualifier (everything after first comma)
+    var commaIndex = result.IndexOf(',');
+    if (commaIndex >= 0) {
+      result = result[..commaIndex].Trim();
+    }
+
+    return result;
+  }
+
+  /// <summary>
+  /// Extracts just the simple type name (no namespace, no assembly).
+  /// Preserves nested type separators (+).
+  /// </summary>
+  /// <example>
+  /// "MyApp.Events.OrderCreated, MyApp" → "OrderCreated"
+  /// "global::MyApp.Events.OrderCreated" → "OrderCreated"
+  /// "MyApp.Events.SessionContracts+EndedEvent" → "SessionContracts+EndedEvent"
+  /// </example>
+  public static string GetSimpleName(string typeName) {
+    if (string.IsNullOrEmpty(typeName)) {
+      return typeName;
+    }
+
+    var fullName = GetFullName(typeName);
+
+    var lastDot = fullName.LastIndexOf('.');
+    return lastDot >= 0 ? fullName[(lastDot + 1)..] : fullName;
+  }
+
+  /// <summary>
+  /// Extracts the namespace from a type name string.
+  /// </summary>
+  /// <example>
+  /// "MyApp.Events.OrderCreated, MyApp" → "MyApp.Events"
+  /// "global::MyApp.Events.OrderCreated" → "MyApp.Events"
+  /// "OrderCreated" → null
+  /// </example>
+  public static string? GetNamespace(string typeName) {
+    if (string.IsNullOrEmpty(typeName)) {
+      return null;
+    }
+
+    var fullName = GetFullName(typeName);
+
+    var lastDot = fullName.LastIndexOf('.');
+    return lastDot >= 0 ? fullName[..lastDot] : null;
+  }
 }

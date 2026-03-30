@@ -199,8 +199,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
 /// Used to test that core Whizbang tables are created even without custom perspectives.
 /// </summary>
 [WhizbangDbContext(Schema = "public")]
-public partial class MinimalDbContext : DbContext {
-  public MinimalDbContext(DbContextOptions<MinimalDbContext> options) : base(options) { }
+public partial class MinimalDbContext(DbContextOptions<MinimalDbContext> options) : DbContext(options) {
 
   // No user-defined DbSets or perspectives - only core Whizbang tables should be configured
 }

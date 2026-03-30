@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tags;
 /// tag registrations without requiring generated code.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#registry</docs>
+/// <docs>fundamentals/messages/message-tags#registry</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
 public interface IMessageTagRegistry {
   /// <summary>

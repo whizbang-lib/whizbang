@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// complex object hierarchies.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/polymorphic-types</docs>
+/// <docs>fundamentals/perspectives/polymorphic-types</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc/>
@@ -50,13 +50,14 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
-      if (!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) || iface.TypeArguments.Length < 2) {
+      if ((!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveWithActionsFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveBase", StringComparison.Ordinal)) || iface.TypeArguments.Length < 2) {
         continue;
       }
 
       // TModel is the first type argument
-      var modelType = iface.TypeArguments[0] as INamedTypeSymbol;
-      if (modelType == null) {
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
         continue;
       }
 
@@ -76,58 +77,113 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Skip system types
-    if (type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
-        !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal)) {
+    // Skip system types (except collections)
+    if (_isNonCollectionSystemType(type)) {
       return;
     }
 
     foreach (var member in type.GetMembers().OfType<IPropertySymbol>()) {
-      // Skip static, indexers, and write-only properties
-      if (member.IsStatic || member.IsIndexer || member.IsWriteOnly) {
-        continue;
-      }
+      _checkPropertyForPolymorphicTypes(context, member, type, visited);
+    }
+  }
 
-      // Skip properties marked as not mapped/ignored
-      if (_isPropertyIgnored(member)) {
-        continue;
-      }
+  /// <summary>
+  /// Checks a single property for polymorphic types and recursively inspects nested types.
+  /// </summary>
+  private static void _checkPropertyForPolymorphicTypes(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      HashSet<INamedTypeSymbol> visited) {
 
-      var propType = member.Type as INamedTypeSymbol;
-      if (propType == null) {
-        continue;
-      }
+    if (_shouldSkipProperty(member)) {
+      return;
+    }
 
-      // Get the element type if this is a collection
-      var elementType = _getCollectionElementType(propType);
-      var typeToCheck = elementType ?? propType;
+    if (member.Type is not INamedTypeSymbol propType) {
+      return;
+    }
 
-      // Check if this property type is polymorphic (abstract or has [JsonPolymorphic])
-      if (_isPolymorphicType(typeToCheck)) {
-        var diagnostic = Diagnostic.Create(
-            DiagnosticDescriptors.PerspectiveModelPolymorphicProperty,
-            member.Locations.FirstOrDefault() ?? Location.None,
-            member.Name,
-            type.Name,
-            typeToCheck.Name);
-        context.ReportDiagnostic(diagnostic);
-        continue;
-      }
+    // Get the element type if this is a collection
+    var elementType = _getCollectionElementType(propType);
+    var typeToCheck = elementType ?? propType;
 
-      // Recursively check nested class/struct types
-      if (typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) {
-        if (!_isSystemPrimitiveType(typeToCheck)) {
-          _checkForPolymorphicTypes(context, typeToCheck, visited);
-        }
-      }
+    // Check if this property type is polymorphic (abstract or has [JsonPolymorphic])
+    if (_isPolymorphicType(typeToCheck)) {
+      _reportPolymorphicDiagnostic(context, member, containingType, typeToCheck);
+      return;
+    }
 
-      // Check generic type arguments (e.g., List<NestedType> where NestedType has polymorphic property)
-      foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-        if (!_isSystemPrimitiveType(typeArg) && !_isPolymorphicType(typeArg)) {
-          _checkForPolymorphicTypes(context, typeArg, visited);
-        }
+    // Recursively check nested class/struct types
+    _checkNestedTypeForPolymorphic(context, typeToCheck, visited);
+
+    // Check generic type arguments (e.g., List<NestedType> where NestedType has polymorphic property)
+    _checkTypeArgumentsForPolymorphic(context, propType, visited);
+  }
+
+  /// <summary>
+  /// Recursively checks a nested class/struct type for polymorphic properties.
+  /// </summary>
+  private static void _checkNestedTypeForPolymorphic(
+      SymbolAnalysisContext context,
+      INamedTypeSymbol typeToCheck,
+      HashSet<INamedTypeSymbol> visited) {
+
+    if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
+        !_isSystemPrimitiveType(typeToCheck)) {
+      _checkForPolymorphicTypes(context, typeToCheck, visited);
+    }
+  }
+
+  /// <summary>
+  /// Checks if a type is a System namespace type that is NOT a collections type.
+  /// </summary>
+  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
+    return type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
+           !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Checks if a property should be skipped during analysis (static, indexer, write-only, or ignored).
+  /// </summary>
+  private static bool _shouldSkipProperty(IPropertySymbol member) {
+    return member.IsStatic || member.IsIndexer || member.IsWriteOnly || _isPropertyIgnored(member);
+  }
+
+  /// <summary>
+  /// Reports a WHIZ811 diagnostic for a polymorphic property.
+  /// </summary>
+  private static void _reportPolymorphicDiagnostic(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol polymorphicType) {
+
+    var diagnostic = Diagnostic.Create(
+        DiagnosticDescriptors.PerspectiveModelPolymorphicProperty,
+        member.Locations.FirstOrDefault() ?? Location.None,
+        member.Name,
+        containingType.Name,
+        polymorphicType.Name);
+    context.ReportDiagnostic(diagnostic);
+  }
+
+  /// <summary>
+  /// Checks generic type arguments for polymorphic types or nested types containing polymorphic properties.
+  /// </summary>
+  private static void _checkTypeArgumentsForPolymorphic(
+      SymbolAnalysisContext context,
+      INamedTypeSymbol propType,
+      HashSet<INamedTypeSymbol> visited) {
+
+    // S3267: Loop has side effects (reporting diagnostics, mutating visited set) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
+      if (!_isSystemPrimitiveType(typeArg) && !_isPolymorphicType(typeArg)) {
+        _checkForPolymorphicTypes(context, typeArg, visited);
       }
     }
+#pragma warning restore S3267
   }
 
   /// <summary>

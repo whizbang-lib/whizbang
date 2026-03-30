@@ -417,8 +417,8 @@ public class PolicyContextTests {
   }
 
   // Test helper types
-  private interface ITestService { }
-  private sealed class TestService : ITestService { }
+  private interface ITestService;
+  private sealed class TestService : ITestService;
 
   private sealed class TestServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) {
@@ -427,8 +427,8 @@ public class PolicyContextTests {
   }
 
   // Mock aggregate types for testing MatchesAggregate
-  private sealed class Order { }
-  private sealed class Customer { }
+  private sealed class Order;
+  private sealed class Customer;
 }
 
 /// <summary>
@@ -469,6 +469,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
   public JsonElement? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
   public SecurityContext? GetCurrentSecurityContext() => null;
+  public ScopeContext? GetCurrentScope() => null;
 
   // Explicit implementation of base interface Payload property
   object IMessageEnvelope.Payload => Payload!;

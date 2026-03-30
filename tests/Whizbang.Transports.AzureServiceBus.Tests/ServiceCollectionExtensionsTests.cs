@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Transports.AzureServiceBus.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -98,7 +99,7 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
   public async Task AddAzureServiceBusTransport_WithOptions_AppliesOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var customMaxConcurrentCalls = 10;
+    const int customMaxConcurrentCalls = 10;
 
     // Pre-register the client
     services.AddSingleton(_fixture.Client);
@@ -106,9 +107,7 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
     // Act
     services.AddAzureServiceBusTransport(
       _fixture.ConnectionString,
-      options => {
-        options.MaxConcurrentCalls = customMaxConcurrentCalls;
-      }
+      options => options.MaxConcurrentCalls = customMaxConcurrentCalls
     );
     var provider = services.BuildServiceProvider();
     var transport = provider.GetService<ITransport>();
@@ -137,5 +136,25 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
     // Assert - Health check registration is verified by checking the health check service is available
     var healthCheckService = provider.GetService<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckService>();
     await Assert.That(healthCheckService).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_RegistersMessagePublishStrategy_AsSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton(_fixture.Client);
+    services.AddLogging();
+
+    // Act
+    services.AddAzureServiceBusTransport(_fixture.ConnectionString);
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var strategy1 = provider.GetService<IMessagePublishStrategy>();
+    var strategy2 = provider.GetService<IMessagePublishStrategy>();
+
+    await Assert.That(strategy1).IsNotNull();
+    await Assert.That(strategy2).IsNotNull();
+    await Assert.That(ReferenceEquals(strategy1, strategy2)).IsTrue();
   }
 }

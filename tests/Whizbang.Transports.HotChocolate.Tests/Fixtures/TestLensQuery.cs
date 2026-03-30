@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Whizbang.Core.Lenses;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Fixtures;
@@ -28,7 +29,7 @@ public record ProductReadModel {
 /// Test lens interface for orders.
 /// </summary>
 [GraphQLLens(QueryName = "orders")]
-public interface IOrderLens : ILensQuery<OrderReadModel> { }
+public interface IOrderLens : ILensQuery<OrderReadModel>;
 
 /// <summary>
 /// Test lens interface for products with custom configuration.
@@ -38,7 +39,7 @@ public interface IOrderLens : ILensQuery<OrderReadModel> { }
     EnablePaging = true,
     DefaultPageSize = 10,
     MaxPageSize = 50)]
-public interface IProductLens : ILensQuery<ProductReadModel> { }
+public interface IProductLens : ILensQuery<ProductReadModel>;
 
 /// <summary>
 /// Test lens with filtering only.
@@ -48,17 +49,13 @@ public interface IProductLens : ILensQuery<ProductReadModel> { }
     EnableFiltering = true,
     EnableSorting = false,
     EnablePaging = false)]
-public interface IFilterOnlyLens : ILensQuery<OrderReadModel> { }
+public interface IFilterOnlyLens : ILensQuery<OrderReadModel>;
 
 /// <summary>
 /// In-memory test lens implementation for orders.
 /// </summary>
-public class TestOrderLens : IOrderLens {
-  private readonly List<PerspectiveRow<OrderReadModel>> _data;
-
-  public TestOrderLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestOrderLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) : IOrderLens {
+  private readonly List<PerspectiveRow<OrderReadModel>> _data = data?.ToList() ?? [];
 
   public IQueryable<PerspectiveRow<OrderReadModel>> Query => _data.AsQueryable();
 
@@ -70,17 +67,17 @@ public class TestOrderLens : IOrderLens {
   public void AddData(IEnumerable<PerspectiveRow<OrderReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<OrderReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
 /// In-memory test lens implementation for products.
 /// </summary>
-public class TestProductLens : IProductLens {
-  private readonly List<PerspectiveRow<ProductReadModel>> _data;
-
-  public TestProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) : IProductLens {
+  private readonly List<PerspectiveRow<ProductReadModel>> _data = data?.ToList() ?? [];
 
   public IQueryable<PerspectiveRow<ProductReadModel>> Query => _data.AsQueryable();
 
@@ -92,17 +89,17 @@ public class TestProductLens : IProductLens {
   public void AddData(IEnumerable<PerspectiveRow<ProductReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<ProductReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
 /// In-memory test lens for filter-only tests.
 /// </summary>
-public class TestFilterOnlyLens : IFilterOnlyLens {
-  private readonly List<PerspectiveRow<OrderReadModel>> _data;
-
-  public TestFilterOnlyLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestFilterOnlyLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) : IFilterOnlyLens {
+  private readonly List<PerspectiveRow<OrderReadModel>> _data = data?.ToList() ?? [];
 
   public IQueryable<PerspectiveRow<OrderReadModel>> Query => _data.AsQueryable();
 
@@ -114,6 +111,10 @@ public class TestFilterOnlyLens : IFilterOnlyLens {
   public void AddData(IEnumerable<PerspectiveRow<OrderReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<OrderReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -125,18 +126,14 @@ public class TestFilterOnlyLens : IFilterOnlyLens {
     EnablePaging = true,
     DefaultPageSize = 10,
     MaxPageSize = 50)]
-public interface IPreOrderedProductLens : ILensQuery<ProductReadModel> { }
+public interface IPreOrderedProductLens : ILensQuery<ProductReadModel>;
 
 /// <summary>
 /// In-memory test lens that returns a pre-ordered query.
 /// This simulates application code that applies a default OrderBy before HotChocolate.
 /// </summary>
-public class TestPreOrderedProductLens : IPreOrderedProductLens {
-  private readonly List<PerspectiveRow<ProductReadModel>> _data;
-
-  public TestPreOrderedProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestPreOrderedProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) : IPreOrderedProductLens {
+  private readonly List<PerspectiveRow<ProductReadModel>> _data = data?.ToList() ?? [];
 
   /// <summary>
   /// Returns pre-ordered query - this is the scenario that triggers the bug.
@@ -153,6 +150,10 @@ public class TestPreOrderedProductLens : IPreOrderedProductLens {
   public void AddData(IEnumerable<PerspectiveRow<ProductReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<ProductReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>

@@ -1,17 +1,18 @@
 using System;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core.Security;
+using Whizbang.Core.Events.System;
 using Whizbang.Core.Tracing;
-using Whizbang.Core.ValueObjects;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -45,25 +46,32 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;
   private readonly IPerspectiveStore<__MODEL_TYPE_NAME__> _perspectiveStore;
-  private readonly ILifecycleInvoker _lifecycleInvoker;
+  private readonly IServiceScopeFactory _scopeFactory;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly IPerspectiveSnapshotStore? _snapshotStore;
+  private readonly IOptions<PerspectiveSnapshotOptions>? _snapshotOptions;
+  private int _eventsSinceLastSnapshot;
 
   public __RUNNER_CLASS_NAME__(
       IServiceProvider serviceProvider,
       ILogger<__RUNNER_CLASS_NAME__> logger,
       IEventStore eventStore,
       IPerspectiveStore<__MODEL_TYPE_NAME__> perspectiveStore,
-      ILifecycleInvoker lifecycleInvoker,
-      IOptionsMonitor<TracingOptions>? tracingOptions = null) {
+      IServiceScopeFactory scopeFactory,
+      IOptionsMonitor<TracingOptions>? tracingOptions = null,
+      IPerspectiveSnapshotStore? snapshotStore = null,
+      IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
     _perspectiveStore = perspectiveStore ?? throw new ArgumentNullException(nameof(perspectiveStore));
-    _lifecycleInvoker = lifecycleInvoker ?? throw new ArgumentNullException(nameof(lifecycleInvoker));
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _tracingOptions = tracingOptions;
+    _snapshotStore = snapshotStore;
+    _snapshotOptions = snapshotOptions;
   }
 
-  public async Task<PerspectiveCheckpointCompletion> RunAsync(
+  public async Task<PerspectiveCursorCompletion> RunAsync(
       Guid streamId,
       string perspectiveName,
       Guid? lastProcessedEventId,
@@ -77,7 +85,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
-      _logger.LogInformation(
+      _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
           streamId,
           perspectiveName
@@ -95,6 +103,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
+    PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
 
     // Build list of event types this perspective handles (for polymorphic deserialization)
     var eventTypes = new[] {
@@ -103,18 +112,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       #endregion
     };
 
-    // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
-    var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
-
     try {
       // Materialize events into list for PrePerspective peek and main processing
       // This allows PrePerspective receptors to receive the first event for type-based routing
       var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName} starting ReadPolymorphicAsync for stream {streamId}, lastProcessedEventId={lastProcessedEventId}");
-        Console.WriteLine($"[PerspectiveRunner DIAG] Event types ({eventTypes.Length}): [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-      }
 
       await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
           streamId,
@@ -123,13 +124,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken)) {
 
         events.Add(envelope);
-      }
-
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: ReadPolymorphicAsync returned {events.Count} events");
-        if (events.Count == 0) {
-          Console.WriteLine("[PerspectiveRunner DIAG] ⚠️ NO EVENTS FOUND - perspective will return None status");
-        }
       }
 
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
@@ -141,27 +135,30 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           StreamId = streamId,
           PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           EventId = null,  // No specific event ID yet (haven't processed)
-          LastProcessedEventId = lastProcessedEventId
+          LastProcessedEventId = lastProcessedEventId,
+          ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
         };
 
         // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing)
         // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
         // However, we track it to ensure completion before returning from RunAsync.
-        var preAsyncTask = _lifecycleInvoker.InvokeAsync(
-          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
-          LifecycleStage.PrePerspectiveAsync,
-          context with { CurrentStage = LifecycleStage.PrePerspectiveAsync },
-          cancellationToken
-        ).AsTask();  // Convert ValueTask to Task for tracking
+        var preAsyncTask = Task.Run(async () => {
+          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+          var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveAsync, context with { CurrentStage = LifecycleStage.PrePerspectiveAsync }, cancellationToken);
+          }
+        }, cancellationToken);
         backgroundTasks.Add(preAsyncTask);
 
         // Fire INLINE hooks (blocking, transactional)
-        await _lifecycleInvoker.InvokeAsync(
-          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
-          LifecycleStage.PrePerspectiveInline,
-          context with { CurrentStage = LifecycleStage.PrePerspectiveInline },
-          cancellationToken
-        );
+        {
+          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+          var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveInline, context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
+          }
+        }
       }
 
       // Check if per-event tracing is enabled
@@ -174,6 +171,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Extract event from envelope
         var @event = envelope.Payload;
         var eventTypeName = @event.GetType().Name;
+
+        // Track scope from envelope for perspective upsert
+        var envelopeScope = envelope.GetCurrentScope();
+        if (envelopeScope?.Scope != null) lastScope = envelopeScope.Scope;
 
         // Create per-event span if enabled
         using var eventActivity = enableEventSpans
@@ -188,8 +189,36 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track event type for summary
         appliedEventTypes.Add(eventTypeName);
 
+        // Once purge is set, skip applying further events — the model is null
+        // and calling Apply would cause NullReferenceException.
+        // We still advance the checkpoint so these events aren't reprocessed.
+        if (pendingPurge) {
+          processedEvents.Add(envelope);
+          lastSuccessfulEventId = envelope.MessageId.Value;
+          eventsProcessed++;
+          continue;
+        }
+
         // Apply event to model using perspective's pure Apply method
-        var (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+        __MODEL_TYPE_NAME__? appliedModel;
+        global::Whizbang.Core.Perspectives.ModelAction action;
+        try {
+          (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+        } catch (Exception applyEx) {
+          _logger.LogError(
+              applyEx,
+              "Error applying {EventType} to {PerspectiveName} stream {StreamId}, skipping event {EventId}",
+              eventTypeName,
+              perspectiveName,
+              streamId,
+              envelope.MessageId.Value
+          );
+          // Advance checkpoint past the failed event so it isn't retried indefinitely
+          processedEvents.Add(envelope);
+          lastSuccessfulEventId = envelope.MessageId.Value;
+          eventsProcessed++;
+          continue;
+        }
 
         // Set span outcome
         eventActivity?.SetTag("whizbang.perspective.action", action.ToString());
@@ -244,7 +273,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         if (pendingPurge) {
           // Hard delete: Remove model from database entirely
           await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
-          _logger.LogInformation(
+          _logger.LogDebug(
               "Model purged for {PerspectiveName} stream {StreamId}",
               perspectiveName,
               streamId
@@ -254,7 +283,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
-              cancellationToken
+              cancellationToken,
+              lastScope
           );
         }
 
@@ -264,7 +294,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
 
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Successfully processed {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
             eventsProcessed,
             perspectiveName,
@@ -272,62 +302,45 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             lastSuccessfulEventId
         );
 
+        // Create snapshot if configured and threshold reached
+        if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+            && !pendingPurge && updatedModel is not null && lastSuccessfulEventId.HasValue) {
+          _eventsSinceLastSnapshot += eventsProcessed;
+          if (_eventsSinceLastSnapshot >= _snapshotOptions.Value.SnapshotEveryNEvents) {
+            await _snapshotStore.CreateSnapshotAsync(
+                streamId, perspectiveName, lastSuccessfulEventId.Value,
+                ToSnapshotJson(updatedModel), cancellationToken);
+            await _snapshotStore.PruneOldSnapshotsAsync(
+                streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+            _eventsSinceLastSnapshot = 0;
+          }
+        }
+
         // Fire PostPerspectiveAsync lifecycle hooks AFTER perspective data is flushed
         // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
+        // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally
         foreach (var envelope in processedEvents) {
-          // CRITICAL: Establish FULL security context BEFORE invoking lifecycle receptors
-          // This ensures IMessageContext.TenantId and UserId are available in handlers
-          // Pattern matches PerspectiveWorker._establishSecurityContextAsync - must do both steps:
-          // 1. Call IMessageSecurityContextProvider.EstablishContextAsync to set IScopeContextAccessor
-          // 2. Set IMessageContextAccessor.Current with envelope security context
-
-          // Step 1: Establish security context via provider (sets IScopeContextAccessor.Current)
-          var securityProvider = _serviceProvider.GetService<IMessageSecurityContextProvider>();
-          if (securityProvider is not null) {
-            var establishedContext = await securityProvider
-              .EstablishContextAsync(envelope, _serviceProvider, cancellationToken)
-              .ConfigureAwait(false);
-            if (establishedContext is not null) {
-              var scopeContextAccessor = _serviceProvider.GetService<IScopeContextAccessor>();
-              if (scopeContextAccessor is not null) {
-                scopeContextAccessor.Current = establishedContext;
-              }
-            }
-          }
-
-          // Step 2: Set message context with security info from envelope
-          var messageContextAccessor = _serviceProvider.GetService<IMessageContextAccessor>();
-          if (messageContextAccessor is not null) {
-            var securityContext = envelope.GetCurrentSecurityContext();
-            messageContextAccessor.Current = new MessageContext {
-              MessageId = envelope.MessageId,
-              CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
-              CausationId = envelope.GetCausationId() ?? MessageId.New(),
-              Timestamp = envelope.GetMessageTimestamp(),
-              UserId = securityContext?.UserId,
-              TenantId = securityContext?.TenantId
-            };
-          }
-
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,
             PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
             EventId = envelope.MessageId.Value,
-            LastProcessedEventId = lastSuccessfulEventId
+            LastProcessedEventId = lastSuccessfulEventId,
+            ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
           };
 
           // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits)
           // Note: We don't await this immediately, allowing perspective processing to complete.
           // However, we track it to ensure completion before returning from RunAsync.
           // Envelope passed to preserve security context from message hops
-          var postAsyncTask = _lifecycleInvoker.InvokeAsync(
-            envelope,
-            LifecycleStage.PostPerspectiveAsync,
-            context with { CurrentStage = LifecycleStage.PostPerspectiveAsync },
-            cancellationToken
-          ).AsTask();  // Convert ValueTask to Task for tracking
+          var postAsyncTask = Task.Run(async () => {
+            await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+            var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveAsync, context with { CurrentStage = LifecycleStage.PostPerspectiveAsync }, cancellationToken);
+            }
+          }, cancellationToken);
           backgroundTasks.Add(postAsyncTask);
         }
       }
@@ -342,14 +355,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       var resultStatus = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None;
 
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: Returning status={resultStatus}, eventsProcessed={eventsProcessed}, lastEventId={lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty}");
-        if (resultStatus == PerspectiveProcessingStatus.None) {
-          Console.WriteLine("[PerspectiveRunner DIAG] ⚠️ Status is NONE - PostPerspectiveInline will NOT fire from PerspectiveWorker");
-        }
-      }
-
-      return new PerspectiveCheckpointCompletion {
+      return new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
@@ -376,7 +382,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 streamId,
                 updatedModel,
                 lastSuccessfulEventId.Value,
-                cancellationToken
+                cancellationToken,
+                lastScope
             );
           }
         } catch (Exception saveEx) {
@@ -456,22 +463,254 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// This is the ONLY place where database writes occur (unit of work pattern).
   /// Checkpoint persistence happens through the return value of RunAsync - the
   /// PerspectiveWorker collects checkpoint completions and reports them to
-  /// ProcessWorkBatchAsync, which persists them via complete_perspective_checkpoint_work SQL function.
+  /// ProcessWorkBatchAsync, which persists them via complete_perspective_cursor_work SQL function.
   /// </summary>
   private async Task SaveModelAndCheckpointAsync(
       Guid streamId,
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      PerspectiveScope? scope = null) {
 
     #region UPSERT_CALL
     // Upsert model (insert or update)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
-    await _perspectiveStore.UpsertAsync(
-        streamId,
-        model,
-        cancellationToken
-    );
+    if (scope != null) {
+      await _perspectiveStore.UpsertAsync(
+          streamId,
+          model,
+          scope,
+          cancellationToken
+      );
+    } else {
+      await _perspectiveStore.UpsertAsync(
+          streamId,
+          model,
+          cancellationToken
+      );
+    }
     #endregion
   }
+
+  public async Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid triggeringEventId,
+      CancellationToken cancellationToken = default) {
+
+    Guid? replayFromEventId = null;
+    __MODEL_TYPE_NAME__? snapshotModel = null;
+    var hasSnapshot = false;
+    var startedAt = DateTimeOffset.UtcNow;
+
+    if (_snapshotStore is not null) {
+      var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
+          streamId, perspectiveName, triggeringEventId, cancellationToken);
+
+      if (snapshot.HasValue) {
+        snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
+        replayFromEventId = snapshot.Value.SnapshotEventId;
+        hasSnapshot = true;
+
+        _logger.LogInformation(
+            "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
+            perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
+      } else {
+        _logger.LogInformation(
+            "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+            perspectiveName, streamId, triggeringEventId);
+      }
+    } else {
+      _logger.LogInformation(
+          "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+          perspectiveName, streamId, triggeringEventId);
+    }
+
+    // Fire PerspectiveRewindStarted system event
+    var dispatcher = _serviceProvider.GetService<IDispatcher>();
+    if (dispatcher is not null) {
+      await dispatcher.PublishAsync(new PerspectiveRewindStarted(
+          streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+    }
+
+    // In-memory replay: apply all events without intermediate DB writes
+    // Lenses see pre-replay data until the single atomic write at the end
+    var result = await RunFromModelAsync(
+        streamId, perspectiveName, snapshotModel, replayFromEventId, cancellationToken);
+
+    // Fire PerspectiveRewindCompleted system event
+    if (dispatcher is not null) {
+      await dispatcher.PublishAsync(new PerspectiveRewindCompleted(
+          streamId, perspectiveName, triggeringEventId, result.LastEventId,
+          0, // EventsReplayed count not available from result
+          startedAt, DateTimeOffset.UtcNow));
+    }
+
+    return result;
+  }
+
+  /// <summary>
+  /// Replays events in-memory starting from a provided model (or empty model if null).
+  /// Does NOT call GetByStreamIdAsync — uses the provided model directly.
+  /// No intermediate DB writes — single atomic UpsertAsync at the end.
+  /// No lifecycle hooks — receptors are suppressed via ProcessingMode on the PerspectiveWorker context.
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> RunFromModelAsync(
+      Guid streamId,
+      string perspectiveName,
+      __MODEL_TYPE_NAME__? initialModel,
+      Guid? replayFromEventId,
+      CancellationToken cancellationToken) {
+
+    // Use provided model or create empty one (full replay from event zero)
+    var currentModel = initialModel ?? CreateEmptyModel(streamId);
+
+    // Get perspective instance from DI
+    var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
+
+    // Track progress
+    var eventsProcessed = 0;
+    Guid? lastSuccessfulEventId = replayFromEventId;
+    __MODEL_TYPE_NAME__? updatedModel = currentModel;
+    var pendingPurge = false;
+    PerspectiveScope? lastScope = null;
+
+    // Build list of event types this perspective handles
+    var eventTypes = new[] {
+      #region REPLAY_EVENT_TYPES
+      // Generated event type list goes here (same as EVENT_TYPES)
+      #endregion
+    };
+
+    // Read all events from replay point
+    var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+    await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
+        streamId,
+        replayFromEventId,
+        eventTypes,
+        cancellationToken)) {
+      events.Add(envelope);
+    }
+
+    // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
+    foreach (var envelope in events) {
+      var @event = envelope.Payload;
+
+      // Track scope from envelope for perspective upsert
+      var envelopeScope = envelope.GetCurrentScope();
+      if (envelopeScope?.Scope != null) lastScope = envelopeScope.Scope;
+
+      // Once purge is set, skip applying further events — the model is null
+      if (pendingPurge) {
+        lastSuccessfulEventId = envelope.MessageId.Value;
+        eventsProcessed++;
+        continue;
+      }
+
+      // Apply event to model using perspective's pure Apply method
+      __MODEL_TYPE_NAME__? appliedModel;
+      global::Whizbang.Core.Perspectives.ModelAction action;
+      try {
+        (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+      } catch (Exception applyEx) {
+        _logger.LogError(
+            applyEx,
+            "Error applying {EventType} to perspective stream {StreamId}, skipping event {EventId}",
+            @event.GetType().Name,
+            streamId,
+            envelope.MessageId.Value
+        );
+        lastSuccessfulEventId = envelope.MessageId.Value;
+        eventsProcessed++;
+        continue;
+      }
+
+      switch (action) {
+        case global::Whizbang.Core.Perspectives.ModelAction.Delete:
+          updatedModel = appliedModel ?? updatedModel;
+          break;
+        case global::Whizbang.Core.Perspectives.ModelAction.Purge:
+          pendingPurge = true;
+          updatedModel = null;
+          break;
+        default:
+          if (appliedModel != null) {
+            updatedModel = appliedModel;
+          }
+          break;
+      }
+
+      lastSuccessfulEventId = envelope.MessageId.Value;
+      eventsProcessed++;
+    }
+
+    // Single atomic write at the end — lenses see pre-replay data until this point
+    if (eventsProcessed > 0) {
+      if (pendingPurge) {
+        await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+      } else if (updatedModel != null) {
+        await SaveModelAndCheckpointAsync(
+            streamId, updatedModel, lastSuccessfulEventId!.Value, cancellationToken, lastScope);
+      }
+
+      await _perspectiveStore.FlushAsync(cancellationToken);
+
+      _logger.LogDebug(
+          "Replay completed: {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
+          eventsProcessed, perspectiveName, streamId, lastSuccessfulEventId);
+
+      // Create snapshot after replay if configured
+      if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+          && !pendingPurge && updatedModel is not null && lastSuccessfulEventId.HasValue) {
+        await _snapshotStore.CreateSnapshotAsync(
+            streamId, perspectiveName, lastSuccessfulEventId.Value,
+            ToSnapshotJson(updatedModel), cancellationToken);
+        await _snapshotStore.PruneOldSnapshotsAsync(
+            streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+        _eventsSinceLastSnapshot = 0;
+      }
+    }
+
+    var resultStatus = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None;
+
+    return new PerspectiveCursorCompletion {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+      LastEventId = lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      Status = resultStatus
+    };
+  }
+
+  public async Task BootstrapSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid lastProcessedEventId,
+      CancellationToken cancellationToken = default) {
+
+    if (_snapshotStore is null || _snapshotOptions?.Value.Enabled != true) {
+      return;
+    }
+
+    var model = await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken);
+    if (model is null) {
+      return;
+    }
+
+    var snapshotData = ToSnapshotJson(model);
+    await _snapshotStore.CreateSnapshotAsync(
+        streamId, perspectiveName, lastProcessedEventId, snapshotData, cancellationToken);
+
+    _logger.LogDebug(
+        "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",
+        perspectiveName, streamId, lastProcessedEventId);
+  }
+
+  #region SNAPSHOT_SERIALIZATION
+  private static JsonDocument ToSnapshotJson(__MODEL_TYPE_NAME__ model) =>
+      JsonSerializer.SerializeToDocument(model);
+
+  private static __MODEL_TYPE_NAME__ FromSnapshotJson(JsonDocument doc) =>
+      JsonSerializer.Deserialize<__MODEL_TYPE_NAME__>(doc.RootElement.GetRawText())!;
+  #endregion
 }

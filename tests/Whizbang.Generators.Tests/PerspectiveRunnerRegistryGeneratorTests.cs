@@ -17,7 +17,8 @@ public class PerspectiveRunnerRegistryGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNestedPerspective_UsesQualifiedNameAsync() {
     // Arrange - Nested class should use "ParentClass.NestedClass" format
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -25,23 +26,24 @@ using System;
 namespace TestNamespace {
   public record OrderEvent : IEvent {
     [StreamId]
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record OrderModel {
     [StreamId]
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public class DraftJobStatus {
-    // Nested perspective class - should be named ""DraftJobStatus.Projection""
+    // Nested perspective class - should be named "DraftJobStatus.Projection"
     public class Projection : IPerspectiveFor<OrderModel, OrderEvent> {
       public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
         return currentData;
       }
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
@@ -49,16 +51,17 @@ namespace TestNamespace {
     // Assert - Should use CLR format name "TestNamespace.DraftJobStatus+Projection" in switch case
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.DraftJobStatus+Projection\"");
+    await Assert.That(registrySource).Contains("\"TestNamespace.DraftJobStatus+Projection\"");
     // Should NOT use just "Projection"
-    await Assert.That(registrySource!).DoesNotContain("\"Projection\" =>");
+    await Assert.That(registrySource).DoesNotContain("\"Projection\" =>");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonNestedPerspective_UsesSimpleNameAsync() {
     // Arrange - Top-level class should use simple name
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -66,21 +69,22 @@ using System;
 namespace TestNamespace {
   public record OrderEvent : IEvent {
     [StreamId]
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record OrderModel {
     [StreamId]
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
-  // Top-level perspective class - should be named ""OrderPerspective""
+  // Top-level perspective class - should be named "OrderPerspective"
   public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
     public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
@@ -88,14 +92,15 @@ namespace TestNamespace {
     // Assert - Should use CLR format name "TestNamespace.OrderPerspective" in switch case
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.OrderPerspective\"");
+    await Assert.That(registrySource).Contains("\"TestNamespace.OrderPerspective\"");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDuplicateNames_EmitsCollisionErrorAsync() {
     // Arrange - Two nested classes with same name should cause collision error
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -103,22 +108,22 @@ using System;
 namespace TestNamespace {
   public record Event1 : IEvent {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public record Event2 : IEvent {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public record Model1 {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public record Model2 {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   // Two top-level classes with same name - should cause collision
@@ -136,7 +141,8 @@ namespace OtherNamespace {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
@@ -153,7 +159,8 @@ namespace OtherNamespace {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleNestedPerspectives_SameParentClassName_UsesDistinctNamesAsync() {
     // Arrange - Multiple nested classes with same nested name but different parents
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -161,22 +168,22 @@ using System;
 namespace TestNamespace {
   public record Event1 : IEvent {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public record Event2 : IEvent {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public record Model1 {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public record Model2 {
     [StreamId]
-    public string Id { get; init; } = """";
+    public string Id { get; init; } = "";
   }
 
   public class DraftJobStatus {
@@ -194,7 +201,8 @@ namespace TestNamespace {
       }
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
@@ -202,8 +210,8 @@ namespace TestNamespace {
     // Assert - Should have distinct CLR format names for each nested class
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.DraftJobStatus+Projection\"");
-    await Assert.That(registrySource!).Contains("\"TestNamespace.ActiveJobStatus+Projection\"");
+    await Assert.That(registrySource).Contains("\"TestNamespace.DraftJobStatus+Projection\"");
+    await Assert.That(registrySource).Contains("\"TestNamespace.ActiveJobStatus+Projection\"");
     // Should NOT have a collision error since names are different
     var diagnostics = result.Diagnostics;
     var whiz032 = diagnostics.FirstOrDefault(d => d.Id == "WHIZ032");
@@ -214,7 +222,7 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task Generator_EmptyCompilation_GeneratesNothingAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 namespace TestNamespace {
@@ -236,7 +244,7 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task Generator_PerspectiveWith10Events_GeneratesRegistryAsync() {
     // Arrange - Perspective implementing IPerspectiveFor with 10 event types
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -281,8 +289,8 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("MultiEventPerspective");
-    await Assert.That(registrySource!).Contains("PerspectiveRunnerRegistry");
+    await Assert.That(registrySource).Contains("MultiEventPerspective");
+    await Assert.That(registrySource).Contains("PerspectiveRunnerRegistry");
   }
 
   [Test]
@@ -326,8 +334,8 @@ namespace TestNamespace {{
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("BigPerspective");
-    await Assert.That(registrySource!).Contains("PerspectiveRunnerRegistry");
+    await Assert.That(registrySource).Contains("BigPerspective");
+    await Assert.That(registrySource).Contains("PerspectiveRunnerRegistry");
   }
 
   // ==================== IEventTypeProvider Tests ====================
@@ -336,7 +344,7 @@ namespace TestNamespace {{
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesGetEventTypesMethodAsync() {
     // Arrange - Simple perspective with events
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -363,15 +371,15 @@ namespace TestNamespace {
     // Assert - Should generate GetEventTypes() method
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("public IReadOnlyList<Type> GetEventTypes()");
-    await Assert.That(registrySource!).Contains("_allEventTypes");
+    await Assert.That(registrySource).Contains("public IReadOnlyList<Type> GetEventTypes()");
+    await Assert.That(registrySource).Contains("_allEventTypes");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_AllEventTypesContainsTypeofExpressionsAsync() {
     // Arrange - Perspective with multiple events
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -404,15 +412,15 @@ namespace TestNamespace {
     // Assert - Should use typeof() expressions for event types
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("typeof(global::TestNamespace.EventA)");
-    await Assert.That(registrySource!).Contains("typeof(global::TestNamespace.EventB)");
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventA)");
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventB)");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_DeduplicatesEventTypesAsync() {
     // Arrange - Two perspectives sharing an event type
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -462,11 +470,8 @@ namespace TestNamespace {
     await Assert.That(registrySource).IsNotNull();
 
     // Count occurrences of typeof(global::TestNamespace.SharedEvent) in _allEventTypes
-    var allEventTypesSection = registrySource!.Substring(
-        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal),
-        registrySource.IndexOf("public IReadOnlyList<Type> GetEventTypes()", StringComparison.Ordinal) -
-        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal)
-    );
+    var allEventTypesSection = registrySource![
+        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal)..registrySource.IndexOf("public IReadOnlyList<Type> GetEventTypes()", StringComparison.Ordinal)];
     var sharedEventCount = _countOccurrences(allEventTypesSection, "typeof(global::TestNamespace.SharedEvent)");
     await Assert.That(sharedEventCount).IsEqualTo(1);
   }
@@ -475,7 +480,7 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task Generator_RegistersIEventTypeProviderInDIAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -502,15 +507,15 @@ namespace TestNamespace {
     // Assert - DI registration should include IEventTypeProvider
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("services.AddSingleton<IEventTypeProvider>");
-    await Assert.That(registrySource!).Contains("using Whizbang.Core.Messaging;");
+    await Assert.That(registrySource).Contains("services.AddSingleton<IEventTypeProvider>");
+    await Assert.That(registrySource).Contains("using Whizbang.Core.Messaging;");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_EventTypesSortedAlphabeticallyAsync() {
     // Arrange - Events should be sorted for deterministic output
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -556,6 +561,249 @@ namespace TestNamespace {
 
     await Assert.That(aIndex).IsLessThan(mIndex);
     await Assert.That(mIndex).IsLessThan(zIndex);
+  }
+
+  // ==================== EventTypes Format Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_EventTypesInRegistrationInfo_UseRuntimeFormat_NotGlobalPrefixAsync() {
+    // Arrange — Verify generated PerspectiveRegistrationInfo.EventTypes
+    // uses "FullName, AssemblyName" format (no global:: prefix)
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel current, OrderCreatedEvent @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — EventTypes in PerspectiveRegistrationInfo should use runtime format
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+
+    // The PerspectiveRegistrationInfo EventTypes array should contain assembly-qualified format
+    // e.g. "TestNamespace.OrderCreatedEvent, TestProject" — NOT "global::TestNamespace.OrderCreatedEvent"
+    // The EventTypes are in the last argument of PerspectiveRegistrationInfo constructor: [...]
+    // ClassName and ModelType still use global:: format (they're for code gen), but EventTypes must not.
+
+    // Verify EventTypes array uses runtime format (contains assembly name after comma, no global::)
+    // The generated code looks like: ["TestNamespace.OrderCreatedEvent, TestProject"]
+    await Assert.That(registrySource).Contains("[\"TestNamespace.OrderCreatedEvent,");
+    // Verify EventTypes do NOT use global:: prefix
+    await Assert.That(registrySource).DoesNotContain("[\"global::");
+
+    // _allEventTypes should still use typeof(global::...) for code generation
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.OrderCreatedEvent)");
+  }
+
+  // ==================== IPerspectiveWithActionsFor Event Type Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypes_IncludesIPerspectiveWithActionsForEventsAsync() {
+    // Arrange — Perspective that uses IPerspectiveWithActionsFor for a PurgeEvent
+    // and IPerspectiveFor for a regular CreatedEvent.
+    // Both event types MUST appear in _allEventTypes.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record CreatedEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record PurgeEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public class TestPerspective :
+      IPerspectiveFor<Model, CreatedEvent>,
+      IPerspectiveWithActionsFor<Model, PurgeEvent> {
+    public Model Apply(Model current, CreatedEvent @event) => current;
+    public ApplyResult<Model> Apply(Model current, PurgeEvent @event)
+        => ApplyResult<Model>.Purge();
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — BOTH event types must be in _allEventTypes
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+
+    // CreatedEvent from IPerspectiveFor — should be included (this already works)
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.CreatedEvent)")
+      .Because("IPerspectiveFor events must be in _allEventTypes");
+
+    // PurgeEvent from IPerspectiveWithActionsFor — MUST also be included
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.PurgeEvent)")
+      .Because("IPerspectiveWithActionsFor events must be in _allEventTypes for IEventTypeProvider — " +
+               "without this, is_event=false on inbox and perspectives never fire");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypes_IncludesOnlyWithActionsForPerspectiveAsync() {
+    // Arrange — Perspective that ONLY uses IPerspectiveWithActionsFor (no IPerspectiveFor at all)
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record DeletedEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public class PurgeOnlyPerspective : IPerspectiveWithActionsFor<Model, DeletedEvent> {
+    public ApplyResult<Model> Apply(Model current, DeletedEvent @event)
+        => ApplyResult<Model>.Purge();
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — DeletedEvent must be in _allEventTypes even though it's only via WithActionsFor
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.DeletedEvent)")
+      .Because("A perspective-only-via-WithActionsFor must still have its events in _allEventTypes");
+  }
+
+  // ==================== IPerspectiveBase Extensibility Lock-in ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CustomInterfaceExtendingIPerspectiveBase_EventsDiscoveredAsync() {
+    // Arrange — a FUTURE interface extending IPerspectiveBase directly
+    // Proves any new interface that extends IPerspectiveBase will be discovered
+    // without modifying any generator code.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record FutureEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  // A hypothetical future interface that extends IPerspectiveBase
+  public interface ICustomPerspective<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+      where TModel : class where TEvent : IEvent {
+    TModel CustomApply(TModel current, TEvent e);
+  }
+
+  public class FuturePerspective : ICustomPerspective<Model, FutureEvent> {
+    public Model CustomApply(Model current, FutureEvent e) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — FutureEvent must be discovered via IPerspectiveBase inheritance
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.FutureEvent)")
+      .Because("Any interface extending IPerspectiveBase must have its events discovered — this is the extensibility guarantee");
+  }
+
+  // ==================== Cross-interface lock-in ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task LockIn_AllThreeInterfaceTypes_DiscoveredInSameCompilationAsync() {
+    // Arrange — one perspective class using IPerspectiveFor, one using IPerspectiveWithActionsFor,
+    // one using a custom interface extending IPerspectiveBase.
+    // ALL three must have their events in _allEventTypes.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EventA : IEvent {
+    [StreamId] public Guid Id { get; init; }
+  }
+  public record EventB : IEvent {
+    [StreamId] public Guid Id { get; init; }
+  }
+  public record EventC : IEvent {
+    [StreamId] public Guid Id { get; init; }
+  }
+  public record Model {
+    [StreamId] public Guid Id { get; init; }
+  }
+
+  // IPerspectiveFor
+  public class StandardPerspective : IPerspectiveFor<Model, EventA> {
+    public Model Apply(Model current, EventA e) => current;
+  }
+
+  // IPerspectiveWithActionsFor
+  public class ActionsPerspective : IPerspectiveWithActionsFor<Model, EventB> {
+    public ApplyResult<Model> Apply(Model current, EventB e) => ApplyResult<Model>.Purge();
+  }
+
+  // Custom interface extending IPerspectiveBase
+  public interface ICustom<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+      where TModel : class where TEvent : IEvent { }
+  public class CustomPerspective : ICustom<Model, EventC> { }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — ALL three event types discovered
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventA)")
+      .Because("IPerspectiveFor events must be discovered");
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventB)")
+      .Because("IPerspectiveWithActionsFor events must be discovered");
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventC)")
+      .Because("Custom interface extending IPerspectiveBase events must be discovered");
   }
 
   private static int _countOccurrences(string text, string pattern) {

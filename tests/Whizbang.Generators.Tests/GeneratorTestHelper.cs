@@ -100,7 +100,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -165,7 +165,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     return CSharpCompilation.Create(
         assemblyName: assemblyName,
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -218,7 +218,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -231,7 +231,7 @@ public static class GeneratorTestHelper {
 
     // Create generator driver with options provider
     var driver = CSharpGeneratorDriver.Create(
-        generators: new ISourceGenerator[] { generator.AsSourceGenerator() },
+        generators: [generator.AsSourceGenerator()],
         optionsProvider: optionsProvider
     );
 
@@ -245,12 +245,8 @@ public static class GeneratorTestHelper {
   /// <summary>
   /// Test implementation of AnalyzerConfigOptionsProvider for passing MSBuild properties to generators.
   /// </summary>
-  private sealed class TestAnalyzerConfigOptionsProvider : AnalyzerConfigOptionsProvider {
-    private readonly Dictionary<string, string> _globalOptions;
-
-    public TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions) {
-      _globalOptions = globalOptions;
-    }
+  private sealed class TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions) : AnalyzerConfigOptionsProvider {
+    private readonly Dictionary<string, string> _globalOptions = globalOptions;
 
     public override AnalyzerConfigOptions GlobalOptions =>
         new TestAnalyzerConfigOptions(_globalOptions);
@@ -265,15 +261,11 @@ public static class GeneratorTestHelper {
   /// <summary>
   /// Test implementation of AnalyzerConfigOptions.
   /// </summary>
-  private sealed class TestAnalyzerConfigOptions : AnalyzerConfigOptions {
-    private readonly Dictionary<string, string> _options;
+  private sealed class TestAnalyzerConfigOptions(Dictionary<string, string> options) : AnalyzerConfigOptions {
+    private readonly Dictionary<string, string> _options = options;
 
     public static readonly TestAnalyzerConfigOptions Empty =
-        new(new Dictionary<string, string>());
-
-    public TestAnalyzerConfigOptions(Dictionary<string, string> options) {
-      _options = options;
-    }
+        new([]);
 
     public override bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) {
       return _options.TryGetValue(key, out value!);

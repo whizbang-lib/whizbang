@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Observability.Hooks;
@@ -33,7 +34,7 @@ namespace Whizbang.Observability.Hooks;
 /// // The hook will automatically create a span when this event is processed
 /// </code>
 /// </example>
-/// <docs>observability/opentelemetry-integration</docs>
+/// <docs>operations/observability/opentelemetry-integration</docs>
 /// <tests>Whizbang.Observability.Tests/Hooks/OpenTelemetrySpanHookTests.cs</tests>
 public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribute> {
   /// <summary>
@@ -49,39 +50,21 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
       CancellationToken ct) {
     var attribute = context.Attribute;
 
-    // Determine span name (use SpanName if specified, else Tag)
     var spanName = !string.IsNullOrEmpty(attribute.SpanName)
       ? attribute.SpanName
       : attribute.Tag;
 
-    // Map SpanKind to ActivityKind
     var activityKind = _mapSpanKind(attribute.Kind);
-
-    // Start a new activity (span)
     using var activity = ActivitySource.StartActivity(spanName, activityKind);
 
     if (activity is not null) {
-      // Add standard attributes
-      activity.SetTag("messaging.system", "whizbang");
-      activity.SetTag("messaging.operation", "process");
-      activity.SetTag("whizbang.tag", attribute.Tag);
-      activity.SetTag("whizbang.message_type", context.MessageType.FullName);
+      _setStandardTags(activity, attribute, context.MessageType);
+      _setScopeAttributes(activity, context.Scope);
 
-      // Add scope attributes
-      if (context.Scope is not null) {
-        foreach (var (key, value) in context.Scope) {
-          if (value is not null) {
-            activity.SetTag($"whizbang.scope.{key.ToLowerInvariant()}", value.ToString());
-          }
-        }
-      }
-
-      // Add payload properties as attributes (from Properties array)
       if (attribute.Properties is { Length: > 0 }) {
         _addPayloadAttributes(activity, context.Payload, attribute.Properties);
       }
 
-      // Record as event if configured
       if (attribute.RecordAsEvent) {
         var eventTags = new ActivityTagsCollection {
           { "event.name", context.MessageType.Name }
@@ -90,8 +73,32 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
       }
     }
 
-    // Return null to pass original payload to next hook
     return ValueTask.FromResult<JsonElement?>(null);
+  }
+
+  private static void _setStandardTags(Activity activity, TelemetryTagAttribute attribute, Type messageType) {
+    activity.SetTag("messaging.system", "whizbang");
+    activity.SetTag("messaging.operation", "process");
+    activity.SetTag("whizbang.tag", attribute.Tag);
+    activity.SetTag("whizbang.message_type", messageType.FullName);
+  }
+
+  private static void _setScopeAttributes(Activity activity, IScopeContext? scopeContext) {
+    if (scopeContext?.Scope is null) {
+      return;
+    }
+
+    var scope = scopeContext.Scope;
+    _setTagIfPresent(activity, "whizbang.scope.tenantid", scope.TenantId);
+    _setTagIfPresent(activity, "whizbang.scope.userid", scope.UserId);
+    _setTagIfPresent(activity, "whizbang.scope.customerid", scope.CustomerId);
+    _setTagIfPresent(activity, "whizbang.scope.organizationid", scope.OrganizationId);
+  }
+
+  private static void _setTagIfPresent(Activity activity, string key, string? value) {
+    if (!string.IsNullOrEmpty(value)) {
+      activity.SetTag(key, value);
+    }
   }
 
   private static ActivityKind _mapSpanKind(SpanKind kind) {

@@ -23,18 +23,18 @@ namespace Whizbang.Core.Tags;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#hook-registration</docs>
+/// <docs>fundamentals/messages/message-tags#hook-registration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagHookRegistrationTests.cs</tests>
 /// <param name="AttributeType">The tag attribute type this hook handles (e.g., typeof(SignalTagAttribute)).</param>
 /// <param name="HookType">The hook implementation type (e.g., typeof(SignalRNotificationHook)).</param>
 /// <param name="Priority">Execution priority. Lower values execute first. Default is -100.</param>
-/// <param name="FireAt">Lifecycle stage when this hook fires. Default is AfterReceptorCompletion.</param>
+/// <param name="FireAt">Lifecycle stage when this hook fires. Null means fire at all stages (default).</param>
 public sealed record TagHookRegistration(
   Type AttributeType,
   [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
   Type HookType,
   int Priority = -100,
-  LifecycleStage FireAt = LifecycleStage.AfterReceptorCompletion
+  LifecycleStage? FireAt = null
 ) {
   /// <summary>
   /// Gets the default priority for hooks. Lower values execute first.
@@ -42,7 +42,7 @@ public sealed record TagHookRegistration(
   public static int DefaultPriority => -100;
 
   /// <summary>
-  /// Gets the default lifecycle stage for hooks.
+  /// Gets the default lifecycle stage for hooks. Null means fire at all stages.
   /// </summary>
-  public static LifecycleStage DefaultFireAt => LifecycleStage.AfterReceptorCompletion;
+  public static LifecycleStage? DefaultFireAt => null;
 }

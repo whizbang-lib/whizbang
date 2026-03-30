@@ -17,7 +17,7 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   /// <summary>
   /// Creates a fixture using the emulator's default built-in configuration.
   /// </summary>
-  public DirectServiceBusEmulatorFixture() : this(5672, null) {
+  public DirectServiceBusEmulatorFixture() : this(5673, null) {
   }
 
   /// <summary>
@@ -27,7 +27,7 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   /// <param name="configFileName">Optional config file name (e.g., "Config-Default.json"). If null, uses built-in config.</param>
   public DirectServiceBusEmulatorFixture(int port, string? configFileName) {
     _port = port;
-    _projectName = $"sbecommerce{_port}";  // Explicit project name to avoid conflicts
+    _projectName = $"whizbang-ecommerce-servicebus-{_port}";  // Explicit project name to avoid conflicts
     // Store paths for Config.json
     var testDirectory = AppContext.BaseDirectory;
     _configFile = Path.Combine(testDirectory, "Config.json");
@@ -68,18 +68,26 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     _activeComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-ecommerce-{_port}.yml");
     await File.WriteAllTextAsync(_activeComposeFile, dockerComposeContent, cancellationToken);
 
-    try {
-      // Stop any existing containers (use project name to avoid conflicts)
-      await _runDockerComposeAsync($"-p {_projectName} down -v --remove-orphans", cancellationToken);
+    var containerName = $"whizbang-test-servicebus-{_port}";
 
-      // Start containers with explicit project name
+    try {
+      // Check if emulator container is already running (reuse from previous run)
+      var existingState = await _getContainerStateAsync(containerName, cancellationToken);
+      if (existingState == "running") {
+        Console.WriteLine($"[DirectEmulator] Reusing existing container '{containerName}'");
+        _isInitialized = true;
+        return;
+      }
+
+      // Not running — clean up and start fresh
+      if (existingState != null) {
+        await _runDockerComposeAsync($"-p {_projectName} down -v --remove-orphans", cancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+      }
+
       await _runDockerComposeAsync($"-p {_projectName} up -d --force-recreate", cancellationToken);
 
-      // Wait for emulator to be ready by polling logs until "Successfully Up!" appears
-      // SQL Server can take 60-120 seconds to start (especially on ARM64), and the emulator
-      // has built-in retries (15s each). Polling is more reliable than a fixed delay.
       Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (polling up to 180 seconds)...");
-      var containerName = $"whizbang-test-servicebus-{_port}";
       var maxWaitSeconds = 180;
       var pollIntervalSeconds = 5;
       var elapsed = 0;
@@ -120,23 +128,12 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Stops the emulator containers and cleans up the compose file.
+  /// Keeps containers running for reuse across test runs.
+  /// To remove: docker rm -f whizbang-test-servicebus-{port} whizbang-test-mssql-{port}
   /// </summary>
-  public async ValueTask DisposeAsync() {
-    if (!_isInitialized || _activeComposeFile == null) {
-      return;
-    }
-
-    Console.WriteLine("[DirectEmulator] Stopping emulator containers...");
-    try {
-      await _runDockerComposeAsyncIgnoreErrors($"-p {_projectName} down -v --remove-orphans");
-    } finally {
-      // Clean up compose file
-      if (File.Exists(_activeComposeFile)) {
-        File.Delete(_activeComposeFile);
-      }
-    }
-    Console.WriteLine("[DirectEmulator] ✅ Emulator stopped");
+  public ValueTask DisposeAsync() {
+    Console.WriteLine($"[DirectEmulator] Keeping containers running for reuse (port {_port})");
+    return ValueTask.CompletedTask;
   }
 
   private string _generateDockerComposeContent() {
@@ -238,6 +235,27 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     } catch {
       // Ignore errors during cleanup
     }
+  }
+
+  private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {
+    var psi = new ProcessStartInfo {
+      FileName = "docker",
+      Arguments = $"inspect --format={{{{.State.Status}}}} {containerName}",
+      RedirectStandardOutput = true,
+      RedirectStandardError = true,
+      UseShellExecute = false,
+      CreateNoWindow = true
+    };
+
+    using var process = Process.Start(psi);
+    if (process == null) {
+      return null;
+    }
+
+    var output = await process.StandardOutput.ReadToEndAsync(ct);
+    await process.WaitForExitAsync(ct);
+
+    return process.ExitCode != 0 ? null : output.Trim();
   }
 
   private async Task<string> _getDockerLogsAsync(string containerName, CancellationToken cancellationToken = default) {

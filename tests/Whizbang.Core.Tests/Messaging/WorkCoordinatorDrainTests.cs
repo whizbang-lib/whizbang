@@ -26,7 +26,7 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    _ = await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Deferred messages included in batch request
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -47,7 +47,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage(Guid.NewGuid()));
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    _ = await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Still works without deferred channel
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -66,7 +66,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    _ = await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Only the directly queued message
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -88,7 +88,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchFlags.None);
+    var batch = await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Both messages included
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -109,13 +109,13 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
     // Act - first flush
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Queue another deferred message
     await deferredChannel.QueueAsync(_createTestOutboxMessage(Guid.NewGuid()));
 
     // Act - second flush
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Second flush got the second message
     await Assert.That(workCoordinator.FlushCount).IsEqualTo(2);
@@ -140,16 +140,16 @@ public class WorkCoordinatorDrainTests {
       });
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -165,7 +165,7 @@ public class WorkCoordinatorDrainTests {
       new ServiceInstanceProvider(configuration: null),
       new WorkCoordinatorOptions(),
       logger: null,
-      lifecycleInvoker: null,
+      scopeFactory: null,
       lifecycleMessageDeserializer: null,
       tracingOptions: null,
       deferredChannel: deferredChannel

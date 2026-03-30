@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
@@ -40,6 +41,110 @@ public static class ServiceCollectionExtensions {
     bool initializeSchema = false,
     string? perspectiveSchemaSql = null) {
     return AddWhizbangPostgres(services, connectionString, jsonOptions, initializeSchema, perspectiveSchemaSql, configureOptions: null);
+  }
+
+  /// <summary>
+  /// Registers all Whizbang PostgreSQL stores with per-perspective hash tracking.
+  /// Uses PerspectiveSchemas.Entries for individual perspective change detection.
+  /// </summary>
+  /// <param name="services">The service collection to register services with.</param>
+  /// <param name="connectionString">The PostgreSQL connection string.</param>
+  /// <param name="jsonOptions">The JSON serializer options configured with the application's WhizbangJsonContext.</param>
+  /// <param name="initializeSchema">Whether to automatically initialize the Whizbang schema on startup.</param>
+  /// <param name="perspectiveEntries">Per-perspective SQL entries from PerspectiveSchemas.Entries for individual hash tracking.</param>
+  /// <returns>The service collection for chaining.</returns>
+  public static IServiceCollection AddWhizbangPostgres(
+    this IServiceCollection services,
+    string connectionString,
+    JsonSerializerOptions jsonOptions,
+    bool initializeSchema,
+    KeyValuePair<string, string>[] perspectiveEntries) {
+    return AddWhizbangPostgres(services, connectionString, jsonOptions, initializeSchema, perspectiveEntries, configureOptions: null);
+  }
+
+  /// <summary>
+  /// Registers all Whizbang PostgreSQL stores with per-perspective hash tracking and configurable options.
+  /// </summary>
+  [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
+  public static IServiceCollection AddWhizbangPostgres(
+    this IServiceCollection services,
+    string connectionString,
+    JsonSerializerOptions jsonOptions,
+    bool initializeSchema,
+    KeyValuePair<string, string>[] perspectiveEntries,
+    Action<PostgresOptions>? configureOptions) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    ArgumentNullException.ThrowIfNull(jsonOptions);
+    ArgumentNullException.ThrowIfNull(perspectiveEntries);
+
+    // Configure options
+    var options = new PostgresOptions();
+    configureOptions?.Invoke(options);
+
+    // Build a temporary service provider to get logger (if logging is configured)
+    var tempProvider = services.BuildServiceProvider();
+    var logger = tempProvider.GetService<ILogger<PostgresConnectionRetry>>();
+
+    // Wait for database connection with retry
+    if (logger?.IsEnabled(LogLevel.Information) == true) {
+      var initialRetryAttempts = options.InitialRetryAttempts;
+      var retryIndefinitely = options.RetryIndefinitely;
+      logger.LogInformation("Waiting for PostgreSQL connection (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialRetryAttempts, retryIndefinitely);
+    }
+    var connectionRetry = new PostgresConnectionRetry(options, logger);
+    connectionRetry.WaitForConnectionAsync(connectionString).GetAwaiter().GetResult();
+
+    // Initialize schema with per-perspective hash tracking
+    if (initializeSchema) {
+      logger?.LogInformation("Initializing PostgreSQL schema with per-perspective tracking...");
+      var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries);
+      initializer.InitializeSchema();
+      connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
+      logger?.LogInformation("PostgreSQL schema initialized and database ready");
+    }
+
+    // Register database infrastructure
+    services.AddSingleton<IDbConnectionFactory>(_ =>
+      new PostgresConnectionFactory(connectionString));
+    services.AddSingleton<IDbExecutor, DapperDbExecutor>();
+
+    services.AddSingleton(options);
+    services.AddSingleton(jsonOptions);
+
+    services.TryAddSingleton<IPolicyEngine, PolicyEngine>();
+
+    services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
+    services.AddSingleton<JsonbSizeValidator>();
+
+    services.AddSingleton<IDatabaseReadinessCheck>(sp => {
+      var readinessLogger = sp.GetService<ILogger<PostgresDatabaseReadinessCheck>>();
+      return new PostgresDatabaseReadinessCheck(connectionString, readinessLogger!);
+    });
+
+    services.AddScoped<IEventStore, DapperPostgresEventStore>();
+    services.AddSingleton<IWorkCoordinator>(sp =>
+      new DapperWorkCoordinator(
+        connectionString,
+        jsonOptions,
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        options.CommandTimeoutSeconds));
+    services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // Register perspective snapshot store and stream locker
+    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+      new DapperPerspectiveSnapshotStore(
+        connectionString,
+        sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
+    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+      new DapperPerspectiveStreamLocker(
+        connectionString,
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
+        sp.GetService<ILogger<DapperPerspectiveStreamLocker>>()));
+
+    services.DecorateEventStoreWithSyncTracking();
+
+    return services;
   }
 
   /// <summary>
@@ -86,17 +191,12 @@ public static class ServiceCollectionExtensions {
       logger?.LogInformation("Initializing PostgreSQL schema...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql);
       initializer.InitializeSchema();
-      logger?.LogInformation("PostgreSQL schema initialized");
-
-      // Wait for schema to be ready (tables and functions exist)
-      // This ensures workers don't start until schema is fully initialized
-      logger?.LogInformation("Waiting for PostgreSQL schema to be ready...");
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
-      logger?.LogInformation("PostgreSQL database ready");
+      logger?.LogInformation("PostgreSQL schema initialized and database ready");
     }
 
     // Register database infrastructure
-    services.AddSingleton<IDbConnectionFactory>(sp =>
+    services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -123,9 +223,25 @@ public static class ServiceCollectionExtensions {
     // Register Whizbang stores
     // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker
     services.AddScoped<IEventStore, DapperPostgresEventStore>();
-    services.AddSingleton<IWorkCoordinator, DapperWorkCoordinator>();
+    services.AddSingleton<IWorkCoordinator>(sp =>
+      new DapperWorkCoordinator(
+        connectionString,
+        jsonOptions,
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        options.CommandTimeoutSeconds));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // Register perspective snapshot store and stream locker
+    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+      new DapperPerspectiveSnapshotStore(
+        connectionString,
+        sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
+    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+      new DapperPerspectiveStreamLocker(
+        connectionString,
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
+        sp.GetService<ILogger<DapperPerspectiveStreamLocker>>()));
 
     // TURNKEY: Wrap IEventStore with sync tracking decorator
     // This enables perspective synchronization by tracking emitted events

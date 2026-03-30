@@ -5,7 +5,7 @@ namespace Whizbang.Core;
 /// <summary>
 /// Provides context and metadata for a message flowing through the system.
 /// </summary>
-/// <docs>core-concepts/message-context</docs>
+/// <docs>fundamentals/messages/message-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs</tests>
 public interface IMessageContext {
   /// <summary>
@@ -76,4 +76,28 @@ public interface IMessageContext {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Metadata_IsEmptyByDefaultAsync</tests>
   IReadOnlyDictionary<string, object> Metadata { get; }
+
+  /// <summary>
+  /// Gets the rich authorization context (Roles, Permissions, SecurityPrincipals, Claims)
+  /// that this message context OWNS and carries.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Messages carry state in event-sourced systems. The ScopeContext is OWNED by
+  /// the message context, not read from ambient AsyncLocal.
+  /// </para>
+  /// <para>
+  /// When a message context is created, it captures the current scope context.
+  /// AsyncLocal then reads FROM the initiating message context's ScopeContext.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messages/cascade-context#scope-context</docs>
+  Security.IScopeContext? ScopeContext { get; }
+
+  /// <summary>
+  /// Caller information from the code that dispatched this message.
+  /// Null when caller info is unavailable (e.g., <see cref="MessageContext.New()"/> or test contexts).
+  /// </summary>
+  /// <docs>fundamentals/messages/message-context#caller-info</docs>
+  Observability.ICallerInfo? CallerInfo { get; }
 }

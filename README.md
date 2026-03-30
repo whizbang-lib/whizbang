@@ -1,152 +1,107 @@
-# Whizbang
+<p align="center">
+  <img alt="Whizbang — One Runtime. Any Store. Every Message." src="assets/hero-banner.svg" width="100%">
+</p>
 
-[![CI](https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg)](https://codecov.io/gh/whizbang-lib/whizbang)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status)](https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang)
-[![Secret Scanning](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml)
-[![Supply Chain](https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml)
-[![OSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang/badge)](https://securityscorecards.dev/viewer/?uri=github.com/whizbang-lib/whizbang)
-[![NuGet](https://img.shields.io/nuget/v/Whizbang.Core.svg)](https://www.nuget.org/packages/Whizbang.Core/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <a href="https://whizba.ng/">Documentation</a> &middot;
+  <a href="https://www.nuget.org/packages/Whizbang.Core/">NuGet</a> &middot;
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-A comprehensive .NET library for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.
+<p align="center">
+  <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang"><img src="https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status" alt="Quality Gate Status"></a>
+  <a href="https://www.nuget.org/packages/Whizbang.Core/"><img src="https://img.shields.io/nuget/v/Whizbang.Core.svg" alt="NuGet"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
-## Version 0.1.0 - Foundation Release
+<p align="center">
+  <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg" alt="Secret Scanning"></a>
+  <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml/badge.svg" alt="Supply Chain"></a>
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/whizbang-lib/whizbang"><img src="https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang/badge" alt="OSSF Scorecard"></a>
+</p>
 
-This is the foundation release establishing all core components with in-memory implementations. The focus is on breadth over depth, ensuring every component exists and works together from day one.
+<p align="center">
+  <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/graphs/sunburst.svg?token=F1AZXLI2MM" alt="Codecov Sunburst" width="200"></a>
+</p>
+
+---
+
+<h3 align="center"><a href="https://whizba.ng">Read the full documentation at whizba.ng</a></h3>
+
+---
+
+## Why Whizbang?
+
+- **Blazing Performance** — < 20ns in-process message dispatch with zero allocations on the hot path
+- **Native AOT from Day One** — Source generators wire everything at compile time; no reflection, no runtime surprises
+- **Type Safe** — Compile-time verification of message handlers, routing, and event schemas
+- **Developer Experience** — Rich IDE support with code navigation, diagnostics, and discovery via source generators
+
+## Core Concepts
+
+**Receptors** — Stateless message handlers that receive commands and produce events. Type-safe with flexible response types.
+
+**Dispatcher** — Message routing engine that connects messages to receptors with full observability (correlation, causation, hops).
+
+**Perspectives** — Materialized read models built from event streams. Individually hash-tracked for incremental migration.
+
+**Lenses** — Composable query projections over perspective data with LINQ translation to SQL.
+
+**Event Store** — Append-only event storage with stream-based organization, UUIDv7 ordering, and optimistic concurrency.
+
+**Policy Engine** — Declarative rules for message validation, transformation, and routing decisions.
 
 ## Project Structure
 
 ```
-whizbang/
-├── src/
-│   ├── Whizbang.Core/              # Core interfaces and types
-│   ├── Whizbang.Generators/        # Source generators (future)
-│   └── Whizbang.Testing/           # Testing utilities
-└── tests/
-    ├── Whizbang.Core.Tests/        # Unit tests
-    └── Whizbang.Documentation.Tests/ # Documentation example tests
+src/
+├── Whizbang.Core/                          # Core interfaces, messaging, perspectives, lenses
+├── Whizbang.Generators/                    # Roslyn source generators (receptors, perspectives, registry)
+├── Whizbang.Data.Dapper.Postgres/          # Dapper + PostgreSQL stores (event store, work coordinator)
+├── Whizbang.Data.EFCore.Postgres/          # EF Core + PostgreSQL stores with turnkey initialization
+├── Whizbang.Data.EFCore.Postgres.Generators/  # EF Core source generators (schema, registration)
+├── Whizbang.Transports.RabbitMQ/           # RabbitMQ transport
+├── Whizbang.Transports.AzureServiceBus/    # Azure Service Bus transport
+├── Whizbang.Transports.HotChocolate/       # GraphQL integration via HotChocolate
+├── Whizbang.Transports.FastEndpoints/      # REST integration via FastEndpoints
+├── Whizbang.SignalR/                       # Real-time push via SignalR
+├── Whizbang.Observability/                 # Metrics and tracing
+├── Whizbang.Testing/                       # Test utilities and fakes
+└── Whizbang.Hosting.*/                     # Hosted service wiring for transports
 ```
-
-## Core Components (v0.1.0)
-
-### Receptors
-Stateless message handlers that receive commands and produce events. Type-safe with flexible response types (single, tuple, array, Result<T>).
-
-### Dispatcher
-Message routing and orchestration engine. Routes messages to appropriate handlers with context tracking (correlation/causation IDs).
-
-### Value Objects (Vogen)
-Type-safe IDs using source-generation:
-- `MessageId` - Unique message identifier
-- `CorrelationId` - Logical workflow identifier
-- `CausationId` - Causal chain identifier
 
 ## Technology Stack
 
-- **.NET 10.0** - Target framework (LTS)
-- **Vogen** - Source-generated value objects
-- **TUnit 1.5+** - Modern source-generation test framework
-- **TUnit.Assertions** - Native fluent assertions
-- **Rocks 9.3+** - Source-generation mocking for AOT compatibility
-- **Bogus** - Test data generation
-- **EF Core 10** - Database access with compiled models
-- **Dapper** - High-performance SQL queries
-- **PostgreSQL** - Primary database with JsonB and UUIDv7 support
+- **.NET 10** — Target framework
+- **PostgreSQL** — Primary database with JSONB, UUIDv7, and hash-based schema migration
+- **EF Core 10** / **Dapper** — Dual data access with source-generated models
+- **Roslyn Source Generators** — Compile-time wiring for receptors, perspectives, and DI registration
+- **TUnit** — Source-generated testing with Microsoft.Testing.Platform
+- **Rocks** — Source-generated mocking for AOT compatibility
+- **Vogen** — Source-generated value objects
 
 ## Getting Started
 
-### Build
 ```bash
-dotnet build
+dotnet add package SoftwareExtravaganza.Whizbang.Core
 ```
 
-### Run Tests
-```bash
-dotnet test
-```
-
-### Current Status
-All tests are currently **failing** by design. This is TDD - tests define the behavior, implementation comes next.
+See the [Quick Start guide](https://whizba.ng/docs/getting-started/quick-start) for a walkthrough.
 
 ## Philosophy
 
-- **Zero Reflection** - Everything via source generators
-- **AOT Compatible** - Native AOT from day one
-- **Type Safe** - Compile-time safety everywhere
-- **Test Driven** - Comprehensive test coverage
-
-## Documentation
-
-See the [whizbang-lib.github.io](https://github.com/whizbang/whizbang-lib.github.io) repository for comprehensive documentation of all features and design decisions.
-
-## Release Workflow
-
-### Three-Phase Release Process
-
-Whizbang uses a three-phase release process:
-
-1. **Alpha** - Internal testing and validation
-2. **Beta** - Limited public testing with early adopters
-3. **GA** - General availability for public use
-
-### Release Checklist
-
-The complete release checklist is maintained in `.github/RELEASE.md`.
-
-### Using the `/release` Command
-
-Claude Code can guide you through the release process:
-
-```bash
-/release alpha   # Start alpha release
-/release beta    # Start beta release
-/release ga      # Start GA release
-```
-
-### Manual Release Process
-
-If not using Claude Code, follow these steps:
-
-#### Alpha Release
-1. Follow all items in `.github/RELEASE.md` Alpha Phase section
-2. Verify all exit criteria are met
-3. Tag version: `git tag -a v0.1.0-alpha.1 -m "Alpha 1"`
-4. Push tag: `git push origin v0.1.0-alpha.1`
-5. GitHub Actions will automatically publish to NuGet
-
-#### Beta Release
-1. Complete Alpha phase
-2. Address feedback from alpha testing
-3. Follow all items in `.github/RELEASE.md` Beta Phase section
-4. Tag version: `git tag -a v0.1.0-beta.1 -m "Beta 1"`
-5. Push tag: `git push origin v0.1.0-beta.1`
-
-#### GA Release
-1. Complete Beta phase
-2. Address feedback from beta testing
-3. Follow all items in `.github/RELEASE.md` GA Phase section
-4. Tag version: `git tag -a v0.1.0 -m "Release v0.1.0"`
-5. Push tag: `git push origin v0.1.0`
-6. Announce to community
-
-### Version Numbering
-
-See GitVersion section for automatic version calculation.
-
-## Next Steps
-
-1. ✅ Foundation skeleton (DONE)
-2. ⏳ Implement Receptors to pass tests
-3. ⏳ Implement Dispatcher to pass tests
-4. ⏳ Add source generators for handler discovery
-5. ⏳ Add remaining components (Perspectives, Lenses, etc.)
+- **Zero Reflection** — Everything via source generators
+- **AOT Compatible** — Native AOT from day one
+- **Type Safe** — Compile-time safety everywhere
+- **Test Driven** — 21,000+ tests with comprehensive coverage
+- **Documentation First** — Docs drive implementation
 
 ## Contributing
 
-This is v0.1.0 - the foundation. Follow the TDD approach:
-1. Tests define behavior (already written)
-2. Implement to make tests pass (green)
-3. Refactor for quality (refactor)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
+## License
+
+[MIT](LICENSE)

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Transports.HotChocolate.Middleware;
@@ -388,8 +389,9 @@ public class WhizbangScopeMiddlewareTests {
   public async Task InvokeAsync_WithNullUser_ScopeFieldsShouldBeNullAsync() {
     // Arrange - explicitly set User to null to exercise the ?. branches
     var (middleware, accessor) = _createMiddleware();
-    var context = new DefaultHttpContext();
-    context.User = null!;
+    var context = new DefaultHttpContext {
+      User = null!
+    };
 
     // Act
     await middleware.InvokeAsync(context, accessor);
@@ -413,8 +415,9 @@ public class WhizbangScopeMiddlewareTests {
     var options = new WhizbangScopeOptions();
     options.ExtensionClaimMappings["region_claim"] = "Region";
     var (middleware, accessor) = _createMiddleware(options);
-    var context = new DefaultHttpContext();
-    context.User = null!;
+    var context = new DefaultHttpContext {
+      User = null!
+    };
 
     // Act
     await middleware.InvokeAsync(context, accessor);
@@ -947,8 +950,9 @@ public class WhizbangScopeMiddlewareTests {
   [Test]
   public async Task Options_SettingUserIdClaimType_ShouldReplaceListAsync() {
     // For backwards compatibility, setting UserIdClaimType replaces the list
-    var options = new WhizbangScopeOptions();
-    options.UserIdClaimType = "my_custom_user_id";
+    var options = new WhizbangScopeOptions {
+      UserIdClaimType = "my_custom_user_id"
+    };
     await Assert.That(options.UserIdClaimTypes.Count).IsEqualTo(1);
     await Assert.That(options.UserIdClaimTypes).Contains("my_custom_user_id");
     await Assert.That(options.UserIdClaimType).IsEqualTo("my_custom_user_id");
@@ -1014,4 +1018,5 @@ public class WhizbangScopeMiddlewareTests {
 /// </summary>
 internal sealed class TestScopeContextAccessor : IScopeContextAccessor {
   public IScopeContext? Current { get; set; }
+  public IMessageContext? InitiatingContext { get; set; }
 }

@@ -16,7 +16,10 @@ public sealed record StreamIdInfo(
     string EventType,
     string PropertyName,
     string PropertyType,
-    bool IsPropertyValueType
+    bool IsPropertyValueType,
+    bool HasGenerate = false,
+    bool OnlyIfEmpty = false,
+    bool IsPropertyInitOnly = false
 );
 
 /// <summary>
@@ -39,9 +42,14 @@ public sealed record EventWithoutStreamIdInfo(
 /// <param name="PropertyName">Name of the property marked with [StreamId]</param>
 /// <param name="PropertyType">Fully qualified type of the stream ID property</param>
 /// <param name="IsPropertyValueType">True if the property type is a value type (struct)</param>
+/// <param name="HasGenerate">True if [GenerateStreamId] is present on the command</param>
+/// <param name="OnlyIfEmpty">True if [GenerateStreamId(OnlyIfEmpty = true)] is set</param>
 public sealed record CommandStreamIdInfo(
     string CommandType,
     string PropertyName,
     string PropertyType,
-    bool IsPropertyValueType
+    bool IsPropertyValueType,
+    bool HasGenerate = false,
+    bool OnlyIfEmpty = false,
+    bool IsPropertyInitOnly = false
 );

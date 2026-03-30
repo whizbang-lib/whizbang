@@ -13,8 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Flags is the standard suffix for [Flags] enums")]
-public enum WorkBatchFlags {
+public enum WorkBatchOptions {
   /// <summary>
   /// No special flags.
   /// </summary>
@@ -126,7 +125,7 @@ public enum MessageProcessingStatus {
   Failed = 1 << 15
 
   // Note: Receptor and perspective processing are now tracked separately in
-  // wh_receptor_processing and wh_perspective_checkpoints tables.
+  // wh_receptor_processing and wh_perspective_cursors tables.
   // This allows for:
   // - Multiple receptors to process the same event independently
   // - Perspectives to catch up via time-travel (replay from event store)

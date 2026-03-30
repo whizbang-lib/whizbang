@@ -1,6 +1,6 @@
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Postgres;
-using Whizbang.Sequencing.Tests;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -35,5 +35,5 @@ public class DapperPostgresSequenceProviderTests : SequenceProviderContractTests
     return new DapperPostgresSequenceProvider(_testBase.ConnectionFactory, _testBase.Executor);
   }
 
-  private sealed class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase;
 }

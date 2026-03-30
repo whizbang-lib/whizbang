@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// Ensures AOT compatibility by flagging object, dynamic, and non-generic interface properties.
 /// Recursively checks nested child types to ensure entire object graph is serializable.
 /// </summary>
-/// <docs>diagnostics/serializable-property-analyzer</docs>
+/// <docs>operations/diagnostics/serializable-property-analyzer</docs>
 /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
@@ -23,13 +23,17 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
-      DiagnosticDescriptors.NonSerializablePropertyObject,
-      DiagnosticDescriptors.NonSerializablePropertyDynamic,
-      DiagnosticDescriptors.NonSerializablePropertyInterface,
-      DiagnosticDescriptors.NonSerializableNestedProperty
-  );
+  /// <inheritdoc/>
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+  [
+    DiagnosticDescriptors.NonSerializablePropertyObject,
+    DiagnosticDescriptors.NonSerializablePropertyDynamic,
+    DiagnosticDescriptors.NonSerializablePropertyInterface,
+    DiagnosticDescriptors.NonSerializableNestedProperty
+,
+  ];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();

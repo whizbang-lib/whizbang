@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Sequencing;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Sequencing.Tests;
 
@@ -54,8 +55,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "mixed-ops-stream";
-    var getNextCount = 50;
+    const string streamKey = "mixed-ops-stream";
+    const int getNextCount = 50;
     var getTasks = new Task<long>[getNextCount];
 
     // Act - Mix GetNext calls with a Reset in the middle
@@ -184,8 +185,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task ResetDuringConcurrentAccess_ShouldNotCorruptAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "reset-concurrent-stream";
-    var callCount = 100;
+    const string streamKey = "reset-concurrent-stream";
+    const int callCount = 100;
     var allTasks = new List<Task>();
 
     // Act - Mix GetNext and Reset calls concurrently
@@ -258,34 +259,29 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   }
 
   [Test]
-  [Arguments(10, 100, 5.0)]
-  [Arguments(50, 500, 8.0)]
-  [Arguments(100, 1000, 10.0)]
-  public async Task ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync(int streamCount, int callsPerStream, double maxSeconds) {
+  [Arguments(10, 100)]
+  [Arguments(50, 500)]
+  [Arguments(100, 1000)]
+  public async Task ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync(int streamCount, int callsPerStream) {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var allTasks = new List<Task<long>>();
+    var streamKeys = Enumerable.Range(0, streamCount).Select(i => $"concurrent-stream-{i}").ToArray();
 
-    // Act - Concurrent calls across many streams
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    // Act - Bounded parallelism instead of 100K fire-and-forget Task.Run calls
+    // which saturate the ThreadPool and cause OperationCanceledException under load
+    var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount * 2 };
+
+    // Each work item is one (stream, call) pair
+    var workItems = streamKeys.SelectMany(key =>
+      Enumerable.Range(0, callsPerStream).Select(_ => key)).ToArray();
+
+    await Parallel.ForEachAsync(workItems, parallelOptions, async (streamKey, ct) => {
+      await provider.GetNextAsync(streamKey, ct);
+    });
+
+    // Assert - Verify each stream reached expected count (correctness, not timing)
     for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
-      var streamKey = $"concurrent-stream-{streamIdx}";
-      for (int call = 0; call < callsPerStream; call++) {
-        var capturedStreamId = streamKey;
-        allTasks.Add(Task.Run(async () => await provider.GetNextAsync(capturedStreamId)));
-      }
-    }
-
-    await Task.WhenAll(allTasks);
-    stopwatch.Stop();
-
-    // Assert - Should complete in reasonable time
-    await Assert.That(stopwatch.Elapsed.TotalSeconds).IsLessThan(maxSeconds);
-
-    // Verify each stream reached expected count
-    for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
-      var streamKey = $"concurrent-stream-{streamIdx}";
-      var current = await provider.GetCurrentAsync(streamKey);
+      var current = await provider.GetCurrentAsync(streamKeys[streamIdx]);
       await Assert.That(current).IsEqualTo(callsPerStream - 1);
     }
   }
@@ -296,7 +292,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task UnusedStreams_ShouldReturnMinusOneAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var neverUsedStreamId = "never-used-stream";
+    const string neverUsedStreamId = "never-used-stream";
 
     // Act - Get current for a stream that was never initialized
     var current = await provider.GetCurrentAsync(neverUsedStreamId);
@@ -309,7 +305,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "get-current-test-stream";
+    const string streamKey = "get-current-test-stream";
 
     // Act
     await provider.GetNextAsync(streamKey); // 0
@@ -325,7 +321,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task CancellationToken_Cancelled_ShouldThrowAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "cancellation-test-stream";
+    const string streamKey = "cancellation-test-stream";
     var cts = new CancellationTokenSource();
     cts.Cancel();
 

@@ -77,7 +77,7 @@ public class DispatcherIntegrationSyncTests {
     // Arrange - clear any existing registrations and add a test one
     SyncEventTypeRegistrations.Clear();
     var testEventType = typeof(IntegrationTestEventB);
-    var testPerspectiveName = "Test.Perspective.Name";
+    const string testPerspectiveName = "Test.Perspective.Name";
 
     SyncEventTypeRegistrations.Register(testEventType, testPerspectiveName);
 
@@ -131,8 +131,7 @@ public class DispatcherIntegrationSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // === STEP 3: Perspective worker processes Event B ===
     var perspectiveTask = Task.Run(async () => {
@@ -194,7 +193,7 @@ public class DispatcherIntegrationSyncTests {
   [Test]
   public async Task NoRegistryMapping_EventNotTracked_FallsBackToDbAsync() {
     // Arrange
-    var streamId = Guid.NewGuid();
+    _ = Guid.NewGuid();
     var singletonTracker = new SyncEventTracker();
 
     // Empty registry - no mappings

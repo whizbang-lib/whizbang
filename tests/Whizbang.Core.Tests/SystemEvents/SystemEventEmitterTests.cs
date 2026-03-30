@@ -6,6 +6,7 @@ using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
@@ -596,10 +597,10 @@ public class SystemEventEmitterTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             TenantId = "tenant-123",
             UserId = "user-456"
-          },
+          }),
           CorrelationId = new CorrelationId(testCorrelationId)
         }
       ]
@@ -712,6 +713,520 @@ public class SystemEventEmitterTests {
 
   #endregion
 
+  #region EmitEventAuditedAsync Happy Path Tests
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithEnabledAudit_EmitsEventAuditedToSystemStreamAsync() {
+    // Arrange - Use string as TEvent since it's registered in InfrastructureJsonContext
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var streamId = Guid.NewGuid();
+    const long streamPosition = 42L;
+    var envelope = _createTestEnvelope("TestPayload");
+
+    // Act
+    await emitter.EmitEventAuditedAsync(streamId, streamPosition, envelope);
+
+    // Assert - EventAudited was emitted to the system stream
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.OriginalEventType).IsEqualTo("String");
+    await Assert.That(emittedEnvelope.Payload.OriginalStreamId).IsEqualTo(streamId.ToString());
+    await Assert.That(emittedEnvelope.Payload.OriginalStreamPosition).IsEqualTo(streamPosition);
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithScopeContext_ExtractsTenantAndUserAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var testCorrelationId = Guid.NewGuid();
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "ScopedPayload",
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
+            TenantId = "tenant-abc",
+            UserId = "user-xyz"
+          }),
+          CorrelationId = new CorrelationId(testCorrelationId)
+        }
+      ]
+    };
+
+    // Act
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 5, envelope);
+
+    // Assert - Scope values are extracted into EventAudited
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.TenantId).IsEqualTo("tenant-abc");
+    await Assert.That(emittedEnvelope.Payload.UserId).IsEqualTo("user-xyz");
+    await Assert.That(emittedEnvelope.Payload.CorrelationId).IsEqualTo(testCorrelationId.ToString());
+    await Assert.That(emittedEnvelope.Payload.Scope).IsNotNull();
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithNoScope_EmitsWithNullScopeAsync() {
+    // Arrange - Envelope with no scope delta and no correlation ID
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "NoScopePayload",
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    // Act
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    // Assert - EventAudited is emitted with null scope properties
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.TenantId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.UserId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.CorrelationId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.Scope).IsNull();
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithPartialScope_ExtractsOnlyAvailableFieldsAsync() {
+    // Arrange - Scope with only TenantId (no UserId, no CorrelationId)
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "PartialScopePayload",
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
+            TenantId = "tenant-only"
+          })
+        }
+      ]
+    };
+
+    // Act
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    // Assert
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.TenantId).IsEqualTo("tenant-only");
+    await Assert.That(emittedEnvelope.Payload.UserId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.CorrelationId).IsNull();
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_SerializesPayloadToJsonElementAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var envelope = _createTestEnvelope("SerializeMe");
+
+    // Act
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    // Assert - OriginalBody should contain serialized payload
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.OriginalBody.ValueKind).IsNotEqualTo(JsonValueKind.Undefined);
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_SetsTimestampOnAuditEventAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var before = DateTimeOffset.UtcNow;
+    var envelope = _createTestEnvelope("TimestampTest");
+
+    // Act
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    // Assert
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.Timestamp).IsGreaterThanOrEqualTo(before);
+    await Assert.That(emittedEnvelope.Payload.Timestamp).IsLessThanOrEqualTo(DateTimeOffset.UtcNow);
+  }
+
+  #endregion
+
+  #region EmitCommandAuditedAsync Happy Path Tests
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithEnabledAudit_EmitsCommandAuditedToSystemStreamAsync() {
+    // Arrange - Use string as TCommand since it's registered in InfrastructureJsonContext
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("TestCommand", "TestResponse", "MyReceptor", null);
+
+    // Assert
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.CommandType).IsEqualTo("String");
+    await Assert.That(emittedEnvelope.Payload.ReceptorName).IsEqualTo("MyReceptor");
+    await Assert.That(emittedEnvelope.Payload.ResponseType).IsEqualTo("String");
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithContext_ExtractsMetadataCorrectlyAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var context = new TestMessageContext {
+      UserId = "user-cmd-123"
+    };
+    context.Metadata["TenantId"] = "tenant-cmd-456";
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("SomeCommand", 42, "OrderReceptor", context);
+
+    // Assert - Metadata extracted into CommandAudited
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.UserId).IsEqualTo("user-cmd-123");
+    await Assert.That(emittedEnvelope.Payload.TenantId).IsEqualTo("tenant-cmd-456");
+    await Assert.That(emittedEnvelope.Payload.CorrelationId).IsNotNull();
+    await Assert.That(emittedEnvelope.Payload.Scope).IsNotNull();
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithNullContext_EmitsWithNullScopeFieldsAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Act - null context
+    await emitter.EmitCommandAuditedAsync("NullCtxCmd", "ok", "TestReceptor", null);
+
+    // Assert
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.TenantId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.UserId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.CorrelationId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.Scope).IsNull();
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithContextNoTenantId_OmitsTenantFromScopeAsync() {
+    // Arrange - Context with UserId but no TenantId in Metadata
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var context = new TestMessageContext {
+      UserId = "user-only"
+    };
+    // Not setting TenantId metadata
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("PartialCtxCmd", "ok", "TestReceptor", context);
+
+    // Assert
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.UserId).IsEqualTo("user-only");
+    await Assert.That(emittedEnvelope.Payload.TenantId).IsNull();
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_SerializesCommandBodyAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("MyCommandBody", "response", "Receptor", null);
+
+    // Assert - CommandBody should contain serialized command
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.CommandBody.ValueKind).IsNotEqualTo(JsonValueKind.Undefined);
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_SetsTimestampAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var before = DateTimeOffset.UtcNow;
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("TimedCmd", "ok", "Receptor", null);
+
+    // Assert
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.Timestamp).IsGreaterThanOrEqualTo(before);
+    await Assert.That(emittedEnvelope.Payload.Timestamp).IsLessThanOrEqualTo(DateTimeOffset.UtcNow);
+  }
+
+  #endregion
+
+  #region EmitCommandAuditedAsync Branch Coverage Tests
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithNullTenantIdInMetadata_HandlesNullValueGracefullyAsync() {
+    // Arrange - Context with TenantId key present in Metadata but value is null.
+    // This covers the branch in `scope["TenantId"] = tenantId?.ToString()` where tenantId is null.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var context = new TestMessageContext {
+      UserId = "user-789"
+    };
+    // TenantId key present but value is null - exercises the null-coalescing branch
+    context.Metadata["TenantId"] = null!;
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("SomeCommand", "ok", "TestReceptor", context);
+
+    // Assert - Should emit with null TenantId despite key being present
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.UserId).IsEqualTo("user-789");
+    // TenantId is null (the null value from Metadata)
+    await Assert.That(emittedEnvelope.Payload.TenantId).IsNull();
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithContextMissingTenantIdKey_DoesNotAddTenantToScopeAsync() {
+    // Arrange - Context with Metadata that does NOT contain TenantId key at all.
+    // This covers the false branch of context?.Metadata.TryGetValue("TenantId") == true.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var context = new TestMessageContext {
+      UserId = "user-scope-test"
+    };
+    // Deliberately do NOT add TenantId to Metadata
+
+    // Act
+    await emitter.EmitCommandAuditedAsync("MyCommand", "result", "Receptor", context);
+
+    // Assert - Scope should not include TenantId
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.TenantId).IsNull();
+    await Assert.That(emittedEnvelope.Payload.UserId).IsEqualTo("user-scope-test");
+    // Scope should contain UserId and CorrelationId, but NOT TenantId
+    await Assert.That(emittedEnvelope.Payload.Scope).IsNotNull();
+    await Assert.That(emittedEnvelope.Payload.Scope!.ContainsKey("TenantId")).IsFalse();
+  }
+
+  #endregion
+
+  #region EmitAsync Branch Coverage Tests
+
+  [Test]
+  public async Task EmitAsync_WithActivityCurrentSet_PopulatesTraceParentAsync() {
+    // Arrange - Test the TraceParent branch in EmitAsync where Activity.Current?.Id is used.
+    // Start a diagnostic activity to ensure Activity.Current is non-null.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new EventAudited {
+      Id = Guid.NewGuid(),
+      OriginalEventType = "Test",
+      OriginalStreamId = "stream-1",
+      OriginalStreamPosition = 1,
+      OriginalBody = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act - With an active diagnostic activity
+    using var activity = new System.Diagnostics.ActivitySource("TestSource").StartActivity("TestActivity");
+
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - The hop's TraceParent may be set if an activity is running
+    var envelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(envelope).IsNotNull();
+    await Assert.That(envelope!.Hops).Count().IsEqualTo(1);
+    // TraceParent is Activity.Current?.Id - may be null or set depending on activity listener
+    // The test verifies the code path is exercised without error
+    await Assert.That(envelope.Hops[0].Type).IsEqualTo(HopType.Current);
+  }
+
+  [Test]
+  public async Task EmitAsync_WithNoActivityCurrent_TraceParentIsNullAsync() {
+    // Arrange - Test the null branch of Activity.Current?.Id in EmitAsync.
+    // This ensures the null-conditional expression is tested with null Activity.Current.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new CommandAudited {
+      Id = Guid.NewGuid(),
+      CommandType = "TestCommand",
+      CommandBody = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow,
+      ReceptorName = "Receptor",
+      ResponseType = "string"
+    };
+
+    // Act - Without an active diagnostic activity, Activity.Current should be null
+    // (assuming no ambient activity in the test environment)
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert
+    var envelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(envelope).IsNotNull();
+    await Assert.That(envelope!.Hops).Count().IsEqualTo(1);
+    await Assert.That(envelope.Hops[0].ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
+  }
+
+  #endregion
+
+  #region EmitAsync Additional Coverage Tests
+
+  [Test]
+  public async Task EmitAsync_WithEventAudited_WhenEventAuditEnabled_IsEnabledReturnsTrueAsync() {
+    // Arrange - Test the path where IsEnabled<EventAudited>() returns true directly
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new EventAudited {
+      Id = Guid.NewGuid(),
+      OriginalEventType = "Test",
+      OriginalStreamId = "stream-1",
+      OriginalStreamPosition = 1,
+      OriginalBody = JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - Should emit because IsEnabled<EventAudited>() returns true
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task EmitAsync_WithCommandAudited_WhenCommandAuditEnabled_IsEnabledReturnsTrueAsync() {
+    // Arrange - Test the path where IsEnabled<CommandAudited>() returns true directly
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new CommandAudited {
+      Id = Guid.NewGuid(),
+      CommandType = "Test",
+      CommandBody = JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow,
+      ReceptorName = "Receptor",
+      ResponseType = "string"
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - Should emit because IsEnabled<CommandAudited>() returns true
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task EmitAsync_PassesCancellationTokenToEventStoreAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new EventAudited {
+      Id = Guid.NewGuid(),
+      OriginalEventType = "Test",
+      OriginalStreamId = "stream-1",
+      OriginalStreamPosition = 1,
+      OriginalBody = JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    using var cts = new CancellationTokenSource();
+
+    // Act - should not throw with non-cancelled token
+    await emitter.EmitAsync(systemEvent, cts.Token);
+
+    // Assert
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task EmitAsync_CreatesEnvelopeWithServiceInstanceUnknownAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new EventAudited {
+      Id = Guid.NewGuid(),
+      OriginalEventType = "Test",
+      OriginalStreamId = "stream-1",
+      OriginalStreamPosition = 1,
+      OriginalBody = JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - Verify hop uses ServiceInstanceInfo.Unknown
+    var envelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(envelope).IsNotNull();
+    await Assert.That(envelope!.Hops[0].ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
+  }
+
+  #endregion
+
   #region Helper Methods
 
   private static MessageEnvelope<T> _createTestEnvelope<T>(T payload) {
@@ -737,9 +1252,11 @@ public class SystemEventEmitterTests {
     public MessageId CausationId { get; init; } = MessageId.New();
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     public string? UserId { get; set; }
-    public Dictionary<string, object> Metadata { get; } = new();
+    public Dictionary<string, object> Metadata { get; } = [];
 
     public string? TenantId => throw new NotImplementedException();
+    public Core.Security.IScopeContext? ScopeContext => null;
+    public ICallerInfo? CallerInfo => null;
 
     IReadOnlyDictionary<string, object> IMessageContext.Metadata => Metadata;
   }

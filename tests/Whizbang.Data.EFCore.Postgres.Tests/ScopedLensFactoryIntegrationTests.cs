@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -99,7 +100,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<IOrderLensQuery>(
-      ScopeFilter.Tenant,
+      ScopeFilters.Tenant,
       Permission.Delete("orders")))
       .Throws<AccessDeniedException>();
   }
@@ -140,8 +141,8 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
 
     // Assert
     await Assert.That(lens.AppliedFilter!.Value.SecurityPrincipals.Count).IsEqualTo(3);
-    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilter.Principal)).IsTrue();
-    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilter.Tenant)).IsTrue();
+    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilters.Principal)).IsTrue();
+    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilters.Tenant)).IsTrue();
   }
 
   [Test]
@@ -321,7 +322,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     };
 
     // Act
-    var lens = factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilter.Tenant, Permission.Read("orders"));
+    var lens = factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilters.Tenant, Permission.Read("orders"));
     var result = await lens.Query.ToListAsync();
 
     // Assert
@@ -343,7 +344,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     };
 
     // Act & Assert
-    await Assert.That(() => factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilter.Tenant, Permission.Read("orders")))
+    await Assert.That(() => factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilters.Tenant, Permission.Read("orders")))
       .Throws<AccessDeniedException>();
   }
 
@@ -422,17 +423,13 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   /// <summary>
   /// Database-backed lens query interface.
   /// </summary>
-  public interface IDatabaseOrderLensQuery : ILensQuery<Order> { }
+  public interface IDatabaseOrderLensQuery : ILensQuery<Order>;
 
   /// <summary>
   /// Database-backed lens implementation using EFCoreFilterableLensQuery.
   /// </summary>
-  private sealed class DatabaseOrderLensQuery : IDatabaseOrderLensQuery, IFilterableLens {
-    private readonly EFCoreFilterableLensQuery<Order> _inner;
-
-    public DatabaseOrderLensQuery(DbContext context) {
-      _inner = new EFCoreFilterableLensQuery<Order>(context, "wh_per_order");
-    }
+  private sealed class DatabaseOrderLensQuery(DbContext context) : IDatabaseOrderLensQuery, IFilterableLens {
+    private readonly EFCoreFilterableLensQuery<Order> _inner = new(context, "wh_per_order");
 
     public void ApplyFilter(ScopeFilterInfo filterInfo) {
       _inner.ApplyFilter(filterInfo);
@@ -443,6 +440,10 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       return _inner.GetByIdAsync(id, cancellationToken);
     }
+
+    public IScopedLensAccess<Order> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<Order> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<Order> DefaultScope => throw new NotImplementedException();
   }
 
   // === Mock Test Types ===

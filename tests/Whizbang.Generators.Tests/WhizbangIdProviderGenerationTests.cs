@@ -7,7 +7,7 @@ public class WhizbangIdProviderGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithWhizbangId_GeneratesProviderClassAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -20,7 +20,7 @@ public class WhizbangIdProviderGenerationTests {
     // Assert
     var providerSource = GeneratorTestHelper.GetGeneratedSource(result, "TestIdProvider.g.cs");
     await Assert.That(providerSource).IsNotNull();
-    await Assert.That(providerSource!).Contains("class TestIdProvider");
+    await Assert.That(providerSource).Contains("class TestIdProvider");
     await Assert.That(providerSource).Contains("IWhizbangIdProvider<TestId>");
     await Assert.That(providerSource).Contains("public TestId NewId()");
   }
@@ -29,7 +29,7 @@ public class WhizbangIdProviderGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleIds_GeneratesAllProvidersAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -53,7 +53,7 @@ public class WhizbangIdProviderGenerationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesProviderWithNullCheckAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       [WhizbangId]
@@ -66,6 +66,6 @@ public class WhizbangIdProviderGenerationTests {
     // Assert
     var providerSource = GeneratorTestHelper.GetGeneratedSource(result, "TestIdProvider.g.cs");
     await Assert.That(providerSource).IsNotNull();
-    await Assert.That(providerSource!).Contains("ArgumentNullException");
+    await Assert.That(providerSource).Contains("ArgumentNullException");
   }
 }

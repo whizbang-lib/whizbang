@@ -46,7 +46,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -54,7 +54,7 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(500); // Give time for subscriptions to be created
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
     cts.Cancel();
 
     // Assert
@@ -64,8 +64,8 @@ public class TransportConsumerWorkerTests {
 
   [Test]
   public async Task ExecuteAsync_WaitsForReadinessCheck_BeforeSubscribingAsync() {
-    // Arrange
-    var readinessCheck = new DelayedReadinessCheck(millisecondsDelay: 500);
+    // Arrange - use a gate-controlled readiness check instead of delay-based timing
+    var readinessCheck = new GatedReadinessCheck();
     var transport = new FakeTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("topic1"));
@@ -86,7 +86,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -94,14 +94,19 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Well before 500ms readiness delay
 
-    // Assert - should not have subscribed yet
+    // Wait until the readiness check is actually being called (blocked on our gate)
+    await readinessCheck.WaitForCheckCalledAsync(TimeSpan.FromSeconds(5));
+
+    // Assert - should not have subscribed yet (readiness check is still blocked)
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
       .Because("Worker should wait for readiness check before subscribing");
 
-    // Wait for readiness to complete (500ms) plus buffer for subscription creation
-    await Task.Delay(800);
+    // Release the readiness gate
+    readinessCheck.AllowReady();
+
+    // Wait for subscription to happen
+    await transport.WaitForSubscriptionsAsync(1, TimeSpan.FromSeconds(5));
 
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Worker should subscribe after readiness check completes");
@@ -132,7 +137,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -140,7 +145,7 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200); // Give time for subscriptions
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
 
     await worker.PauseAllSubscriptionsAsync();
 
@@ -179,7 +184,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -187,7 +192,7 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200); // Give time for subscriptions
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
 
     await worker.PauseAllSubscriptionsAsync();
     await worker.ResumeAllSubscriptionsAsync();
@@ -227,7 +232,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -235,7 +240,7 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200); // Give time for subscriptions
+    await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
 
     await worker.StopAsync(CancellationToken.None);
 
@@ -252,14 +257,28 @@ public class TransportConsumerWorkerTests {
 
 // ===== Test Doubles =====
 
-internal class FakeTransport : ITransport {
+internal class FakeTransport : ITransport, IDisposable {
   private readonly List<FakeSubscription> _subscriptions = [];
   private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+  private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
   public int SubscribeCallCount { get; private set; }
   public bool IsInitialized => true;
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
   public IReadOnlyList<FakeSubscription> Subscriptions => _subscriptions;
+
+  public void Dispose() => _subscribeSignal.Dispose();
+
+  /// <summary>
+  /// Waits until the specified number of subscriptions have been created.
+  /// </summary>
+  public async Task WaitForSubscriptionsAsync(int count, TimeSpan timeout) {
+    for (var i = 0; i < count; i++) {
+      if (!await _subscribeSignal.WaitAsync(timeout)) {
+        throw new TimeoutException($"Expected {count} subscriptions but only got {SubscribeCallCount} within {timeout}");
+      }
+    }
+  }
 
   public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -279,6 +298,7 @@ internal class FakeTransport : ITransport {
     _handler = handler;
     var subscription = new FakeSubscription();
     _subscriptions.Add(subscription);
+    _subscribeSignal.Release();
     return Task.FromResult<ISubscription>(subscription);
   }
 
@@ -439,11 +459,29 @@ internal class FakeDispatcher : IDispatcher {
   public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
     throw new NotImplementedException();
 
-  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+  public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+    throw new NotImplementedException();
+
+  public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+    throw new NotImplementedException();
+
+  public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull =>
+    throw new NotImplementedException();
+
+  public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
+    throw new NotImplementedException();
+
+  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
-  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
+
+  public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+  public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) => throw new NotImplementedException();
+  public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
+  public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+  public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotImplementedException();
 }
 
 internal class FakeDeliveryReceipt : IDeliveryReceipt {
@@ -486,17 +524,46 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
   public MessageId? GetCausationId() => _hops[0].CausationId;
   public JsonElement? GetMetadata(string key) => null;
   public SecurityContext? GetCurrentSecurityContext() => null;
+  public ScopeContext? GetCurrentScope() => null;
 }
 
-internal class DelayedReadinessCheck : ITransportReadinessCheck {
-  private readonly int _millisecondsDelay;
-
-  public DelayedReadinessCheck(int millisecondsDelay) {
-    _millisecondsDelay = millisecondsDelay;
-  }
+internal class DelayedReadinessCheck(int millisecondsDelay) : ITransportReadinessCheck {
+  private readonly int _millisecondsDelay = millisecondsDelay;
 
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     await Task.Delay(_millisecondsDelay, cancellationToken);
+    return true;
+  }
+}
+
+/// <summary>
+/// Gate-controlled readiness check that blocks until explicitly released.
+/// Deterministic alternative to delay-based readiness simulation.
+/// </summary>
+internal class GatedReadinessCheck : ITransportReadinessCheck {
+  private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly TaskCompletionSource _checkCalled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  /// <summary>
+  /// Waits until IsReadyAsync has been called by the worker.
+  /// </summary>
+  public async Task WaitForCheckCalledAsync(TimeSpan timeout) {
+    using var cts = new CancellationTokenSource(timeout);
+    try {
+      await _checkCalled.Task.WaitAsync(cts.Token);
+    } catch (OperationCanceledException) {
+      throw new TimeoutException("IsReadyAsync was not called within timeout");
+    }
+  }
+
+  /// <summary>
+  /// Releases the readiness gate, allowing IsReadyAsync to return true.
+  /// </summary>
+  public void AllowReady() => _gate.TrySetResult();
+
+  public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+    _checkCalled.TrySetResult();
+    await _gate.Task.WaitAsync(cancellationToken);
     return true;
   }
 }
@@ -526,7 +593,7 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchFlags flags, CancellationToken ct = default) {
+  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, Whizbang.Core.Messaging.FlushMode mode = Whizbang.Core.Messaging.FlushMode.Required, CancellationToken ct = default) {
     // Return an empty WorkBatch - unit tests don't need actual work processing
     var workBatch = new Whizbang.Core.Messaging.WorkBatch {
       InboxWork = [],

@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Schema;
@@ -36,25 +37,25 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -69,29 +70,29 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync() {
     // Arrange
-    var metadataJson = """{"version":"1.0.0","environment":"test","enabled":true}""";
+    const string metadataJson = """{"version":"1.0.0","environment":"test","enabled":true}""";
     var metadata = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson);
 
     // Act
-    await _sut.ProcessWorkBatchAsync(
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
       metadata,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300);
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
 
     // Assert
     var storedMetadata = await GetInstanceMetadataAsync(_instanceId);
@@ -111,28 +112,28 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertOutboxMessageAsync(messageId2, "topic2", "TestEvent", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
         new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      Flags: WorkBatchOptions.DebugMode));  // Enable debug mode to keep completed messages
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0)
@@ -156,30 +157,30 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [
         new MessageFailure {
           MessageId = messageId,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Network timeout"
         }
       ],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -199,33 +200,33 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId);
 
     // Error message with special characters that need JSON escaping
-    var errorMessage = "Error with \"quotes\", \nnewlines\n, and \\backslashes\\";
+    const string errorMessage = "Error with \"quotes\", \nnewlines\n, and \\backslashes\\";
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [
         new MessageFailure {
           MessageId = messageId,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = errorMessage
         }
       ],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Should not throw, error should be recorded
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -245,27 +246,27 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertInboxMessageAsync(messageId2, "Handler2", "TestEvent", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [
         new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published },
         new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published }
       ],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert
     await Assert.That(result.InboxWork).Count().IsEqualTo(0);
@@ -288,30 +289,30 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertInboxMessageAsync(messageId, "Handler1", "TestEvent", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [
         new MessageFailure {
           MessageId = messageId,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Handler exception"
         }
       ],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert
     await Assert.That(result.InboxWork).Count().IsEqualTo(0);
@@ -360,24 +361,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Should return 2 work items, not the active one
     await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
@@ -424,24 +425,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5));
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -493,41 +494,41 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }
       ],
-      outboxFailures: [
+      OutboxFailures: [
         new MessageFailure {
           MessageId = failedOutboxId,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Outbox error"
         }
       ],
-      inboxCompletions: [
+      InboxCompletions: [
         new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published }
       ],
-      inboxFailures: [
+      InboxFailures: [
         new MessageFailure {
           MessageId = failedInboxId,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Inbox error"
         }
       ],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      Flags: WorkBatchOptions.DebugMode));  // Enable debug mode to keep completed messages
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1)
@@ -575,24 +576,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       statusFlags: (int)MessageProcessingStatus.Stored);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - All fields should be populated correctly (not null/default)
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
@@ -609,8 +610,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var complexJson = "{\"nested\":{\"key\":\"value\"},\"array\":[1,2,3]}";
-    var complexMetadata = "{\"correlation_id\":\"abc-123\",\"user\":\"test\"}";
+    const string complexJson = "{\"nested\":{\"key\":\"value\"},\"array\":[1,2,3]}";
+    const string complexMetadata = "{\"correlation_id\":\"abc-123\",\"user\":\"test\"}";
 
     await InsertOutboxMessageAsync(
       messageId,
@@ -621,24 +622,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       metadata: complexMetadata);
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - JSON should be returned as text strings
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
@@ -893,45 +894,45 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Instance 1 claims work (should be instance index 0 based on UUID sort order)
     var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result1 = await coordinator1.ProcessWorkBatchAsync(
+    var result1 = await coordinator1.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance1Id,
       "TestService",
       "host1",
       11111,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Act - Instance 2 claims work (should be instance index 1 based on UUID sort order)
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance2Id,
       "TestService",
       "host2",
       22222,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Verify each instance only claimed messages with matching modulo
     var claimedByInstance1 = result1.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -974,9 +975,10 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(instance2Id, "TestService", "host2", 22222);
     await InsertServiceInstanceAsync(instance3Id, "TestService", "host3", 33333);
 
-    // Create 15 messages (divisible by 3 for even distribution testing)
+    // Create 30 messages to ensure reliable distribution across 3 modulo buckets
+    // With 15 messages, random partition hashes can occasionally skip a bucket entirely
     var messages = new List<(Guid messageId, int partition)>();
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < 30; i++) {
       var messageId = _idProvider.NewGuid();
       var streamId = _idProvider.NewGuid();
 
@@ -997,64 +999,64 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Each instance claims work
     var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result1 = await coordinator1.ProcessWorkBatchAsync(
+    var result1 = await coordinator1.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance1Id,
       "TestService",
       "host1",
       11111,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance2Id,
       "TestService",
       "host2",
       22222,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result3 = await coordinator3.ProcessWorkBatchAsync(
+    var result3 = await coordinator3.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance3Id,
       "TestService",
       "host3",
       33333,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert
     var claimedByInstance1 = result1.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1067,10 +1069,10 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await Assert.That(claimedByInstance2.Intersect(claimedByInstance3)).Count().IsEqualTo(0);
 
     // Total claimed should equal total messages
-    await Assert.That(claimedByInstance1.Count + claimedByInstance2.Count + claimedByInstance3.Count).IsEqualTo(15);
+    await Assert.That(claimedByInstance1.Count + claimedByInstance2.Count + claimedByInstance3.Count).IsEqualTo(30);
 
-    // Each instance should claim at least 1 message (ideally ~5 each with perfect distribution)
-    // Random stream IDs don't guarantee even partition distribution across modulo 3 values
+    // Each instance should claim at least 1 message (ideally ~10 each with perfect distribution)
+    // With 30 random partitions across 3 buckets, probability of any bucket being empty is negligible
     await Assert.That(claimedByInstance1.Count).IsGreaterThanOrEqualTo(1)
       .Because("Each instance should claim at least some messages based on modulo distribution");
     await Assert.That(claimedByInstance2.Count).IsGreaterThanOrEqualTo(1);
@@ -1163,45 +1165,45 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Instance 1 claims work first (will claim messages based on modulo)
     var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result1 = await coordinator1.ProcessWorkBatchAsync(
+    var result1 = await coordinator1.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance1Id,
       "TestService",
       "host1",
       11111,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Act - Instance 2 tries to claim work
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance2Id,
       "TestService",
       "host2",
       22222,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - If instance 1 claimed any messages, instance 2 should NOT claim later messages in the same stream
     // Use MessageId for ordering (UUIDv7 IDs are time-ordered)
@@ -1253,26 +1255,26 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       streamId: streamId);
 
     // Act - Report completion with Status = 0 (clears lease, doesn't change status)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = messageId, Status = 0 }  // Status = 0 clears lease
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Status flags should remain unchanged
     var statusFlags = await GetOutboxStatusFlagsAsync(messageId);
@@ -1329,33 +1331,33 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       instanceId: _instanceId);
 
     // Act - Report failure for message 1, and release message 2 and 3 (Status = 0)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = message2Id, Status = 0 },  // Release later message
         new MessageCompletion { MessageId = message3Id, Status = 0 }   // Release later message
       ],
-      outboxFailures: [
+      OutboxFailures: [
         new MessageFailure {
           MessageId = message1Id,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Processing error"
         }
       ],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Message 1 should be marked as failed
     var message1Status = await GetOutboxStatusFlagsAsync(message1Id);
@@ -1399,47 +1401,47 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Instance 1 releases the message (Status = 0)
     var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result1 = await coordinator1.ProcessWorkBatchAsync(
+    var result1 = await coordinator1.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance1Id,
       "TestService",
       "host1",
       11111,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = message1Id, Status = 0 }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Act - Instance 2 tries to claim work
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instance2Id,
       "TestService",
       "host2",
       22222,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Combined results should include the message
     // The message will be claimed by whichever instance owns its partition (based on modulo distribution)
@@ -1471,34 +1473,34 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertOutboxMessageAsync(message3Id, "topic", "Event3", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId, streamId: streamId);
 
     // Act - Report mixed completions and failures in a single call (Unit of Work pattern)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = message1Id, Status = MessageProcessingStatus.Published },  // Success
         new MessageCompletion { MessageId = message3Id, Status = 0 }  // Release
       ],
-      outboxFailures: [
+      OutboxFailures: [
         new MessageFailure {
           MessageId = message2Id,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Processing failed"
         }
       ],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      Flags: WorkBatchOptions.DebugMode));  // Enable debug mode to keep completed messages
 
     // Assert - Verify all results were processed correctly in single transaction
     var status1 = await GetOutboxStatusFlagsAsync(message1Id);
@@ -1548,25 +1550,25 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Active instance processes work batch with short stale threshold
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    await coordinator.ProcessWorkBatchAsync(
+    await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       activeInstanceId,
       "TestService",
       "host2",
       22222,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      staleThresholdSeconds: 600); // 10 minutes
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      StaleThresholdSeconds: 600)); // 10 minutes
 
     // Assert - Stale instance should be deleted
     await using (var dbContext = CreateDbContext()) {
@@ -1638,24 +1640,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Recovery instance claims work
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result = await coordinator.ProcessWorkBatchAsync(
+    var result = await coordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       recoveryInstanceId,
       "TestService",
       "host2",
       22222,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
 
     // Assert - Messages should be reclaimed by recovery instance
     await Assert.That(result.OutboxWork).Count().IsEqualTo(2)
@@ -1704,25 +1706,25 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - All three instances claim work
     var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result1 = await coordinator1.ProcessWorkBatchAsync(
-      instance1Id, "TestService", "host1", 11111, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result1 = await coordinator1.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      instance1Id, "TestService", "host1", 11111, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
-      instance2Id, "TestService", "host2", 22222, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      instance2Id, "TestService", "host2", 22222, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result3 = await coordinator3.ProcessWorkBatchAsync(
-      instance3Id, "TestService", "host3", 33333, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result3 = await coordinator3.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      instance3Id, "TestService", "host3", 33333, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - Work should be distributed across all 3 instances
     var claimed1 = result1.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1775,11 +1777,11 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(instance2Id, "TestService", "host2", 22222);
 
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
-      instance2Id, "TestService", "host2", 22222, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      instance2Id, "TestService", "host2", 22222, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - Instance 2 should NOT claim instance 1's active messages
     var claimed2Ids = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1817,11 +1819,11 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Instance 1 claims work (establishes partition ownership)
     var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    await coordinator1.ProcessWorkBatchAsync(
-      staleInstanceId, "TestService", "host1", 11111, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    await coordinator1.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      staleInstanceId, "TestService", "host1", 11111, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Make instance 1 stale
     await using (var dbContext = CreateDbContext()) {
@@ -1836,12 +1838,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(activeInstanceId, "TestService", "host2", 22222);
 
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    await coordinator2.ProcessWorkBatchAsync(
-      activeInstanceId, "TestService", "host2", 22222, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: [],
-      staleThresholdSeconds: 600);
+    await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      activeInstanceId, "TestService", "host2", 22222, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      StaleThresholdSeconds: 600));
 
     // Assert - Stale instance's partitions should be released (CASCADE DELETE)
     await using (var dbContext = CreateDbContext()) {
@@ -1852,16 +1854,15 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         .Because("Stale instance should be deleted");
 
       // Partition assignments for stale instance should also be deleted (CASCADE)
-      await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
-        await connection.OpenAsync();
-        await using var command = new Npgsql.NpgsqlCommand(
-          "SELECT COUNT(*) FROM wh_partition_assignments WHERE instance_id = @instanceId",
-          connection);
-        command.Parameters.AddWithValue("instanceId", (Guid)staleInstanceId);
-        var count = (long)(await command.ExecuteScalarAsync() ?? 0L);
-        await Assert.That(count).IsEqualTo(0)
-          .Because("CASCADE DELETE should remove partition assignments when instance is deleted");
-      }
+      await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(
+        "SELECT COUNT(*) FROM wh_partition_assignments WHERE instance_id = @instanceId",
+        connection);
+      command.Parameters.AddWithValue("instanceId", (Guid)staleInstanceId);
+      var count = (long)(await command.ExecuteScalarAsync() ?? 0L);
+      await Assert.That(count).IsEqualTo(0)
+        .Because("CASCADE DELETE should remove partition assignments when instance is deleted");
     }
   }
 
@@ -1892,11 +1893,11 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Act - Instance 2 tries to claim work
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
-    var result2 = await coordinator2.ProcessWorkBatchAsync(
-      instance2Id, "TestService", "host2", 22222, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result2 = await coordinator2.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      instance2Id, "TestService", "host2", 22222, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - Instance 2 should NOT claim instance 1's message
     var claimed2Ids = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1947,11 +1948,11 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       statusFlags: (int)MessageProcessingStatus.Stored);
 
     // Act - Try to claim work
-    var result = await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - M2 should be blocked by M1's scheduled retry
     var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1998,11 +1999,11 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       statusFlags: (int)MessageProcessingStatus.Stored);
 
     // Act - Try to claim work
-    var result = await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - Both messages should be claimable now
     var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -2051,12 +2052,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       IsEvent = false
     };
 
-    var result = await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [inboxMessage],
-      renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [inboxMessage],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - Duplicate should be rejected (no work returned for duplicate)
     await Assert.That(result.InboxWork).Count().IsEqualTo(0)
@@ -2103,26 +2104,25 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var outboxMessage1 = CreateTestOutboxMessage(message1Id, "orders.topic", streamId, isEvent: false);
     var outboxMessage2 = CreateTestOutboxMessage(message2Id, "orders.topic", streamId, isEvent: false);
 
-    await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [outboxMessage1, outboxMessage2], newInboxMessages: [],
-      renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [outboxMessage1, outboxMessage2], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - Both messages accepted (no deduplication for outbox)
     // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
-    await using (var dbContext = CreateDbContext()) {
-      var outboxRecord1 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == (Guid)message1Id);
-      var outboxRecord2 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == (Guid)message2Id);
+    await using var dbContext = CreateDbContext();
+    var outboxRecord1 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(r => r.MessageId == (Guid)message1Id);
+    var outboxRecord2 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(r => r.MessageId == (Guid)message2Id);
 
-      await Assert.That(outboxRecord1).IsNotNull()
-        .Because("Outbox does not deduplicate - application's responsibility");
-      await Assert.That(outboxRecord2).IsNotNull()
-        .Because("Outbox does not deduplicate - application's responsibility");
-    }
+    await Assert.That(outboxRecord1).IsNotNull()
+      .Because("Outbox does not deduplicate - application's responsibility");
+    await Assert.That(outboxRecord2).IsNotNull()
+      .Because("Outbox does not deduplicate - application's responsibility");
   }
 
   // ===== ORDERING UNDER FAILURE TESTS =====
@@ -2167,31 +2167,31 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       instanceId: _instanceId);
 
     // Act - M1 fails, M2 and M3 released (Status = 0 cascade release pattern)
-    await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion { MessageId = message2Id, Status = 0 }, // Release
         new MessageCompletion { MessageId = message3Id, Status = 0 }  // Release
       ],
-      outboxFailures: [
+      OutboxFailures: [
         new MessageFailure {
           MessageId = message1Id,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Transient failure"
         }
       ],
-      inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - M2 and M3 are still BLOCKED because M1 is scheduled for retry
     // Even though we released M2 and M3 (Status=0), the NOT EXISTS clause blocks them
     // because M1 (earlier message in same stream) has scheduled_for > now
-    var result2 = await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result2 = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     var claimedIds = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
 
@@ -2207,21 +2207,20 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Verify that M2 and M3 DO have their leases cleared (Status=0 worked)
     // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
-    await using (var dbContext = CreateDbContext()) {
-      var message2 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(m => m.MessageId == (Guid)message2Id);
-      var message3 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(m => m.MessageId == (Guid)message3Id);
+    await using var dbContext = CreateDbContext();
+    var message2 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(m => m.MessageId == (Guid)message2Id);
+    var message3 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(m => m.MessageId == (Guid)message3Id);
 
-      await Assert.That(message2?.InstanceId).IsNull()
-        .Because("Status=0 completion should clear instance_id");
-      await Assert.That(message2?.LeaseExpiry).IsNull()
-        .Because("Status=0 completion should clear lease_expiry");
-      await Assert.That(message3?.InstanceId).IsNull()
-        .Because("Status=0 completion should clear instance_id");
-      await Assert.That(message3?.LeaseExpiry).IsNull()
-        .Because("Status=0 completion should clear lease_expiry");
-    }
+    await Assert.That(message2?.InstanceId).IsNull()
+      .Because("Status=0 completion should clear instance_id");
+    await Assert.That(message2?.LeaseExpiry).IsNull()
+      .Because("Status=0 completion should clear lease_expiry");
+    await Assert.That(message3?.InstanceId).IsNull()
+      .Because("Status=0 completion should clear instance_id");
+    await Assert.That(message3?.LeaseExpiry).IsNull()
+      .Because("Status=0 completion should clear lease_expiry");
   }
 
   /// <summary>
@@ -2261,26 +2260,26 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       instanceId: _instanceId);
 
     // Act - M1 fails, M2 and M3 NOT released (remain leased)
-    await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [
         new MessageFailure {
           MessageId = message1Id,
           CompletedStatus = MessageProcessingStatus.Stored,
           Error = "Transient failure"
         }
       ],
-      inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // Assert - M2 and M3 should NOT be claimable (still leased by this instance, blocked by M1 scheduled retry)
-    var result2 = await _sut.ProcessWorkBatchAsync(
-      _instanceId, "TestService", "test-host", 12345, metadata: null,
-      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
-      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
-      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+    var result2 = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
 
     // All messages should be blocked (M1 scheduled, M2/M3 still have active leases)
     await Assert.That(result2.OutboxWork).Count().IsEqualTo(0)
@@ -2507,7 +2506,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
     // Create a simple test event with StreamId
-    var testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
+    const string testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
     var productId = _idProvider.NewGuid();
     var messageId = _idProvider.NewGuid();
 
@@ -2520,11 +2519,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     """;
 
     // Create envelope with metadata indicating this is an event with stream_id
+    // Use short property names: id, p, h (as defined by [JsonPropertyName] attributes)
     var envelope = $$"""
     {
-      "MessageId": "{{messageId}}",
-      "Payload": {{eventPayload}},
-      "Hops": []
+      "id": "{{messageId}}",
+      "p": {{eventPayload}},
+      "h": []
     }
     """;
 
@@ -2548,25 +2548,25 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [outboxMessage],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300);
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [outboxMessage],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
 
     // Assert - Verify event was stored using raw SQL
     var dbContext = CreateDbContext();
@@ -2622,5 +2622,149 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     } finally {
       await connection.CloseAsync();
     }
+  }
+
+  // ===== SCOPEDELTA ROUND-TRIP TESTS =====
+
+  /// <summary>
+  /// **Given**: Outbox message with ScopeDelta in MessageHop (AsSystem() scenario)
+  /// **When**: Message stored in PostgreSQL JSONB and retrieved via ProcessWorkBatchAsync
+  /// **Then**: ScopeDelta.Values[ScopeProp.Scope] is preserved with correct enum dictionary keys
+  ///
+  /// **VERIFIED**: This test confirms that Dictionary&lt;ScopeProp, JsonElement&gt; correctly
+  /// round-trips through PostgreSQL JSONB. The enum keys are preserved and
+  /// MessageHopSecurityExtractor.ExtractFromHopScope() can successfully extract the scope.
+  /// </summary>
+  /// <docs>messaging/scope-propagation#scopedelta-serialization</docs>
+  [Test]
+  [Category("Integration")]
+  public async Task ProcessWorkBatchAsync_ScopeDeltaInHop_PostgresRoundTrip_PreservesEnumKeysAsync() {
+    // Arrange - Create instance
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    // Create ScopeDelta like AsSystem() does - with Dictionary<ScopeProp, JsonElement>
+    var scopeDelta = new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Scope] = JsonSerializer.SerializeToElement(new {
+          t = "tenant-123",
+          u = "SYSTEM"
+        })
+      }
+    };
+
+    // Create MessageHop with ScopeDelta
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        HostName = "test-host",
+        ProcessId = 12345,
+        InstanceId = _instanceId
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = scopeDelta  // The key part - ScopeDelta with enum dictionary keys
+    };
+
+    // Create OutboxMessageData with hop containing ScopeDelta
+    var outboxMessageData = new OutboxMessageData {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
+      Hops = [hop]  // Hop with ScopeDelta
+    };
+
+    // Insert directly via DbContext to test PostgreSQL JSONB storage
+    await using (var dbContext = CreateDbContext()) {
+      var partitionNumber = await ComputePartitionAsync(streamId);
+
+      dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
+        MessageId = messageId,
+        Destination = "test-topic",
+        MessageType = typeof(TestMessageEnvelope).AssemblyQualifiedName!,
+        MessageData = outboxMessageData,
+        Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] },
+        Scope = null,
+        StatusFlags = MessageProcessingStatus.Stored,
+        Attempts = 0,
+        CreatedAt = DateTimeOffset.UtcNow,
+        StreamId = streamId,
+        PartitionNumber = partitionNumber
+      });
+
+      await dbContext.SaveChangesAsync();
+    }
+
+    // Act - Retrieve via ProcessWorkBatchAsync (simulates real outbox processing)
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: []));
+
+    // Assert - Work should be claimed
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1)
+      .Because("The outbox message should be claimed");
+
+    var work = result.OutboxWork.First();
+
+    // Assert - Envelope.Hops should have ScopeDelta
+    await Assert.That(work.Envelope.Hops).Count().IsEqualTo(1)
+      .Because("The hop with ScopeDelta should be preserved");
+
+    var retrievedHop = work.Envelope.Hops.First();
+    await Assert.That(retrievedHop.Scope).IsNotNull()
+      .Because("The ScopeDelta should be preserved after PostgreSQL round-trip");
+
+    await Assert.That(retrievedHop.Scope!.Values).IsNotNull()
+      .Because("ScopeDelta.Values should not be null");
+
+    // THE CRITICAL ASSERTION - This is where the bug manifests
+    // The enum key ScopeProp.Scope (value 0) should be preserved
+    await Assert.That(retrievedHop.Scope.Values!.ContainsKey(ScopeProp.Scope)).IsTrue()
+      .Because("ScopeDelta.Values should have ScopeProp.Scope key after PostgreSQL JSONB round-trip. " +
+               "If this fails, the Dictionary<ScopeProp, JsonElement> is not correctly serializing/deserializing enum keys.");
+
+    // Verify the scope data itself
+    var scopeValue = retrievedHop.Scope.Values[ScopeProp.Scope];
+    await Assert.That(scopeValue.TryGetProperty("t", out var tenantProp)).IsTrue()
+      .Because("Scope should have 't' property (TenantId)");
+    await Assert.That(tenantProp.GetString()).IsEqualTo("tenant-123")
+      .Because("TenantId should match");
+    await Assert.That(scopeValue.TryGetProperty("u", out var userProp)).IsTrue()
+      .Because("Scope should have 'u' property (UserId)");
+    await Assert.That(userProp.GetString()).IsEqualTo("SYSTEM")
+      .Because("UserId should match");
+  }
+
+  /// <summary>
+  /// Helper to compute partition number from stream ID.
+  /// </summary>
+  private async Task<int> ComputePartitionAsync(Guid streamId) {
+    await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using var command = new Npgsql.NpgsqlCommand(
+      "SELECT compute_partition(@streamId::uuid, 10000)",
+      connection);
+    command.Parameters.AddWithValue("streamId", streamId);
+    return (int)(await command.ExecuteScalarAsync() ?? 0);
+  }
+
+  /// <summary>
+  /// Test implementation of IMessageEnvelope for testing.
+  /// </summary>
+  private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+    public required MessageId MessageId { get; init; }
+    public required JsonElement Payload { get; init; }
+    public List<MessageHop> Hops { get; init; } = [];
+    object IMessageEnvelope.Payload => Payload;
+    public void AddHop(MessageHop hop) => Hops.Add(hop);
+    public DateTimeOffset GetMessageTimestamp() => Hops.FirstOrDefault()?.Timestamp ?? DateTimeOffset.MinValue;
+    public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;
+    public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
+    public JsonElement? GetMetadata(string key) => null;
+    public ScopeContext? GetCurrentScope() => null;
+    public SecurityContext? GetCurrentSecurityContext() => null;
   }
 }

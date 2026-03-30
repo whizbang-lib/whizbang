@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// signals the work coordinator that pending work exists.</para>
 /// <para>Thread-safe for concurrent writes from multiple threads.</para>
 /// </remarks>
-/// <docs>core-concepts/dispatcher#deferred-event-channel</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#deferred-event-channel</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs</tests>
 public interface IDeferredOutboxChannel {
   /// <summary>

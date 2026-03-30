@@ -18,17 +18,13 @@ namespace Whizbang.Core;
 ///     .WithDriver.Postgres;
 /// </code>
 /// </example>
-public sealed class WhizbangBuilder {
+/// <remarks>
+/// Initializes a new instance of WhizbangBuilder.
+/// </remarks>
+/// <param name="services">The service collection to configure.</param>
+public sealed class WhizbangBuilder(IServiceCollection services) {
   /// <summary>
   /// Gets the service collection for registering services.
   /// </summary>
-  public IServiceCollection Services { get; }
-
-  /// <summary>
-  /// Initializes a new instance of WhizbangBuilder.
-  /// </summary>
-  /// <param name="services">The service collection to configure.</param>
-  public WhizbangBuilder(IServiceCollection services) {
-    Services = services ?? throw new ArgumentNullException(nameof(services));
-  }
+  public IServiceCollection Services { get; } = services ?? throw new ArgumentNullException(nameof(services));
 }

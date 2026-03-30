@@ -24,7 +24,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(value);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -37,7 +37,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(array);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -50,7 +50,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(tuple);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -60,7 +60,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsNull();
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   #endregion
@@ -77,7 +77,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(value);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -90,7 +90,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(array);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -100,7 +100,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsNull();
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   #endregion
@@ -117,7 +117,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(value);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
@@ -130,7 +130,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(array);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
@@ -139,7 +139,7 @@ public class RouteTests {
     var routed = Route.Both(new TestEvent("Test"));
 
     // Assert - Both includes LocalDispatch for local receptor invocation
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue();
   }
 
   [Test]
@@ -148,7 +148,7 @@ public class RouteTests {
     var routed = Route.Both(new TestEvent("Test"));
 
     // Assert
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsTrue();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.Outbox)).IsTrue();
   }
 
   [Test]
@@ -157,7 +157,7 @@ public class RouteTests {
     var routed = Route.Both(new TestEvent("Test"));
 
     // Assert - Both uses outbox for event storage, not direct EventStore flag
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsFalse();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.EventStore)).IsFalse();
   }
 
   #endregion
@@ -174,7 +174,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(value);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.LocalNoPersist);
   }
 
   [Test]
@@ -187,7 +187,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(array);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.LocalNoPersist);
   }
 
   [Test]
@@ -198,7 +198,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsNull();
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.LocalNoPersist);
   }
 
   [Test]
@@ -207,7 +207,7 @@ public class RouteTests {
     var routed = Route.LocalNoPersist(new TestEvent("Test"));
 
     // Assert - LocalNoPersist invokes local receptors
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue();
   }
 
   [Test]
@@ -216,7 +216,7 @@ public class RouteTests {
     var routed = Route.LocalNoPersist(new TestEvent("Test"));
 
     // Assert - LocalNoPersist does NOT persist to event store
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsFalse();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.EventStore)).IsFalse();
   }
 
   [Test]
@@ -225,13 +225,13 @@ public class RouteTests {
     var routed = Route.LocalNoPersist(new TestEvent("Test"));
 
     // Assert - LocalNoPersist does NOT use outbox
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsFalse();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.Outbox)).IsFalse();
   }
 
   [Test]
   public async Task LocalNoPersist_WithCollection_ReturnsEnumerableOfRoutedAsync() {
     // Arrange
-    IEnumerable<TestEvent> events = new List<TestEvent> { new("A"), new("B"), new("C") };
+    IEnumerable<TestEvent> events = [new("A"), new("B"), new("C")];
 
     // Act
     var routedCollection = Route.LocalNoPersist(events).ToList();
@@ -239,7 +239,7 @@ public class RouteTests {
     // Assert
     await Assert.That(routedCollection).Count().IsEqualTo(3);
     await Assert.That(routedCollection[0].Value.Name).IsEqualTo("A");
-    await Assert.That(routedCollection[0].Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(routedCollection[0].Mode).IsEqualTo(DispatchModes.LocalNoPersist);
     await Assert.That(routedCollection[1].Value.Name).IsEqualTo("B");
     await Assert.That(routedCollection[2].Value.Name).IsEqualTo("C");
   }
@@ -258,7 +258,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(value);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.EventStoreOnly);
   }
 
   [Test]
@@ -271,7 +271,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(array);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.EventStoreOnly);
   }
 
   [Test]
@@ -282,7 +282,7 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Value).IsNull();
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.EventStoreOnly);
   }
 
   [Test]
@@ -291,7 +291,7 @@ public class RouteTests {
     var routed = Route.EventStoreOnly(new TestEvent("Test"));
 
     // Assert - EventStoreOnly persists to event store
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsTrue();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.EventStore)).IsTrue();
   }
 
   [Test]
@@ -300,7 +300,7 @@ public class RouteTests {
     var routed = Route.EventStoreOnly(new TestEvent("Test"));
 
     // Assert - EventStoreOnly does NOT invoke local receptors
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsFalse();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.LocalDispatch)).IsFalse();
   }
 
   [Test]
@@ -309,13 +309,13 @@ public class RouteTests {
     var routed = Route.EventStoreOnly(new TestEvent("Test"));
 
     // Assert - EventStoreOnly does NOT use outbox transport
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsFalse();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.Outbox)).IsFalse();
   }
 
   [Test]
   public async Task EventStoreOnly_WithCollection_ReturnsEnumerableOfRoutedAsync() {
     // Arrange
-    IEnumerable<TestEvent> events = new List<TestEvent> { new("A"), new("B"), new("C") };
+    IEnumerable<TestEvent> events = [new("A"), new("B"), new("C")];
 
     // Act
     var routedCollection = Route.EventStoreOnly(events).ToList();
@@ -323,7 +323,7 @@ public class RouteTests {
     // Assert
     await Assert.That(routedCollection).Count().IsEqualTo(3);
     await Assert.That(routedCollection[0].Value.Name).IsEqualTo("A");
-    await Assert.That(routedCollection[0].Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(routedCollection[0].Mode).IsEqualTo(DispatchModes.EventStoreOnly);
     await Assert.That(routedCollection[1].Value.Name).IsEqualTo("B");
     await Assert.That(routedCollection[2].Value.Name).IsEqualTo("C");
   }
@@ -338,7 +338,7 @@ public class RouteTests {
     var routed = Route.Local(new TestEvent("Test"));
 
     // Assert - Local invokes local receptors
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue();
   }
 
   [Test]
@@ -347,7 +347,7 @@ public class RouteTests {
     var routed = Route.Local(new TestEvent("Test"));
 
     // Assert - Local now persists to event store
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsTrue();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.EventStore)).IsTrue();
   }
 
   [Test]
@@ -356,7 +356,7 @@ public class RouteTests {
     var routed = Route.Local(new TestEvent("Test"));
 
     // Assert - Local does NOT use outbox transport
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsFalse();
+    await Assert.That(routed.Mode.HasFlag(DispatchModes.Outbox)).IsFalse();
   }
 
   #endregion
@@ -412,7 +412,7 @@ public class RouteTests {
     IRouted iRouted = routed;
 
     // Assert
-    await Assert.That(iRouted.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(iRouted.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -424,7 +424,7 @@ public class RouteTests {
     IRouted iRouted = routed;
 
     // Assert
-    await Assert.That(iRouted.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(iRouted.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -436,7 +436,7 @@ public class RouteTests {
     IRouted iRouted = routed;
 
     // Assert
-    await Assert.That(iRouted.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(iRouted.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   #endregion
@@ -458,7 +458,7 @@ public class RouteTests {
     var result = Route.None();
 
     // Assert - Access via interface
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.None);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.None);
     await Assert.That(result.Value).IsNull();
   }
 

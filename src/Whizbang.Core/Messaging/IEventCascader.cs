@@ -11,7 +11,7 @@ namespace Whizbang.Core.Messaging;
 /// these messages should be dispatched to other receptors and/or published to outbox.
 /// Supports routing via Route.Local(), Route.Outbox(), Route.Both() wrappers.
 /// </summary>
-/// <docs>core-concepts/lifecycle-receptors#event-cascading</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors#event-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public interface IEventCascader {
   /// <summary>
@@ -41,5 +41,5 @@ public interface IEventCascader {
   /// sourceEnvelope's current security context when ambient context is unavailable.
   /// </para>
   /// </remarks>
-  Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default);
+  Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default);
 }

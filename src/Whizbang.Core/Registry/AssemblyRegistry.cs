@@ -30,9 +30,10 @@ namespace Whizbang.Core.Registry;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/assembly-registry</docs>
+/// <docs>fundamentals/identity/assembly-registry</docs>
 /// <tests>tests/Whizbang.Core.Tests/Registry/AssemblyRegistryTests.cs</tests>
 #pragma warning disable CA1000 // Do not declare static members on generic types - by design for registry pattern
+#pragma warning disable S2743 // Static fields in generic types are intentional — each T gets its own registry
 public static class AssemblyRegistry<T> where T : class {
   /// <summary>
   /// Thread-safe collection of registered contributions with priorities.
@@ -55,7 +56,6 @@ public static class AssemblyRegistry<T> where T : class {
   public static void Register(T contribution, int priority = 1000) {
     ArgumentNullException.ThrowIfNull(contribution);
     _contributions.Add((priority, contribution));
-    Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] Registered {contribution.GetType().FullName} with priority {priority}. Count now: {_contributions.Count}");
 
     lock (_lock) {
       _orderedContributions = null; // Invalidate cache
@@ -68,23 +68,18 @@ public static class AssemblyRegistry<T> where T : class {
   /// <returns>Read-only list of contributions ordered by priority</returns>
   public static IReadOnlyList<T> GetOrderedContributions() {
     if (_orderedContributions is not null) {
-      Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions returning CACHED list with {_orderedContributions.Count} items");
       return _orderedContributions;
     }
 
     lock (_lock) {
       if (_orderedContributions is not null) {
-        Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions returning CACHED (inside lock) list with {_orderedContributions.Count} items");
         return _orderedContributions;
       }
-      Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions BUILDING list from {_contributions.Count} contributions");
       // Take a snapshot before iterating to avoid race condition with concurrent Register() calls
-      _orderedContributions = _contributions
+      _orderedContributions = [.. _contributions
           .ToArray()
           .OrderBy(c => c.Priority)
-          .Select(c => c.Contribution)
-          .ToList();
-      Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions BUILT list with {_orderedContributions.Count} items");
+          .Select(c => c.Contribution)];
       return _orderedContributions;
     }
   }

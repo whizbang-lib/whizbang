@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.SignalR.Hooks;
@@ -34,20 +35,16 @@ namespace Whizbang.SignalR.Hooks;
 /// public record SystemAnnouncementEvent(string Message) : IEvent;
 /// </code>
 /// </example>
-/// <docs>signalr/notification-hooks</docs>
+/// <docs>apis/signalr/notification-hooks</docs>
 /// <tests>Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs</tests>
 /// <typeparam name="THub">The SignalR hub type to use for notifications.</typeparam>
-public sealed class SignalRNotificationHook<THub> : IMessageTagHook<SignalTagAttribute>
+/// <remarks>
+/// Creates a new SignalR notification hook.
+/// </remarks>
+/// <param name="hubContext">The SignalR hub context for sending notifications.</param>
+public sealed class SignalRNotificationHook<THub>(IHubContext<THub> hubContext) : IMessageTagHook<SignalTagAttribute>
     where THub : Hub {
-  private readonly IHubContext<THub> _hubContext;
-
-  /// <summary>
-  /// Creates a new SignalR notification hook.
-  /// </summary>
-  /// <param name="hubContext">The SignalR hub context for sending notifications.</param>
-  public SignalRNotificationHook(IHubContext<THub> hubContext) {
-    _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
-  }
+  private readonly IHubContext<THub> _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
 
   /// <summary>
   /// Sends a SignalR notification for the tagged message.
@@ -89,7 +86,7 @@ public sealed class SignalRNotificationHook<THub> : IMessageTagHook<SignalTagAtt
   private static string? _resolveGroup(
       string? template,
       JsonElement payload,
-      IReadOnlyDictionary<string, object?>? scope) {
+      IScopeContext? scope) {
     if (string.IsNullOrEmpty(template)) {
       return null;
     }
@@ -113,17 +110,25 @@ public sealed class SignalRNotificationHook<THub> : IMessageTagHook<SignalTagAtt
       }
     }
 
-    // Also replace from scope
-    if (scope is not null) {
-      foreach (var (key, value) in scope) {
-        var placeholder = $"{{{key}}}";
-        if (result.Contains(placeholder, StringComparison.Ordinal)) {
-          result = result.Replace(placeholder, value?.ToString() ?? "", StringComparison.Ordinal);
-        }
-      }
+    // Also replace from scope properties
+    if (scope?.Scope is not null) {
+      var perspectiveScope = scope.Scope;
+
+      result = _replacePlaceholder(result, "TenantId", perspectiveScope.TenantId);
+      result = _replacePlaceholder(result, "UserId", perspectiveScope.UserId);
+      result = _replacePlaceholder(result, "CustomerId", perspectiveScope.CustomerId);
+      result = _replacePlaceholder(result, "OrganizationId", perspectiveScope.OrganizationId);
     }
 
     return result;
+  }
+
+  private static string _replacePlaceholder(string template, string propertyName, string? value) {
+    var placeholder = $"{{{propertyName}}}";
+    if (template.Contains(placeholder, StringComparison.Ordinal) && value is not null) {
+      return template.Replace(placeholder, value, StringComparison.Ordinal);
+    }
+    return template;
   }
 }
 

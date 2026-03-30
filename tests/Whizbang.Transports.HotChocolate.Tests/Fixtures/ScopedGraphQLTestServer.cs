@@ -1,8 +1,10 @@
+#pragma warning disable CS0618
 using HotChocolate;
 using HotChocolate.Data;
 using HotChocolate.Execution;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 
@@ -57,19 +59,14 @@ public record CurrentScopeResult {
 /// <summary>
 /// Lens interface for scoped order queries.
 /// </summary>
-public interface IScopedOrderLens : ILensQuery<OrderReadModel> { }
+public interface IScopedOrderLens : ILensQuery<OrderReadModel>;
 
 /// <summary>
 /// Scoped lens implementation that filters by the current scope context.
 /// </summary>
-public class ScopedTestOrderLens : IScopedOrderLens {
-  private readonly List<PerspectiveRow<OrderReadModel>> _data;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
-
-  public ScopedTestOrderLens(IScopeContextAccessor scopeContextAccessor) {
-    _data = [];
-    _scopeContextAccessor = scopeContextAccessor;
-  }
+public class ScopedTestOrderLens(IScopeContextAccessor scopeContextAccessor) : IScopedOrderLens {
+  private readonly List<PerspectiveRow<OrderReadModel>> _data = [];
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public IQueryable<PerspectiveRow<OrderReadModel>> Query {
     get {
@@ -121,6 +118,10 @@ public class ScopedTestOrderLens : IScopedOrderLens {
   public void AddData(IEnumerable<PerspectiveRow<OrderReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<OrderReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -128,10 +129,16 @@ public class ScopedTestOrderLens : IScopedOrderLens {
 /// </summary>
 public class TestScopeContextAccessor : IScopeContextAccessor {
   private readonly AsyncLocal<IScopeContext?> _current = new();
+  private readonly AsyncLocal<IMessageContext?> _initiatingContext = new();
 
   public IScopeContext? Current {
     get => _current.Value;
     set => _current.Value = value;
+  }
+
+  public IMessageContext? InitiatingContext {
+    get => _initiatingContext.Value;
+    set => _initiatingContext.Value = value;
   }
 }
 

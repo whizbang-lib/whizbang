@@ -33,7 +33,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   [Test]
   public async Task IsReadyAsync_WithInvalid_connectionString_ReturnsFalseAsync() {
     // Arrange
-    var invalid_connectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
+    const string invalid_connectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
     var readinessCheck = new PostgresDatabaseReadinessCheck(
       invalid_connectionString,
       NullLogger<PostgresDatabaseReadinessCheck>.Instance
@@ -51,6 +51,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   public async Task IsReadyAsync_WithMissingTables_ReturnsFalseAsync() {
     // Arrange - Create a fresh database without Whizbang schema
     await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder("postgres:17-alpine")
+      .WithName($"whizbang-test-dapper-empty-{Environment.ProcessId}")
       .WithDatabase("empty_test")
       .WithUsername("postgres")
       .WithPassword("postgres")
@@ -131,7 +132,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
 
     // Verify tables exist directly in database
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    var tableCountSql = @"
+    const string tableCountSql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -147,6 +148,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   public async Task IsReadyAsync_WithMissingFunctions_ReturnsFalseAsync() {
     // Arrange - Create a fresh database with tables but WITHOUT the process_work_batch function
     await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder("postgres:17-alpine")
+      .WithName($"whizbang-test-dapper-tables-only-{Environment.ProcessId}")
       .WithDatabase("tables_only_test")
       .WithUsername("postgres")
       .WithPassword("postgres")
@@ -194,7 +196,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
 
     // Verify the process_work_batch function exists in test database (in public schema)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    var functionCountSql = @"
+    const string functionCountSql = @"
       SELECT COUNT(*)
       FROM information_schema.routines
       WHERE routine_schema = 'public'

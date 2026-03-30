@@ -79,12 +79,14 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RECEPTORS = "__RECEPTORS__";
   private const string PLACEHOLDER_PERSPECTIVES = "__PERSPECTIVES__";
   private const string PLACEHOLDER_MESSAGES = "__MESSAGES__";
+  private const string PLACEHOLDER_PACKAGES = "__PACKAGES__";
   private const string PLACEHOLDER_JSON = "__JSON__";
   private const string PLACEHOLDER_TEST_FILE = "__TEST_FILE__";
   private const string PLACEHOLDER_TEST_METHOD = "__TEST_METHOD__";
   private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
@@ -122,15 +124,21 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
 
-    // Combine all discoveries and generate JSON
+    // Combine all discoveries + compilation (for referenced assembly versions)
     var allData = messageTypes.Collect()
         .Combine(dispatchers.Collect())
         .Combine(receptors.Collect())
-        .Combine(perspectives.Collect());
+        .Combine(perspectives.Collect())
+        .Combine(context.CompilationProvider);
 
     context.RegisterSourceOutput(
         allData,
-        static (ctx, data) => _generateMessageRegistry(ctx, data)
+        static (ctx, data) => {
+          var ((((messages, dispatchers2), receptors2), perspectives2), compilation) = data;
+          _generateMessageRegistry(ctx,
+            (((messages, dispatchers2), receptors2), perspectives2),
+            compilation);
+        }
     );
   }
 
@@ -341,7 +349,8 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
   private static void _generateMessageRegistry(
       SourceProductionContext context,
-      (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data) {
+      (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data,
+      Compilation? compilation = null) {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
 
@@ -464,8 +473,32 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       }
     }
 
+    // Extract referenced Whizbang package versions from compilation
+    var packageEntries = new StringBuilder();
+    if (compilation is not null) {
+      var whizbangAssemblies = compilation.ReferencedAssemblyNames
+          .Where(a => a.Name.StartsWith("Whizbang.", StringComparison.Ordinal))
+          .OrderBy(a => a.Name)
+          .ToList();
+
+      for (var p = 0; p < whizbangAssemblies.Count; p++) {
+        var asm = whizbangAssemblies[p];
+        var packageId = $"SoftwareExtravaganza.{asm.Name}";
+        // Assembly version is Major.Minor.Build.Revision (no prerelease suffix)
+        // Emit as "versionPrefix" so the extension can match NuGet folders by prefix
+        var ver = asm.Version;
+        var versionPrefix = $"{ver.Major}.{ver.Minor}.{ver.Build}";
+        packageEntries.Append($"    {{ \"id\": \"{packageId}\", \"versionPrefix\": \"{versionPrefix}\" }}");
+        if (p < whizbangAssemblies.Count - 1) {
+          packageEntries.AppendLine(",");
+        }
+      }
+    }
+
     // Build final JSON
-    var json = jsonWrapperSnippet.Replace(PLACEHOLDER_MESSAGES, messageEntries.ToString());
+    var json = jsonWrapperSnippet
+        .Replace(PLACEHOLDER_MESSAGES, messageEntries.ToString())
+        .Replace(PLACEHOLDER_PACKAGES, packageEntries.ToString());
 
     // Generate C# wrapper with embedded JSON using snippet
     var wrapperSnippet = TemplateUtilities.ExtractSnippet(

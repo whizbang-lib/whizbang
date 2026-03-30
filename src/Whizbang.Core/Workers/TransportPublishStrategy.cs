@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
@@ -20,14 +23,44 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync</tests>
 /// Default implementation of IMessagePublishStrategy that publishes messages via ITransport.
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
 /// </summary>
-public class TransportPublishStrategy : IMessagePublishStrategy {
-  private readonly ITransport _transport;
-  private readonly ITransportReadinessCheck _readinessCheck;
-  private readonly string _inboxTopic;
+/// <remarks>
+/// Creates a new TransportPublishStrategy with a custom inbox topic.
+/// Commands are automatically routed to the specified inbox topic.
+/// </remarks>
+/// <param name="transport">The transport to publish messages to</param>
+/// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
+/// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
+public partial class TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic, ILoggerFactory? loggerFactory = null) : IMessagePublishStrategy {
+  private const string LOG_CATEGORY = "Whizbang.Core.Transport";
+
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
+  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+#pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
+  private readonly ILogger _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+#pragma warning restore S4487
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping transport for event-store-only message: {MessageType}")]
+  private partial void LogSkippingEventStoreOnly(string messageType);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Publishing message: MessageType={MessageType}, OutboxDestination={OutboxDestination}, ResolvedAddress={ResolvedAddress}, ResolvedRoutingKey={ResolvedRoutingKey}")]
+  private partial void LogPublishingMessage(string messageType, string outboxDestination, string resolvedAddress, string? resolvedRoutingKey);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Publishing batch of {Count} messages to {Address}")]
+  private partial void LogPublishingBatch(int count, string address);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Batch publish failed for group {Address}: {Error}")]
+  private partial void LogBatchPublishGroupFailed(string address, string error);
 
   /// <summary>
   /// Creates a new TransportPublishStrategy with default inbox topic.
@@ -35,21 +68,8 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck)
-    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic) {
-  }
-
-  /// <summary>
-  /// Creates a new TransportPublishStrategy with a custom inbox topic.
-  /// Commands are automatically routed to the specified inbox topic.
-  /// </summary>
-  /// <param name="transport">The transport to publish messages to</param>
-  /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
-    _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory? loggerFactory = null)
+    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory) {
   }
 
   /// <summary>
@@ -76,14 +96,14 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// via process_work_batch but should not be transported. Returns success immediately.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullDestination_*</tests>
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     try {
       // Skip transport publishing for event-store-only messages (destination is null)
       // These messages are stored in event store via process_work_batch but should not be transported
       if (string.IsNullOrEmpty(work.Destination)) {
-        Console.WriteLine($"[TransportPublishStrategy.PublishAsync] Skipping transport for event-store-only message: {work.MessageType}");
+        LogSkippingEventStoreOnly(work.MessageType);
         return new MessagePublishResult {
           MessageId = work.MessageId,
           Success = true,
@@ -97,11 +117,13 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
       var destination = _resolveDestination(work);
 
-      // DEBUG: Log routing decision for troubleshooting
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] MessageType={work.MessageType}");
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] OutboxDestination={work.Destination}");
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] ResolvedAddress={destination.Address}");
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] ResolvedRoutingKey={destination.RoutingKey}");
+      // Carry StreamId in destination metadata for transport-level FIFO ordering
+      // Transports that support ordering (e.g., ASB sessions) use this to set SessionId
+      if (work.StreamId.HasValue) {
+        destination = _addStreamIdToMetadata(destination, work.StreamId.Value);
+      }
+
+      LogPublishingMessage(work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
 
       // Publish to transport - envelope is already deserialized
       // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
@@ -124,6 +146,109 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
         Error = $"{ex.GetType().Name}: {ex.Message}"
       };
     }
+  }
+
+  /// <summary>
+  /// Whether this strategy supports bulk publishing.
+  /// Returns true when the underlying transport declares the BulkPublish capability.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
+  public bool SupportsBulkPublish =>
+    _transport.Capabilities.HasFlag(TransportCapabilities.BulkPublish);
+
+  /// <summary>
+  /// Publishes a batch of outbox messages to the configured transport.
+  /// Groups messages by resolved destination address and calls PublishBatchAsync per group.
+  /// Event-store-only messages (null/empty destination) are returned as immediate successes.
+  /// Partial failures are handled per-group: if a group's transport call throws, all items in that group fail.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
+    IReadOnlyList<OutboxWork> workItems,
+    CancellationToken cancellationToken) {
+    if (workItems.Count == 0) {
+      return [];
+    }
+
+    var results = new List<MessagePublishResult>(workItems.Count);
+
+    // Separate event-store-only items (null/empty destination) from transportable items
+    var transportableItems = new List<(OutboxWork Work, TransportDestination Destination)>();
+
+    foreach (var work in workItems) {
+      if (string.IsNullOrEmpty(work.Destination)) {
+        LogSkippingEventStoreOnly(work.MessageType);
+        results.Add(new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = true,
+          CompletedStatus = MessageProcessingStatus.Published,
+          Error = null
+        });
+      } else {
+        var destination = _resolveDestination(work);
+        transportableItems.Add((work, destination));
+      }
+    }
+
+    // Group by (destination address, stream ID) for batch transport calls.
+    // Messages with the same StreamId stay together to preserve FIFO ordering.
+    // Different StreamIds get separate batch calls so transports can handle sessions correctly.
+    var groups = transportableItems.GroupBy(item => (item.Destination.Address, item.Work.StreamId));
+
+    foreach (var group in groups) {
+      var groupItems = group.ToList();
+      // Use the first item's destination as the shared destination (address is the same for all)
+      var sharedDestination = groupItems[0].Destination;
+
+      // Build BulkPublishItems with per-item routing keys
+      var bulkItems = new List<BulkPublishItem>(groupItems.Count);
+      foreach (var (work, destination) in groupItems) {
+        bulkItems.Add(new BulkPublishItem {
+          Envelope = work.Envelope,
+          EnvelopeType = work.EnvelopeType,
+          MessageId = work.MessageId,
+          RoutingKey = destination.RoutingKey,
+          StreamId = work.StreamId
+        });
+      }
+
+      try {
+        LogPublishingBatch(bulkItems.Count, sharedDestination.Address);
+        var batchResults = await _transport.PublishBatchAsync(bulkItems, sharedDestination, cancellationToken);
+
+        // Map transport results back to MessagePublishResult
+        foreach (var batchResult in batchResults) {
+          var originalWork = groupItems.First(g => g.Work.MessageId == batchResult.MessageId).Work;
+          results.Add(new MessagePublishResult {
+            MessageId = batchResult.MessageId,
+            Success = batchResult.Success,
+            CompletedStatus = batchResult.Success ? MessageProcessingStatus.Published : originalWork.Status,
+            Error = batchResult.Error
+          });
+        }
+      } catch (Exception ex) {
+        LogBatchPublishGroupFailed(sharedDestination.Address, ex.Message);
+        // All items in this group fail
+        foreach (var (work, _) in groupItems) {
+          results.Add(new MessagePublishResult {
+            MessageId = work.MessageId,
+            Success = false,
+            CompletedStatus = work.Status,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
+        }
+      }
+    }
+
+    return results;
   }
 
   /// <summary>
@@ -158,8 +283,8 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
     // Null check should never trigger due to early return in PublishAsync, but be defensive
     if (string.IsNullOrEmpty(work.Destination)) {
       throw new InvalidOperationException(
-        $"Event destination cannot be null or empty at this point. " +
-        $"Event-store-only messages should be handled by early return in PublishAsync. " +
+        "Event destination cannot be null or empty at this point. " +
+        "Event-store-only messages should be handled by early return in PublishAsync. " +
         $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
     }
 
@@ -187,7 +312,6 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// <param name="typeFullName">Assembly-qualified type name (e.g., "MyApp.Commands.CreateTenantCommand, MyApp")</param>
   /// <returns>Detected MessageKind or Unknown</returns>
   private static MessageKind _detectMessageKindFromTypeName(string typeFullName) {
-    // Extract namespace and type name from assembly-qualified name
     var ns = _extractNamespace(typeFullName);
     var typeName = _extractTypeName(typeFullName);
 
@@ -195,23 +319,42 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       return MessageKind.Unknown;
     }
 
-    // Check namespace convention (Commands, Events, Queries)
-    if (!string.IsNullOrEmpty(ns)) {
-      var segments = ns.Split('.');
-      foreach (var segment in segments) {
-        if (string.Equals(segment, "Commands", StringComparison.OrdinalIgnoreCase)) {
-          return MessageKind.Command;
-        }
-        if (string.Equals(segment, "Events", StringComparison.OrdinalIgnoreCase)) {
-          return MessageKind.Event;
-        }
-        if (string.Equals(segment, "Queries", StringComparison.OrdinalIgnoreCase)) {
-          return MessageKind.Query;
-        }
+    var kindFromNamespace = _detectMessageKindFromNamespace(ns);
+    if (kindFromNamespace != MessageKind.Unknown) {
+      return kindFromNamespace;
+    }
+
+    return _detectMessageKindFromSuffix(typeName);
+  }
+
+  /// <summary>
+  /// Detects MessageKind from namespace segments (e.g., "MyApp.Commands" returns Command).
+  /// </summary>
+  private static MessageKind _detectMessageKindFromNamespace(string? ns) {
+    if (string.IsNullOrEmpty(ns)) {
+      return MessageKind.Unknown;
+    }
+
+    var segments = ns.Split('.');
+    foreach (var segment in segments) {
+      if (string.Equals(segment, "Commands", StringComparison.OrdinalIgnoreCase)) {
+        return MessageKind.Command;
+      }
+      if (string.Equals(segment, "Events", StringComparison.OrdinalIgnoreCase)) {
+        return MessageKind.Event;
+      }
+      if (string.Equals(segment, "Queries", StringComparison.OrdinalIgnoreCase)) {
+        return MessageKind.Query;
       }
     }
 
-    // Check type name suffix
+    return MessageKind.Unknown;
+  }
+
+  /// <summary>
+  /// Detects MessageKind from type name suffix (e.g., "CreateTenantCommand" returns Command).
+  /// </summary>
+  private static MessageKind _detectMessageKindFromSuffix(string typeName) {
     if (typeName.EndsWith("Command", StringComparison.Ordinal)) {
       return MessageKind.Command;
     }
@@ -228,40 +371,28 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
     return MessageKind.Unknown;
   }
 
-  /// <summary>
-  /// Extracts the namespace from an assembly-qualified type name.
-  /// </summary>
-  /// <param name="typeFullName">Assembly-qualified type name</param>
-  /// <returns>Namespace or null</returns>
-  private static string? _extractNamespace(string typeFullName) {
-    // Format: "Namespace.TypeName, AssemblyName" or "Namespace.TypeName"
-    var commaIndex = typeFullName.IndexOf(',');
-    var fullTypeName = commaIndex >= 0 ? typeFullName[..commaIndex].Trim() : typeFullName.Trim();
+  private static string? _extractNamespace(string typeFullName) =>
+    TypeNameFormatter.GetNamespace(typeFullName);
 
-    var lastDotIndex = fullTypeName.LastIndexOf('.');
-    if (lastDotIndex < 0) {
-      return null;
-    }
-
-    return fullTypeName[..lastDotIndex];
-  }
+  private static string? _extractTypeName(string typeFullName) =>
+    TypeNameFormatter.GetSimpleName(typeFullName);
 
   /// <summary>
-  /// Extracts the type name from an assembly-qualified type name.
+  /// Creates a new TransportDestination with StreamId added to the metadata dictionary.
+  /// Used to carry stream ordering context to transports that support FIFO (e.g., ASB sessions).
   /// </summary>
-  /// <param name="typeFullName">Assembly-qualified type name</param>
-  /// <returns>Type name or null</returns>
-  private static string? _extractTypeName(string typeFullName) {
-    // Format: "Namespace.TypeName, AssemblyName" or "Namespace.TypeName"
-    var commaIndex = typeFullName.IndexOf(',');
-    var fullTypeName = commaIndex >= 0 ? typeFullName[..commaIndex].Trim() : typeFullName.Trim();
+  private static TransportDestination _addStreamIdToMetadata(TransportDestination destination, Guid streamId) {
+    var metadata = new Dictionary<string, JsonElement>();
 
-    var lastDotIndex = fullTypeName.LastIndexOf('.');
-    if (lastDotIndex < 0) {
-      return fullTypeName;
+    // Preserve existing metadata entries
+    if (destination.Metadata is not null) {
+      foreach (var kvp in destination.Metadata) {
+        metadata[kvp.Key] = kvp.Value;
+      }
     }
 
-    return fullTypeName[(lastDotIndex + 1)..];
+    metadata["StreamId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement;
+
+    return destination with { Metadata = metadata };
   }
 }
-

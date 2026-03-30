@@ -19,7 +19,7 @@ namespace Whizbang.Core.Registry;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/delivery-receipts</docs>
+/// <docs>fundamentals/messages/delivery-receipts</docs>
 /// <tests>tests/Whizbang.Core.Tests/Registry/StreamIdExtractorRegistryTests.cs</tests>
 public static class StreamIdExtractorRegistry {
   /// <summary>
@@ -39,12 +39,15 @@ public static class StreamIdExtractorRegistry {
   /// <param name="messageType">The type of the message</param>
   /// <returns>The stream ID if found, otherwise null</returns>
   public static Guid? ExtractStreamId(object message, Type messageType) {
+    // S3267: Loop uses early return on computed result — LINQ FirstOrDefault would obscure intent
+#pragma warning disable S3267
     foreach (var extractor in AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()) {
       var result = extractor.ExtractStreamId(message, messageType);
       if (result.HasValue) {
         return result;
       }
     }
+#pragma warning restore S3267
     return null;
   }
 
@@ -66,8 +69,40 @@ public static class StreamIdExtractorRegistry {
   /// <summary>
   /// Composite IStreamIdExtractor that delegates to the registry.
   /// </summary>
+  /// <summary>
+  /// Get generation policy by trying all registered extractors in priority order.
+  /// Returns the first (ShouldGenerate=true) result, or (false, false) if none match.
+  /// </summary>
+  public static (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    // S3267: Loop uses early return on computed result — LINQ FirstOrDefault would obscure intent
+#pragma warning disable S3267
+    foreach (var extractor in AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()) {
+      var result = extractor.GetGenerationPolicy(message);
+      if (result.ShouldGenerate) {
+        return result;
+      }
+    }
+#pragma warning restore S3267
+    return (false, false);
+  }
+
+  /// <summary>
+  /// Set stream ID by trying all registered extractors in priority order.
+  /// Returns true if an extractor successfully set the value.
+  /// </summary>
+  public static bool SetStreamId(object message, Guid streamId) {
+    return AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()
+        .Any(extractor => extractor.SetStreamId(message, streamId));
+  }
+
   private sealed class CompositeStreamIdExtractor : IStreamIdExtractor {
-    public Guid? ExtractStreamId(object message, Type messageType) =>
+    Guid? IStreamIdExtractor.ExtractStreamId(object message, Type messageType) =>
         StreamIdExtractorRegistry.ExtractStreamId(message, messageType);
+
+    (bool ShouldGenerate, bool OnlyIfEmpty) IStreamIdExtractor.GetGenerationPolicy(object message) =>
+        StreamIdExtractorRegistry.GetGenerationPolicy(message);
+
+    bool IStreamIdExtractor.SetStreamId(object message, Guid streamId) =>
+        StreamIdExtractorRegistry.SetStreamId(message, streamId);
   }
 }

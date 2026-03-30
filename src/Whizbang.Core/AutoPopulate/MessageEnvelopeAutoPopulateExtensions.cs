@@ -20,7 +20,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// dispatched or received, based on attribute decorations on message properties.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/MessageEnvelopeAutoPopulateExtensionsTests.cs</tests>
 public static class MessageEnvelopeAutoPopulateExtensions {
   /// <summary>
@@ -116,6 +116,11 @@ public static class MessageEnvelopeAutoPopulateExtensions {
 
     const string prefix = AutoPopulateProcessor.METADATA_PREFIX;
     var keys = new HashSet<string>();
+
+    // Defensive: Handle null Hops gracefully
+    if (envelope.Hops == null) {
+      return keys;
+    }
 
     // Scan all current hops for auto-populate metadata
     for (int i = envelope.Hops.Count - 1; i >= 0; i--) {

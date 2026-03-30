@@ -17,15 +17,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: ./.github/actions/setup-dotnet-retry
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Display .NET Info
         run: dotnet --info
+
+      - name: Cache NuGet packages
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
         run: dotnet restore
@@ -40,7 +47,7 @@ jobs:
         run: dotnet format --verify-no-changes --no-restore
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: build-${{ github.run_id }}
           path: |

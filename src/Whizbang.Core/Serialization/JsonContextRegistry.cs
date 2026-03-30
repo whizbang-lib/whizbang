@@ -26,7 +26,7 @@ public static class JsonContextRegistry {
   /// Thread-safe collection of registered resolvers.
   /// Populated via [ModuleInitializer] methods in each assembly.
   /// </summary>
-  private static readonly ConcurrentBag<IJsonTypeInfoResolver> _resolvers = [];
+  private static readonly ConcurrentQueue<IJsonTypeInfoResolver> _resolvers = new();
 
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
@@ -34,7 +34,7 @@ public static class JsonContextRegistry {
   /// Needed for WhizbangId converters due to STJ source generation limitations.
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
-  private static readonly ConcurrentBag<JsonConverter> _converters = [];
+  private static readonly ConcurrentQueue<JsonConverter> _converters = new();
 
   /// <summary>
   /// Thread-safe dictionary mapping normalized type names to (Type, Resolver) tuples.
@@ -52,7 +52,7 @@ public static class JsonContextRegistry {
   public static void RegisterContext(IJsonTypeInfoResolver resolver) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Add(resolver);
+    _resolvers.Enqueue(resolver);
   }
 
   /// <summary>
@@ -67,7 +67,7 @@ public static class JsonContextRegistry {
   public static void RegisterConverter(JsonConverter converter) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Add(converter);
+    _converters.Enqueue(converter);
   }
 
   /// <summary>
@@ -190,7 +190,7 @@ public static class JsonContextRegistry {
   /// <param name="discriminator">Optional type discriminator for JSON serialization. Defaults to type name.</param>
   public static void RegisterDerivedType<TBase, TDerived>(string? discriminator = null)
     where TDerived : TBase {
-    var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => new ConcurrentBag<(Type, string)>());
+    var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => []);
     var actualDiscriminator = discriminator ?? typeof(TDerived).Name;
 
     // Avoid duplicate registrations
@@ -207,7 +207,7 @@ public static class JsonContextRegistry {
   /// <returns>Collection of registered derived types</returns>
   public static IEnumerable<Type> GetRegisteredDerivedTypes<TBase>() {
     if (_derivedTypes.TryGetValue(typeof(TBase), out var bag)) {
-      return bag.Select(x => x.derivedType).ToArray();
+      return [.. bag.Select(x => x.derivedType)];
     }
     return [];
   }
@@ -268,7 +268,7 @@ public static class JsonContextRegistry {
       JsonMetadataServices.CreateListInfo<List<TBase>, TBase>(
         options,
         collectionInfo: new JsonCollectionInfoValues<List<TBase>> {
-          ObjectCreator = () => new List<TBase>(),
+          ObjectCreator = () => [],
           ElementInfo = elementTypeInfo
         }));
     return (JsonTypeInfo<List<TBase>>)cached;
@@ -380,7 +380,7 @@ public static class JsonContextRegistry {
     properties[2] = _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(
       _options,
       "Hops",
-      obj => obj.Hops.ToList(),
+      obj => obj.Hops?.ToList() ?? [],
       null);
 
     // Constructor parameters for deserialization

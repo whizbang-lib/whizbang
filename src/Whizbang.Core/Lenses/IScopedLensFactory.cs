@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lenses;
 /// <remarks>
 /// <para>
 /// The factory pattern allows runtime scope selection while maintaining
-/// compile-time type safety. Use <see cref="ScopeFilter"/> flags for
+/// compile-time type safety. Use <see cref="ScopeFilters"/> flags for
 /// composable filtering, or string-based scope names for backward compatibility.
 /// </para>
 /// <para>
@@ -20,13 +20,13 @@ namespace Whizbang.Core.Lenses;
 /// <example>
 /// <code>
 /// // Get lens with composable filters
-/// var lens = _lensFactory.GetLens&lt;IOrderLens&gt;(ScopeFilter.Tenant | ScopeFilter.User);
+/// var lens = _lensFactory.GetLens&lt;IOrderLens&gt;(ScopeFilters.Tenant | ScopeFilters.User);
 ///
 /// // Get lens with permission check
-/// var lens = _lensFactory.GetLens&lt;IOrderLens&gt;(ScopeFilter.Tenant, Permission.Read("orders"));
+/// var lens = _lensFactory.GetLens&lt;IOrderLens&gt;(ScopeFilters.Tenant, Permission.Read("orders"));
 /// </code>
 /// </example>
-/// <docs>core-concepts/scoped-lenses</docs>
+/// <docs>fundamentals/lenses/scoped-lenses</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
 public interface IScopedLensFactory {
   // === Legacy API (string-based scope names) ===
@@ -52,11 +52,11 @@ public interface IScopedLensFactory {
   /// <example>
   /// <code>
   /// // Tenant + Principal filtering
-  /// var lens = factory.GetLens&lt;IOrderLens&gt;(ScopeFilter.Tenant | ScopeFilter.Principal);
+  /// var lens = factory.GetLens&lt;IOrderLens&gt;(ScopeFilters.Tenant | ScopeFilters.Principal);
   /// // WHERE TenantId = ? AND AllowedPrincipals ?| [...]
   /// </code>
   /// </example>
-  TLens GetLens<TLens>(ScopeFilter filters) where TLens : ILensQuery;
+  TLens GetLens<TLens>(ScopeFilters filters) where TLens : ILensQuery;
 
   /// <summary>
   /// Get lens with scope filters AND permission requirement.
@@ -70,7 +70,7 @@ public interface IScopedLensFactory {
   /// <exception cref="Security.Exceptions.AccessDeniedException">
   /// Thrown when caller lacks the required permission.
   /// </exception>
-  TLens GetLens<TLens>(ScopeFilter filters, Permission requiredPermission) where TLens : ILensQuery;
+  TLens GetLens<TLens>(ScopeFilters filters, Permission requiredPermission) where TLens : ILensQuery;
 
   /// <summary>
   /// Get lens with scope filters AND any of the specified permissions.
@@ -83,7 +83,7 @@ public interface IScopedLensFactory {
   /// <exception cref="Security.Exceptions.AccessDeniedException">
   /// Thrown when caller lacks all specified permissions.
   /// </exception>
-  TLens GetLens<TLens>(ScopeFilter filters, params Permission[] anyOfPermissions) where TLens : ILensQuery;
+  TLens GetLens<TLens>(ScopeFilters filters, params Permission[] anyOfPermissions) where TLens : ILensQuery;
 
   // === Convenience methods for common patterns ===
 
@@ -92,7 +92,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <typeparam name="TLens">The lens interface type.</typeparam>
   /// <returns>A lens with no scope filtering applied.</returns>
-  /// <remarks>Equivalent to GetLens(ScopeFilter.None)</remarks>
+  /// <remarks>Equivalent to GetLens(ScopeFilters.None)</remarks>
   TLens GetGlobalLens<TLens>() where TLens : ILensQuery;
 
   /// <summary>
@@ -100,7 +100,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <typeparam name="TLens">The lens interface type.</typeparam>
   /// <returns>A lens filtered by TenantId.</returns>
-  /// <remarks>Equivalent to GetLens(ScopeFilter.Tenant)</remarks>
+  /// <remarks>Equivalent to GetLens(ScopeFilters.Tenant)</remarks>
   TLens GetTenantLens<TLens>() where TLens : ILensQuery;
 
   /// <summary>
@@ -108,7 +108,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <typeparam name="TLens">The lens interface type.</typeparam>
   /// <returns>A lens filtered by TenantId and UserId.</returns>
-  /// <remarks>Equivalent to GetLens(ScopeFilter.Tenant | ScopeFilter.User)</remarks>
+  /// <remarks>Equivalent to GetLens(ScopeFilters.Tenant | ScopeFilters.User)</remarks>
   TLens GetUserLens<TLens>() where TLens : ILensQuery;
 
   /// <summary>
@@ -131,7 +131,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <typeparam name="TLens">The lens interface type.</typeparam>
   /// <returns>A lens filtered by TenantId and principal membership.</returns>
-  /// <remarks>Equivalent to GetLens(ScopeFilter.Tenant | ScopeFilter.Principal)</remarks>
+  /// <remarks>Equivalent to GetLens(ScopeFilters.Tenant | ScopeFilters.Principal)</remarks>
   TLens GetPrincipalLens<TLens>() where TLens : ILensQuery;
 
   /// <summary>
@@ -140,7 +140,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <typeparam name="TLens">The lens interface type.</typeparam>
   /// <returns>A lens for user's own or shared records.</returns>
-  /// <remarks>Equivalent to GetLens(ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal)</remarks>
+  /// <remarks>Equivalent to GetLens(ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal)</remarks>
   TLens GetMyOrSharedLens<TLens>() where TLens : ILensQuery;
 
   // === Event Store Query Methods ===
@@ -151,11 +151,11 @@ public interface IScopedLensFactory {
   /// <param name="filters">Composable scope filter flags.</param>
   /// <returns>An event store query with the scope filters applied.</returns>
   /// <remarks>
-  /// Note: EventStoreRecord.Scope (MessageScope) only supports TenantId and UserId filtering.
-  /// Organization, Customer, and Principal filters are ignored for event queries.
+  /// Note: EventStoreRecord.Scope (PerspectiveScope) supports TenantId, UserId, OrganizationId, and CustomerId filtering.
+  /// Principal filters are not applied for event queries.
   /// </remarks>
-  /// <docs>core-concepts/event-store-query</docs>
-  Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters);
+  /// <docs>fundamentals/events/event-store-query</docs>
+  Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilters filters);
 
   /// <summary>
   /// Get event store query with scope filters AND permission requirement.
@@ -164,30 +164,30 @@ public interface IScopedLensFactory {
   /// <param name="filters">Composable scope filter flags.</param>
   /// <param name="requiredPermission">Permission the caller must have.</param>
   /// <returns>An event store query with the scope filters applied.</returns>
-  /// <docs>core-concepts/event-store-query</docs>
-  Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters, Security.Permission requiredPermission);
+  /// <docs>fundamentals/events/event-store-query</docs>
+  Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilters filters, Security.Permission requiredPermission);
 
   /// <summary>
   /// Get event store query with no filtering (global/admin access).
   /// </summary>
   /// <returns>An event store query with no scope filtering applied.</returns>
-  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.None)</remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilters.None)</remarks>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetGlobalEventStoreQuery();
 
   /// <summary>
   /// Get event store query filtered by current tenant only.
   /// </summary>
   /// <returns>An event store query filtered by TenantId.</returns>
-  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.Tenant)</remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilters.Tenant)</remarks>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetTenantEventStoreQuery();
 
   /// <summary>
   /// Get event store query filtered by tenant + user.
   /// </summary>
   /// <returns>An event store query filtered by TenantId and UserId.</returns>
-  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.Tenant | ScopeFilter.User)</remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilters.Tenant | ScopeFilters.User)</remarks>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetUserEventStoreQuery();
 }

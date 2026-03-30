@@ -5,6 +5,7 @@ using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -209,16 +210,34 @@ public class DispatcherEventCascaderTests {
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
       throw new NotImplementedException();
 
-    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) {
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+      throw new NotImplementedException();
+
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+      throw new NotImplementedException();
+
+    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull =>
+      throw new NotImplementedException();
+
+    public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
+      throw new NotImplementedException();
+
+    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);
       return Task.CompletedTask;
     }
 
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) {
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);
       LastSourceEnvelope = sourceEnvelope;
       return Task.CompletedTask;
     }
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
   }
 
   private sealed class FakeDeliveryReceipt : IDeliveryReceipt {
@@ -260,6 +279,7 @@ public class DispatcherEventCascaderTests {
     public MessageId? GetCausationId() => _hops[0].CausationId;
     public JsonElement? GetMetadata(string key) => null;
     public SecurityContext? GetCurrentSecurityContext() => null;
+    public ScopeContext? GetCurrentScope() => null;
   }
 
   public sealed class TestCascadeEvent : IEvent {

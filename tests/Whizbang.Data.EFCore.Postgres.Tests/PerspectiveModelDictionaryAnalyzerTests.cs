@@ -18,7 +18,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithDictionary_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
 
@@ -57,7 +57,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithList_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
 
@@ -98,7 +98,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithNestedDictionary_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
 
@@ -140,7 +140,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithListOfDictionary_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
 
@@ -178,7 +178,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task NonPerspectiveClass_WithDictionary_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
 
@@ -203,7 +203,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithIDictionary_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
 
@@ -240,7 +240,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithNotMappedDictionary_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
             using System.ComponentModel.DataAnnotations.Schema;
@@ -278,7 +278,7 @@ public class PerspectiveModelDictionaryAnalyzerTests {
   [Test]
   public async Task PerspectiveModel_WithJsonIgnoreDictionary_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Collections.Generic;
             using System.Text.Json.Serialization;

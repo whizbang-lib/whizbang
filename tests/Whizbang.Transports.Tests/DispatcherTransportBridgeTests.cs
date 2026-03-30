@@ -443,7 +443,7 @@ public class DispatcherTransportBridgeTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
-      return async (evt) => { await Task.CompletedTask; };
+      return async (evt) => await Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
@@ -462,7 +462,7 @@ public class DispatcherTransportBridgeTests {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }

@@ -13,31 +13,22 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 /// Minimal reproduction test: PostPerspectiveInline MUST fire AFTER database transaction commits.
 /// </summary>
 [NotInParallel("ServiceBus")]
-[Skip("Flaky in CI due to lifecycle receptor timing issues - see plan file soft-wibbling-nova.md")]
+[Timeout(120_000)]
 public class PostPerspectiveInlineCommitTest {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    var testIndex = 10;
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      try {
-        await _fixture.CleanupDatabaseAsync();
-      } catch (Exception ex) {
-        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
-      }
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public async Task TeardownAsync() {
+    // Don't dispose - shared fixture is reused across tests
   }
 
   /// <summary>
@@ -49,7 +40,6 @@ public class PostPerspectiveInlineCommitTest {
   /// Actual: receptor fires → query returns null → data NOT committed yet
   /// </summary>
   [Test]
-  [Timeout(120000)]  // Increased to 2 minutes
   public async Task PostPerspectiveInline_MustFireAfterTransactionCommits_DataMustBeQueryableAsync() {
     Console.WriteLine("==========================================================");
     Console.WriteLine("[TEST] ===== POST PERSPECTIVE INLINE COMMIT TEST START =====");
@@ -76,8 +66,8 @@ public class PostPerspectiveInlineCommitTest {
       perspectiveName: "ProductCatalogPerspective");
     Console.WriteLine("[TEST] Created GenericLifecycleCompletionReceptor for ProductCatalog perspective");
 
-    Console.WriteLine("[TEST] Getting ILifecycleReceptorRegistry from BffHost...");
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    Console.WriteLine("[TEST] Getting IReceptorRegistry from BffHost...");
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     Console.WriteLine($"[TEST] Got registry: {registry.GetType().Name}");
 
     Console.WriteLine("[TEST] Registering receptor for PostPerspectiveInline stage...");

@@ -36,7 +36,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithGetOnlyProperty_UsesNullSetterAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithRecordStructNestedType_DiscoversStructAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync</tests>
-/// <docs>source-generators/json-contexts</docs>
+/// <docs>extending/source-generators/json-contexts</docs>
 /// Source generator that discovers message types (ICommand, IEvent) and generates
 /// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
 /// This context handles message types discovered in the current assembly.
@@ -46,7 +46,6 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
-  private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -56,29 +55,32 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TYPE_NAME = "__TYPE_NAME__";
   private const string PLACEHOLDER_MESSAGE_ID = "MessageId";
   private const string PLACEHOLDER_FULLY_QUALIFIED_NAME = "__FULLY_QUALIFIED_NAME__";
-  private const string PLACEHOLDER_SIMPLE_NAME = "__SIMPLE_NAME__";
+#pragma warning disable S1144 // Used extensively in template replacement (e.g., lines 562, 943, 1014, 2495)
   private const string PLACEHOLDER_UNIQUE_IDENTIFIER = "__UNIQUE_IDENTIFIER__";
+#pragma warning restore S1144
   private const string PLACEHOLDER_GLOBAL = "global::";
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";
   private const string PLACEHOLDER_PROPERTY_NAME = "__PROPERTY_NAME__";
+  private const string PLACEHOLDER_JSON_PROPERTY_NAME = "__JSON_PROPERTY_NAME__";
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_SETTER = "__SETTER__";
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
+  private const string PLACEHOLDER_ELEMENT_TYPE = "__ELEMENT_TYPE__";
+  private const string PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER = "__ELEMENT_UNIQUE_IDENTIFIER__";
+  private const string PLACEHOLDER_INTERFACE_TYPE = "__INTERFACE_TYPE__";
+  private const string PLACEHOLDER_INTERFACE_NAME = "__INTERFACE_NAME__";
+  private const string GLOBAL_SYSTEM_PREFIX = "global::System.";
+  private const string GLOBAL_WHIZBANG_CORE_IMESSAGE = "global::Whizbang.Core.IMessage";
+  private const string GLOBAL_WHIZBANG_CORE_IEVENT = "global::Whizbang.Core.IEvent";
+  private const string GLOBAL_WHIZBANG_CORE_ICOMMAND = "global::Whizbang.Core.ICommand";
+  private const string INTERFACE_NAME_IMESSAGE = "IMessage";
+  private const string INTERFACE_NAME_IEVENT = "IEvent";
+  private const string INTERFACE_NAME_ICOMMAND = "ICommand";
+  private const string PRAGMA_DISABLE_CS0169 = "#pragma warning disable CS0169  // Field is never used";
+  private const string PRAGMA_RESTORE_CS0169 = "#pragma warning restore CS0169";
 
-  /// <summary>
-  /// Converts a fully qualified type name to a safe C# identifier for use in method names.
-  /// This ensures unique method names even when multiple namespaces have types with the same simple name.
-  /// Example: "global::JDX.Contracts.Job.CreateCommand" → "JDX_Contracts_Job_CreateCommand"
-  /// Example: "string?" → "string_Nullable"
-  /// </summary>
-  private static string _toSafeMethodName(string fullyQualifiedName) {
-    return fullyQualifiedName
-        .Replace(PLACEHOLDER_GLOBAL, "")
-        .Replace(".", "_")
-        .Replace("?", "_Nullable");
-  }
-
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
     // Predicate includes:
@@ -134,7 +136,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         return prop.Type;
       } else {
         // Nullable reference type: typeof(string?) is invalid - strip the '?'
-        return prop.Type.Substring(0, prop.Type.Length - 1);
+        return prop.Type[..^1];
       }
     }
 
@@ -239,6 +241,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Type must be a command, event, explicitly marked as serializable, has GraphQL attribute, or is a perspective model
     if (!isCommand && !isEvent && !isSerializable && !hasGraphQLName && !isPerspectiveModel) {
+      // Check if this type IS a perspective class (implements IPerspectiveBase<TModel, TEvent>)
+      // If so, extract TModel and return its type info for JSON serialization
+      // This handles the case where TModel is a plain record with no base types/attributes
+      // that would otherwise be filtered out by the syntactic predicate
+      var perspectiveModelInfo = _extractPerspectiveModelFromPerspectiveClass(typeSymbol);
+      if (perspectiveModelInfo is not null) {
+        return perspectiveModelInfo;
+      }
+
       return null;
     }
 
@@ -282,13 +293,109 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Reports diagnostics for each discovered message type.
+  /// </summary>
+  private static void _reportMessageTypeDiagnostics(SourceProductionContext context, ImmutableArray<JsonMessageTypeInfo> messages) {
+    foreach (var message in messages) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          message.SimpleName,
+          _getMessageKind(message)
+      ));
+    }
+  }
+
+  /// <summary>
+  /// Reports diagnostics for discovered nested types.
+  /// </summary>
+  private static void _reportTypeDiscoveryDiagnostics(SourceProductionContext context, ImmutableArray<JsonMessageTypeInfo> types, string kind) {
+    foreach (var type in types) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          type.SimpleName,
+          kind
+      ));
+    }
+  }
+
+  /// <summary>
+  /// Reports diagnostics for discovered collection and special types.
+  /// </summary>
+  private static void _reportCollectionTypeDiagnostics(
+      SourceProductionContext context,
+      ImmutableArray<ListTypeInfo> listTypes,
+      ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes,
+      ImmutableArray<ArrayTypeInfo> arrayTypes,
+      ImmutableArray<DictionaryTypeInfo> dictionaryTypes,
+      ImmutableArray<JsonEnumInfo> enumTypes) {
+
+    foreach (var t in listTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"List<{t.ElementSimpleName}>", "collection type"));
+    }
+    foreach (var t in iReadOnlyListTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"IReadOnlyList<{t.ElementSimpleName}>", "collection interface type"));
+    }
+    foreach (var t in arrayTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"{t.ElementSimpleName}[]", "array type"));
+    }
+    foreach (var t in dictionaryTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"Dictionary<{t.KeyTypeName}, {t.ValueSimpleName}>", "dictionary type"));
+    }
+    foreach (var t in enumTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, t.SimpleName, "enum type"));
+    }
+  }
+
+  /// <summary>
+  /// Discovers and merges polymorphic types from both message inheritance and property analysis.
+  /// </summary>
+  private static ImmutableArray<PolymorphicTypeInfo> _discoverAndMergePolymorphicTypes(
+      SourceProductionContext context,
+      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<PolymorphicTypeInfo> propertyPolymorphicTypes,
+      Compilation compilation) {
+
+    var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation);
+    var messagePolymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
+
+    // Merge: property-derived types take precedence (they have [JsonDerivedType] attributes)
+    var polymorphicTypeDict = new Dictionary<string, PolymorphicTypeInfo>();
+    foreach (var polyType in messagePolymorphicTypes) {
+      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
+    }
+    foreach (var polyType in propertyPolymorphicTypes) {
+      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
+    }
+    var polymorphicTypes = polymorphicTypeDict.Values.ToImmutableArray();
+
+    foreach (var polyType in polymorphicTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.PolymorphicBaseTypeDiscovered,
+          Location.None,
+          polyType.BaseSimpleName,
+          polyType.DerivedTypes.Length
+      ));
+    }
+
+    return polymorphicTypes;
+  }
+
+  /// <summary>
   /// Generates WhizbangJsonContext.g.cs with JsonTypeInfo objects for all discovered message types
   /// and Whizbang core types (MessageId, CorrelationId, etc.).
   /// </summary>
   private static void _generateWhizbangJsonContext(
       SourceProductionContext context,
-      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<JsonMessageTypeInfo> allMessages,
       Compilation compilation) {
+
+    // Deduplicate messages by FullyQualifiedName — perspective models can be discovered
+    // through both the nested type path (syntactic predicate) and the perspective class
+    // extraction path (_extractPerspectiveModelFromPerspectiveClass), producing duplicates.
+    var seen = new HashSet<string>();
+    var messages = allMessages.Where(m => seen.Add(m.FullyQualifiedName)).ToImmutableArray();
 
     // Report that generator is running
     context.ReportDiagnostic(Diagnostic.Create(
@@ -304,125 +411,27 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         messages.Length
     ));
 
-    // Report diagnostics for discovered message types
-    foreach (var message in messages) {
-      var messageKind = _getMessageKind(message);
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          message.SimpleName,
-          messageKind
-      ));
-    }
+    _reportMessageTypeDiagnostics(context, messages);
 
-    // Discover nested custom types used in message properties (e.g., OrderLineItem in List<OrderLineItem>)
-    // Also discovers polymorphic base types with [JsonPolymorphic] attribute from property types
+    // Discover nested custom types used in message properties
     var (nestedTypes, propertyPolymorphicTypes) = _discoverNestedTypes(messages, compilation);
-
-    // Report diagnostics for discovered nested types
-    foreach (var nestedType in nestedTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          nestedType.SimpleName,
-          "nested type"
-      ));
-    }
+    _reportTypeDiscoveryDiagnostics(context, nestedTypes, "nested type");
 
     // Combine messages and nested types for code generation
     var allTypes = messages.Concat(nestedTypes).ToImmutableArray();
 
-    // Discover List<T> types used in all messages and nested types
+    // Discover collection and special types
     var listTypes = _discoverListTypes(allTypes);
-
-    // Report diagnostics for discovered list types
-    foreach (var listType in listTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"List<{listType.ElementSimpleName}>",
-          "collection type"
-      ));
-    }
-
-    // Discover IReadOnlyList<T> types used in all messages and nested types
     var iReadOnlyListTypes = _discoverIReadOnlyListTypes(allTypes);
-
-    // Report diagnostics for discovered IReadOnlyList types
-    foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"IReadOnlyList<{iReadOnlyListType.ElementSimpleName}>",
-          "collection interface type"
-      ));
-    }
-
-    // Discover array types (T[]) used in all messages and nested types
     var arrayTypes = _discoverArrayTypes(allTypes);
-
-    // Report diagnostics for discovered array types
-    foreach (var arrayType in arrayTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"{arrayType.ElementSimpleName}[]",
-          "array type"
-      ));
-    }
-
-    // Discover Dictionary<TKey, TValue> types used in all messages and nested types
     var dictionaryTypes = _discoverDictionaryTypes(allTypes);
-
-    // Report diagnostics for discovered dictionary types
-    foreach (var dictType in dictionaryTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"Dictionary<{dictType.KeyTypeName}, {dictType.ValueSimpleName}>",
-          "dictionary type"
-      ));
-    }
-
-    // Discover enum types used in message and nested type properties
     var enumTypes = _discoverEnumTypes(allTypes, compilation);
 
-    // Report diagnostics for discovered enum types
-    foreach (var enumType in enumTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          enumType.SimpleName,
-          "enum type"
-      ));
-    }
+    // Report collection/special type diagnostics
+    _reportCollectionTypeDiagnostics(context, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes);
 
-    // Discover polymorphic base types from inheritance relationships (message types)
-    var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation);
-    var messagePolymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
-
-    // Merge message-derived and property-derived polymorphic types
-    // Property-derived types come from nested type discovery (e.g., AbstractFieldSettings with [JsonPolymorphic])
-    // Use dictionary to deduplicate by BaseTypeName (netstandard2.0 doesn't have DistinctBy)
-    var polymorphicTypeDict = new Dictionary<string, PolymorphicTypeInfo>();
-    foreach (var polyType in messagePolymorphicTypes) {
-      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
-    }
-    foreach (var polyType in propertyPolymorphicTypes) {
-      // Property-derived types take precedence (they have [JsonDerivedType] attributes)
-      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
-    }
-    var polymorphicTypes = polymorphicTypeDict.Values.ToImmutableArray();
-
-    // Report diagnostics for discovered polymorphic types
-    foreach (var polyType in polymorphicTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.PolymorphicBaseTypeDiscovered,
-          Location.None,
-          polyType.BaseSimpleName,
-          polyType.DerivedTypes.Length
-      ));
-    }
+    // Discover and merge polymorphic types
+    var polymorphicTypes = _discoverAndMergePolymorphicTypes(context, messages, propertyPolymorphicTypes, compilation);
 
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
@@ -474,40 +483,56 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     context.AddSource("MessageJsonContext.g.cs", template);
 
-    // Always generate WhizbangJsonContext facade
-    {
-      var facadeTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextFacadeTemplate.cs");
-      facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
-      facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
-      facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
+    _generateWhizbangJsonContextFacade(context, assembly, assemblyName, namespaceName, converters);
+    _generateMessageJsonContextInitializer(context, assembly, namespaceName, messages);
+  }
 
-      // Reuse converters already discovered at line 195 for facade generation
-      // Generate converter registration code
-      var converterRegistrations = new System.Text.StringBuilder();
-      if (!converters.IsEmpty) {
-        converterRegistrations.AppendLine();
-        converterRegistrations.AppendLine("    // Register WhizbangId converters");
-        foreach (var converter in converters) {
-          converterRegistrations.AppendLine($"    options.Converters.Add(new global::{converter.FullyQualifiedTypeName}());");
-        }
+  /// <summary>
+  /// Generates WhizbangJsonContext.g.cs facade with converter registrations.
+  /// </summary>
+  private static void _generateWhizbangJsonContextFacade(
+      SourceProductionContext context,
+      System.Reflection.Assembly assembly,
+      string assemblyName,
+      string namespaceName,
+      ImmutableArray<WhizbangIdTypeInfo> converters) {
+    var facadeTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextFacadeTemplate.cs");
+    facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
+    facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
+    facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
+
+    // Reuse converters already discovered for facade generation
+    // Generate converter registration code
+    var converterRegistrations = new System.Text.StringBuilder();
+    if (!converters.IsEmpty) {
+      converterRegistrations.AppendLine();
+      converterRegistrations.AppendLine("    // Register WhizbangId converters");
+      foreach (var converter in converters) {
+        converterRegistrations.AppendLine($"    options.Converters.Add(new global::{converter.FullyQualifiedTypeName}());");
       }
-      facadeTemplate = facadeTemplate.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
-
-      context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
     }
+    facadeTemplate = facadeTemplate.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
 
-    // Generate MessageJsonContextInitializer with RegisterDerivedType calls for polymorphic serialization
-    {
-      var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
-      initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
-      initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
+    context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
+  }
 
-      // Generate RegisterDerivedType calls for each message type
-      var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
-      initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+  /// <summary>
+  /// Generates MessageJsonContextInitializer.g.cs with RegisterDerivedType calls for polymorphic serialization.
+  /// </summary>
+  private static void _generateMessageJsonContextInitializer(
+      SourceProductionContext context,
+      System.Reflection.Assembly assembly,
+      string namespaceName,
+      ImmutableArray<JsonMessageTypeInfo> messages) {
+    var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
+    initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
+    initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
 
-      context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
-    }
+    // Generate RegisterDerivedType calls for each message type
+    var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
+    initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+
+    context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
   }
 
   /// <summary>
@@ -521,7 +546,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var message in messages) {
       // Use fully qualified name without global:: prefix for discriminator to ensure uniqueness
-      var discriminator = message.FullyQualifiedName.Replace("global::", "");
+      var discriminator = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
 
       if (message.IsEvent) {
         sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IEvent, {message.FullyQualifiedName}>(\"{discriminator}\");");
@@ -544,7 +569,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     // Load snippets
@@ -609,45 +634,45 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // IMessage (always if we have any messages)
       sb.AppendLine(interfaceFieldSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
       sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
       sb.AppendLine(listInterfaceFieldSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
 
       // IEvent (only if we have events)
       if (hasEvents) {
         sb.AppendLine(interfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
         sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
         sb.AppendLine(listInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
       }
 
       // ICommand (only if we have commands)
       if (hasCommands) {
         sb.AppendLine(interfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
         sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
         sb.AppendLine(listInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
       }
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -686,92 +711,84 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // IMessage (always if we have any messages)
     sb.AppendLine(interfacePropertySnippet
-        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-        .Replace("__INTERFACE_NAME__", "IMessage"));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
     sb.AppendLine(messageEnvelopeInterfacePropertySnippet
-        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-        .Replace("__INTERFACE_NAME__", "IMessage"));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
     sb.AppendLine(listInterfacePropertySnippet
-        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-        .Replace("__INTERFACE_NAME__", "IMessage"));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
 
     // IEvent (only if we have events)
     if (hasEvents) {
       sb.AppendLine(interfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-          .Replace("__INTERFACE_NAME__", "IEvent"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
       sb.AppendLine(messageEnvelopeInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-          .Replace("__INTERFACE_NAME__", "IEvent"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
       sb.AppendLine(listInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-          .Replace("__INTERFACE_NAME__", "IEvent"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
     }
 
     // ICommand (only if we have commands)
     if (hasCommands) {
       sb.AppendLine(interfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-          .Replace("__INTERFACE_NAME__", "ICommand"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
       sb.AppendLine(messageEnvelopeInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-          .Replace("__INTERFACE_NAME__", "ICommand"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
       sb.AppendLine(listInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-          .Replace("__INTERFACE_NAME__", "ICommand"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
     }
 
     return sb.ToString();
   }
 
-  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+  /// <summary>
+  /// Holds pre-loaded snippet templates for GetTypeInfo generation.
+  /// </summary>
+  private sealed record GetTypeInfoSnippets(
+      string ValueObject,
+      string Message,
+      string Envelope,
+      string List,
+      string IReadOnlyList,
+      string Array,
+      string Dictionary,
+      string Enum,
+      string NullableEnum
+  );
+
+  /// <summary>
+  /// Loads all snippet templates needed for GetTypeInfo generation.
+  /// </summary>
+  private static GetTypeInfoSnippets _loadGetTypeInfoSnippets(Assembly assembly) {
+    return new GetTypeInfoSnippets(
+        ValueObject: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_VALUE_OBJECT"),
+        Message: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_MESSAGE"),
+        Envelope: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_MESSAGE_ENVELOPE"),
+        List: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_LIST"),
+        IReadOnlyList: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_IREADONLYLIST"),
+        Array: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_ARRAY"),
+        Dictionary: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_DICTIONARY"),
+        Enum: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_ENUM"),
+        NullableEnum: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_NULLABLE_ENUM")
+    );
+  }
+
+  // S3776: Type-info generation for all serializable types — complexity from many type categories (messages, lists, arrays, dicts, enums, polymorphic)
+#pragma warning disable S3776
+  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+#pragma warning restore S3776
     var sb = new System.Text.StringBuilder();
 
-    // Load snippets
-    var valueObjectCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_VALUE_OBJECT");
-
-    var messageCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_MESSAGE");
-
-    var envelopeCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_MESSAGE_ENVELOPE");
-
-    var listCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_LIST");
-
-    var iReadOnlyListCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_IREADONLYLIST");
-
-    var arrayCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_ARRAY");
-
-    var dictionaryCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_DICTIONARY");
-
-    var enumCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_ENUM");
-
-    var nullableEnumCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_NULLABLE_ENUM");
+    // Load all snippets up front
+    var snippets = _loadGetTypeInfoSnippets(assembly);
 
     // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
     // Must track types being created to detect circular references
@@ -792,6 +809,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Override base GetTypeInfo(Type) for compatibility
+    sb.AppendLine("/// <inheritdoc/>");
     sb.AppendLine("public override JsonTypeInfo? GetTypeInfo(Type type) {");
     sb.AppendLine("  // When called directly (not in resolver chain), Options might be null");
     sb.AppendLine("  if (Options == null) return null;");
@@ -813,8 +831,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Shared implementation
     sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
-    sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
-    sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
+    sb.AppendLine(snippets.ValueObject.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
+    sb.AppendLine(snippets.ValueObject.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
     sb.AppendLine();
 
     // Primitive types - create directly using JsonMetadataServices (AOT-compatible)
@@ -949,95 +967,154 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // All discovered types (messages + nested types)
-    sb.AppendLine("  // Discovered types (messages + nested types)");
-    foreach (var type in allTypes) {
-      var check = messageCheckSnippet
-          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
-      sb.AppendLine(check);
-      sb.AppendLine();
-    }
+    _appendDiscoveredTypeChecks(sb, snippets, allTypes);
 
     // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
-    sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
-    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
-      var check = envelopeCheckSnippet
+    _appendEnvelopeTypeChecks(sb, snippets, allTypes);
+
+    // Collection and dictionary types discovered in messages
+    _appendCollectionTypeChecks(sb, snippets, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes);
+
+    // Enum types discovered in message and nested type properties (both non-nullable and nullable)
+    _appendEnumTypeChecks(sb, snippets, enumTypes);
+
+    // Polymorphic and interface types
+    _appendPolymorphicTypeChecks(sb, assembly, allTypes, polymorphicTypes);
+
+    sb.AppendLine("  // Return null for types we don't handle - let next resolver in chain handle them");
+    sb.AppendLine("  return null;");
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Appends type checks for all discovered types (messages + nested types).
+  /// </summary>
+  private static void _appendDiscoveredTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    sb.AppendLine("  // Discovered types (messages + nested types)");
+    foreach (var type in allTypes) {
+      var check = snippets.Message
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(check);
       sb.AppendLine();
     }
+  }
 
-    // List<T> types discovered in messages
+  /// <summary>
+  /// Appends MessageEnvelope type checks for actual message types (commands/events).
+  /// </summary>
+  private static void _appendEnvelopeTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
+    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
+      var check = snippets.Envelope
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
+      sb.AppendLine(check);
+      sb.AppendLine();
+    }
+  }
+
+  /// <summary>
+  /// Appends type checks for List, IReadOnlyList, Array, and Dictionary types.
+  /// </summary>
+  private static void _appendCollectionTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<ListTypeInfo> listTypes,
+      ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes,
+      ImmutableArray<ArrayTypeInfo> arrayTypes,
+      ImmutableArray<DictionaryTypeInfo> dictionaryTypes) {
     if (!listTypes.IsEmpty) {
       sb.AppendLine("  // List<T> types discovered in messages");
       foreach (var listType in listTypes) {
-        var check = listCheckSnippet
-            .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+        var check = snippets.List
+            .Replace(PLACEHOLDER_ELEMENT_TYPE, listType.ElementTypeName)
+            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, listType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
     }
 
-    // IReadOnlyList<T> types discovered in messages
     if (!iReadOnlyListTypes.IsEmpty) {
       sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
       foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-        var check = iReadOnlyListCheckSnippet
-            .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
-            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+        var check = snippets.IReadOnlyList
+            .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
+            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
     }
 
-    // Array types (T[]) discovered in messages
     if (!arrayTypes.IsEmpty) {
       sb.AppendLine("  // Array types (T[]) discovered in messages");
       foreach (var arrayType in arrayTypes) {
-        var check = arrayCheckSnippet
-            .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
-            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+        var check = snippets.Array
+            .Replace(PLACEHOLDER_ELEMENT_TYPE, arrayType.ElementTypeName)
+            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, arrayType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
     }
 
-    // Dictionary<TKey, TValue> types discovered in messages
     if (!dictionaryTypes.IsEmpty) {
       sb.AppendLine("  // Dictionary<TKey, TValue> types discovered in messages");
       foreach (var dictType in dictionaryTypes) {
-        var check = dictionaryCheckSnippet
+        var check = snippets.Dictionary
             .Replace("__KEY_TYPE__", dictType.KeyTypeName)
             .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
-            .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, dictType.UniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
     }
+  }
 
-    // Enum types discovered in message and nested type properties (both non-nullable and nullable)
-    if (!enumTypes.IsEmpty) {
-      sb.AppendLine("  // Enum types discovered in messages and nested types");
-      foreach (var enumType in enumTypes) {
-        // Non-nullable enum
-        var check = enumCheckSnippet
-            .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
-            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
-        sb.AppendLine(check);
-        sb.AppendLine();
-
-        // Nullable enum (always generate both - no need to discover which are used as nullable)
-        var nullableCheck = nullableEnumCheckSnippet
-            .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
-            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
-        sb.AppendLine(nullableCheck);
-        sb.AppendLine();
-      }
+  /// <summary>
+  /// Appends type checks for enum types (both non-nullable and nullable).
+  /// </summary>
+  private static void _appendEnumTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<JsonEnumInfo> enumTypes) {
+    if (enumTypes.IsEmpty) {
+      return;
     }
 
-    // Polymorphic base types for automatic JSON serialization
+    sb.AppendLine("  // Enum types discovered in messages and nested types");
+    foreach (var enumType in enumTypes) {
+      // Non-nullable enum
+      var check = snippets.Enum
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
+      sb.AppendLine(check);
+      sb.AppendLine();
+
+      // Nullable enum (always generate both - no need to discover which are used as nullable)
+      var nullableCheck = snippets.NullableEnum
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
+      sb.AppendLine(nullableCheck);
+      sb.AppendLine();
+    }
+  }
+
+  /// <summary>
+  /// Appends type checks for polymorphic base types and interface types (IEvent, ICommand, IMessage).
+  /// </summary>
+  private static void _appendPolymorphicTypeChecks(
+      StringBuilder sb,
+      Assembly assembly,
+      ImmutableArray<JsonMessageTypeInfo> allTypes,
+      ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     if (!polymorphicTypes.IsEmpty) {
       var polymorphicCheckSnippet = TemplateUtilities.ExtractSnippet(
           assembly,
@@ -1054,74 +1131,73 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    // Interface types for polymorphic serialization (IEvent, ICommand, IMessage)
-    // These delegate to JsonContextRegistry which aggregates derived types from all assemblies
     var hasEvents = allTypes.Any(t => t.IsEvent);
     var hasCommands = allTypes.Any(t => t.IsCommand);
 
     if (hasEvents || hasCommands) {
-      var interfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          TEMPLATE_SNIPPET_FILE,
-          "GET_TYPE_INFO_INTERFACE");
-      var messageEnvelopeInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          TEMPLATE_SNIPPET_FILE,
-          "GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE");
-      var listInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          TEMPLATE_SNIPPET_FILE,
-          "GET_TYPE_INFO_LIST_INTERFACE");
+      _appendInterfaceTypeChecks(sb, assembly, hasEvents, hasCommands);
+    }
+  }
 
-      sb.AppendLine("  // Interface types for polymorphic serialization");
-      sb.AppendLine("  // These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
+  /// <summary>
+  /// Appends interface type checks for IMessage, IEvent, and ICommand polymorphic serialization.
+  /// </summary>
+  private static void _appendInterfaceTypeChecks(
+      StringBuilder sb,
+      Assembly assembly,
+      bool hasEvents,
+      bool hasCommands) {
+    var interfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_INTERFACE");
+    var messageEnvelopeInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE");
+    var listInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_LIST_INTERFACE");
 
-      // IMessage (always if we have any messages)
-      sb.AppendLine(interfaceCheckSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
-      sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
-      sb.AppendLine(listInterfaceCheckSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
-      sb.AppendLine();
+    sb.AppendLine("  // Interface types for polymorphic serialization");
+    sb.AppendLine("  // These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
 
-      // IEvent (only if we have events)
-      if (hasEvents) {
-        sb.AppendLine(interfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
-        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
-        sb.AppendLine(listInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
-        sb.AppendLine();
-      }
+    // IMessage (always if we have any messages)
+    _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
+        GLOBAL_WHIZBANG_CORE_IMESSAGE, INTERFACE_NAME_IMESSAGE);
 
-      // ICommand (only if we have commands)
-      if (hasCommands) {
-        sb.AppendLine(interfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
-        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
-        sb.AppendLine(listInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
-        sb.AppendLine();
-      }
+    if (hasEvents) {
+      _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
+          GLOBAL_WHIZBANG_CORE_IEVENT, INTERFACE_NAME_IEVENT);
     }
 
-    sb.AppendLine("  // Return null for types we don't handle - let next resolver in chain handle them");
-    sb.AppendLine("  return null;");
-    sb.AppendLine("}");
+    if (hasCommands) {
+      _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
+          GLOBAL_WHIZBANG_CORE_ICOMMAND, INTERFACE_NAME_ICOMMAND);
+    }
+  }
 
-    return sb.ToString();
+  /// <summary>
+  /// Appends the three interface check snippets for a single interface type.
+  /// </summary>
+  private static void _appendSingleInterfaceCheck(
+      StringBuilder sb,
+      string interfaceCheckSnippet,
+      string messageEnvelopeInterfaceCheckSnippet,
+      string listInterfaceCheckSnippet,
+      string interfaceType,
+      string interfaceName) {
+    sb.AppendLine(interfaceCheckSnippet
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, interfaceType)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, interfaceName));
+    sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, interfaceType)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, interfaceName));
+    sb.AppendLine(listInterfaceCheckSnippet
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, interfaceType)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, interfaceName));
+    sb.AppendLine();
   }
 
   private static string _generateHelperMethods(Assembly assembly) {
@@ -1249,99 +1325,119 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      // Generate the main factory method with deferred property initialization
-      // This enables support for self-referencing types (e.g., Event with List<Event> property)
-      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
-
-      // Filter to only writable properties for constructor params and object initializer
-      // Computed properties (CanWrite = false) cannot be assigned and are excluded
       var writableProperties = message.Properties.Where(p => p.CanWrite).ToArray();
 
-      // Generate different code based on constructor type
-      if (message.HasParameterizedConstructor) {
-        // Type has parameterized constructor (e.g., record with primary constructor)
-        // Create JsonObjectInfoValues with DEFERRED property initialization
-        sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-        sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
-        for (int i = 0; i < writableProperties.Length; i++) {
-          var prop = writableProperties[i];
-          var comma = i < writableProperties.Length - 1 ? "," : "";
-          sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
-        }
-        sb.AppendLine("      ),");
-        sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
-        sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
-        sb.AppendLine($"  }};");
-      } else {
-        // Type has no parameterized constructor but has init-only properties
-        // Create JsonObjectInfoValues with DEFERRED property initialization
-        sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-        sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
-        for (int i = 0; i < writableProperties.Length; i++) {
-          var prop = writableProperties[i];
-          var comma = i < writableProperties.Length - 1 ? "," : "";
-          sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
-        }
-        sb.AppendLine("      },");
-        sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
-        sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
-        sb.AppendLine($"  }};");
-      }
-      sb.AppendLine();
-
-      // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
-      // This is critical for self-referencing types - the cache must be populated
-      // before the deferred PropertyMetadataInitializer runs
-      sb.AppendLine($"  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
-      sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
-      sb.AppendLine($"  jsonTypeInfo.OriginatingResolver = this;");
-      sb.AppendLine($"  return jsonTypeInfo;");
-      sb.AppendLine($"}}");
-      sb.AppendLine();
-
-      // Generate the deferred property creation method
-      sb.AppendLine($"private JsonPropertyInfo[] CreatePropertiesFor_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
-      sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
-      sb.AppendLine();
-
-      for (int i = 0; i < message.Properties.Length; i++) {
-        var prop = message.Properties[i];
-        var setter = !prop.CanWrite || prop.IsInitOnly
-            ? "null"
-            : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
-
-        var propertyCode = propertyCreationSnippet
-            .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
-            .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
-            .Replace(PLACEHOLDER_SETTER, setter);
-
-        sb.AppendLine(propertyCode);
-        sb.AppendLine();
-      }
-      sb.AppendLine($"  return properties;");
-      sb.AppendLine($"}}");
-      sb.AppendLine();
-
-      // Generate the deferred constructor params creation method
-      sb.AppendLine($"private JsonParameterInfoValues[] CreateCtorParamsFor_{message.UniqueIdentifier}() {{");
-      sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
-      for (int i = 0; i < writableProperties.Length; i++) {
-        var prop = writableProperties[i];
-        var parameterCode = parameterInfoSnippet
-            .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
-            .Replace(PLACEHOLDER_PROPERTY_TYPE, _getTypeOfExpression(prop));
-
-        sb.AppendLine(parameterCode);
-      }
-      sb.AppendLine($"  return ctorParams;");
-      sb.AppendLine($"}}");
-      sb.AppendLine();
+      _generateFactoryMethod(sb, message, writableProperties);
+      _generatePropertyCreationMethod(sb, message, propertyCreationSnippet);
+      _generateCtorParamsMethod(sb, message, writableProperties, parameterInfoSnippet);
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates the main Create_ factory method with deferred property initialization.
+  /// Supports both parameterized constructors and object initializers.
+  /// </summary>
+  private static void _generateFactoryMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties) {
+    sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
+
+    // Generate different code based on constructor type
+    sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
+    if (message.HasParameterizedConstructor) {
+      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
+      _appendConstructorArgs(sb, writableProperties);
+      sb.AppendLine("      ),");
+    } else {
+      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
+      _appendObjectInitializerArgs(sb, writableProperties);
+      sb.AppendLine("      },");
+    }
+    sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
+    sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
+    sb.AppendLine("  };");
+    sb.AppendLine();
+
+    // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
+    // This is critical for self-referencing types
+    sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
+    sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
+    sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
+    sb.AppendLine("  return jsonTypeInfo;");
+    sb.AppendLine("}");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Appends typed constructor argument casts for parameterized constructors.
+  /// </summary>
+  private static void _appendConstructorArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
+    for (int i = 0; i < writableProperties.Length; i++) {
+      var prop = writableProperties[i];
+      var comma = i < writableProperties.Length - 1 ? "," : "";
+      sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
+    }
+  }
+
+  /// <summary>
+  /// Appends object initializer assignments for types without parameterized constructors.
+  /// </summary>
+  private static void _appendObjectInitializerArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
+    for (int i = 0; i < writableProperties.Length; i++) {
+      var prop = writableProperties[i];
+      var comma = i < writableProperties.Length - 1 ? "," : "";
+      sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
+    }
+  }
+
+  /// <summary>
+  /// Generates the deferred property creation method for a message type.
+  /// </summary>
+  private static void _generatePropertyCreationMethod(StringBuilder sb, JsonMessageTypeInfo message, string propertyCreationSnippet) {
+    sb.AppendLine($"private JsonPropertyInfo[] CreatePropertiesFor_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
+    sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
+    sb.AppendLine();
+
+    for (int i = 0; i < message.Properties.Length; i++) {
+      var prop = message.Properties[i];
+      var setter = !prop.CanWrite || prop.IsInitOnly
+          ? "null"
+          : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
+
+      var propertyCode = propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, prop.Name)
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
+          .Replace(PLACEHOLDER_SETTER, setter);
+
+      sb.AppendLine(propertyCode);
+      sb.AppendLine();
+    }
+    sb.AppendLine("  return properties;");
+    sb.AppendLine("}");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Generates the deferred constructor params creation method for a message type.
+  /// </summary>
+  private static void _generateCtorParamsMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties, string parameterInfoSnippet) {
+    sb.AppendLine($"private JsonParameterInfoValues[] CreateCtorParamsFor_{message.UniqueIdentifier}() {{");
+    sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
+    for (int i = 0; i < writableProperties.Length; i++) {
+      var prop = writableProperties[i];
+      var parameterCode = parameterInfoSnippet
+          .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, _getTypeOfExpression(prop));
+
+      sb.AppendLine(parameterCode);
+    }
+    sb.AppendLine("  return ctorParams;");
+    sb.AppendLine("}");
+    sb.AppendLine();
   }
 
   private static string _generateMessageEnvelopeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
@@ -1365,31 +1461,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  var properties = new JsonPropertyInfo[3];");
       sb.AppendLine();
 
-      // Property 0: MessageId using snippet
+      // Property 0: MessageId using snippet - JSON name is "id" per [JsonPropertyName] on MessageEnvelope
       var messageIdProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "0")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, PLACEHOLDER_MESSAGE_ID)
           .Replace(PLACEHOLDER_PROPERTY_NAME, PLACEHOLDER_MESSAGE_ID)
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "id")
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(messageIdProperty);
       sb.AppendLine();
 
-      // Property 1: Payload using snippet
+      // Property 1: Payload using snippet - JSON name is "p" per [JsonPropertyName] on MessageEnvelope
       var payloadProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "1")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, message.FullyQualifiedName)
           .Replace(PLACEHOLDER_PROPERTY_NAME, "Payload")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "p")
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(payloadProperty);
       sb.AppendLine();
 
-      // Property 2: Hops using snippet
+      // Property 2: Hops using snippet - JSON name is "h" per [JsonPropertyName] on MessageEnvelope
       var hopsProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "2")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, "List<MessageHop>")
           .Replace(PLACEHOLDER_PROPERTY_NAME, "Hops")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "h")
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(hopsProperty);
@@ -1429,7 +1528,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine();
 
       // Create JsonTypeInfo
-      sb.AppendLine($"  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
+      sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
       sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
       sb.AppendLine("  return jsonTypeInfo;");
       sb.AppendLine("}");
@@ -1495,141 +1594,125 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var currentType = typesToProcess.Dequeue();
 
       foreach (var property in currentType.Properties) {
-        // Try to extract type from collections first, then check for direct property types
-        var elementTypeName = _extractElementType(property.Type);
-        var typeNameToProcess = elementTypeName ?? _extractDirectPropertyType(property.Type);
-
-        if (typeNameToProcess == null) {
-          continue;
-        }
-
-        // Skip if already processed (handles circular and self-references)
-        if (processedTypes.Contains(typeNameToProcess)) {
-          continue;
-        }
-
-        // Skip primitive and framework types
-        if (_isPrimitiveOrFrameworkType(typeNameToProcess)) {
-          continue;
-        }
-
-        // Skip System.* types (collections, framework types) - STJ handles these natively
-        // This handles cases like List<List<T>> where element type is List<T>
-        if (typeNameToProcess.StartsWith("global::System.", StringComparison.Ordinal)) {
-          continue;
-        }
-
-        // Try to get public type symbol
-        var typeSymbol = _tryGetPublicTypeSymbol(typeNameToProcess, compilation);
-        if (typeSymbol == null) {
-          continue;
-        }
-
-        // Skip enums - they're handled by _discoverEnumTypes
-        if (typeSymbol.TypeKind == TypeKind.Enum) {
-          continue;
-        }
-
-        // Handle abstract types with [JsonPolymorphic] - discover their derived types
-        // For polymorphic types, we generate JsonTypeInfo for both:
-        // 1. The abstract base type (with polymorphic options for derived type dispatch)
-        // 2. All concrete derived types (for actual serialization)
-        if (typeSymbol.IsAbstract) {
-          // Check if this abstract type has [JsonPolymorphic] attribute
-          if (_hasJsonPolymorphicAttribute(typeSymbol)) {
-            // Discover derived types from [JsonDerivedType] attributes
-            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol, compilation);
-            var derivedTypeNames = new List<string>();
-
-            foreach (var derivedType in derivedTypes) {
-              var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-              derivedTypeNames.Add(derivedTypeName);
-
-              // Skip if already processed
-              if (processedTypes.Contains(derivedTypeName)) {
-                continue;
-              }
-
-              // Extract properties and create type info for derived type
-              var derivedProperties = _extractPropertiesFromType(derivedType);
-              var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
-              var derivedClrTypeName = _getClrTypeName(derivedType);
-
-              var derivedTypeInfo = new JsonMessageTypeInfo(
-                  FullyQualifiedName: derivedTypeName,
-                  ClrTypeName: derivedClrTypeName,
-                  SimpleName: derivedType.Name,
-                  IsCommand: false,
-                  IsEvent: false,
-                  IsSerializable: false,
-                  Properties: derivedProperties,
-                  HasParameterizedConstructor: hasDerivedCtor
-              );
-
-              nestedTypes[derivedTypeName] = derivedTypeInfo;
-              processedTypes.Add(derivedTypeName);
-              typesToProcess.Enqueue(derivedTypeInfo);
-            }
-
-            // Create polymorphic type info for the abstract base type
-            // This allows STJ to dispatch to the correct derived type during deserialization
-            if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
-              var simpleName = typeSymbol.Name;
-              var isInterface = typeSymbol.TypeKind == TypeKind.Interface;
-              discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
-                  BaseTypeName: typeNameToProcess,
-                  BaseSimpleName: simpleName,
-                  DerivedTypes: derivedTypeNames.ToImmutableArray(),
-                  IsInterface: isInterface
-              );
-            }
-          }
-          // Mark abstract type as processed to avoid re-checking
-          processedTypes.Add(typeNameToProcess);
-          continue;
-        }
-
-        // Skip [WhizbangId] types - they have their own converters generated by WhizbangIdGenerator
-        // If we generate JsonTypeInfo here, it will incorrectly create an empty object metadata
-        // that overrides the proper converter-based handling from WhizbangIdJsonContext
-        // Note: We check for the attribute, not IWhizbangId interface, because generators run in parallel
-        // and MessageJsonContextGenerator may not see the interface that WhizbangIdGenerator adds
-        if (_hasWhizbangIdAttribute(typeSymbol)) {
-          continue;
-        }
-
-        // Note: Structs (including record struct) are now supported.
-        // The IsInitOnly fix (SetMethod == null || IsInitOnly) properly handles
-        // get-only properties, so structs work correctly with constructor initialization.
-
-        // Extract properties and detect constructor
-        var nestedProperties = _extractPropertiesFromType(typeSymbol);
-        bool hasParameterizedConstructor = _hasMatchingParameterizedConstructor(typeSymbol, nestedProperties);
-
-        // Build CLR type name for nested types (uses + separator for nested types)
-        var clrTypeName = _getClrTypeName(typeSymbol);
-
-        // Build nested type info
-        var nestedTypeInfo = new JsonMessageTypeInfo(
-            FullyQualifiedName: typeNameToProcess,
-            ClrTypeName: clrTypeName,
-            SimpleName: typeSymbol.Name,
-            IsCommand: false,  // Nested types are not commands/events
-            IsEvent: false,
-            IsSerializable: false,  // Nested types discovered through property analysis, not attribute
-            Properties: nestedProperties,
-            HasParameterizedConstructor: hasParameterizedConstructor
-        );
-
-        nestedTypes[typeNameToProcess] = nestedTypeInfo;
-        processedTypes.Add(typeNameToProcess);
-
-        // Queue for recursive processing - discovers deeply nested types
-        typesToProcess.Enqueue(nestedTypeInfo);
+        _processPropertyForNestedTypeDiscovery(
+          property, compilation, nestedTypes, discoveredPolymorphicTypes, processedTypes, typesToProcess);
       }
     }
 
     return (nestedTypes.Values.ToImmutableArray(), discoveredPolymorphicTypes.Values.ToImmutableArray());
+  }
+
+  private static void _processPropertyForNestedTypeDiscovery(
+      PropertyInfo property,
+      Compilation compilation,
+      Dictionary<string, JsonMessageTypeInfo> nestedTypes,
+      Dictionary<string, PolymorphicTypeInfo> discoveredPolymorphicTypes,
+      HashSet<string> processedTypes,
+      Queue<JsonMessageTypeInfo> typesToProcess) {
+
+    // Try to extract type from collections first, then check for direct property types
+    var elementTypeName = _extractElementType(property.Type);
+    var typeNameToProcess = elementTypeName ?? _extractDirectPropertyType(property.Type);
+
+    if (typeNameToProcess == null ||
+        processedTypes.Contains(typeNameToProcess) ||
+        _isPrimitiveOrFrameworkType(typeNameToProcess) ||
+        typeNameToProcess.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
+      return;
+    }
+
+    var typeSymbol = _tryGetPublicTypeSymbol(typeNameToProcess, compilation);
+    if (typeSymbol == null || typeSymbol.TypeKind == TypeKind.Enum) {
+      return;
+    }
+
+    // Handle abstract types with [JsonPolymorphic] - discover their derived types
+    if (typeSymbol.IsAbstract) {
+      _processAbstractPolymorphicType(typeSymbol, typeNameToProcess, nestedTypes, discoveredPolymorphicTypes, processedTypes, typesToProcess);
+      processedTypes.Add(typeNameToProcess);
+      return;
+    }
+
+    // Skip [WhizbangId] types - they have their own converters
+    if (_hasWhizbangIdAttribute(typeSymbol)) {
+      return;
+    }
+
+    // Extract properties and detect constructor
+    var nestedProperties = _extractPropertiesFromType(typeSymbol);
+    bool hasParameterizedConstructor = _hasMatchingParameterizedConstructor(typeSymbol, nestedProperties);
+    var clrTypeName = _getClrTypeName(typeSymbol);
+
+    var nestedTypeInfo = new JsonMessageTypeInfo(
+        FullyQualifiedName: typeNameToProcess,
+        ClrTypeName: clrTypeName,
+        SimpleName: typeSymbol.Name,
+        IsCommand: false,
+        IsEvent: false,
+        IsSerializable: false,
+        Properties: nestedProperties,
+        HasParameterizedConstructor: hasParameterizedConstructor
+    );
+
+    nestedTypes[typeNameToProcess] = nestedTypeInfo;
+    processedTypes.Add(typeNameToProcess);
+    typesToProcess.Enqueue(nestedTypeInfo);
+  }
+
+  /// <summary>
+  /// Processes an abstract type with [JsonPolymorphic] attribute, discovering its derived types.
+  /// </summary>
+  private static void _processAbstractPolymorphicType(
+      INamedTypeSymbol typeSymbol,
+      string typeNameToProcess,
+      Dictionary<string, JsonMessageTypeInfo> nestedTypes,
+      Dictionary<string, PolymorphicTypeInfo> discoveredPolymorphicTypes,
+      HashSet<string> processedTypes,
+      Queue<JsonMessageTypeInfo> typesToProcess) {
+
+    if (!_hasJsonPolymorphicAttribute(typeSymbol)) {
+      return;
+    }
+
+    var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol);
+    var derivedTypeNames = new List<string>();
+
+    foreach (var derivedType in derivedTypes) {
+      var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      derivedTypeNames.Add(derivedTypeName);
+
+      if (processedTypes.Contains(derivedTypeName)) {
+        continue;
+      }
+
+      var derivedProperties = _extractPropertiesFromType(derivedType);
+      var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
+      var derivedClrTypeName = _getClrTypeName(derivedType);
+
+      var derivedTypeInfo = new JsonMessageTypeInfo(
+          FullyQualifiedName: derivedTypeName,
+          ClrTypeName: derivedClrTypeName,
+          SimpleName: derivedType.Name,
+          IsCommand: false,
+          IsEvent: false,
+          IsSerializable: false,
+          Properties: derivedProperties,
+          HasParameterizedConstructor: hasDerivedCtor
+      );
+
+      nestedTypes[derivedTypeName] = derivedTypeInfo;
+      processedTypes.Add(derivedTypeName);
+      typesToProcess.Enqueue(derivedTypeInfo);
+    }
+
+    if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
+      discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
+          BaseTypeName: typeNameToProcess,
+          BaseSimpleName: typeSymbol.Name,
+          DerivedTypes: [.. derivedTypeNames],
+          IsInterface: typeSymbol.TypeKind == TypeKind.Interface
+      );
+    }
   }
 
   /// <summary>
@@ -1646,56 +1729,53 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var discoveredEnums = new Dictionary<string, JsonEnumInfo>();
 
+    // S3267: Loop has side effects (mutating discoveredEnums dictionary) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
-        // Get the property type (handle nullable and collection wrappers)
-        var propertyTypeName = property.Type;
-
-        // Strip nullable suffix if present
-        if (propertyTypeName.EndsWith("?", StringComparison.Ordinal)) {
-          propertyTypeName = propertyTypeName[..^1];
-        }
-
-        // Check if it's already discovered
-        if (discoveredEnums.ContainsKey(propertyTypeName)) {
-          continue;
-        }
-
-        // Skip collection types (their element types are handled separately)
-        if (_extractElementType(property.Type) != null) {
-          continue;
-        }
-
-        // Skip primitive and framework types
-        if (_isPrimitiveOrFrameworkType(propertyTypeName)) {
-          continue;
-        }
-
-        // Skip framework enums (DayOfWeek, etc.) - they're handled by STJ
-        if (_isFrameworkEnum(propertyTypeName)) {
-          continue;
-        }
-
-        // Try to get the type symbol
-        var typeSymbol = _tryGetPublicTypeSymbol(propertyTypeName, compilation);
-        if (typeSymbol == null) {
-          continue;
-        }
-
-        // Check if it's an enum
-        if (typeSymbol.TypeKind != TypeKind.Enum) {
-          continue;
-        }
-
-        // Add to discovered enums
-        discoveredEnums[propertyTypeName] = new JsonEnumInfo(
-            FullyQualifiedName: propertyTypeName,
-            SimpleName: typeSymbol.Name
-        );
+        _tryDiscoverEnumFromProperty(property, compilation, discoveredEnums);
       }
     }
+#pragma warning restore S3267
 
-    return discoveredEnums.Values.ToImmutableArray();
+    return [.. discoveredEnums.Values];
+  }
+
+  /// <summary>
+  /// Inspects a single property and adds it to the enum dictionary if it is a user-defined enum type.
+  /// Skips nullable wrappers, collections, primitives, framework types, and framework enums.
+  /// </summary>
+  private static void _tryDiscoverEnumFromProperty(
+      PropertyInfo property,
+      Compilation compilation,
+      Dictionary<string, JsonEnumInfo> discoveredEnums) {
+    var propertyTypeName = property.Type;
+
+    // Strip nullable suffix if present
+    if (propertyTypeName.EndsWith("?", StringComparison.Ordinal)) {
+      propertyTypeName = propertyTypeName[..^1];
+    }
+
+    if (discoveredEnums.ContainsKey(propertyTypeName)) {
+      return;
+    }
+
+    // Skip collection types, primitives, and framework enums
+    if (_extractElementType(property.Type) != null ||
+        _isPrimitiveOrFrameworkType(propertyTypeName) ||
+        _isFrameworkEnum(propertyTypeName)) {
+      return;
+    }
+
+    var typeSymbol = _tryGetPublicTypeSymbol(propertyTypeName, compilation);
+    if (typeSymbol is null || typeSymbol.TypeKind != TypeKind.Enum) {
+      return;
+    }
+
+    discoveredEnums[propertyTypeName] = new JsonEnumInfo(
+        FullyQualifiedName: propertyTypeName,
+        SimpleName: typeSymbol.Name
+    );
   }
 
   /// <summary>
@@ -1877,7 +1957,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Skip all System.* types - they're either handled natively by STJ or shouldn't be discovered
-    if (typeName.StartsWith("global::System.", StringComparison.Ordinal)) {
+    if (typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
       return null;
     }
 
@@ -2015,6 +2095,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<ArrayTypeInfo> _discoverArrayTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var arrayTypes = new Dictionary<string, ArrayTypeInfo>();
 
+    // S3267: Multi-statement loop body — LINQ would reduce readability
+#pragma warning disable S3267
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
         var rawTypeName = property.Type;
@@ -2052,8 +2134,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         );
       }
     }
+#pragma warning restore S3267
 
-    return arrayTypes.Values.ToImmutableArray();
+    return [.. arrayTypes.Values];
   }
 
   /// <summary>
@@ -2100,7 +2183,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return listTypes.Values.ToImmutableArray();
+    return [.. listTypes.Values];
   }
 
   /// <summary>
@@ -2126,21 +2209,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_LIST");
 
     foreach (var listType in listTypes) {
       var field = snippet
-          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, listType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, listType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2159,8 +2242,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var listType in listTypes) {
       var factory = snippet
-          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, listType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, listType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2175,8 +2258,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MultipleIReadOnlyListProperties_GeneratesAllFactoriesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_BugReport_IReadOnlyListCatalogItem_GeneratesFactoryAsync</tests>
-  private static ImmutableArray<IReadOnlyListTypeInfo> _discoverIReadOnlyListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
-    var iReadOnlyListTypes = new Dictionary<string, IReadOnlyListTypeInfo>();
+  private static ImmutableArray<ReadOnlyListTypeInfo> _discoverIReadOnlyListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var iReadOnlyListTypes = new Dictionary<string, ReadOnlyListTypeInfo>();
 
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
@@ -2184,13 +2267,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return iReadOnlyListTypes.Values.ToImmutableArray();
+    return [.. iReadOnlyListTypes.Values];
   }
 
   /// <summary>
   /// Extracts IReadOnlyList type info from a fully qualified type name if it's an IReadOnlyList type.
   /// </summary>
-  private static void _discoverIReadOnlyListType(string fullyQualifiedTypeName, Dictionary<string, IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+  private static void _discoverIReadOnlyListType(string fullyQualifiedTypeName, Dictionary<string, ReadOnlyListTypeInfo> iReadOnlyListTypes) {
     // Strip nullable suffix for analysis
     var typeName = fullyQualifiedTypeName;
     if (typeName.EndsWith("?", StringComparison.Ordinal)) {
@@ -2214,9 +2297,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Extract simple name from element type
         var parts = elementTypeName.Split('.');
-        var elementSimpleName = parts[^1].Replace("global::", "").TrimEnd('?');
+        var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
-        iReadOnlyListTypes[iReadOnlyListTypeName] = new IReadOnlyListTypeInfo(
+        iReadOnlyListTypes[iReadOnlyListTypeName] = new ReadOnlyListTypeInfo(
             IReadOnlyListTypeName: iReadOnlyListTypeName,
             ElementTypeName: elementTypeName,
             ElementSimpleName: elementSimpleName
@@ -2238,7 +2321,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates lazy fields for IReadOnlyList&lt;T&gt; types.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
-  private static string _generateIReadOnlyListLazyFields(Assembly assembly, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+  private static string _generateIReadOnlyListLazyFields(Assembly assembly, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes) {
     if (iReadOnlyListTypes.IsEmpty) {
       return string.Empty;
     }
@@ -2246,21 +2329,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_IREADONLYLIST");
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
       var field = snippet
-          .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2270,7 +2353,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IReadOnlyListWithNestedGenericElement_GeneratesFactoryAsync</tests>
-  private static string _generateIReadOnlyListFactories(Assembly assembly, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+  private static string _generateIReadOnlyListFactories(Assembly assembly, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes) {
     if (iReadOnlyListTypes.IsEmpty) {
       return string.Empty;
     }
@@ -2280,8 +2363,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
       var factory = snippet
-          .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2300,21 +2383,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_ARRAY");
 
     foreach (var arrayType in arrayTypes) {
       var field = snippet
-          .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, arrayType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, arrayType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2332,8 +2415,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var arrayType in arrayTypes) {
       var factory = snippet
-          .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, arrayType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, arrayType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2357,7 +2440,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return dictionaryTypes.Values.ToImmutableArray();
+    return [.. dictionaryTypes.Values];
   }
 
   /// <summary>
@@ -2398,7 +2481,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
           // Extract simple name from value type
           var parts = valueType.Split('.');
-          var valueSimpleName = parts[^1].Replace("global::", "").TrimEnd('?');
+          var valueSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
           dictionaryTypes[dictionaryTypeName] = new DictionaryTypeInfo(
               DictionaryTypeName: dictionaryTypeName,
@@ -2432,7 +2515,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_DICTIONARY");
@@ -2441,13 +2524,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var field = snippet
           .Replace("__KEY_TYPE__", dictType.KeyTypeName)
           .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
-          .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, dictType.UniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2470,7 +2553,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var factory = snippet
           .Replace("__KEY_TYPE__", dictType.KeyTypeName)
           .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
-          .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, dictType.UniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2490,7 +2573,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var enumSnippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_ENUM");
@@ -2512,7 +2595,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2596,27 +2679,106 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       typesToCheck.AddRange(containingNamespace.GetTypeMembers());
     }
 
-    foreach (var candidateType in typesToCheck) {
-      // Check if this type implements IPerspectiveFor<typeSymbol, ...>
-      foreach (var iface in candidateType.AllInterfaces) {
-        var ifaceName = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    return typesToCheck.Any(candidateType => _implementsPerspectiveForModel(candidateType, typeSymbol));
+  }
 
-        // Check if it's IPerspectiveFor<TModel, ...> (can have 2-10 type arguments)
-        if (!ifaceName.StartsWith($"global::{I_PERSPECTIVE_FOR}<", System.StringComparison.Ordinal)) {
-          continue;
-        }
+  /// <summary>
+  /// Checks if a candidate type implements IPerspectiveFor/IPerspectiveBase/IPerspectiveWithActionsFor
+  /// with the given type as TModel (first type argument).
+  /// </summary>
+  private static bool _implementsPerspectiveForModel(
+      INamedTypeSymbol candidateType,
+      INamedTypeSymbol modelTypeSymbol) {
+    foreach (var iface in candidateType.AllInterfaces) {
+      // Check if it's a perspective interface -- use default format to match shared helper
+      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      if (!_isPerspectiveInterfaceDefinition(originalDef)) {
+        continue;
+      }
 
-        // Check if the first type argument is our type
-        if (iface.TypeArguments.Length > 0) {
-          var modelType = iface.TypeArguments[0];
-          if (SymbolEqualityComparer.Default.Equals(modelType, typeSymbol)) {
-            return true;
-          }
+      // Check if the first type argument is our type
+      if (iface.TypeArguments.Length > 0) {
+        var modelType = iface.TypeArguments[0];
+        if (SymbolEqualityComparer.Default.Equals(modelType, modelTypeSymbol)) {
+          return true;
         }
       }
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// Checks if an interface original definition string matches a perspective interface pattern.
+  /// </summary>
+  private static bool _isPerspectiveInterfaceDefinition(string originalDef) {
+    return originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", System.StringComparison.Ordinal) ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", System.StringComparison.Ordinal) ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", System.StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// When a type implements IPerspectiveBase&lt;TModel, TEvent&gt; (or IPerspectiveFor/IPerspectiveWithActionsFor),
+  /// extracts TModel and returns its JsonMessageTypeInfo for JSON context inclusion.
+  /// This handles the case where TModel is a plain record/class with no base types or attributes,
+  /// which would otherwise be filtered out by the syntactic predicate.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync</tests>
+  private static JsonMessageTypeInfo? _extractPerspectiveModelFromPerspectiveClass(INamedTypeSymbol typeSymbol) {
+    foreach (var iface in typeSymbol.AllInterfaces) {
+      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      if (!_isPerspectiveInterfaceDefinition(originalDef)) {
+        continue;
+      }
+
+      if (iface.TypeArguments.Length < 1) {
+        continue;
+      }
+
+      // Extract TModel (first type argument)
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
+        continue;
+      }
+
+      // Skip non-public models - generated code can't access them
+      if (modelType.DeclaredAccessibility != Accessibility.Public) {
+        continue;
+      }
+
+      var fullyQualifiedName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var clrTypeName = _getClrTypeName(modelType);
+      var simpleName = modelType.Name;
+
+      var properties = _getAllPropertiesIncludingInherited(modelType)
+          .Select(p => new PropertyInfo(
+              Name: p.Name,
+              Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+              IsValueType: _isValueType(p.Type),
+              IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+              CanWrite: p.SetMethod != null
+          ))
+          .ToArray();
+
+      var writableProperties = properties.Where(p => p.CanWrite).ToArray();
+      bool hasParameterizedConstructor = modelType.Constructors.Any(c =>
+          c.DeclaredAccessibility == Accessibility.Public &&
+          c.Parameters.Length == writableProperties.Length &&
+          c.Parameters.All(p => writableProperties.Any(prop =>
+              prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+
+      return new JsonMessageTypeInfo(
+          FullyQualifiedName: fullyQualifiedName,
+          ClrTypeName: clrTypeName,
+          SimpleName: simpleName,
+          IsCommand: false,
+          IsEvent: false,
+          IsSerializable: true,
+          Properties: properties,
+          HasParameterizedConstructor: hasParameterizedConstructor
+      );
+    }
+
+    return null;
   }
 
   /// <summary>
@@ -2637,8 +2799,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeInDifferentNamespace_DiscoversAsync</tests>
   private static List<INamedTypeSymbol> _discoverDerivedTypesFromAttributes(
-      INamedTypeSymbol polymorphicBaseType,
-      Compilation compilation) {
+      INamedTypeSymbol polymorphicBaseType) {
 
     var discoveredTypes = new List<INamedTypeSymbol>();
 
@@ -2722,15 +2883,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Extracts property information from a type symbol, including inherited properties.
   /// </summary>
   private static PropertyInfo[] _extractPropertiesFromType(INamedTypeSymbol typeSymbol) {
-    return _getAllPropertiesIncludingInherited(typeSymbol)
+    return [.. _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
             IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
             CanWrite: p.SetMethod != null
-        ))
-        .ToArray();
+        ))];
   }
 
   /// <summary>
@@ -2755,20 +2915,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Order properties by constructor parameter order, then any remaining properties (in base→derived order)
       var ordered = new List<IPropertySymbol>();
+      // S3267: Loop has side effects (removing from propertyLookup dictionary) — LINQ not appropriate
+#pragma warning disable S3267
       foreach (var param in primaryCtor.Parameters) {
         if (propertyLookup.TryGetValue(param.Name, out var prop)) {
           ordered.Add(prop);
           propertyLookup.Remove(param.Name);
         }
       }
+#pragma warning restore S3267
 
       // Add any remaining properties (computed properties, inherited properties not in ctor)
       // Keep them in base→derived order
-      foreach (var prop in allProperties) {
-        if (propertyLookup.ContainsKey(prop.Name)) {
-          ordered.Add(prop);
-        }
-      }
+      ordered.AddRange(allProperties.Where(prop => propertyLookup.ContainsKey(prop.Name)));
       return ordered;
     }
 
@@ -2827,10 +2986,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var assemblyQualifiedName = $"{message.ClrTypeName}, {actualAssemblyName}";
 
-      return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
              $"    \"{assemblyQualifiedName}\",\n" +
              $"    typeof({message.FullyQualifiedName}),\n" +
-             $"    MessageJsonContext.Default);";
+             "    MessageJsonContext.Default);";
     });
     sb.AppendLine(string.Join("\n", typeRegistrations));
   }
@@ -2854,10 +3013,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{message.ClrTypeName}, {actualAssemblyName}]], Whizbang.Core";
 
-      return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
              $"    \"{envelopeTypeName}\",\n" +
              $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),\n" +
-             $"    MessageJsonContext.Default);";
+             "    MessageJsonContext.Default);";
     });
     sb.AppendLine(string.Join("\n", envelopeRegistrations));
   }
@@ -2875,7 +3034,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <returns>Array of InheritanceInfo records for each base class and interface</returns>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithUserBaseClass_AutoDiscoversPolymorphicTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDeepInheritance_DiscoversAllLevelsAsync</tests>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static InheritanceInfo[] _extractInheritanceInfo(INamedTypeSymbol typeSymbol) {
     var inheritanceList = new List<InheritanceInfo>();
     var derivedTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -2887,7 +3046,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Skip System.* types (object, ValueType, etc.)
       // Also skip C# keyword aliases like "object", "string" which FullyQualifiedFormat may return
-      if (baseTypeName.StartsWith("global::System.", StringComparison.Ordinal) ||
+      if (baseTypeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal) ||
           baseTypeName == "object" ||
           baseTypeName == "string") {
         break; // Stop walking up the chain once we hit System types
@@ -2909,16 +3068,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
       // Skip System.* interfaces
-      if (interfaceName.StartsWith("global::System.", StringComparison.Ordinal)) {
+      if (interfaceName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
         continue;
       }
 
       // Include Whizbang.Core.ICommand and Whizbang.Core.IEvent for polymorphic collections
       // Skip other Whizbang.Core.* interfaces (IMessage, IHasId, etc.)
-      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal)) {
-        if (interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
-          continue;
-        }
+      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal) &&
+          interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
+        continue;
       }
 
       inheritanceList.Add(new InheritanceInfo(
@@ -2928,7 +3086,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
-    return inheritanceList.ToArray();
+    return [.. inheritanceList];
   }
 
   /// <summary>
@@ -2940,7 +3098,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <returns>Array of PolymorphicTypeInfo records for each polymorphic base type</returns>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithExplicitJsonPolymorphic_UsesUserAttributesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithAbstractDerivedType_ExcludesItAsync</tests>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static ImmutableArray<PolymorphicTypeInfo> _buildPolymorphicRegistry(
       ImmutableArray<InheritanceInfo> allInheritanceInfo,
       Compilation compilation) {
@@ -2956,51 +3114,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var baseTypeName = group.Key;
       var isInterface = group.First().IsInterface;
 
-      // Try to get the base type symbol to check for [JsonPolymorphic]
-      var baseSymbol = _tryGetTypeSymbolByName(baseTypeName, compilation);
-      if (baseSymbol != null) {
-        // Skip if base type already has explicit [JsonPolymorphic] attribute
-        if (_hasJsonPolymorphicAttribute(baseSymbol)) {
-          continue;
-        }
-
-        // Skip non-public base types
-        if (baseSymbol.DeclaredAccessibility != Accessibility.Public) {
-          continue;
-        }
-
-        // Skip abstract base types that are not interfaces
-        // Abstract classes can't be instantiated, so no point in generating polymorphic factories
-        // Interfaces (ICommand, IEvent) ARE allowed even though they can't be instantiated
-        if (!isInterface && baseSymbol.IsAbstract) {
-          continue;
-        }
+      // Skip base types that are ineligible for polymorphic generation
+      if (_shouldSkipBaseType(baseTypeName, isInterface, compilation)) {
+        continue;
       }
 
-      // Extract simple name from fully qualified base type name
       var simpleName = _extractSimpleName(baseTypeName);
 
-      // Get all derived type names, excluding abstract types
-      var derivedTypes = group
-          .Select(i => i.DerivedTypeName)
-          .Distinct()
-          .Where(derivedName => {
-            // Exclude abstract derived types - they can't be instantiated
-            var derivedSymbol = _tryGetTypeSymbolByName(derivedName, compilation);
-            if (derivedSymbol == null) {
-              return false;
-            }
-            if (derivedSymbol.IsAbstract) {
-              return false;
-            }
-            if (derivedSymbol.DeclaredAccessibility != Accessibility.Public) {
-              return false;
-            }
-            return true;
-          })
-          .ToImmutableArray();
-
-      // Only create polymorphic info if there are concrete derived types
+      // Get all derived type names, excluding abstract and non-public types
+      var derivedTypes = _getConcretePublicDerivedTypes(group, compilation);
       if (derivedTypes.Length == 0) {
         continue;
       }
@@ -3013,7 +3135,53 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
-    return registry.ToImmutableArray();
+    return [.. registry];
+  }
+
+  /// <summary>
+  /// Determines whether a base type should be skipped for polymorphic registry generation.
+  /// Skips types with explicit [JsonPolymorphic], non-public types, and abstract non-interface types.
+  /// </summary>
+  private static bool _shouldSkipBaseType(string baseTypeName, bool isInterface, Compilation compilation) {
+    var baseSymbol = _tryGetTypeSymbolByName(baseTypeName, compilation);
+    if (baseSymbol == null) {
+      return false;
+    }
+
+    if (_hasJsonPolymorphicAttribute(baseSymbol)) {
+      return true;
+    }
+
+    if (baseSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return true;
+    }
+
+    // Abstract classes can't be instantiated; interfaces are allowed
+    if (!isInterface && baseSymbol.IsAbstract) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Filters derived types to only include concrete, public types that can be instantiated.
+  /// </summary>
+  private static ImmutableArray<string> _getConcretePublicDerivedTypes(
+      IGrouping<string, InheritanceInfo> group,
+      Compilation compilation) {
+    return [.. group
+        .Select(i => i.DerivedTypeName)
+        .Distinct()
+        .Where(derivedName => _isConcretePublicType(derivedName, compilation))];
+  }
+
+  /// <summary>
+  /// Checks whether a type is concrete (non-abstract) and public.
+  /// </summary>
+  private static bool _isConcretePublicType(string typeName, Compilation compilation) {
+    var symbol = _tryGetTypeSymbolByName(typeName, compilation);
+    return symbol is not null && !symbol.IsAbstract && symbol.DeclaredAccessibility == Accessibility.Public;
   }
 
   /// <summary>
@@ -3021,9 +3189,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// E.g., "global::MyApp.Events.BaseEvent" → "BaseEvent"
   /// </summary>
   private static string _extractSimpleName(string fullyQualifiedName) {
-    var name = fullyQualifiedName.Replace("global::", "");
+    var name = fullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
     var lastDot = name.LastIndexOf('.');
-    return lastDot >= 0 ? name.Substring(lastDot + 1) : name;
+    return lastDot >= 0 ? name[(lastDot + 1)..] : name;
   }
 
   /// <summary>
@@ -3032,7 +3200,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static INamedTypeSymbol? _tryGetTypeSymbolByName(string fullyQualifiedName, Compilation compilation) {
     // Remove global:: prefix for GetTypeByMetadataName
-    var metadataName = fullyQualifiedName.Replace("global::", "");
+    var metadataName = fullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
     return compilation.GetTypeByMetadataName(metadataName);
   }
 
@@ -3047,7 +3215,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var lazyFieldSnippet = TemplateUtilities.ExtractSnippet(
@@ -3065,33 +3233,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
-
-    return sb.ToString();
-  }
-
-  /// <summary>
-  /// Generates GetTypeInfo checks for polymorphic base types.
-  /// </summary>
-  private static string _generatePolymorphicTypeChecks(Assembly assembly, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
-    if (polymorphicTypes.IsEmpty) {
-      return "";
-    }
-
-    var sb = new System.Text.StringBuilder();
-    var typeCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_POLYMORPHIC");
-
-    sb.AppendLine("  // Polymorphic base types");
-    foreach (var polyType in polymorphicTypes) {
-      var check = typeCheckSnippet
-          .Replace("__BASE_TYPE__", polyType.BaseTypeName)
-          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, polyType.UniqueIdentifier);
-      sb.AppendLine(check);
-      sb.AppendLine();
-    }
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -3143,7 +3285,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <param name="messages">All discovered message types (commands, events, serializable types)</param>
   /// <param name="compilation">The compilation for type symbol lookup</param>
   /// <returns>Flat array of all inheritance relationships</returns>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static ImmutableArray<InheritanceInfo> _collectAllInheritanceInfo(
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {
@@ -3162,6 +3304,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       allInheritance.AddRange(inheritanceInfo);
     }
 
-    return allInheritance.ToImmutableArray();
+    return [.. allInheritance];
   }
 }

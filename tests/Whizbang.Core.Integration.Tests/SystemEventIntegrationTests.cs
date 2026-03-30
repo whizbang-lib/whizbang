@@ -70,7 +70,6 @@ public class SystemEventIntegrationTests {
       Timestamp = DateTimeOffset.UtcNow,
       TenantId = "tenant-1",
       UserId = "user-1",
-      UserName = "Test User",
       CorrelationId = "corr-123",
       CausationId = "cause-456",
       AuditReason = "Compliance",

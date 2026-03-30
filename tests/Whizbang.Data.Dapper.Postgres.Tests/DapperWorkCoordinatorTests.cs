@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(MessageEnvelope<DapperWorkCoordinatorTests.TestEvent>))]
 [JsonSerializable(typeof(DapperWorkCoordinatorTests.TestEvent))]
-internal sealed partial class TestEnvelopeJsonContext : JsonSerializerContext { }
+internal sealed partial class TestEnvelopeJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Integration tests for DapperWorkCoordinator.
@@ -83,6 +83,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -118,7 +119,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [
               new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
               new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
@@ -129,6 +130,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -173,6 +175,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -219,6 +222,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -265,6 +269,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -337,6 +342,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -405,6 +411,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -471,7 +478,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }],
             OutboxFailures = [new MessageFailure { MessageId = failedOutboxId, CompletedStatus = MessageProcessingStatus.Stored, Error = "Test failure" }],
             InboxCompletions = [new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored }],
@@ -479,6 +486,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -548,6 +556,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -598,6 +607,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],
@@ -620,6 +630,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],
@@ -631,10 +642,12 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(result1.InboxWork).Count().IsEqualTo(1);
     await Assert.That(result1.InboxWork[0].MessageId).IsEqualTo(messageId);
 
-    // Assert - Second call returns empty (duplicate detected via INSERT ... ON CONFLICT DO NOTHING)
-    await Assert.That(result2.InboxWork).Count().IsEqualTo(0);
+    // Assert - Second call returns the existing message (owned, unprocessed, valid lease)
+    // Dedup prevents a second row, but the owned message is still returned for processing
+    await Assert.That(result2.InboxWork).Count().IsEqualTo(1);
+    await Assert.That(result2.InboxWork[0].MessageId).IsEqualTo(messageId);
 
-    // Verify only one message in database
+    // Verify only one message in database (dedup worked)
     var count = await _countInboxMessagesAsync(messageId);
     await Assert.That(count).IsEqualTo(1);
   }
@@ -671,6 +684,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],
@@ -724,6 +738,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -767,7 +782,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create new outbox message with IsEvent=true
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -781,6 +796,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -814,7 +830,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create new inbox message with IsEvent=true
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -828,6 +844,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],
@@ -865,7 +882,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Try to create new inbox message (should handle version conflict)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -879,6 +896,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],
@@ -951,7 +969,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create all three messages in a single batch
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -965,6 +983,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = newOutboxMessages,
             NewInboxMessages = [],
@@ -1004,7 +1023,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create new outbox message with IsEvent=false
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1018,6 +1037,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -1080,6 +1100,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
                 ReceptorCompletions = [],
                 ReceptorFailures = [],
                 PerspectiveCompletions = [],
+                PerspectiveEventCompletions = [],
                 PerspectiveFailures = [],
                 NewOutboxMessages = [newOutboxMessage],
                 NewInboxMessages = [],
@@ -1141,6 +1162,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
                 ReceptorCompletions = [],
                 ReceptorFailures = [],
                 PerspectiveCompletions = [],
+                PerspectiveEventCompletions = [],
                 PerspectiveFailures = [],
                 NewOutboxMessages = [newOutboxMessage],
                 NewInboxMessages = [],
@@ -1203,6 +1225,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1224,6 +1247,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1245,6 +1269,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1315,6 +1340,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1326,8 +1352,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Instance A may not claim all 10 messages initially
     await Assert.That(resultA.OutboxWork.Count).IsGreaterThan(0)
       .Because("Instance A should claim at least some work initially");
-
-    var initialWorkCount = resultA.OutboxWork.Count;
+    _ = resultA.OutboxWork.Count;
 
     // Act - Mark Instance A as stale (simulate failure)
     await _markInstanceHeartbeatOldAsync(instanceA, DateTimeOffset.UtcNow.AddHours(-2));
@@ -1352,6 +1377,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1396,7 +1422,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion {
               MessageId = messageId,
               Status = MessageProcessingStatus.Stored
@@ -1407,6 +1433,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1427,7 +1454,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
+            Flags = WorkBatchOptions.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion {
               MessageId = messageId,
               Status = MessageProcessingStatus.Published
@@ -1438,6 +1465,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1488,6 +1516,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1508,7 +1537,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync() {
+  public async Task ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync() {
     // Arrange
     await _insertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var newMessageId = _idProvider.NewGuid();
@@ -1555,6 +1584,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -1571,10 +1601,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(orphanedMessage).IsNotNull()
       .Because("Orphaned message should be returned");
 
-    await Assert.That((newMessage!.Flags & WorkBatchFlags.NewlyStored) == WorkBatchFlags.NewlyStored).IsTrue()
+    await Assert.That((newMessage!.Flags & WorkBatchOptions.NewlyStored) == WorkBatchOptions.NewlyStored).IsTrue()
       .Because("Newly stored message should have NewlyStored flag");
 
-    await Assert.That((orphanedMessage!.Flags & WorkBatchFlags.Orphaned) == WorkBatchFlags.Orphaned).IsTrue()
+    await Assert.That((orphanedMessage!.Flags & WorkBatchOptions.Orphaned) == WorkBatchOptions.Orphaned).IsTrue()
       .Because("Orphaned message should have Orphaned flag");
   }
 
@@ -1597,7 +1627,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertServiceInstanceAsync(activeInstanceId, "ActiveService", "active-host", 123);
 
     // Act - Active instance calls ProcessWorkBatchAsync (triggers cleanup)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = activeInstanceId,
             ServiceName = "ActiveService",
@@ -1611,6 +1641,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1639,7 +1670,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertServiceInstanceAsync(instance2, "Service2", "host2", 222);
 
     // Act - Instance 1 calls ProcessWorkBatchAsync
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = instance1,
             ServiceName = "Service1",
@@ -1653,6 +1684,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [],
@@ -1695,7 +1727,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1709,6 +1741,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -1743,7 +1776,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1757,6 +1790,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
@@ -1787,7 +1821,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1801,6 +1835,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],
@@ -1831,7 +1866,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1845,6 +1880,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
             NewInboxMessages = [newInboxMessage],

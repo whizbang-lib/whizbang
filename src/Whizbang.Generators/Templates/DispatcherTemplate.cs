@@ -40,12 +40,11 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     IEnvelopeSerializer? envelopeSerializer = null,
     IEnvelopeRegistry? envelopeRegistry = null,
     IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-    ILifecycleInvoker? lifecycleInvoker = null,
     IReceptorRegistry? receptorRegistry = null,
     global::Whizbang.Core.Perspectives.Sync.IScopedEventTracker? scopedEventTracker = null,
     global::Whizbang.Core.Perspectives.Sync.ISyncEventTracker? syncEventTracker = null,
     global::Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry? trackedEventTypeRegistry = null
-  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, streamIdExtractor: null, receptorRegistry, scopedEventTracker, syncEventTracker, trackedEventTypeRegistry) {
+  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, streamIdExtractor: null, receptorRegistry, scopedEventTracker, syncEventTracker, trackedEventTypeRegistry) {
     _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   }
 
@@ -156,7 +155,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Zero reflection - uses compile-time type matching.
   /// </summary>
   [DebuggerStepThrough]
-  protected override global::Whizbang.Core.Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+  protected override global::Whizbang.Core.Dispatch.DispatchModes? GetReceptorDefaultRouting(Type messageType) {
     // Generated routing metadata - zero reflection!
     #region RECEPTOR_DEFAULT_ROUTING
     // This region will be replaced with generated routing lookup code
@@ -174,7 +173,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// <param name="messageType">The runtime type of the message.</param>
   /// <param name="sourceEnvelope">Optional source envelope for security context inheritance.</param>
   /// <param name="eventId">Optional event ID for sync tracking consistency. When provided, uses this ID instead of generating a new one.</param>
-  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   [DebuggerStepThrough]
   protected override Task CascadeToOutboxAsync(global::Whizbang.Core.IMessage message, Type messageType, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Generated type-switch dispatch - zero reflection!
@@ -195,7 +194,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// <param name="messageType">The runtime type of the message.</param>
   /// <param name="sourceEnvelope">Optional source envelope for security context inheritance.</param>
   /// <param name="eventId">Optional event ID for sync tracking consistency. When provided, uses this ID instead of generating a new one.</param>
-  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   [DebuggerStepThrough]
   protected override Task CascadeToEventStoreOnlyAsync(global::Whizbang.Core.IMessage message, Type messageType, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Generated type-switch dispatch - zero reflection!

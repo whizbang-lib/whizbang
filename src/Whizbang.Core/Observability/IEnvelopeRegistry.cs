@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 /// 4. Processing completes, Unregister is called (or scope disposes)
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/envelope-registry</docs>
+/// <docs>fundamentals/messages/envelope-registry</docs>
 public interface IEnvelopeRegistry {
   /// <summary>
   /// Registers an envelope in the registry.

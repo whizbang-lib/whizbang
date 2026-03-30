@@ -1,3 +1,5 @@
+#pragma warning disable S2436 // Fluent API with intentional generic type parameter overloads
+
 namespace Whizbang.Core.Perspectives.Sync;
 
 /// <summary>
@@ -25,7 +27,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 ///     .Build();
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public static class SyncFilter {
   /// <summary>

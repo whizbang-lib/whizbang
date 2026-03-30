@@ -19,9 +19,7 @@ namespace Whizbang.Benchmarks;
 [MinColumn, MaxColumn]
 public class ThroughputBenchmarks {
   private ServiceProvider _serviceProvider = null!;
-  private ITransportManager _transportManager = null!;
   private ITransport _transport = null!;
-  private IMessageSerializer _serializer = null!;
 
   // Test message types
   private sealed record SmallCommand(string Id, int Value);
@@ -43,9 +41,7 @@ public class ThroughputBenchmarks {
     services.AddSingleton<ITransport, InProcessTransport>();
 
     _serviceProvider = services.BuildServiceProvider();
-    _transportManager = _serviceProvider.GetRequiredService<ITransportManager>();
     _transport = _serviceProvider.GetRequiredService<ITransport>();
-    _serializer = _serviceProvider.GetRequiredService<IMessageSerializer>();
 
     // Pre-generate test messages
     _smallMessages = [.. Enumerable.Range(0, 100_000).Select(i => new SmallCommand($"cmd-{i}", i))];
@@ -243,7 +239,7 @@ public class ThroughputBenchmarks {
       var responseEnvelope = _createEnvelope(response);
 
       // Get correlation ID from request
-      var correlationId = requestEnvelope.Hops.Last().CorrelationId;
+      var correlationId = requestEnvelope.Hops[^1].CorrelationId;
       if (correlationId.HasValue) {
         await store.SaveResponseAsync(correlationId.Value, responseEnvelope, CancellationToken.None);
       }

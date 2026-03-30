@@ -13,7 +13,7 @@ public class WhizbangGraphQLOptionsTests {
     var options = new WhizbangGraphQLOptions();
 
     // Assert
-    await Assert.That(options.DefaultScope).IsEqualTo(GraphQLLensScope.DataOnly);
+    await Assert.That(options.DefaultScope).IsEqualTo(GraphQLLensScopes.DataOnly);
     await Assert.That(options.DefaultPageSize).IsEqualTo(10);
     await Assert.That(options.MaxPageSize).IsEqualTo(100);
     await Assert.That(options.IncludeMetadataInFilters).IsTrue();
@@ -23,26 +23,26 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task DefaultScope_ShouldBeSettableAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.DefaultScope = GraphQLLensScope.All;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      DefaultScope = GraphQLLensScopes.All
+    };
 
     // Assert
-    await Assert.That(options.DefaultScope).IsEqualTo(GraphQLLensScope.All);
+    await Assert.That(options.DefaultScope).IsEqualTo(GraphQLLensScopes.All);
   }
 
   [Test]
   public async Task DefaultScope_ShouldAcceptComposedFlagsAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.DefaultScope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields;
-    var hasData = options.DefaultScope.HasFlag(GraphQLLensScope.Data);
-    var hasSystemFields = options.DefaultScope.HasFlag(GraphQLLensScope.SystemFields);
-    var hasMetadata = options.DefaultScope.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = options.DefaultScope.HasFlag(GraphQLLensScope.Scope);
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      DefaultScope = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields
+    };
+    var hasData = options.DefaultScope.HasFlag(GraphQLLensScopes.Data);
+    var hasSystemFields = options.DefaultScope.HasFlag(GraphQLLensScopes.SystemFields);
+    var hasMetadata = options.DefaultScope.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = options.DefaultScope.HasFlag(GraphQLLensScopes.Scope);
 
     // Assert
     await Assert.That(hasData).IsTrue();
@@ -54,10 +54,10 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task DefaultPageSize_ShouldBeSettableAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.DefaultPageSize = 25;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      DefaultPageSize = 25
+    };
 
     // Assert
     await Assert.That(options.DefaultPageSize).IsEqualTo(25);
@@ -66,10 +66,10 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task MaxPageSize_ShouldBeSettableAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.MaxPageSize = 500;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      MaxPageSize = 500
+    };
 
     // Assert
     await Assert.That(options.MaxPageSize).IsEqualTo(500);
@@ -78,10 +78,10 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task IncludeMetadataInFilters_ShouldBeSettableAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.IncludeMetadataInFilters = false;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      IncludeMetadataInFilters = false
+    };
 
     // Assert
     await Assert.That(options.IncludeMetadataInFilters).IsFalse();
@@ -90,10 +90,10 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task IncludeScopeInFilters_ShouldBeSettableAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.IncludeScopeInFilters = false;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      IncludeScopeInFilters = false
+    };
 
     // Assert
     await Assert.That(options.IncludeScopeInFilters).IsFalse();
@@ -103,7 +103,7 @@ public class WhizbangGraphQLOptionsTests {
   public async Task AllPropertiesSet_ShouldRetainValuesAsync() {
     // Arrange & Act
     var options = new WhizbangGraphQLOptions {
-      DefaultScope = GraphQLLensScope.Data | GraphQLLensScope.Metadata,
+      DefaultScope = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata,
       DefaultPageSize = 50,
       MaxPageSize = 200,
       IncludeMetadataInFilters = false,
@@ -111,7 +111,7 @@ public class WhizbangGraphQLOptionsTests {
     };
 
     // Assert
-    await Assert.That(options.DefaultScope).IsEqualTo(GraphQLLensScope.Data | GraphQLLensScope.Metadata);
+    await Assert.That(options.DefaultScope).IsEqualTo(GraphQLLensScopes.Data | GraphQLLensScopes.Metadata);
     await Assert.That(options.DefaultPageSize).IsEqualTo(50);
     await Assert.That(options.MaxPageSize).IsEqualTo(200);
     await Assert.That(options.IncludeMetadataInFilters).IsFalse();
@@ -121,10 +121,10 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task DefaultPageSize_Zero_ShouldBeAllowedAsync() {
     // Arrange
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.DefaultPageSize = 0;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      DefaultPageSize = 0
+    };
 
     // Assert
     await Assert.That(options.DefaultPageSize).IsEqualTo(0);
@@ -133,11 +133,11 @@ public class WhizbangGraphQLOptionsTests {
   [Test]
   public async Task MaxPageSize_LessThanDefaultPageSize_ShouldBeAllowedAsync() {
     // Arrange - options class doesn't enforce validation, that's done at runtime
-    var options = new WhizbangGraphQLOptions();
-
-    // Act
-    options.DefaultPageSize = 100;
-    options.MaxPageSize = 50;
+    var options = new WhizbangGraphQLOptions {
+      // Act
+      DefaultPageSize = 100,
+      MaxPageSize = 50
+    };
 
     // Assert - values are stored as-is (validation at runtime)
     await Assert.That(options.DefaultPageSize).IsEqualTo(100);

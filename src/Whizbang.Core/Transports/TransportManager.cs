@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Transports;
 
@@ -31,9 +32,13 @@ namespace Whizbang.Core.Transports;
 /// Creates a new TransportManager.
 /// </remarks>
 /// <param name="instanceProvider">Optional service instance provider for message tracing</param>
-public class TransportManager(IServiceInstanceProvider? instanceProvider = null) : ITransportManager {
+public class TransportManager(
+  IServiceInstanceProvider? instanceProvider = null,
+  CascadeContextFactory? cascadeContextFactory = null
+) : ITransportManager {
   private readonly Dictionary<TransportType, ITransport> _transports = [];
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? new CascadeContextFactory(null);
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreTransportAsync</tests>
@@ -52,7 +57,7 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
     if (!_transports.TryGetValue(type, out var transport)) {
       throw new InvalidOperationException(
         $"Transport type '{type}' is not registered. " +
-        $"Please register it using AddTransport() before use."
+        "Please register it using AddTransport() before use."
       );
     }
     return transport;
@@ -69,7 +74,7 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
-  public async Task PublishToTargetsAsync<TMessage>(
+  public Task PublishToTargetsAsync<TMessage>(
     TMessage message,
     IReadOnlyList<PublishTarget> targets,
     IMessageContext? context = null
@@ -79,11 +84,22 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return;
+      return Task.CompletedTask;
     }
 
-    // Create context if not provided
-    context ??= MessageContext.New();
+    return _publishToTargetsCoreAsync(message, targets, context);
+  }
+
+  private async Task _publishToTargetsCoreAsync<TMessage>(
+    TMessage message,
+    IReadOnlyList<PublishTarget> targets,
+    IMessageContext? context
+  ) {
+    // Create context if not provided - use CascadeContextFactory for proper security propagation
+    if (context == null) {
+      var cascade = _cascadeContextFactory.NewRoot();
+      context = MessageContext.Create(cascade);
+    }
 
     // Create envelope once (shared across all targets)
     var envelope = _createEnvelope(message, context);
@@ -97,7 +113,7 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync</tests>
-  public async Task<List<ISubscription>> SubscribeFromTargetsAsync(
+  public Task<List<ISubscription>> SubscribeFromTargetsAsync(
     IReadOnlyList<SubscriptionTarget> targets,
     Func<IMessageEnvelope, Task> handler
   ) {
@@ -106,9 +122,16 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return [];
+      return Task.FromResult<List<ISubscription>>([]);
     }
 
+    return _subscribeFromTargetsCoreAsync(targets, handler);
+  }
+
+  private async Task<List<ISubscription>> _subscribeFromTargetsCoreAsync(
+    IReadOnlyList<SubscriptionTarget> targets,
+    Func<IMessageEnvelope, Task> handler
+  ) {
     // Subscribe to all targets in parallel
     var tasks = targets.Select(target => _subscribeFromTargetAsync(target, handler));
     var subscriptions = await Task.WhenAll(tasks);
@@ -194,6 +217,15 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
     TMessage message,
     IMessageContext context
   ) {
+    // Extract scope from IMessageContext (UserId/TenantId)
+    ScopeDelta? scopeDelta = null;
+    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
+      scopeDelta = ScopeDelta.FromSecurityContext(new SecurityContext {
+        UserId = context.UserId,
+        TenantId = context.TenantId
+      });
+    }
+
     return new MessageEnvelope<TMessage> {
       MessageId = context.MessageId,
       Payload = message,
@@ -202,10 +234,9 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
           Type = HopType.Current,
           ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          Metadata = new Dictionary<string, JsonElement> {
-            ["CorrelationId"] = JsonElementHelper.FromString(context.CorrelationId.ToString()),
-            ["CausationId"] = JsonElementHelper.FromString(context.CausationId.ToString())
-          },
+          CorrelationId = context.CorrelationId,
+          CausationId = context.CausationId,
+          Scope = scopeDelta,
           TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]

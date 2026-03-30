@@ -32,7 +32,7 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// </remarks>
 /// <typeparam name="TModel">The perspective model type.</typeparam>
-/// <docs>core-concepts/model-action</docs>
+/// <docs>fundamentals/perspectives/model-action</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs</tests>
 /// <example>
 /// <para><strong>Using static factory methods:</strong></para>
@@ -63,26 +63,21 @@ namespace Whizbang.Core.Perspectives;
 /// }
 /// </code>
 /// </example>
-public readonly struct ApplyResult<TModel> where TModel : class {
+/// <remarks>
+/// Initializes a new instance of the <see cref="ApplyResult{TModel}"/> struct.
+/// </remarks>
+/// <param name="model">The model to update, or null.</param>
+/// <param name="action">The action to perform. Defaults to <see cref="ModelAction.None"/>.</param>
+public readonly struct ApplyResult<TModel>(TModel? model, ModelAction action = ModelAction.None) where TModel : class {
   /// <summary>
   /// Gets the model to update, or null if no update is needed or deletion is requested.
   /// </summary>
-  public TModel? Model { get; }
+  public TModel? Model { get; } = model;
 
   /// <summary>
   /// Gets the action to perform on the model.
   /// </summary>
-  public ModelAction Action { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="ApplyResult{TModel}"/> struct.
-  /// </summary>
-  /// <param name="model">The model to update, or null.</param>
-  /// <param name="action">The action to perform. Defaults to <see cref="ModelAction.None"/>.</param>
-  public ApplyResult(TModel? model, ModelAction action = ModelAction.None) {
-    Model = model;
-    Action = action;
-  }
+  public ModelAction Action { get; } = action;
 
   /// <summary>
   /// Creates a result indicating no change (skip update).

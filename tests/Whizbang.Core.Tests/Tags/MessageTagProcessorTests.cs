@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
@@ -186,11 +187,20 @@ public class MessageTagProcessorTests {
     var options = new TagOptions();
     options.UseHook<SignalTagAttribute, ScopeTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
-    var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-123" };
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-123" },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
     var context = _createProcessContext<SignalTagAttribute>(
       new SignalTagAttribute { Tag = "test" },
       new { },
-      scope
+      scopeContext
     );
 
     // Act
@@ -198,8 +208,7 @@ public class MessageTagProcessorTests {
 
     // Assert
     await Assert.That(hook.ReceivedScope is not null).IsTrue();
-    var tenantId = hook.ReceivedScope!["TenantId"];
-    await Assert.That(tenantId).IsEqualTo("tenant-123");
+    await Assert.That(hook.ReceivedScope!.Scope?.TenantId).IsEqualTo("tenant-123");
   }
 
   [Test]
@@ -236,14 +245,16 @@ public class MessageTagProcessorTests {
   private static TagContext<TAttribute> _createProcessContext<TAttribute>(
       TAttribute attribute,
       object payloadData,
-      IReadOnlyDictionary<string, object?>? scope = null)
+      IScopeContext? scope = null,
+      LifecycleStage stage = LifecycleStage.AfterReceptorCompletion)
       where TAttribute : MessageTagAttribute {
     return new TagContext<TAttribute> {
       Attribute = attribute,
       Message = payloadData,
       MessageType = payloadData.GetType(),
       Payload = JsonSerializer.SerializeToElement(payloadData),
-      Scope = scope
+      Scope = scope,
+      Stage = stage
     };
   }
 
@@ -283,14 +294,9 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class OrderTrackingHook : IMessageTagHook<SignalTagAttribute> {
-    private readonly string _name;
-    private readonly List<string> _executionOrder;
-
-    public OrderTrackingHook(string name, List<string> executionOrder) {
-      _name = name;
-      _executionOrder = executionOrder;
-    }
+  private sealed class OrderTrackingHook(string name, List<string> executionOrder) : IMessageTagHook<SignalTagAttribute> {
+    private readonly string _name = name;
+    private readonly List<string> _executionOrder = executionOrder;
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
@@ -332,7 +338,7 @@ public class MessageTagProcessorTests {
   }
 
   private sealed class ScopeTrackingHook : IMessageTagHook<SignalTagAttribute> {
-    public IReadOnlyDictionary<string, object?>? ReceivedScope { get; private set; }
+    public IScopeContext? ReceivedScope { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
@@ -367,7 +373,7 @@ public class MessageTagProcessorTests {
   #region ProcessTagsAsync Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoHookResolver_ReturnsEarlyAsync() {
     // Arrange
     _cleanupRegistry();
@@ -389,7 +395,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoTags_DoesNothingAsync() {
     // Arrange
     _cleanupRegistry();
@@ -410,7 +416,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithMatchingTag_InvokesHookAsync() {
     // Arrange
     _cleanupRegistry();
@@ -433,7 +439,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync() {
     // Arrange
     _cleanupRegistry();
@@ -469,7 +475,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_BuildsPayloadFromMessageAsync() {
     // Arrange
     _cleanupRegistry();
@@ -493,7 +499,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_PassesScopeToContextAsync() {
     // Arrange
     _cleanupRegistry();
@@ -506,18 +512,27 @@ public class MessageTagProcessorTests {
     options.UseHook<SignalTagAttribute, ScopeTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
     var message = new TaggedTestMessage("123");
-    var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-456" };
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-456" },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
 
     // Act
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion, scope);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion, scopeContext);
 
     // Assert
     await Assert.That(hook.ReceivedScope is not null).IsTrue();
-    await Assert.That(hook.ReceivedScope!["TenantId"]).IsEqualTo("tenant-456");
+    await Assert.That(hook.ReceivedScope!.Scope?.TenantId).IsEqualTo("tenant-456");
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_InvokesHooksInPriorityOrderAsync() {
     // Arrange
     _cleanupRegistry();
@@ -697,7 +712,7 @@ public class MessageTagProcessorTests {
   #region ScopeFactory Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_CreatesScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -724,7 +739,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_DisposesScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -748,7 +763,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_MultipleHooksShareSameScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -779,7 +794,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoHooksAndScopeFactory_DoesNotCreateScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -824,16 +839,11 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class TrackingScope : IServiceScope, IAsyncDisposable {
-    private readonly Func<Type, object?> _resolver;
-
-    public TrackingScope(Func<Type, object?> resolver) {
-      _resolver = resolver;
-      ServiceProvider = new TrackingServiceProvider(resolver);
-    }
+  private sealed class TrackingScope(Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
+    private readonly Func<Type, object?> _resolver = resolver;
 
     public bool Disposed { get; private set; }
-    public IServiceProvider ServiceProvider { get; }
+    public IServiceProvider ServiceProvider { get; } = new TrackingServiceProvider(resolver);
 
     public void Dispose() {
       Disposed = true;
@@ -845,12 +855,8 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class TrackingServiceProvider : IServiceProvider {
-    private readonly Func<Type, object?> _resolver;
-
-    public TrackingServiceProvider(Func<Type, object?> resolver) {
-      _resolver = resolver;
-    }
+  private sealed class TrackingServiceProvider(Func<Type, object?> resolver) : IServiceProvider {
+    private readonly Func<Type, object?> _resolver = resolver;
 
     public object? GetService(Type serviceType) {
       return _resolver(serviceType);
@@ -866,7 +872,7 @@ public class MessageTagProcessorTests {
   /// Custom attributes require generated dispatchers for AOT-compatible hook invocation.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithCustomAttribute_CallsDispatcherRegistryAsync() {
     // Arrange
     _cleanupRegistry();
@@ -902,7 +908,7 @@ public class MessageTagProcessorTests {
   /// Built-in types should NOT call the dispatcher registry.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithBuiltInAttribute_UsesDirectDispatchAsync() {
     // Arrange
     _cleanupRegistry();
@@ -937,7 +943,7 @@ public class MessageTagProcessorTests {
   /// Test that processor falls back to base context when custom attribute has no dispatcher.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithUnknownAttribute_FallsBackToBaseContextAsync() {
     // Arrange
     _cleanupRegistry();
@@ -966,7 +972,7 @@ public class MessageTagProcessorTests {
   /// Test that custom dispatcher correctly handles TryDispatchAsync.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithCustomAttribute_InvokesHookViaDispatcherAsync() {
     // Arrange
     _cleanupRegistry();
@@ -1080,7 +1086,8 @@ public class MessageTagProcessorTests {
         object message,
         Type messageType,
         JsonElement payload,
-        IReadOnlyDictionary<string, object?>? scope) {
+        IScopeContext? scope,
+        LifecycleStage stage) {
       TryCreateContextCallCount++;
 
       if (attributeType == typeof(CustomTestTagAttribute) && attribute is CustomTestTagAttribute customAttr) {
@@ -1089,7 +1096,8 @@ public class MessageTagProcessorTests {
           Message = message,
           MessageType = messageType,
           Payload = payload,
-          Scope = scope
+          Scope = scope,
+          Stage = stage
         };
       }
 
@@ -1114,4 +1122,465 @@ public class MessageTagProcessorTests {
   }
 
   #endregion
+
+  #region Stage Context Tests — Parameterized (All 20 Lifecycle Stages)
+
+  public static LifecycleStage[] AllLifecycleStages()
+    => Enum.GetValues<LifecycleStage>();
+
+  [Test]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessAsync_PassesStageToHookContext_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
+      new { OrderId = "123" },
+      stage: stage
+    );
+
+    // Act
+    await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(stage);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessTagsAsync_PassesStageToHookContext_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(stage);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessTagsAsync_TelemetryTag_PassesStage_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(TelemetryTagAttribute), "telemetry-stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new TelemetryStageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<TelemetryTagAttribute, TelemetryStageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TelemetryStageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastStage).IsEqualTo(stage);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  [MethodDataSource(nameof(AllLifecycleStages))]
+  public async Task ProcessTagsAsync_MetricTag_PassesStage_AllStagesAsync(LifecycleStage stage) {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(MetricTagAttribute), "metric-stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new MetricStageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<MetricTagAttribute, MetricStageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(MetricStageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastStage).IsEqualTo(stage);
+  }
+
+  #endregion
+
+  #region Stage Context Tests — Scenario Tests
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_MultipleStagesInSequence_HookReceivesCorrectStageEachTimeAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act - simulate the full lifecycle: Dispatcher fires first, then lifecycle stages
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.AfterReceptorCompletion);
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.LocalImmediateInline);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.LocalImmediateInline);
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostInboxInline);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.PostInboxInline);
+
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+    await Assert.That(hook.LastContext?.Stage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+
+    // Assert - hook was invoked for each stage
+    await Assert.That(hook.InvokedCount).IsEqualTo(4);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.AfterReceptorCompletion);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.LocalImmediateInline);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.PostInboxInline);
+    await Assert.That(hook.AllReceivedStages).Contains(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_HookCanFilterByStage_OnlyActsOnPostPerspectiveAsync() {
+    // Arrange - simulates JDNext's pattern of filtering for PostPerspective only
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "notification-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new PostPerspectiveOnlyHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, PostPerspectiveOnlyHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(PostPerspectiveOnlyHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act - fire at multiple stages
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.LocalImmediateInline);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert - hook was called 3 times but only "acted" on PostPerspectiveInline
+    await Assert.That(hook.TotalCallCount).IsEqualTo(3);
+    await Assert.That(hook.ActedCount).IsEqualTo(1);
+    await Assert.That(hook.ActedOnStage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_CustomAttribute_PassesStageViaDispatcherAsync() {
+    // Arrange
+    _cleanupRegistry();
+    _cleanupDispatcherRegistry();
+    var customRegistry = new CustomAttributeTestRegistry();
+    MessageTagRegistry.Register(customRegistry, priority: 100);
+    var customDispatcher = new TestMessageTagHookDispatcher();
+    MessageTagHookDispatcherRegistry.Register(customDispatcher, priority: 100);
+    var customHook = new CustomTagTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<CustomTestTagAttribute, CustomTagTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(CustomTagTrackingHook) ? customHook : null);
+    var message = new CustomTaggedMessage("test-stage");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(CustomTaggedMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert - custom hook receives the stage via dispatcher-created context
+    await Assert.That(customHook.InvokedCount).IsEqualTo(1);
+    await Assert.That(customHook.LastContext?.Stage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_UniversalHook_ReceivesStageAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "universal-stage-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new UniversalStageTrackingHook();
+    var options = new TagOptions();
+    options.UseUniversalHook<UniversalStageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(UniversalStageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastStage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_SameEventMultipleStages_ContextIdenticalExceptStageAsync() {
+    // Arrange — lock-in: when the same event fires across stages, only Stage changes
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "context-consistency");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("order-42");
+
+    // Act — fire at representative stages from each path
+    var stages = new[] {
+      LifecycleStage.AfterReceptorCompletion,
+      LifecycleStage.LocalImmediateInline,
+      LifecycleStage.PreDistributeInline,
+      LifecycleStage.PostOutboxAsync,
+      LifecycleStage.PostPerspectiveInline
+    };
+    foreach (var stage in stages) {
+      await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+    }
+
+    // Assert — all contexts share identical Attribute, Message, MessageType, Payload
+    await Assert.That(hook.AllReceivedContexts).Count().IsEqualTo(5);
+    var first = hook.AllReceivedContexts[0];
+    for (var i = 1; i < hook.AllReceivedContexts.Count; i++) {
+      var ctx = hook.AllReceivedContexts[i];
+      await Assert.That(ctx.Attribute.Tag).IsEqualTo(first.Attribute.Tag);
+      await Assert.That(ctx.MessageType).IsEqualTo(first.MessageType);
+      await Assert.That(ctx.Message).IsEqualTo(first.Message);
+      await Assert.That(ctx.Payload.GetRawText()).IsEqualTo(first.Payload.GetRawText());
+    }
+
+    // Assert — each context has a distinct, correct Stage
+    await Assert.That(hook.AllReceivedStages).IsEquivalentTo(stages);
+  }
+
+  [Test]
+  public async Task ProcessAsync_SameEventMultipleStages_ContextIdenticalExceptStageAsync() {
+    // Arrange — lock-in via ProcessAsync path: only Stage differs between invocations
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var attribute = new SignalTagAttribute { Tag = "order-created" };
+    var payload = new { OrderId = "abc", Total = 99.99m };
+
+    // Act — fire at every lifecycle stage
+    var allStages = Enum.GetValues<LifecycleStage>();
+    foreach (var stage in allStages) {
+      var context = _createProcessContext<SignalTagAttribute>(attribute, payload, stage: stage);
+      await processor.ProcessAsync(context, CancellationToken.None);
+    }
+
+    // Assert — invoked exactly once per stage
+    await Assert.That(hook.AllReceivedContexts).Count().IsEqualTo(allStages.Length);
+
+    // Assert — all contexts share identical Attribute, Message, MessageType, Payload
+    var first = hook.AllReceivedContexts[0];
+    for (var i = 1; i < hook.AllReceivedContexts.Count; i++) {
+      var ctx = hook.AllReceivedContexts[i];
+      await Assert.That(ctx.Attribute.Tag).IsEqualTo(first.Attribute.Tag);
+      await Assert.That(ctx.MessageType).IsEqualTo(first.MessageType);
+      await Assert.That(ctx.Payload.GetRawText()).IsEqualTo(first.Payload.GetRawText());
+    }
+
+    // Assert — every stage received exactly once, in order
+    await Assert.That(hook.AllReceivedStages).IsEquivalentTo(allStages);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_AllStagesFired_ReceivesAllUniqueStagesAsync() {
+    // Arrange — lock-in: all stages (20 lifecycle + AfterReceptorCompletion) produce
+    // exactly one invocation each with unique stages
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "all-stages");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var hook = new StageTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, StageTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(StageTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act — fire at every lifecycle stage
+    var allStages = Enum.GetValues<LifecycleStage>();
+    foreach (var stage in allStages) {
+      await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), stage);
+    }
+
+    // Assert — one invocation per stage, each with a unique stage value
+    await Assert.That(hook.InvokedCount).IsEqualTo(allStages.Length);
+    await Assert.That(hook.AllReceivedStages.Distinct().Count()).IsEqualTo(allStages.Length);
+    await Assert.That(hook.AllReceivedStages).IsEquivalentTo(allStages);
+  }
+
+  #endregion
+
+  #region Stage Hook Helpers
+
+  // Stage-tracking hook for SignalTagAttribute
+  private sealed class StageTrackingHook : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public TagContext<SignalTagAttribute>? LastContext { get; private set; }
+    public List<LifecycleStage> AllReceivedStages { get; } = [];
+    public List<TagContext<SignalTagAttribute>> AllReceivedContexts { get; } = [];
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastContext = context;
+      AllReceivedStages.Add(context.Stage);
+      AllReceivedContexts.Add(context);
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Hook that only acts on PostPerspectiveInline (simulates JDNext notification pattern)
+  private sealed class PostPerspectiveOnlyHook : IMessageTagHook<SignalTagAttribute> {
+    public int TotalCallCount { get; private set; }
+    public int ActedCount { get; private set; }
+    public LifecycleStage? ActedOnStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      TotalCallCount++;
+
+      // Only act on PostPerspectiveInline — the JDNext pattern
+      if (context.Stage == LifecycleStage.PostPerspectiveInline) {
+        ActedCount++;
+        ActedOnStage = context.Stage;
+      }
+
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Telemetry stage-tracking hook
+  private sealed class TelemetryStageTrackingHook : IMessageTagHook<TelemetryTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<TelemetryTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastStage = context.Stage;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Metric stage-tracking hook
+  private sealed class MetricStageTrackingHook : IMessageTagHook<MetricTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MetricTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastStage = context.Stage;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // Universal stage-tracking hook
+  private sealed class UniversalStageTrackingHook : IMessageTagHook<MessageTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MessageTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastStage = context.Stage;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  // FireAt-aware hooks for testing stage filtering in ProcessTagsAsync
+  private sealed class FireAtHookA : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  private sealed class FireAtHookB : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  #endregion
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_FireAtFiltering_OnlyInvokesHookAtRegisteredStageAsync() {
+    // Arrange — two hooks for the same attribute, registered at different stages
+    // Bug: MessageTagProcessor._processTagRegistrationAsync (line 147) calls
+    // GetHooksFor(attributeType) without passing stage, so FireAt is ignored
+    // and BOTH hooks fire at EVERY stage.
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "fireat-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hookA = new FireAtHookA();
+    var hookB = new FireAtHookB();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, FireAtHookA>(fireAt: LifecycleStage.PostPerspectiveInline);
+    options.UseHook<SignalTagAttribute, FireAtHookB>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+
+    var processor = new MessageTagProcessor(options, type => {
+      if (type == typeof(FireAtHookA)) {
+        return hookA;
+      }
+      if (type == typeof(FireAtHookB)) {
+        return hookB;
+      }
+      return null;
+    });
+    var message = new TaggedTestMessage("123");
+
+    // Act — fire at PostPerspectiveInline: only hookA should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert — hookA fires, hookB does NOT
+    await Assert.That(hookA.InvokedCount).IsEqualTo(1);
+    await Assert.That(hookB.InvokedCount).IsEqualTo(0);
+
+    // Act — fire at PostAllPerspectivesAsync: only hookB should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostAllPerspectivesAsync);
+
+    // Assert — hookA still 1, hookB now 1
+    await Assert.That(hookA.InvokedCount).IsEqualTo(1);
+    await Assert.That(hookB.InvokedCount).IsEqualTo(1);
+  }
 }

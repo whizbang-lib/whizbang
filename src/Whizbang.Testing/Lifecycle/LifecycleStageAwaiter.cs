@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Lifecycle;
 
@@ -10,13 +12,15 @@ namespace Whizbang.Testing.Lifecycle;
 /// Encapsulates TaskCompletionSource creation with RunContinuationsAsynchronously to prevent deadlocks.
 /// </summary>
 /// <typeparam name="TMessage">The message type to wait for.</typeparam>
-public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
+public sealed class LifecycleStageAwaiter<TMessage> : IAwaiterIdentity, IDisposable
   where TMessage : IMessage {
 
   private readonly TaskCompletionSource<TMessage> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  private readonly ILifecycleReceptorRegistry _registry;
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+
+  private readonly IReceptorRegistry _registry;
   private readonly LifecycleStage _stage;
   private readonly LifecycleCompletionReceptor<TMessage> _receptor;
   private bool _disposed;
@@ -34,7 +38,7 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
   /// <summary>
   /// Creates a new lifecycle stage awaiter.
   /// </summary>
-  /// <param name="host">The host containing the ILifecycleReceptorRegistry.</param>
+  /// <param name="host">The host containing the IReceptorRegistry.</param>
   /// <param name="stage">The lifecycle stage to wait for.</param>
   /// <param name="perspectiveName">Optional perspective name to filter by.</param>
   /// <param name="messageFilter">Optional message filter predicate.</param>
@@ -52,7 +56,7 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
 
     ArgumentNullException.ThrowIfNull(host);
 
-    _registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    _registry = host.Services.GetRequiredService<IReceptorRegistry>();
     _stage = stage;
     _receptor = new LifecycleCompletionReceptor<TMessage>(
       _tcs,
@@ -73,14 +77,8 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
   /// <returns>The message that triggered completion.</returns>
   /// <exception cref="TimeoutException">Thrown if not completed within timeout.</exception>
   public async Task<TMessage> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      return await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"Lifecycle stage {_stage} not completed within {timeout}");
-    }
+    return await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout, $"Lifecycle stage {_stage} not completed within {timeout}", cancellationToken);
   }
 
   /// <summary>
@@ -107,14 +105,19 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
 /// <summary>
 /// Internal receptor that signals completion when invoked.
 /// </summary>
-internal sealed class LifecycleCompletionReceptor<TMessage> : IReceptor<TMessage>, IAcceptsLifecycleContext
+internal sealed class LifecycleCompletionReceptor<TMessage>(
+  TaskCompletionSource<TMessage> tcs,
+  string? perspectiveName = null,
+  Func<TMessage, bool>? messageFilter = null,
+  LifecycleStage? expectedStage = null,
+  bool skipInboxForDistributeStages = true) : IReceptor<TMessage>, IAcceptsLifecycleContext
   where TMessage : IMessage {
 
-  private readonly TaskCompletionSource<TMessage> _tcs;
-  private readonly string? _perspectiveName;
-  private readonly Func<TMessage, bool>? _messageFilter;
-  private readonly LifecycleStage? _expectedStage;
-  private readonly bool _skipInboxForDistributeStages;
+  private readonly TaskCompletionSource<TMessage> _tcs = tcs;
+  private readonly string? _perspectiveName = perspectiveName;
+  private readonly Func<TMessage, bool>? _messageFilter = messageFilter;
+  private readonly LifecycleStage? _expectedStage = expectedStage;
+  private readonly bool _skipInboxForDistributeStages = skipInboxForDistributeStages;
   private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
   private int _invocationCount;
 
@@ -124,20 +127,8 @@ internal sealed class LifecycleCompletionReceptor<TMessage> : IReceptor<TMessage
   // CA1822: Uses static AsyncLocal but needs instance access for interface pattern
 #pragma warning disable CA1822
   public ILifecycleContext? LastLifecycleContext => _asyncLocalContext.Value;
-#pragma warning restore CA1822
 
-  public LifecycleCompletionReceptor(
-    TaskCompletionSource<TMessage> tcs,
-    string? perspectiveName = null,
-    Func<TMessage, bool>? messageFilter = null,
-    LifecycleStage? expectedStage = null,
-    bool skipInboxForDistributeStages = true) {
-    _tcs = tcs;
-    _perspectiveName = perspectiveName;
-    _messageFilter = messageFilter;
-    _expectedStage = expectedStage;
-    _skipInboxForDistributeStages = skipInboxForDistributeStages;
-  }
+#pragma warning restore CA1822
 
   public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
     LastMessage = message;

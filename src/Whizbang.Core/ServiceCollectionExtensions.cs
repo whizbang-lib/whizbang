@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
@@ -82,7 +84,7 @@ public static class ServiceCollectionExtensions {
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>core-concepts/dependency-injection#multiple-addwhizbang-calls</docs>
+  /// <docs>operations/configuration/dependency-injection#multiple-addwhizbang-calls</docs>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async</tests>
@@ -103,11 +105,14 @@ public static class ServiceCollectionExtensions {
     var existingTagOptions = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
     if (existingTagOptions?.ImplementationInstance is TagOptions existing) {
       // Merge hooks from new options into existing
+      // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
       foreach (var hook in coreOptions.Tags.HookRegistrations) {
         if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
           existing.UseHookRegistration(hook);
         }
       }
+#pragma warning restore S3267
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
@@ -186,12 +191,18 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
     services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
-    services.AddSingleton<Messaging.ILifecycleReceptorRegistry, Messaging.DefaultLifecycleReceptorRegistry>();
-    services.AddSingleton<Messaging.ILifecycleInvoker, Messaging.RuntimeLifecycleInvoker>();
+    services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
+    services.TryAddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
 
     // Deferred outbox channel for events published outside transaction context
     // Events queued here are drained by the work coordinator in the next lifecycle loop
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
+
+    // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
+    // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
+    // but the factory lambda resolves at runtime so ordering is fine.
+    services.TryAddScoped<Messaging.IWorkFlusher>(sp =>
+      (Messaging.IWorkFlusher)sp.GetRequiredService<Messaging.IWorkCoordinatorStrategy>());
 
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
@@ -209,6 +220,20 @@ public static class ServiceCollectionExtensions {
     });
 
     services.AddWhizbangMessageSecurity();
+
+    // Register lens infrastructure
+    services.TryAddSingleton<LensOptions>();
+    services.TryAddSingleton<SystemEvents.ISystemEventEmitter, SystemEvents.NullSystemEventEmitter>();
+    services.TryAddScoped<IScopedLensFactory, ScopedLensFactory>();
+
+    // Register observability metrics (near-zero cost when no OTEL exporter is attached)
+    services.TryAddSingleton<WhizbangMetrics>();
+    services.TryAddSingleton<WorkCoordinatorMetrics>();
+    services.TryAddSingleton<DispatcherMetrics>();
+    services.TryAddSingleton<TransportMetrics>();
+    services.TryAddSingleton<PerspectiveMetrics>();
+    services.TryAddSingleton<LifecycleMetrics>();
+    services.TryAddSingleton<LifecycleCoordinatorMetrics>();
   }
 
   /// <summary>
@@ -219,7 +244,7 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<ITracer, Tracer>();
     services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>();
 
-    services.TryAddScoped<IScopedEventTracker>(sp => {
+    services.TryAddScoped<IScopedEventTracker>(_ => {
       var tracker = new ScopedEventTracker();
       ScopedEventTrackerAccessor.CurrentTracker = tracker;
       return tracker;
@@ -235,11 +260,10 @@ public static class ServiceCollectionExtensions {
   /// PostConfigure implementation for TracingOptions that binds from IConfiguration.
   /// Extracted to reduce cognitive complexity of AddWhizbang.
   /// </summary>
-  private sealed class TracingOptionsPostConfigure : IPostConfigureOptions<TracingOptions> {
-    private readonly IConfiguration? _config;
+  private sealed class TracingOptionsPostConfigure(IConfiguration? config) : IPostConfigureOptions<TracingOptions> {
+    private readonly IConfiguration? _config = config;
 
-    public TracingOptionsPostConfigure(IConfiguration? config) => _config = config;
-
+    /// <inheritdoc/>
     public void PostConfigure(string? name, TracingOptions options) {
       if (_config == null) {
         return;
@@ -434,11 +458,7 @@ public static class ServiceCollectionExtensions {
   /// <summary>
   /// Holder for the inner event store instance to enable decoration.
   /// </summary>
-  private sealed class InnerEventStoreHolder {
-    public object Instance { get; }
-
-    public InnerEventStoreHolder(object instance) {
-      Instance = instance;
-    }
+  private sealed class InnerEventStoreHolder(object instance) {
+    public object Instance { get; } = instance;
   }
 }

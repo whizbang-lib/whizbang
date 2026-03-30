@@ -4,12 +4,19 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.AutoPopulate;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Validation;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
 
@@ -18,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Generic background service that consumes messages from any ITransport implementation.
 /// Subscribes to configured destinations with built-in resilience (retry with exponential backoff).
-/// Uses both IReceptorInvoker (compile-time business receptors) and ILifecycleInvoker (runtime test receptors).
+/// Uses IReceptorInvoker for unified lifecycle receptor invocation (compile-time and runtime).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,10 +38,10 @@ namespace Whizbang.Core.Workers;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>components/workers/transport-consumer</docs>
+/// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
-public class TransportConsumerWorker : BackgroundService {
+public partial class TransportConsumerWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
@@ -42,7 +49,7 @@ public class TransportConsumerWorker : BackgroundService {
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly OrderedStreamProcessor _orderedProcessor;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly ILifecycleInvoker? _lifecycleInvoker;
+  private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
@@ -58,7 +65,7 @@ public class TransportConsumerWorker : BackgroundService {
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
   /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
-  /// <param name="lifecycleInvoker">Optional lifecycle invoker for runtime test/lifecycle receptors</param>
+  /// <param name="metrics">Optional transport metrics for instrumentation</param>
   /// <param name="logger">Logger instance</param>
   /// <remarks>
   /// <para>
@@ -67,6 +74,7 @@ public class TransportConsumerWorker : BackgroundService {
   /// where handlers are scoped and resolved from the message processing scope.
   /// </para>
   /// </remarks>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
   public TransportConsumerWorker(
     ITransport transport,
     TransportConsumerOptions options,
@@ -75,9 +83,10 @@ public class TransportConsumerWorker : BackgroundService {
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
-    ILifecycleInvoker? lifecycleInvoker,
+    TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger
   ) {
+#pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(resilienceOptions);
@@ -93,7 +102,7 @@ public class TransportConsumerWorker : BackgroundService {
     _jsonOptions = jsonOptions;
     _orderedProcessor = orderedProcessor;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-    _lifecycleInvoker = lifecycleInvoker;
+    _metrics = metrics;
     _logger = logger;
 
     // Initialize state for each destination
@@ -123,17 +132,20 @@ public class TransportConsumerWorker : BackgroundService {
     }
 
     // Log all destinations we're going to subscribe to
+    // S3267: Loop has side effects (logging/state mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var destination in _options.Destinations) {
-      if (_logger.IsEnabled(LogLevel.Information)) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
         var address = destination.Address;
         var routingKey = destination.RoutingKey ?? "#";
-        _logger.LogInformation(
+        _logger.LogDebug(
           "  → Destination: {Address} (routing key: {RoutingKey})",
           address,
           routingKey
         );
       }
     }
+#pragma warning restore S3267
 
     _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
@@ -141,29 +153,29 @@ public class TransportConsumerWorker : BackgroundService {
     using (var scope = _scopeFactory.CreateScope()) {
       var readinessCheck = scope.ServiceProvider.GetService<ITransportReadinessCheck>();
       if (readinessCheck != null) {
-        _logger.LogInformation("Waiting for transport readiness");
+        _logger.LogDebug("Waiting for transport readiness");
         var isReady = await readinessCheck.IsReadyAsync(stoppingToken);
         if (!isReady) {
           _logger.LogWarning("Transport readiness check returned false");
           return;
         }
-        _logger.LogInformation("Transport is ready");
+        _logger.LogDebug("Transport is ready");
       }
 
       // Provision infrastructure for owned domains before creating subscriptions
       var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
       var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
       if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
-        if (_logger.IsEnabled(LogLevel.Information)) {
+        if (_logger.IsEnabled(LogLevel.Debug)) {
           var ownedDomainsCount = routingOptions.OwnedDomains.Count;
-          _logger.LogInformation(
+          _logger.LogDebug(
             "Provisioning infrastructure for {Count} owned domains",
             ownedDomainsCount);
         }
 
         await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
 
-        _logger.LogInformation("Infrastructure provisioning completed");
+        _logger.LogDebug("Infrastructure provisioning completed");
       }
     }
 
@@ -187,8 +199,8 @@ public class TransportConsumerWorker : BackgroundService {
     // Keep running until cancellation is requested
     try {
       await Task.Delay(Timeout.Infinite, stoppingToken);
-    } catch (OperationCanceledException) {
-      _logger.LogInformation("TransportConsumerWorker cancellation requested");
+    } catch (OperationCanceledException ex) {
+      _logger.LogInformation(ex, "TransportConsumerWorker cancellation requested");
     }
   }
 
@@ -221,10 +233,10 @@ public class TransportConsumerWorker : BackgroundService {
   /// Subscribes to a single destination with retry logic.
   /// </summary>
   private async Task _subscribeWithRetryAsync(SubscriptionState state, CancellationToken cancellationToken) {
-    if (_logger.IsEnabled(LogLevel.Information)) {
+    if (_logger.IsEnabled(LogLevel.Debug)) {
       var address = state.Destination.Address;
       var routingKey = state.Destination.RoutingKey;
-      _logger.LogInformation(
+      _logger.LogDebug(
         "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
         address,
         routingKey
@@ -308,219 +320,262 @@ public class TransportConsumerWorker : BackgroundService {
     string? envelopeType,
     CancellationToken cancellationToken
   ) {
-    // Restore distributed trace context from the incoming message's TraceParent
-    // This enables cross-service tracing by linking spans from sender to receiver
-    Activity? inboxActivity = null;
-    var traceParent = envelope.Hops
-      .Where(h => h.Type == HopType.Current)
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
+    var receiveSw = Stopwatch.StartNew();
+    var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
+    var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
+    _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      // Start a new activity as child of the sender's span
-      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
-      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
-        $"Inbox {messageType}",
-        ActivityKind.Consumer,
-        parentContext
-      );
-      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
-      inboxActivity?.SetTag("messaging.operation", "receive");
-      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
-    }
+    var inboxActivity = _startInboxActivity(envelope, messageType);
 
     try {
-      // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IReceptorInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
 
-      // Establish FULL security context FIRST (before any business logic)
-      // This sets BOTH IScopeContextAccessor.Current AND IMessageContextAccessor.Current
+      var securitySw = Stopwatch.StartNew();
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+      securitySw.Stop();
+      _metrics?.InboxSecurityContextDuration.Record(securitySw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-
-      // Resolve IReceptorInvoker from scope (scoped service following MediatR/MassTransit pattern)
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var messageId = envelope.MessageId;
-        _logger.LogDebug(
-          "Processing message {MessageId} from transport",
-          messageId
-        );
+        _logger.LogDebug("Processing message {MessageId} from transport", envelope.MessageId);
       }
 
-      // 1. Serialize envelope to InboxMessage
-      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
+      _populateDeliveredAtTimestamp(envelope, envelopeType);
 
-      // 2. Queue for atomic deduplication via process_work_batch
-      strategy.QueueInboxMessage(newInboxMessage);
-
-      // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
-
-      // 4. Check if work was returned - empty means duplicate (already processed)
-      var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
-
+      // 1. Serialize and deduplicate
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
       if (myWork.Count == 0) {
+        _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         if (_logger.IsEnabled(LogLevel.Information)) {
-          var messageId = envelope.MessageId;
-          _logger.LogInformation(
-            "Message {MessageId} already processed (duplicate), skipping",
-            messageId
-          );
+          _logger.LogInformation("Message {MessageId} already processed (duplicate), skipping", envelope.MessageId);
         }
         return;
       }
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var messageId = envelope.MessageId;
-        var workCount = myWork.Count;
-        _logger.LogDebug(
-          "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
-          messageId,
-          workCount
-        );
+        _logger.LogDebug("Message {MessageId} accepted for processing ({WorkCount} inbox work items)", envelope.MessageId, myWork.Count);
       }
 
-      // 5. Invoke PreInbox lifecycle stages (ALL receptors registered at PreInbox stages)
-      foreach (var work in myWork) {
-        object? message = null;
-        IMessageEnvelope? typedEnvelope = null;
+      // 2. PreInbox lifecycle
+      await _invokePreInboxLifecycleAsync(myWork, receptorInvoker, cancellationToken);
 
-        // Deserialize message if we have any invoker
-        if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
-          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-        }
+      // 3. Process via OrderedStreamProcessor
+      var processingSw = Stopwatch.StartNew();
+      await _processInboxWorkItemsAsync(myWork, strategy, cancellationToken);
+      processingSw.Stop();
+      _metrics?.InboxProcessingDuration.Record(processingSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
-        if (typedEnvelope is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PreInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not tracked for inbox work
-          };
+      // 4. PostInbox lifecycle
+      await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scope.ServiceProvider, cancellationToken);
 
-          // Invoke compile-time business receptors via IReceptorInvoker
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
-          }
-
-          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
-          }
-
-          // PreInboxInline stage
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
-          }
-
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
-          }
-        }
-      }
-
-      // 6. Process using OrderedStreamProcessor (maintains stream ordering)
-      // Perspectives are created automatically by process_work_batch and processed by PerspectiveWorker
-      await _orderedProcessor.ProcessInboxWorkAsync(
-        myWork,
-        processor: async (work) => {
-          // Deserialize event from work item
-          var @event = _deserializeEvent(work);
-
-          // Mark as EventStored - perspectives will be processed via PerspectiveWorker
-          if (@event is IEvent) {
-            return MessageProcessingStatus.EventStored;
-          }
-
-          // Non-event messages - just mark as stored
-          return MessageProcessingStatus.EventStored;
-        },
-        completionHandler: (msgId, status) => {
-          strategy.QueueInboxCompletion(msgId, status);
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
-          }
-        },
-        failureHandler: (msgId, status, error) => {
-          strategy.QueueInboxFailure(msgId, status, error);
-          _logger.LogError("Queued failure for {MessageId}: {Error}", msgId, error);
-        },
-        cancellationToken
-      );
-
-      // 7. Invoke PostInbox lifecycle stages (ALL receptors registered at PostInbox stages)
-      // This is where DEFAULT receptors (without [FireAt]) fire for the distributed receive path
-      foreach (var work in myWork) {
-        object? message = null;
-        IMessageEnvelope? typedEnvelope = null;
-
-        // Deserialize message if we have any invoker
-        if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
-          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-        }
-
-        if (typedEnvelope is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not tracked for inbox work
-          };
-
-          // Invoke compile-time business receptors via IReceptorInvoker
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
-          }
-
-          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
-          }
-
-          // PostInboxInline stage
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
-          }
-
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
-          }
-        }
-      }
-
-      // 8. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+      // 5. Report completions/failures
+      var completionSw = Stopwatch.StartNew();
+      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
+      completionSw.Stop();
+      _metrics?.InboxCompletionDuration.Record(completionSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var messageId = envelope.MessageId;
-        _logger.LogDebug("Successfully processed message {MessageId}", messageId);
+        _logger.LogDebug("Successfully processed message {MessageId}", envelope.MessageId);
       }
 
+      _metrics?.InboxMessagesProcessed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
+    } catch (ObjectDisposedException) {
+      LogMessageDroppedDuringShutdown(_logger, envelope.MessageId.Value);
+      return;
+#pragma warning disable S2139 // Log + rethrow is intentional: transport needs the exception for retry/dead-letter, but we need the log for observability
     } catch (Exception ex) {
+      _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
       inboxActivity?.SetTag("exception.message", ex.Message);
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
-      throw; // Let the transport handle retry/dead-letter
+      throw;
     } finally {
+#pragma warning restore S2139
+      receiveSw.Stop();
+      _metrics?.InboxReceiveDuration.Record(receiveSw.Elapsed.TotalMilliseconds, messageTypeTag);
       inboxActivity?.Dispose();
     }
+  }
+
+  private static Activity? _startInboxActivity(IMessageEnvelope envelope, string messageType) {
+    var traceParent = envelope.Hops?
+      .Where(h => h.Type == HopType.Current)
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is null || !ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      return null;
+    }
+
+    var activity = WhizbangActivitySource.Transport.StartActivity(
+      $"Inbox {messageType}", ActivityKind.Consumer, parentContext);
+    activity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
+    activity?.SetTag("messaging.operation", "receive");
+    activity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
+    return activity;
+  }
+
+  private async Task<List<InboxWork>> _serializeAndDeduplicateAsync(
+    IMessageEnvelope envelope, string? envelopeType, IWorkCoordinatorStrategy strategy,
+    IServiceProvider scopedProvider, KeyValuePair<string, object?> messageTypeTag,
+    CancellationToken cancellationToken) {
+    var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
+    strategy.QueueInboxMessage(newInboxMessage);
+
+    var dedupSw = Stopwatch.StartNew();
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
+    dedupSw.Stop();
+    _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
+
+    return [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
+  }
+
+  private async Task _invokePreInboxLifecycleAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, CancellationToken cancellationToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PreInboxAsync,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = null
+      };
+
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+    }
+  }
+
+  private async Task _processInboxWorkItemsAsync(
+    List<InboxWork> myWork, IWorkCoordinatorStrategy strategy, CancellationToken cancellationToken) {
+    await _orderedProcessor.ProcessInboxWorkAsync(
+      myWork,
+      processor: async (work) => {
+        _ = _deserializeEvent(work);
+        return MessageProcessingStatus.EventStored;
+      },
+      completionHandler: (msgId, status) => {
+        strategy.QueueInboxCompletion(msgId, status);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+        }
+      },
+      failureHandler: (msgId, status, error) => {
+        strategy.QueueInboxFailure(msgId, status, error);
+        _logger.LogError("Queued failure for {MessageId}: {Error}", msgId, error);
+      },
+      cancellationToken
+    );
+  }
+
+  private async Task _invokePostInboxLifecycleAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker,
+    IServiceProvider scopedProvider, CancellationToken cancellationToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostInboxAsync,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = null
+      };
+
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+      if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
+        await InvokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, cancellationToken);
+      }
+    }
+  }
+
+  internal static async Task InvokePostLifecycleForEventAsync(
+    InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
+    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider,
+    CancellationToken cancellationToken) {
+    var coordinator = scopedProvider.GetService<ILifecycleCoordinator>();
+    if (coordinator is not null) {
+      var eventId = work.Envelope.MessageId.Value;
+      var tracking = coordinator.BeginTracking(
+        eventId, typedEnvelope, LifecycleStage.PostAllPerspectivesAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesAsync, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
+      coordinator.AbandonTracking(eventId);
+    } else {
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostAllPerspectivesAsync };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostAllPerspectivesAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostAllPerspectivesInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostAllPerspectivesInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+    }
+  }
+
+  private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken cancellationToken) {
+    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+  }
+
+  /// <summary>
+  /// Checks if the given message type is an event type that has NO associated perspectives.
+  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
+  /// Events without perspectives need PostLifecycle fired here immediately.
+  /// </summary>
+  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      // No perspectives registered at all - all events are "without perspectives"
+      return true;
+    }
+
+    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+
+    var perspectives = registry.GetRegisteredPerspectives();
+    foreach (var perspective in perspectives) {
+      foreach (var eventType in perspective.EventTypes) {
+        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
+        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
+          return false; // This event type has at least one perspective
+        }
+      }
+    }
+
+    return true; // No perspectives handle this event type
   }
 
   /// <summary>
@@ -553,15 +608,13 @@ public class TransportConsumerWorker : BackgroundService {
         $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. MessageId: {envelope.MessageId}");
     } else {
       // Strongly-typed envelope - serialize it
-      var serializer = scopeServiceProvider.GetService<IEnvelopeSerializer>();
-      if (serializer == null) {
-        throw new InvalidOperationException("IEnvelopeSerializer is required but not registered");
-      }
+      var serializer = scopeServiceProvider.GetService<IEnvelopeSerializer>()
+        ?? throw new InvalidOperationException("IEnvelopeSerializer is required but not registered");
 
       // Call generic SerializeEnvelope method via reflection
       var genericMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
       var boundMethod = genericMethod!.MakeGenericMethod(payloadType);
-      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, new object[] { envelope })!;
+      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, [envelope])!;
       jsonEnvelope = serialized.JsonEnvelope;
     }
 
@@ -578,13 +631,15 @@ public class TransportConsumerWorker : BackgroundService {
     }
 
     // Extract simple type name
-    var lastDotIndex = messageTypeName.LastIndexOf('.');
-    var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
-      : messageTypeName.Split(',')[0].Trim();
+    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);
+
+    // Guard: fail-fast if StreamId is Guid.Empty for events
+    if (isEvent) {
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
+    }
 
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
@@ -593,6 +648,7 @@ public class TransportConsumerWorker : BackgroundService {
       EnvelopeType = envelopeTypeFromTransport,
       StreamId = streamId,
       IsEvent = isEvent,
+      Scope = envelope.GetCurrentScope()?.Scope,
       MessageType = messageTypeName
     };
   }
@@ -643,7 +699,8 @@ public class TransportConsumerWorker : BackgroundService {
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    var firstHop = envelope.Hops.FirstOrDefault();
+    // Defensive: Handle null Hops gracefully
+    var firstHop = envelope.Hops?.FirstOrDefault();
     if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
         streamIdElem.ValueKind == JsonValueKind.String) {
       var streamIdStr = streamIdElem.GetString();
@@ -662,11 +719,14 @@ public class TransportConsumerWorker : BackgroundService {
   public async Task PauseAllSubscriptionsAsync() {
     _logger.LogInformation("Pausing all subscriptions");
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var state in _states.Values) {
       if (state.Subscription != null) {
         await state.Subscription.PauseAsync();
       }
     }
+#pragma warning restore S3267
 
     _logger.LogInformation("All subscriptions paused");
   }
@@ -678,11 +738,14 @@ public class TransportConsumerWorker : BackgroundService {
   public async Task ResumeAllSubscriptionsAsync() {
     _logger.LogInformation("Resuming all subscriptions");
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var state in _states.Values) {
       if (state.Subscription != null) {
         await state.Subscription.ResumeAsync();
       }
     }
+#pragma warning restore S3267
 
     _logger.LogInformation("All subscriptions resumed");
   }
@@ -694,7 +757,9 @@ public class TransportConsumerWorker : BackgroundService {
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
-    _linkedCts?.Cancel();
+    if (_linkedCts is not null) {
+      await _linkedCts.CancelAsync();
+    }
     _linkedCts?.Dispose();
 
     // Dispose all subscriptions
@@ -708,4 +773,28 @@ public class TransportConsumerWorker : BackgroundService {
 
     await base.StopAsync(cancellationToken);
   }
+
+  /// <summary>
+  /// Populates DeliveredAt timestamp properties on the message payload using JSON manipulation.
+  /// AOT-safe: uses JsonNode, no reflection or Type.GetType().
+  /// </summary>
+  private static void _populateDeliveredAtTimestamp(IMessageEnvelope envelope, string? envelopeType) {
+    if (envelopeType is null || envelope is not MessageEnvelope<JsonElement> concreteEnvelope) {
+      return;
+    }
+
+    var messageTypeName = _extractMessageTypeFromEnvelopeType(envelopeType);
+    concreteEnvelope.Payload = JsonAutoPopulateHelper.PopulateTimestampByName(
+        concreteEnvelope.Payload,
+        messageTypeName,
+        TimestampKind.DeliveredAt,
+        DateTimeOffset.UtcNow);
+  }
+
+  /// <summary>Logs that a message was dropped during shutdown due to ObjectDisposedException.</summary>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
+  )]
+  private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
 }

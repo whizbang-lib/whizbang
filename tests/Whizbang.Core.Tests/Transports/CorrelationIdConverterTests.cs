@@ -36,7 +36,7 @@ public class CorrelationIdConverterTests {
   [Test]
   public async Task Read_WithNullValue_ShouldThrowJsonExceptionAsync() {
     // Arrange
-    var json = "null";
+    const string json = "null";
     var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
     reader.Read();
 

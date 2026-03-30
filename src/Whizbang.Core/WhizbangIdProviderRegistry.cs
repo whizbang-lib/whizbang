@@ -29,7 +29,7 @@ namespace Whizbang.Core;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids</docs>
 public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
   private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];
@@ -85,7 +85,7 @@ public static class WhizbangIdProviderRegistry {
       if (!_factories.TryGetValue(typeof(TId), out var factory)) {
         throw new InvalidOperationException(
           $"No provider factory registered for {typeof(TId).Name}. " +
-          $"Ensure the WhizbangIdGenerator has processed this type. " +
+          "Ensure the WhizbangIdGenerator has processed this type. " +
           $"Add the [WhizbangId] attribute to the {typeof(TId).Name} struct declaration.");
       }
 
@@ -118,7 +118,7 @@ public static class WhizbangIdProviderRegistry {
   /// <returns>Collection of all registered ID types</returns>
   public static IEnumerable<Type> GetRegisteredIdTypes() {
     lock (_lock) {
-      return _factories.Keys.ToArray();
+      return [.. _factories.Keys];
     }
   }
 

@@ -159,7 +159,7 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   public async Task SharedOutbox_ToSharedInbox_EndToEndAsync() {
     // Arrange - Both use shared topic strategy with topic-00
     // Commands go to shared topic; Events go to namespace topics
-    var sharedTopic = "topic-00";
+    const string sharedTopic = "topic-00";
     var outboxStrategy = new SharedTopicOutboxStrategy(sharedTopic);
     var inboxStrategy = new SharedTopicInboxStrategy(sharedTopic);
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };
@@ -289,7 +289,8 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
 
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
-      jsonOptions
+      jsonOptions,
+      new AzureServiceBusOptions { EnableSessions = false }
     );
 
     await transport.InitializeAsync();
@@ -324,7 +325,10 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };

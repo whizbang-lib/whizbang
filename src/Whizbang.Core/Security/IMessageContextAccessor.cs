@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Provides access to the current message context within a scoped request.
 /// Similar to IHttpContextAccessor pattern.
 /// </summary>
-/// <docs>core-concepts/message-security#message-context-accessor</docs>
+/// <docs>fundamentals/security/message-security#message-context-accessor</docs>
 public interface IMessageContextAccessor {
   /// <summary>
   /// Gets or sets the current message context.
@@ -43,7 +43,7 @@ public class MessageContextAccessor : IMessageContextAccessor {
   /// message context but cannot resolve scoped services.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/message-security#message-context-accessor</docs>
+  /// <docs>fundamentals/security/message-security#message-context-accessor</docs>
   public static IMessageContext? CurrentContext {
     get => _messageContextCurrent.Value?.Context;
     set {

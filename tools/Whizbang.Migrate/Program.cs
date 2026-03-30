@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Whizbang.Core.Diagnostics;
 using Whizbang.Migrate.Analysis;
 using Whizbang.Migrate.Commands;
 using Whizbang.Migrate.Wizard;
@@ -13,6 +14,9 @@ public static class Program {
   /// Main entry point.
   /// </summary>
   public static async Task<int> Main(string[] args) {
+    // Show branded banner with tool info
+    WhizbangBanner.PrintHeader("Whizbang Migrate");
+
     var rootCommand = new RootCommand("Migration tool for converting Marten/Wolverine projects to Whizbang");
 
     // analyze command
@@ -43,7 +47,7 @@ public static class Program {
       }
 
       if (!Directory.Exists(sourceDir)) {
-        Console.Error.WriteLine($"Directory not found: {sourceDir}");
+        await Console.Error.WriteLineAsync($"Directory not found: {sourceDir}");
         return;
       }
 
@@ -76,7 +80,8 @@ public static class Program {
     planCommand.AddOption(outputOption);
     planCommand.SetHandler(async (project, output) => {
       Console.WriteLine($"Planning migration for: {project ?? "current directory"}");
-      // TODO: Implement planning
+      Console.WriteLine("Plan command is not yet implemented. Use 'wizard' command for interactive migration.");
+      await Task.CompletedTask;
     }, projectOption, outputOption);
 
     // apply command
@@ -158,7 +163,7 @@ public static class Program {
       DecisionFile? loadedDecisionFile = null;
       if (!string.IsNullOrEmpty(decisionFilePath)) {
         if (!File.Exists(decisionFilePath)) {
-          Console.Error.WriteLine($"Decision file not found: {decisionFilePath}");
+          await Console.Error.WriteLineAsync($"Decision file not found: {decisionFilePath}");
           return;
         }
         loadedDecisionFile = await DecisionFile.LoadAsync(decisionFilePath);
@@ -181,12 +186,12 @@ public static class Program {
           sourceDir,
           dryRun,
           includes,
-          allExcludes.ToArray(),
+          [.. allExcludes],
           loadedDecisionFile,
           managePackages);
 
       if (!result.Success) {
-        Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+        await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
         return;
       }
 
@@ -240,10 +245,10 @@ public static class Program {
     rollbackCommand.SetHandler(async (checkpoint, list) => {
       if (list) {
         Console.WriteLine("Available checkpoints:");
-        // TODO: List checkpoints
+        Console.WriteLine("Checkpoint listing is not yet implemented.");
       } else if (checkpoint != null) {
         Console.WriteLine($"Rolling back to checkpoint: {checkpoint}");
-        // TODO: Implement rollback
+        Console.WriteLine("Rollback is not yet implemented.");
       }
     }, checkpointArgument, listOption);
 
@@ -264,7 +269,7 @@ public static class Program {
       var result = await statusCmd.ExecuteAsync(sourceDir);
 
       if (!result.Success) {
-        Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+        await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
         return;
       }
 

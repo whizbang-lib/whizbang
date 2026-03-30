@@ -7,7 +7,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Wrapper for ServiceBusAdministrationClient that implements IServiceBusAdminClient.
 /// Provides a testable abstraction over the Azure SDK's sealed classes.
 /// </summary>
-/// <docs>transports/azure-service-bus#admin-client</docs>
+/// <docs>messaging/transports/azure-service-bus#admin-client</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
 public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
   private readonly ServiceBusAdministrationClient _adminClient;
@@ -41,7 +41,10 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
 
   /// <inheritdoc />
   public async Task CreateTopicAsync(string topicName, CancellationToken cancellationToken = default) {
-    await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+    var options = new CreateTopicOptions(topicName) {
+      SupportOrdering = true
+    };
+    await _adminClient.CreateTopicAsync(options, cancellationToken);
   }
 
   #endregion
@@ -61,8 +64,43 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
   public async Task CreateSubscriptionAsync(
     string topicName,
     string subscriptionName,
+    int maxDeliveryCount,
     CancellationToken cancellationToken = default) {
-    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
+      MaxDeliveryCount = maxDeliveryCount
+    };
+    await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task CreateSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    bool requiresSession,
+    int maxDeliveryCount,
+    CancellationToken cancellationToken = default) {
+    var options = new CreateSubscriptionOptions(topicName, subscriptionName) {
+      RequiresSession = requiresSession,
+      MaxDeliveryCount = maxDeliveryCount
+    };
+    await _adminClient.CreateSubscriptionAsync(options, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<SubscriptionProperties> GetSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default) {
+    var response = await _adminClient.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    return response.Value;
+  }
+
+  /// <inheritdoc />
+  public async Task DeleteSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default) {
+    await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
   }
 
   #endregion

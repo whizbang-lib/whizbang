@@ -6,8 +6,10 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Serialization;
 
@@ -19,24 +21,19 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Stores events with stream-based organization using sequence numbers.
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
+#pragma warning disable S2743 // Static diagnostic flag is intentionally per-generic-type (reads same env var)
 public sealed class EFCoreEventStore<TDbContext> : IEventStore
   where TDbContext : DbContext {
 
   private readonly TDbContext _context;
   private readonly JsonSerializerOptions _jsonOptions;
-  private readonly Whizbang.Core.Perspectives.IPerspectiveInvoker? _perspectiveInvoker;
 
-  // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
-  private static readonly bool _diagnosticLogging =
-    Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
 
   public EFCoreEventStore(
     TDbContext context,
-    JsonSerializerOptions? jsonOptions = null,
-    Whizbang.Core.Perspectives.IPerspectiveInvoker? perspectiveInvoker = null) {
+    JsonSerializerOptions? jsonOptions = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
     _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
-    _perspectiveInvoker = perspectiveInvoker;
   }
 
   /// <summary>
@@ -46,13 +43,39 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
-  public async Task AppendAsync<TMessage>(
+  public Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(envelope);
+    return _appendCoreAsync(streamId, envelope, cancellationToken);
+  }
 
+  /// <inheritdoc />
+  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Create a minimal envelope - registry-based lookup would require constructor injection
+    var envelope = new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
+        }
+      ]
+    };
+
+    return AppendAsync(streamId, envelope, cancellationToken);
+  }
+
+  private async Task _appendCoreAsync<TMessage>(
+      Guid streamId,
+      MessageEnvelope<TMessage> envelope,
+      CancellationToken cancellationToken) {
     // Get the next sequence number for this stream
     var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
     var nextSequence = lastSequence + 1;
@@ -65,7 +88,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Create envelope metadata directly - EF Core will serialize via POCO mapping
     var metadata = new EnvelopeMetadata {
       MessageId = envelope.MessageId,
-      Hops = envelope.Hops.ToList()
+      Hops = envelope.Hops?.ToList() ?? []
     };
 
     var record = new EventStoreRecord {
@@ -101,26 +124,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // See: Stage 4 of perspective worker refactoring (2025-12-18)
   }
 
-  /// <inheritdoc />
-  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
-    ArgumentNullException.ThrowIfNull(message);
-
-    // Create a minimal envelope - registry-based lookup would require constructor injection
-    var envelope = new MessageEnvelope<TMessage> {
-      MessageId = MessageId.New(),
-      Payload = message,
-      Hops = [
-        new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
-        }
-      ]
-    };
-
-    return AppendAsync(streamId, envelope, cancellationToken);
-  }
-
   /// <summary>
   /// Reads events from a stream with strong typing.
   /// Returns events in sequence order starting from the specified sequence number.
@@ -134,6 +137,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     // Query events from the specified sequence onwards
     var query = _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId && e.Version >= fromSequence)
       .OrderBy(e => e.Version)
       .AsAsyncEnumerable();
@@ -142,13 +146,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
 
-      // Metadata is already strongly-typed EnvelopeMetadata - use directly
-      var metadata = record.Metadata;
+      var hops = _restoreScopeInHops(record);
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -156,7 +157,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -178,10 +179,12 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // UUIDv7 is time-ordered, so we can order by Id directly
     var query = fromEventId == null
       ? _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable();
@@ -190,13 +193,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
 
-      // Metadata is already strongly-typed EnvelopeMetadata - use directly
-      var metadata = record.Metadata;
+      var hops = _restoreScopeInHops(record);
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -204,7 +204,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -220,11 +220,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       Guid? fromEventId,
       IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
-
-    if (_diagnosticLogging) {
-      Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Query: streamId={streamId}, fromEventId={fromEventId}");
-      Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Event types ({eventTypes.Count}): [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-    }
 
     // Build type lookup dictionary with multiple keys for flexible matching
     // Supports: TypeNameFormatter format (medium form), AssemblyQualifiedName (long form), FullName, and Name (short form)
@@ -250,52 +245,36 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Query events from the specified event ID onwards
     var query = fromEventId == null
       ? _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
       // Look up the concrete type from the EventType column
-      // Try exact match first, then fall back to comparing just the type+assembly part
-      if (!typeMap.TryGetValue(record.EventType, out var concreteType)) {
-        // Try without version/culture/token (extract "TypeName, AssemblyName" from full qualified name)
-        var typeAndAssembly = string.Join(", ", record.EventType.Split(',').Take(2).Select(s => s.Trim()));
-        if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
-          // Found via simplified name
-          if (_diagnosticLogging) {
-            Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Event {record.Id} matched via simplified name: {record.EventType} -> {typeAndAssembly}");
-          }
-        } else {
-          // Event type not in the requested list - skip it
-          // This allows perspectives to materialize subsets of events from shared streams
-          // (e.g., ProductCatalogPerspective skips InventoryRestockedEvent in product streams)
-          if (_diagnosticLogging) {
-            Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] ⚠️ SKIPPING event {record.Id} - type '{record.EventType}' not in requested types: [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-          }
-          continue;
-        }
+      var concreteType = _resolveConcreteType(record.EventType, typeMap);
+      if (concreteType == null) {
+        continue;
       }
 
       // Deserialize the event payload to the concrete type
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      // Metadata is already strongly-typed EnvelopeMetadata - use directly
-      var metadata = record.Metadata;
+      var hops = _restoreScopeInHops(record);
 
       // Reconstruct the message envelope with the polymorphic payload cast to IEvent
       var envelope = new MessageEnvelope<IEvent> {
-        MessageId = metadata.MessageId,
+        MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -319,6 +298,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId);
 
     // Apply upper bound only if upToEventId is not Guid.Empty
@@ -341,19 +321,16 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     foreach (var record in records) {
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var hops = _restoreScopeInHops(record);
 
-      var envelope = new MessageEnvelope<TMessage> {
+      envelopes.Add(new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
         Payload = (TMessage)eventData,
-        Hops = record.Metadata.Hops
-      };
-
-      envelopes.Add(envelope);
+        Hops = hops
+      });
     }
 
     return envelopes;
@@ -369,7 +346,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_SkipsUnknownEventsAsync</tests>
-  public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
       Guid upToEventId,
@@ -377,15 +354,19 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(eventTypes);
+    return _getEventsBetweenPolymorphicCoreAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
+  }
 
-    if (_diagnosticLogging) {
-      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Query params: streamId={streamId}, afterEventId={afterEventId}, upToEventId={upToEventId}");
-      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Event types: [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-    }
-
+  private async Task<List<MessageEnvelope<IEvent>>> _getEventsBetweenPolymorphicCoreAsync(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken) {
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId);
 
     // Apply upper bound only if upToEventId is not Guid.Empty
@@ -402,16 +383,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       .OrderBy(e => e.Id)
       .ToListAsync(cancellationToken);
 
-    if (_diagnosticLogging) {
-      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Query returned {records.Count} records");
-      foreach (var r in records.Take(5)) {
-        Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG]   - ID={r.Id}, Type={r.EventType}");
-      }
-      if (records.Count > 5) {
-        Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG]   ... and {records.Count - 5} more");
-      }
-    }
-
     // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
     var typeLookup = new Dictionary<string, Type>(eventTypes.Count);
     foreach (var type in eventTypes) {
@@ -423,35 +394,27 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     foreach (var record in records) {
       // Normalize event type name (remove assembly version/culture/publickey if present)
-      // EventType column stores "TypeName, AssemblyName" or full assembly-qualified name
-      // We need to match against FullName (TypeName only) in our dictionary
       var storedTypeName = record.EventType;
       var commaIndex = storedTypeName.IndexOf(',');
-      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
 
-      // Look up the concrete type based on normalized EventType
-      // Skip events that aren't in the perspective's list - a perspective doesn't need all events from a stream
+      // Skip events that aren't in the perspective's list
       if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {
         continue;
       }
 
-      // Deserialize to concrete type using JSON source generation
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var hops = _restoreScopeInHops(record);
 
-      // Cast to IEvent (safe because all event types implement IEvent)
-      var envelope = new MessageEnvelope<IEvent> {
+      envelopes.Add(new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = record.Metadata.Hops
-      };
-
-      envelopes.Add(envelope);
+        Hops = hops
+      });
     }
 
     return envelopes;
@@ -468,10 +431,48 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       CancellationToken cancellationToken = default) {
 
     var lastSequence = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId)
       .MaxAsync(e => (long?)e.Version, cancellationToken);
 
     return lastSequence ?? -1;
+  }
+
+  /// <summary>
+  /// Resolves a concrete type from the stored EventType string using the type map.
+  /// Returns null if the type is not in the requested list (allows perspectives to skip irrelevant events).
+  /// </summary>
+  private static Type? _resolveConcreteType(string eventType, Dictionary<string, Type> typeMap) {
+    if (typeMap.TryGetValue(eventType, out var concreteType)) {
+      return concreteType;
+    }
+
+    // Try without version/culture/token (extract "TypeName, AssemblyName" from full qualified name)
+    var typeAndAssembly = string.Join(", ", eventType.Split(',').Take(2).Select(s => s.Trim()));
+    if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
+      return concreteType;
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
+  /// Returns the (possibly modified) hops list.
+  /// </summary>
+  private static List<MessageHop> _restoreScopeInHops(EventStoreRecord record) {
+    var hops = record.Metadata.Hops.ToList();
+    if (record.Scope == null || hops.Count == 0 || hops[0].Scope != null) {
+      return hops;
+    }
+
+    var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+    if (scopeDelta == null) {
+      return hops;
+    }
+
+    hops[0] = hops[0] with { Scope = scopeDelta };
+    return hops;
   }
 
   /// <summary>

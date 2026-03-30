@@ -53,28 +53,28 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Test event routed to event store only (Route.Local with new behavior).
   /// Uses default LocalDispatch | EventStore mode.
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record LocalStoredEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   /// <summary>
   /// Test event with no persistence (Route.LocalNoPersist).
   /// Uses LocalDispatch mode only - no event store, no transport.
   /// </summary>
-  [DefaultRouting(DispatchMode.LocalNoPersist)]
+  [DefaultRouting(DispatchModes.LocalNoPersist)]
   public record LocalNoPersistEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   /// <summary>
   /// Test event routed to event store only without local dispatch.
   /// Uses EventStoreOnly mode - stores to event store, no local receptors, no transport.
   /// </summary>
-  [DefaultRouting(DispatchMode.EventStoreOnly)]
+  [DefaultRouting(DispatchModes.EventStoreOnly)]
   public record EventStoreOnlyEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   /// <summary>
   /// Test event routed to outbox with transport.
   /// Uses Outbox mode - standard outbox flow with transport.
   /// </summary>
-  [DefaultRouting(DispatchMode.Outbox)]
+  [DefaultRouting(DispatchModes.Outbox)]
   public record OutboxRoutedEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   #endregion
@@ -86,7 +86,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// </summary>
   public static class LocalEventTracker {
     private static readonly List<object> _events = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -203,7 +203,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerLocalStoredCommand(Guid.CreateVersion7(), "Test data");
 
-    // Act - Command handler returns LocalStoredEvent with [DefaultRouting(DispatchMode.Local)]
+    // Act - Command handler returns LocalStoredEvent with [DefaultRouting(DispatchModes.Local)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Assert - Local receptor should have been invoked for the cascaded event
@@ -227,12 +227,12 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerLocalStoredCommand(Guid.CreateVersion7(), "Test data for storage");
 
-    // Act - Command handler returns LocalStoredEvent with [DefaultRouting(DispatchMode.Local)]
+    // Act - Command handler returns LocalStoredEvent with [DefaultRouting(DispatchModes.Local)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Flush the strategy to write to database
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should be in outbox with null destination
     await using var dbContext = CreateDbContext();
@@ -269,7 +269,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerLocalNoPersistCommand(Guid.CreateVersion7(), "Test data");
 
-    // Act - Command handler returns LocalNoPersistEvent with [DefaultRouting(DispatchMode.LocalNoPersist)]
+    // Act - Command handler returns LocalNoPersistEvent with [DefaultRouting(DispatchModes.LocalNoPersist)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Assert - Local receptor should have been invoked
@@ -292,12 +292,12 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerLocalNoPersistCommand(Guid.CreateVersion7(), "Test data - should not persist");
 
-    // Act - Command handler returns LocalNoPersistEvent with [DefaultRouting(DispatchMode.LocalNoPersist)]
+    // Act - Command handler returns LocalNoPersistEvent with [DefaultRouting(DispatchModes.LocalNoPersist)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Flush the strategy
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should NOT be in outbox
     await using var dbContext = CreateDbContext();
@@ -327,7 +327,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerEventStoreOnlyCommand(Guid.CreateVersion7(), "Test data");
 
-    // Act - Command handler returns EventStoreOnlyEvent with [DefaultRouting(DispatchMode.EventStoreOnly)]
+    // Act - Command handler returns EventStoreOnlyEvent with [DefaultRouting(DispatchModes.EventStoreOnly)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Assert - Local receptor should NOT have been invoked for EventStoreOnly routing
@@ -349,12 +349,12 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerEventStoreOnlyCommand(Guid.CreateVersion7(), "Test data for storage only");
 
-    // Act - Command handler returns EventStoreOnlyEvent with [DefaultRouting(DispatchMode.EventStoreOnly)]
+    // Act - Command handler returns EventStoreOnlyEvent with [DefaultRouting(DispatchModes.EventStoreOnly)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Flush the strategy
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should be in outbox with null destination
     await using var dbContext = CreateDbContext();
@@ -387,12 +387,12 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
     var command = new TriggerOutboxCommand(Guid.CreateVersion7(), "Test data for outbox");
 
-    // Act - Command handler returns OutboxRoutedEvent with [DefaultRouting(DispatchMode.Outbox)]
+    // Act - Command handler returns OutboxRoutedEvent with [DefaultRouting(DispatchModes.Outbox)]
     await dispatcher.LocalInvokeAsync(command);
 
     // Flush the strategy
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should be in outbox with valid destination
     await using var dbContext = CreateDbContext();
@@ -434,7 +434,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
 
     // Flush the strategy
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should have a StreamId set (either from [StreamId] or MessageId fallback)
     await using var dbContext = CreateDbContext();
@@ -470,7 +470,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
 
     // Flush the strategy
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should have a StreamId set (either from [StreamId] or MessageId fallback)
     await using var dbContext = CreateDbContext();

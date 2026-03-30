@@ -1,0 +1,227 @@
+name: 'Pushover Notification'
+description: 'Send push notifications via Pushover with custom sounds for CI events'
+
+inputs:
+  api-token:
+    description: 'Pushover Application API Token'
+    required: true
+  # Individual user keys (1-10) - easier to manage than a single combined secret
+  # Set PUSHOVER_USER_KEY_1, PUSHOVER_USER_KEY_2, etc. in GitHub Secrets
+  # Add new users without needing to remember existing keys
+  user-key-1:
+    description: 'Pushover User Key 1'
+    required: false
+  user-key-2:
+    description: 'Pushover User Key 2'
+    required: false
+  user-key-3:
+    description: 'Pushover User Key 3'
+    required: false
+  user-key-4:
+    description: 'Pushover User Key 4'
+    required: false
+  user-key-5:
+    description: 'Pushover User Key 5'
+    required: false
+  user-key-6:
+    description: 'Pushover User Key 6'
+    required: false
+  user-key-7:
+    description: 'Pushover User Key 7'
+    required: false
+  user-key-8:
+    description: 'Pushover User Key 8'
+    required: false
+  user-key-9:
+    description: 'Pushover User Key 9'
+    required: false
+  user-key-10:
+    description: 'Pushover User Key 10'
+    required: false
+  title:
+    description: 'Notification title'
+    required: true
+  message:
+    description: 'Notification message'
+    required: true
+  status:
+    description: 'Status: success, failure, cancelled, deployed, deploy-failed, approval-needed, pr-created, pr-merged, or custom'
+    required: false
+    default: 'success'
+  url:
+    description: 'URL to include in notification (e.g., PR or workflow run link)'
+    required: false
+  url-title:
+    description: 'Title for the URL link'
+    required: false
+    default: 'View on GitHub'
+  sound-success:
+    description: 'Sound for successful builds'
+    required: false
+    default: 'magic'
+  sound-failure:
+    description: 'Sound for failed builds'
+    required: false
+    default: 'falling'
+  sound-cancelled:
+    description: 'Sound for cancelled builds'
+    required: false
+    default: 'intermission'
+  sound-deployed:
+    description: 'Sound for successful deployments'
+    required: false
+    default: 'cashregister'
+  sound-deploy-failed:
+    description: 'Sound for failed deployments'
+    required: false
+    default: 'siren'
+  sound-approval-needed:
+    description: 'Sound for approval requests'
+    required: false
+    default: 'persistent'
+  sound-pr-created:
+    description: 'Sound for new pull requests'
+    required: false
+    default: 'bike'
+  sound-pr-merged:
+    description: 'Sound for merged pull requests'
+    required: false
+    default: 'cosmic'
+  priority:
+    description: 'Message priority: -2 (silent) to 2 (emergency). Default: 0 (normal), failures use 1 (high)'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Send Pushover Notification
+      shell: bash
+      env:
+        PUSHOVER_TOKEN: ${{ inputs.api-token }}
+        # Combine all user keys into one variable (empty keys are filtered out)
+        USER_KEY_1: ${{ inputs.user-key-1 }}
+        USER_KEY_2: ${{ inputs.user-key-2 }}
+        USER_KEY_3: ${{ inputs.user-key-3 }}
+        USER_KEY_4: ${{ inputs.user-key-4 }}
+        USER_KEY_5: ${{ inputs.user-key-5 }}
+        USER_KEY_6: ${{ inputs.user-key-6 }}
+        USER_KEY_7: ${{ inputs.user-key-7 }}
+        USER_KEY_8: ${{ inputs.user-key-8 }}
+        USER_KEY_9: ${{ inputs.user-key-9 }}
+        USER_KEY_10: ${{ inputs.user-key-10 }}
+        NOTIFY_TITLE: ${{ inputs.title }}
+        NOTIFY_MESSAGE: ${{ inputs.message }}
+        NOTIFY_STATUS: ${{ inputs.status }}
+        NOTIFY_URL: ${{ inputs.url }}
+        NOTIFY_URL_TITLE: ${{ inputs.url-title }}
+        SOUND_SUCCESS: ${{ inputs.sound-success }}
+        SOUND_FAILURE: ${{ inputs.sound-failure }}
+        SOUND_CANCELLED: ${{ inputs.sound-cancelled }}
+        SOUND_DEPLOYED: ${{ inputs.sound-deployed }}
+        SOUND_DEPLOY_FAILED: ${{ inputs.sound-deploy-failed }}
+        SOUND_APPROVAL_NEEDED: ${{ inputs.sound-approval-needed }}
+        SOUND_PR_CREATED: ${{ inputs.sound-pr-created }}
+        SOUND_PR_MERGED: ${{ inputs.sound-pr-merged }}
+        PRIORITY_OVERRIDE: ${{ inputs.priority }}
+      run: |
+        # Determine sound and priority based on status
+        case "$NOTIFY_STATUS" in
+          success)
+            SOUND="$SOUND_SUCCESS"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          failure)
+            SOUND="$SOUND_FAILURE"
+            PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          cancelled)
+            SOUND="$SOUND_CANCELLED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          deployed)
+            SOUND="$SOUND_DEPLOYED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          deploy-failed)
+            SOUND="$SOUND_DEPLOY_FAILED"
+            PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          approval-needed)
+            SOUND="$SOUND_APPROVAL_NEEDED"
+            PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          pr-created)
+            SOUND="$SOUND_PR_CREATED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          pr-merged)
+            SOUND="$SOUND_PR_MERGED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          *)
+            SOUND="pushover"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+        esac
+
+        echo "Sending Pushover notification (status: $NOTIFY_STATUS, sound: $SOUND, priority: $PRIORITY)"
+
+        # Combine all user keys (filters out empty ones)
+        USERS=""
+        for key in "$USER_KEY_1" "$USER_KEY_2" "$USER_KEY_3" "$USER_KEY_4" "$USER_KEY_5" \
+                   "$USER_KEY_6" "$USER_KEY_7" "$USER_KEY_8" "$USER_KEY_9" "$USER_KEY_10"; do
+          if [ -n "$key" ]; then
+            USERS="${USERS}${key}"$'\n'
+          fi
+        done
+        USERS=$(echo "$USERS" | grep -v '^$' || true)
+
+        if [ -z "$USERS" ]; then
+          echo "::warning::No user keys configured. Set PUSHOVER_USER_KEY_1, etc. in GitHub Secrets."
+          exit 0
+        fi
+
+        # Count users for logging
+        USER_COUNT=$(echo "$USERS" | wc -l | tr -d ' ')
+        echo "Notifying $USER_COUNT user(s)/group(s)"
+
+        # Send to each user/group
+        FAILURES=0
+        echo "$USERS" | while IFS= read -r USER_KEY; do
+          if [ -z "$USER_KEY" ]; then
+            continue
+          fi
+
+          # Build curl command
+          CURL_ARGS=(
+            -s
+            --form-string "token=$PUSHOVER_TOKEN"
+            --form-string "user=$USER_KEY"
+            --form-string "title=$NOTIFY_TITLE"
+            --form-string "message=$NOTIFY_MESSAGE"
+            --form-string "sound=$SOUND"
+            --form-string "priority=$PRIORITY"
+          )
+
+          # Add optional URL
+          if [ -n "$NOTIFY_URL" ]; then
+            CURL_ARGS+=(--form-string "url=$NOTIFY_URL")
+            CURL_ARGS+=(--form-string "url_title=$NOTIFY_URL_TITLE")
+          fi
+
+          # Add HTML support for rich formatting
+          CURL_ARGS+=(--form-string "html=1")
+
+          RESPONSE=$(curl "${CURL_ARGS[@]}" https://api.pushover.net/1/messages.json)
+
+          if echo "$RESPONSE" | grep -q '"status":1'; then
+            echo "✓ Notification sent to ${USER_KEY:0:8}..."
+          else
+            echo "✗ Failed to send to ${USER_KEY:0:8}...: $RESPONSE"
+            FAILURES=$((FAILURES + 1))
+          fi
+        done
+
+        if [ "$FAILURES" -gt 0 ]; then
+          echo "::warning::$FAILURES notification(s) failed to send"
+        fi

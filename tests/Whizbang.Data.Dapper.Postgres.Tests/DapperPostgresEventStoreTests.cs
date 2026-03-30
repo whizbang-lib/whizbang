@@ -3,10 +3,9 @@ using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
-using Whizbang.Core.Tests.Generated;
-using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -38,7 +37,7 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposabl
   }
 
   protected override Task<IEventStore> CreateEventStoreAsync() {
-    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var jsonOptions = JsonOptionsHelper.CreateOptions();
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var sizeValidator = new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance);
     var policyEngine = new PolicyEngine();
@@ -57,5 +56,5 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposabl
     return Task.FromResult<IEventStore>(eventStore);
   }
 
-  private sealed class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase;
 }

@@ -83,7 +83,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithoutWhizbangDbContextAttribute_DoesNotDiscoverDbContextAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
 
       namespace TestApp;
@@ -140,7 +140,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithSingleKey_DiscoversDbContextWithKeyAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -183,7 +183,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -499,7 +499,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleDbContexts_GeneratesOnModelCreatingForEachAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -684,11 +684,11 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
-  /// Test that perspective_checkpoints table has composite primary key.
+  /// Test that perspective_cursors table has composite primary key.
   /// The PK should be (stream_id, perspective_name).
   /// </summary>
   [Test]
-  public async Task Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync() {
+  public async Task Generator_PerspectiveCursors_HasCompositePrimaryKeyAsync() {
     // Arrange
     var source = $$"""
       using Microsoft.EntityFrameworkCore;
@@ -757,6 +757,46 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("await ExecuteMigrationsAsync(dbContext");
   }
 
+  [Test]
+  public async Task Generator_SchemaExtensions_UsesTryAdvisoryLockWithBackoffAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should use non-blocking pg_try_advisory_lock, NOT blocking pg_advisory_lock
+    await Assert.That(sourceText).Contains("pg_try_advisory_lock");
+    await Assert.That(sourceText).DoesNotContain("SELECT pg_advisory_lock(");
+
+    // Should use CancellationToken.None for unlock (prevents crash on cancellation)
+    await Assert.That(sourceText).Contains("CancellationToken.None");
+
+    // Should reference SchemaInitializationLog for structured logging
+    await Assert.That(sourceText).Contains("SchemaInitializationLog");
+
+    // Should use NpgsqlDataSource for VACUUM connection (not raw connection string)
+    await Assert.That(sourceText).Contains("NpgsqlDataSource");
+  }
+
   #endregion
 
   #region No Generators Diagnostic Tests
@@ -798,7 +838,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   public async Task Generator_SchemaExtensions_IncludesGinIndexesForJsonbColumnsAsync() {
     // Arrange - use explicit perspective that implements IPerspectiveFor<TModel>
     // The PERSPECTIVE_BOILERPLATE doesn't implement the interface, so we need a full definition
-    var source = """
+    const string source = """
       using System.Threading;
       using System.Threading.Tasks;
       using Microsoft.EntityFrameworkCore;
@@ -852,7 +892,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesPhysicalFieldsInDDLAsync() {
     // Arrange - Model with [PhysicalField] attributes
-    var source = """
+    const string source = """
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -918,7 +958,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesVectorFieldsInDDLAsync() {
     // Arrange - Model with [VectorField] attribute
-    var source = """
+    const string source = """
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -983,7 +1023,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesUniqueDbSetNamesAsync() {
     // Arrange - Two perspectives with nested Model classes (the bug scenario)
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1063,7 +1103,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesCorrectTableNamesAsync() {
     // Arrange - Same scenario as above
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1129,7 +1169,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_DiscoversPerspectiveAsync() {
     // Arrange - JDNext pattern: static class with nested Model and Projection
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1187,7 +1227,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesLensQueryRegistrationAsync() {
     // Arrange - Same JDNext pattern
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1236,7 +1276,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesCorrectRegistrationCodeAsync() {
     // Arrange - JDNext pattern
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1290,7 +1330,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleNestedPerspectiveClasses_DiscoversAllAsync() {
     // Arrange - Multiple static classes with nested perspectives
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1356,7 +1396,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesStep5_RegisterPerspectiveAssociationsAsync() {
     // Arrange - source with DbContext and a perspective
-    var source = """
+    const string source = """
       using System.Threading;
       using System.Threading.Tasks;
       using Microsoft.EntityFrameworkCore;
@@ -1601,6 +1641,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelA)] = \"wh_per_model_a\"");
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelB)] = \"wh_per_model_b\"");
 
+    // Should pass scopeContextAccessor and whizbangOptions to constructor
+    // (constructor requires 4 params: context, tableNames, scopeContextAccessor, whizbangOptions)
+    await Assert.That(sourceText).Contains("scopeContextAccessor")
+      .Because("Multi-model LensQuery constructor requires IScopeContextAccessor parameter");
+    await Assert.That(sourceText).Contains("whizbangOptions")
+      .Because("Multi-model LensQuery constructor requires IOptions<WhizbangCoreOptions> parameter");
+
     // Should have auto-detected comment
     await Assert.That(sourceText).Contains("Auto-detected: ILensQuery<TestApp.ModelA, TestApp.ModelB>");
   }
@@ -1750,6 +1797,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
     // Should generate registration for three-model ILensQuery
     await Assert.That(sourceText).Contains("ILensQuery<global::TestApp.ModelA, global::TestApp.ModelB, global::TestApp.ModelC>");
     await Assert.That(sourceText).Contains("EFCorePostgresLensQuery<global::TestApp.ModelA, global::TestApp.ModelB, global::TestApp.ModelC>");
+
+    // Should pass scopeContextAccessor and whizbangOptions to constructor
+    await Assert.That(sourceText).Contains("scopeContextAccessor")
+      .Because("Multi-model LensQuery constructor requires IScopeContextAccessor parameter");
+    await Assert.That(sourceText).Contains("whizbangOptions")
+      .Because("Multi-model LensQuery constructor requires IOptions<WhizbangCoreOptions> parameter");
 
     // Should include all three table name mappings
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelA)] = \"wh_per_model_a\"");

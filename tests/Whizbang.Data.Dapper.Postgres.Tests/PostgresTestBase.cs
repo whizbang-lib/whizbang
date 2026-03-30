@@ -41,8 +41,8 @@ public abstract class PostgresTestBase : IAsyncDisposable {
   public async Task SetupAsync() {
     var setupSucceeded = false;
     try {
-      // Initialize shared container (only starts once, subsequent calls return immediately)
-      await SharedPostgresContainer.InitializeAsync();
+      // Initialize shared container (skips tests if Docker/PostgreSQL unavailable)
+      await SharedPostgresContainer.InitializeOrSkipAsync();
 
       // Create unique database for THIS test
       _testDatabaseName = $"test_{Guid.NewGuid():N}";
@@ -83,7 +83,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
   [After(Test)]
   public async Task TeardownAsync() {
     // Drop the test-specific database to clean up
-    if (_testDatabaseName != null) {
+    if (_testDatabaseName != null && SharedPostgresContainer.IsInitialized) {
       try {
         // Close all connections to the test database first
         await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
@@ -163,9 +163,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "027_ClaimOrphanedPerspectiveEvents.sql",
       "028_EventStorageErrorTracking.sql",
       "029_ProcessWorkBatch.sql",
-      "030_DecompositionComplete.sql",
-      "031_ReconcilePerspectiveRegistry.sql",
-      "032_FixExponentialBackoffOverflow.sql"
+      "030_ReconcilePerspectiveRegistry.sql"
     };
 
     foreach (var functionFile in functionFiles) {

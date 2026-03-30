@@ -10,7 +10,7 @@ namespace Whizbang.Core.Generated;
 /// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticCategoryTests.cs:DiagnosticCategory_SupportsFlags_BitwiseOperationsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticCategoryTests.cs:DiagnosticCategory_IndividualFlags_HaveUniqueValuesAsync</tests>
 [Flags]
-public enum DiagnosticCategory {
+public enum DiagnosticCategories {
   /// <summary>No category</summary>
   None = 0,
   /// <summary>Receptor discovery and registration diagnostics</summary>

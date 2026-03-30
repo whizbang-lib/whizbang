@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 
 /// <summary>
 /// Tests for routed cascade behavior in LocalInvokeAsync.
-/// When a receptor returns messages, the dispatcher cascades them based on their DispatchMode:
+/// When a receptor returns messages, the dispatcher cascades them based on their DispatchModes:
 /// - Local: Invoke local receptors only
 /// - Outbox: Write to outbox only (for cross-service delivery)
 /// - Both: Invoke local AND write to outbox
@@ -26,14 +26,14 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </summary>
 /// <remarks>
 /// Per the routed cascade design:
-/// - Unwrapped messages default to DispatchMode.Outbox
-/// - Route.Local() wraps a message with DispatchMode.Local
-/// - Route.Outbox() wraps a message with DispatchMode.Outbox
-/// - Route.Both() wraps a message with DispatchMode.Both
+/// - Unwrapped messages default to DispatchModes.Outbox
+/// - Route.Local() wraps a message with DispatchModes.Local
+/// - Route.Outbox() wraps a message with DispatchModes.Outbox
+/// - Route.Both() wraps a message with DispatchModes.Both
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   #region Test Messages
 
@@ -52,6 +52,41 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// </summary>
   public record RoutedTestResult(bool Success);
 
+  // --- Per-item routing scenario messages ---
+
+  /// <summary>
+  /// Command handled by a receptor that routes each cascaded event differently.
+  /// </summary>
+  public record PlaceOrderCommand(Guid OrderId, string ProductId);
+
+  /// <summary>
+  /// Confirmation DTO returned to the caller (not an IEvent, not cascaded).
+  /// </summary>
+  public record OrderConfirmation(Guid OrderId);
+
+  /// <summary>
+  /// Event that stays in-process for local projections (Route.Local).
+  /// </summary>
+  public record OrderCreatedEvent([property: StreamId] Guid OrderId) : IEvent;
+
+  /// <summary>
+  /// Event sent to outbox for cross-service delivery (Route.Outbox).
+  /// </summary>
+  public record InventoryReservedEvent([property: StreamId] Guid OrderId, string ProductId) : IEvent;
+
+  /// <summary>
+  /// Event sent both locally and to outbox (Route.Both).
+  /// </summary>
+  public record AuditLogEvent([property: StreamId] Guid OrderId, string Action) : IEvent;
+
+  // --- Collection with individual overrides scenario messages ---
+
+  /// <summary>
+  /// Command handled by a receptor that wraps a collection with a blanket route
+  /// but overrides individual items.
+  /// </summary>
+  public record BatchProcessCommand(Guid OrderId, string ProductId);
+
   #endregion
 
   #region Tracking Infrastructure
@@ -62,7 +97,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   public static class RoutedCascadeTracker {
     private static readonly List<object> _localInvocations = [];
     private static readonly List<object> _outboxPublications = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -101,13 +136,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     public static IReadOnlyList<object> GetLocalInvocations() {
       lock (_lock) {
-        return _localInvocations.ToList();
+        return [.. _localInvocations];
       }
     }
 
     public static IReadOnlyList<object> GetOutboxPublications() {
       lock (_lock) {
-        return _outboxPublications.ToList();
+        return [.. _outboxPublications];
       }
     }
   }
@@ -130,7 +165,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Outbox)
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Outbox)
       .Because("Unwrapped messages should default to Outbox routing for cross-service delivery");
   }
 
@@ -148,7 +183,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   /// <summary>
@@ -165,7 +200,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   /// <summary>
@@ -182,7 +217,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Both);
   }
 
   /// <summary>
@@ -194,11 +229,11 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var evt = new RoutedTestEvent(Guid.NewGuid());
 
     // Act - Pass receptor default of Local
-    var extracted = MessageExtractor.ExtractMessagesWithRouting(evt, receptorDefault: DispatchMode.Local).ToList();
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(evt, receptorDefault: DispatchModes.Local).ToList();
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local)
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local)
       .Because("Receptor default should override system default when no wrapper is used");
   }
 
@@ -217,9 +252,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(2);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local)
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local)
       .Because("First item has Local routing");
-    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchMode.Outbox)
+    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchModes.Outbox)
       .Because("Second item has Outbox routing");
   }
 
@@ -240,8 +275,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(2);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.Local);
-    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.Local);
+    await Assert.That(extracted[1].Mode).IsEqualTo(DispatchModes.Local);
   }
 
   /// <summary>
@@ -258,7 +293,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.LocalNoPersist);
   }
 
   /// <summary>
@@ -275,7 +310,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     // Assert
     await Assert.That(extracted).Count().IsEqualTo(1);
-    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchModes.EventStoreOnly);
   }
 
   /// <summary>
@@ -291,9 +326,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue()
       .Because("LocalNoPersist should invoke local receptors");
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsFalse()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.EventStore)).IsFalse()
       .Because("LocalNoPersist should NOT persist to event store");
   }
 
@@ -310,9 +345,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.EventStore)).IsTrue()
       .Because("EventStoreOnly should persist to event store");
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsFalse()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.LocalDispatch)).IsFalse()
       .Because("EventStoreOnly should NOT invoke local receptors");
   }
 
@@ -329,9 +364,9 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
 
     // Assert
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue()
       .Because("Local should invoke local receptors");
-    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsTrue()
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchModes.EventStore)).IsTrue()
       .Because("Local should persist to event store");
   }
 
@@ -342,11 +377,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that tracks cascade behavior with routing support.
   /// </summary>
-  private sealed class RoutingTestDispatcher : Core.Dispatcher {
-    public RoutingTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
-
+  private sealed class RoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Handle RoutedTestCommand -> (RoutedTestResult, Routed<RoutedTestEvent>) for Local routing test
       if (messageType == typeof(RoutedTestCommand) && typeof(TResult) == typeof((RoutedTestResult, Routed<RoutedTestEvent>))) {
@@ -391,7 +422,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }
@@ -417,7 +448,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var command = new RoutedTestCommand(Guid.NewGuid());
 
     // Act - Invoke and let cascade happen
-    var (result, routedEvent) = await dispatcher.LocalInvokeAsync<(RoutedTestResult, Routed<RoutedTestEvent>)>(command);
+    var (result, _) = await dispatcher.LocalInvokeAsync<(RoutedTestResult, Routed<RoutedTestEvent>)>(command);
 
     // Assert - Result should be returned
     await Assert.That(result.Success).IsTrue();
@@ -439,17 +470,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed<T> send path testing.
   /// </summary>
-  private sealed class RoutedSendTestDispatcher : Core.Dispatcher {
+  private sealed class RoutedSendTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     private readonly List<object> _sentMessages = [];
-    private readonly object _lock = new();
-
-    public RoutedSendTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetSentMessages() {
       lock (_lock) {
-        return _sentMessages.ToList();
+        return [.. _sentMessages];
       }
     }
 
@@ -490,7 +517,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -614,17 +641,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed&lt;T&gt; local invoke testing.
   /// </summary>
-  private sealed class RoutedLocalInvokeTestDispatcher : Core.Dispatcher {
+  private sealed class RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     private readonly List<object> _invokedMessages = [];
-    private readonly object _lock = new();
-
-    public RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetInvokedMessages() {
       lock (_lock) {
-        return _invokedMessages.ToList();
+        return [.. _invokedMessages];
       }
     }
 
@@ -672,7 +695,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -733,17 +756,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that supports tracing path testing with Routed&lt;T&gt;.
   /// Registers a trace store or receptor registry to trigger the tracing code path.
   /// </summary>
-  private sealed class RoutedTracingTestDispatcher : Core.Dispatcher {
+  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
     private readonly List<object> _invokedMessages = [];
-    private readonly object _lock = new();
-
-    public RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetInvokedMessages() {
       lock (_lock) {
-        return _invokedMessages.ToList();
+        return [.. _invokedMessages];
       }
     }
 
@@ -791,7 +810,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       return null;
     }
   }
@@ -803,6 +822,11 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       return [];
     }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   /// <summary>
@@ -862,17 +886,202 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
   #endregion
 
+  #region Realistic Receptor Integration Tests - Per-Item and Collection Routing
+
+  /// <summary>
+  /// Receptor that returns a tuple with per-item routing.
+  /// Each cascaded event gets a different dispatch route:
+  /// - OrderCreated → Local (stays in-process, event store + local receptors)
+  /// - InventoryReserved → Outbox (cross-service delivery)
+  /// - AuditLog → Both (local receptors AND outbox)
+  /// </summary>
+  /// <remarks>
+  /// In a real application, this would implement:
+  /// <code>
+  /// IReceptor&lt;PlaceOrderCommand, (OrderConfirmation, Routed&lt;OrderCreatedEvent&gt;, Routed&lt;InventoryReservedEvent&gt;, Routed&lt;AuditLogEvent&gt;)&gt;
+  /// </code>
+  /// Defined as a plain class here to prevent the source generator from discovering it
+  /// (these tests use a manually-wired custom dispatcher).
+  /// </remarks>
+  private sealed class PlaceOrderReceptor {
+    public ValueTask<(OrderConfirmation, Routed<OrderCreatedEvent>, Routed<InventoryReservedEvent>, Routed<AuditLogEvent>)>
+        HandleAsync(PlaceOrderCommand message, CancellationToken cancellationToken = default) {
+      return ValueTask.FromResult((
+        new OrderConfirmation(message.OrderId),
+        Route.Local(new OrderCreatedEvent(message.OrderId)),
+        Route.Outbox(new InventoryReservedEvent(message.OrderId, message.ProductId)),
+        Route.Both(new AuditLogEvent(message.OrderId, "OrderPlaced"))
+      ));
+    }
+  }
+
+  /// <summary>
+  /// Receptor that returns a collection with a blanket route and individual overrides.
+  /// Most events default to Local from the collection wrapper, but InventoryReserved
+  /// overrides to Outbox individually.
+  /// </summary>
+  /// <remarks>
+  /// In a real application, this would implement:
+  /// <code>
+  /// IReceptor&lt;BatchProcessCommand, Routed&lt;object[]&gt;&gt;
+  /// </code>
+  /// Defined as a plain class here to prevent the source generator from discovering it
+  /// (these tests use a manually-wired custom dispatcher).
+  /// Uses object[] because the array mixes plain IEvent instances with Routed&lt;T&gt; wrappers.
+  /// </remarks>
+  private sealed class BatchProcessReceptor {
+    public ValueTask<Routed<object[]>> HandleAsync(
+        BatchProcessCommand message, CancellationToken cancellationToken = default) {
+      return Route.Local(new object[] {
+        new OrderCreatedEvent(message.OrderId),                                     // Local (from collection wrapper)
+        Route.Outbox(new InventoryReservedEvent(message.OrderId, message.ProductId)), // Outbox (individual override)
+        new AuditLogEvent(message.OrderId, "BatchProcessed")                        // Local (from collection wrapper)
+      }).AsValueTask();
+    }
+  }
+
+  /// <summary>
+  /// Test dispatcher that wires PlaceOrderReceptor and BatchProcessReceptor for integration testing.
+  /// Tracks which events were cascaded locally vs to outbox.
+  /// </summary>
+  private sealed class RealisticRoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
+      // Wire PlaceOrderCommand → PlaceOrderReceptor
+      if (messageType == typeof(PlaceOrderCommand)) {
+        var receptor = new PlaceOrderReceptor();
+        return async msg => {
+          var result = await receptor.HandleAsync((PlaceOrderCommand)msg);
+          return (TResult)(object)result;
+        };
+      }
+
+      // Wire BatchProcessCommand → BatchProcessReceptor
+      if (messageType == typeof(BatchProcessCommand)) {
+        var receptor = new BatchProcessReceptor();
+        return async msg => {
+          var result = await receptor.HandleAsync((BatchProcessCommand)msg);
+          return (TResult)(object)result;
+        };
+      }
+
+      return null;
+    }
+
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
+      return evt => {
+        RoutedCascadeTracker.TrackLocal(evt!);
+        return Task.CompletedTask;
+      };
+    }
+
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return (evt, envelope, ct) => {
+        RoutedCascadeTracker.TrackLocal(evt);
+        return Task.CompletedTask;
+      };
+    }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Verifies that a receptor returning per-item routing via a tuple cascades each event with its correct mode.
+  /// Receptor: PlaceOrderReceptor returns (OrderConfirmation, Route.Local(OrderCreated), Route.Outbox(InventoryReserved), Route.Both(AuditLog))
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task CascadeFromReceptor_TupleWithPerItemRouting_EachEventGetsCorrectModeAsync() {
+    // Arrange
+    RoutedCascadeTracker.Reset();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RealisticRoutingTestDispatcher(provider);
+    var command = new PlaceOrderCommand(Guid.NewGuid(), "product-456");
+
+    // Act - Invoke the receptor and let cascade happen
+    var (confirmation, routedOrderCreated, routedInventoryReserved, routedAuditLog) =
+      await dispatcher.LocalInvokeAsync<(OrderConfirmation, Routed<OrderCreatedEvent>, Routed<InventoryReservedEvent>, Routed<AuditLogEvent>)>(command);
+
+    // Assert - Result DTO should be returned
+    await Assert.That(confirmation.OrderId).IsEqualTo(command.OrderId);
+
+    // Assert - Routed wrappers preserve their routing modes
+    await Assert.That(routedOrderCreated.Mode).IsEqualTo(DispatchModes.Local)
+      .Because("OrderCreated stays in-process for local projections");
+    await Assert.That(routedInventoryReserved.Mode).IsEqualTo(DispatchModes.Outbox)
+      .Because("InventoryReserved goes to outbox for cross-service delivery");
+    await Assert.That(routedAuditLog.Mode).IsEqualTo(DispatchModes.Both)
+      .Because("AuditLog goes to both local receptors and outbox");
+
+    // Assert - Local cascade should have fired for Local and Both events
+    var localInvocations = RoutedCascadeTracker.GetLocalInvocations();
+    await Assert.That(localInvocations.Any(e => e is OrderCreatedEvent)).IsTrue()
+      .Because("Route.Local events should cascade to local receptors");
+    await Assert.That(localInvocations.Any(e => e is AuditLogEvent)).IsTrue()
+      .Because("Route.Both events should cascade to local receptors");
+  }
+
+  /// <summary>
+  /// Verifies that a receptor returning a collection with a blanket route and individual overrides
+  /// cascades each event with the correct resolved mode.
+  /// Receptor: BatchProcessReceptor returns Route.Local([ OrderCreated, Route.Outbox(InventoryReserved), AuditLog ])
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task CascadeFromReceptor_CollectionWithIndividualOverrides_OverridesWinAsync() {
+    // Arrange
+    RoutedCascadeTracker.Reset();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RealisticRoutingTestDispatcher(provider);
+    var command = new BatchProcessCommand(Guid.NewGuid(), "product-012");
+
+    // Act - Invoke the receptor and let cascade happen
+    var result = await dispatcher.LocalInvokeAsync<Routed<object[]>>(command);
+
+    // Assert - The collection should contain 3 events
+    await Assert.That(result.Value).IsNotNull();
+    await Assert.That(result.Value!.Length).IsEqualTo(3);
+
+    // Assert - Verify the routing was resolved correctly via cascade tracking
+    // OrderCreated and AuditLog should cascade locally (inheriting Local from collection wrapper)
+    // InventoryReserved should NOT cascade locally (individual Outbox override)
+    var localInvocations = RoutedCascadeTracker.GetLocalInvocations();
+    await Assert.That(localInvocations.Any(e => e is OrderCreatedEvent)).IsTrue()
+      .Because("OrderCreated inherits Local from the collection wrapper");
+    await Assert.That(localInvocations.Any(e => e is AuditLogEvent)).IsTrue()
+      .Because("AuditLog inherits Local from the collection wrapper");
+  }
+
+  #endregion
+
   #region Test Infrastructure
 
   /// <summary>
   /// Simple service scope factory for testing.
   /// </summary>
-  private sealed class TestServiceScopeFactory : IServiceScopeFactory {
-    private readonly IServiceProvider _provider;
-
-    public TestServiceScopeFactory(IServiceProvider provider) {
-      _provider = provider;
-    }
+  private sealed class TestServiceScopeFactory(IServiceProvider provider) : IServiceScopeFactory {
+    private readonly IServiceProvider _provider = provider;
 
     public IServiceScope CreateScope() {
       return new TestServiceScope(_provider);
@@ -882,12 +1091,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Simple service scope for testing.
   /// </summary>
-  private sealed class TestServiceScope : IServiceScope {
-    public TestServiceScope(IServiceProvider provider) {
-      ServiceProvider = provider;
-    }
-
-    public IServiceProvider ServiceProvider { get; }
+  private sealed class TestServiceScope(IServiceProvider provider) : IServiceScope {
+    public IServiceProvider ServiceProvider { get; } = provider;
 
     public void Dispose() { }
   }

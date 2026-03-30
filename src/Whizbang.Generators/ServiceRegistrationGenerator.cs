@@ -30,13 +30,16 @@ namespace Whizbang.Generators;
 [Generator]
 public class ServiceRegistrationGenerator : IIncrementalGenerator {
   private const string LENS_QUERY_INTERFACE = "Whizbang.Core.Lenses.ILensQuery";
-  private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_BASE_INTERFACE = "Whizbang.Core.Perspectives.IPerspectiveBase";
+  private const string PERSPECTIVE_FOR_INTERFACE = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string TEMPLATE_SNIPPET_FILE = "ServiceRegistrationSnippets.cs";
   private const string PLACEHOLDER_USER_INTERFACE = "__USER_INTERFACE__";
   private const string PLACEHOLDER_CONCRETE_CLASS = "__CONCRETE_CLASS__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Single pipeline: discover classes that implement user interfaces extending Whizbang interfaces
     var serviceCandidates = context.SyntaxProvider.CreateSyntaxProvider(
@@ -133,7 +136,8 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   private static bool _isDirectWhizbangInterface(INamedTypeSymbol interfaceSymbol) {
     var name = interfaceSymbol.OriginalDefinition.ToDisplayString();
     var isWhizbangInterface = name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal) ||
-                              name.StartsWith(PERSPECTIVE_INTERFACE, StringComparison.Ordinal);
+                              name.StartsWith(PERSPECTIVE_FOR_INTERFACE, StringComparison.Ordinal) ||
+                              name.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE, StringComparison.Ordinal);
 
     if (!isWhizbangInterface) {
       return false;
@@ -157,7 +161,8 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static ServiceCategory _getServiceCategoryFromWhizbangInterface(INamedTypeSymbol whizbangInterface) {
     var name = whizbangInterface.OriginalDefinition.ToDisplayString();
-    if (name.StartsWith(PERSPECTIVE_INTERFACE, StringComparison.Ordinal)) {
+    if (name.StartsWith(PERSPECTIVE_FOR_INTERFACE, StringComparison.Ordinal) ||
+        name.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE, StringComparison.Ordinal)) {
       return ServiceCategory.Perspective;
     }
     return ServiceCategory.Lens;
@@ -180,7 +185,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     return interfaceSymbol.AllInterfaces.Any(i => {
       var name = i.OriginalDefinition.ToDisplayString();
       return name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal) ||
-             name.StartsWith(PERSPECTIVE_INTERFACE, StringComparison.Ordinal);
+             name.StartsWith(PERSPECTIVE_BASE_INTERFACE, StringComparison.Ordinal);
     });
   }
 
@@ -190,7 +195,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   private static ServiceCategory _getServiceCategory(INamedTypeSymbol userInterface) {
     foreach (var baseInterface in userInterface.AllInterfaces) {
       var name = baseInterface.OriginalDefinition.ToDisplayString();
-      if (name.StartsWith(PERSPECTIVE_INTERFACE, StringComparison.Ordinal)) {
+      if (name.StartsWith(PERSPECTIVE_BASE_INTERFACE, StringComparison.Ordinal)) {
         return ServiceCategory.Perspective;
       }
       if (name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal)) {
@@ -321,13 +326,13 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
 
     foreach (var service in services) {
-      // Interface registration: services.AddScoped<IUserInterface, ConcreteClass>();
+      // Register implementation against the user-defined interface
       var interfaceCode = interfaceSnippet
           .Replace(PLACEHOLDER_USER_INTERFACE, service.UserInterfaceName)
           .Replace(PLACEHOLDER_CONCRETE_CLASS, service.ConcreteTypeName);
       sb.AppendLine(TemplateUtilities.IndentCode(interfaceCode, "    "));
 
-      // Self registration (conditional): if (options.IncludeSelfRegistration) services.AddScoped<ConcreteClass>();
+      // Conditionally register the concrete type itself (when IncludeSelfRegistration is enabled)
       var selfCode = selfSnippet
           .Replace(PLACEHOLDER_CONCRETE_CLASS, service.ConcreteTypeName);
       sb.AppendLine(TemplateUtilities.IndentCode(selfCode, "    "));

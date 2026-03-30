@@ -65,22 +65,22 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -105,8 +105,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
   private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
     public bool IsReady { get; set; } = true;
+    private readonly TaskCompletionSource _checkSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitForCheckAsync(TimeSpan timeout) => _checkSignal.Task.WaitAsync(timeout);
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      _checkSignal.TrySetResult();
       return Task.FromResult(IsReady);
     }
   }
@@ -201,10 +205,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker and let it run briefly
-    // Wait long enough to verify nothing happens when database isn't ready
+    // Act - start worker and wait for readiness check to be called (proves worker tried)
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await databaseReadiness.WaitForCheckAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try {
@@ -338,8 +341,11 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
     await Task.WhenAny(signalTask, timeoutTask);
 
-    // Allow time for publishing to complete after ProcessWorkBatchAsync returns
-    await Task.Delay(50);
+    // Wait for all 12 messages to be published (up to 5s safety timeout)
+    var publishDeadline = DateTime.UtcNow.AddSeconds(5);
+    while (publishStrategy.PublishedWork.Count < 12 && DateTime.UtcNow < publishDeadline) {
+      await Task.Delay(10);
+    }
 
     cts.Cancel();
 
@@ -367,7 +373,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
+      Flags = WorkBatchOptions.None,
     };
   }
 
@@ -430,22 +436,22 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 

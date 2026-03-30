@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
 
@@ -34,14 +36,16 @@ namespace Whizbang.Core.Tags;
 ///   // Access the payload
 ///   var payload = context.Payload;
 ///
-///   // Access scope data
-///   var tenantId = context.Scope?["TenantId"]?.ToString();
+///   // Access scope data (tenant, user, roles, permissions)
+///   var tenantId = context.Scope?.Scope?.TenantId;
+///   var userId = context.Scope?.Scope?.UserId;
+///   var hasAdminRole = context.Scope?.HasRole("Admin") ?? false;
 ///
 ///   return null;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#tag-context</docs>
+/// <docs>fundamentals/messages/message-tags#tag-context</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
 public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribute {
   /// <summary>
@@ -88,8 +92,23 @@ public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribu
   public required JsonElement Payload { get; init; }
 
   /// <summary>
-  /// Gets the event scope containing tenant, user, and other contextual data.
-  /// Populated from the event's scope field when available.
+  /// Gets the security scope context containing tenant, user, roles, permissions, and other contextual data.
+  /// Populated from the message envelope's security context when available.
   /// </summary>
-  public IReadOnlyDictionary<string, object?>? Scope { get; init; }
+  /// <remarks>
+  /// <para>
+  /// Use this to access security information:
+  /// </para>
+  /// <code>
+  /// var tenantId = context.Scope?.Scope?.TenantId;
+  /// var hasPermission = context.Scope?.HasPermission(SomePermission) ?? false;
+  /// </code>
+  /// </remarks>
+  public IScopeContext? Scope { get; init; }
+
+  /// <summary>
+  /// Gets the lifecycle stage at which this hook is being invoked.
+  /// Hooks can inspect this to decide whether to act (e.g., only fire at PostPerspectiveInline).
+  /// </summary>
+  public LifecycleStage Stage { get; init; }
 }

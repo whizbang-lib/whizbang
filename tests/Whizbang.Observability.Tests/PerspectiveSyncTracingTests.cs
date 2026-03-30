@@ -25,7 +25,7 @@ namespace Whizbang.Observability.Tests;
 [NotInParallel(Order = 2)]
 public class PerspectiveSyncTracingTests {
   // Dummy perspective type for testing
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // ==========================================================================
   // WaitAsync tracing tests
@@ -107,7 +107,7 @@ public class PerspectiveSyncTracingTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
     // Act
@@ -146,7 +146,7 @@ public class PerspectiveSyncTracingTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
     // Act
@@ -291,7 +291,7 @@ public class PerspectiveSyncTracingTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    return new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    return new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
   }
 
   private static PerspectiveSyncAwaiter _createAwaiterWithSyncTracker() {
@@ -334,16 +334,16 @@ public class PerspectiveSyncTracingTests {
       });
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 }

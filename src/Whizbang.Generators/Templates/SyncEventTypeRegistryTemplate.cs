@@ -27,7 +27,7 @@ namespace Whizbang.Core.Generated;
 /// {{EVENT_TYPE_COUNT}} event type(s) mapped to {{PERSPECTIVE_COUNT}} perspective(s).
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#auto-registration</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#auto-registration</docs>
 internal static class SyncEventTypeAutoRegistration {
   /// <summary>
   /// Module initializer that registers all event type mappings.
@@ -35,10 +35,8 @@ internal static class SyncEventTypeAutoRegistration {
   /// </summary>
   [ModuleInitializer]
   internal static void Initialize() {
-    System.Console.WriteLine("[SyncEventTypeAutoRegistration] ModuleInitializer running for assembly: " + typeof(SyncEventTypeAutoRegistration).Assembly.GetName().Name);
     #region EVENT_TYPE_REGISTRATIONS
     // This region gets replaced with generated registration calls
     #endregion
-    System.Console.WriteLine("[SyncEventTypeAutoRegistration] ModuleInitializer complete");
   }
 }

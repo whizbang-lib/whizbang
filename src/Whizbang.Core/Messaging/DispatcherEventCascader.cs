@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Internal;
 using Whizbang.Core.Observability;
@@ -28,33 +29,48 @@ namespace Whizbang.Core.Messaging;
 /// IDispatcher may depend on IReceptorInvoker which depends on IEventCascader.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors#event-cascading</docs>
-public sealed class DispatcherEventCascader : IEventCascader {
+/// <docs>fundamentals/receptors/lifecycle-receptors#event-cascading</docs>
+public sealed partial class DispatcherEventCascader : IEventCascader {
   private readonly IServiceProvider _serviceProvider;
+  private readonly ILogger<DispatcherEventCascader>? _logger;
   private IDispatcher? _dispatcher;
 
   /// <summary>
   /// Creates a new DispatcherEventCascader.
   /// </summary>
   /// <param name="serviceProvider">The service provider to lazily resolve the dispatcher.</param>
-  public DispatcherEventCascader(IServiceProvider serviceProvider) {
+  /// <param name="logger">Optional logger for reporting unexpected non-message return types.</param>
+  public DispatcherEventCascader(IServiceProvider serviceProvider, ILogger<DispatcherEventCascader>? logger = null) {
     ArgumentNullException.ThrowIfNull(serviceProvider);
     _serviceProvider = serviceProvider;
+    _logger = logger;
   }
 
   /// <inheritdoc/>
-  public async Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+  public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(result);
+    return _cascadeFromResultCoreAsync(result, sourceEnvelope, receptorDefault, cancellationToken);
+  }
 
+  private async Task _cascadeFromResultCoreAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault, CancellationToken cancellationToken) {
     // Lazily resolve dispatcher on first use (avoids circular dependency)
     _dispatcher ??= _serviceProvider.GetRequiredService<IDispatcher>();
 
     // Extract all messages with their routing information
     // Handles tuples, arrays, Route wrappers, and [DefaultRouting] attributes
-    foreach (var (message, mode) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+    foreach (var (message, mode) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault, _onNonMessageValue)) {
       cancellationToken.ThrowIfCancellationRequested();
       // Pass sourceEnvelope so cascaded messages can inherit SecurityContext
       await _dispatcher.CascadeMessageAsync(message, sourceEnvelope, mode, cancellationToken).ConfigureAwait(false);
     }
   }
+
+  private void _onNonMessageValue(Type type) {
+    if (_logger is not null) {
+      LogNonMessageReturnType(_logger, type.FullName);
+    }
+  }
+
+  [LoggerMessage(Level = LogLevel.Error, Message = "Receptor returned unexpected non-message type {TypeName} during cascade. Only IMessage, tuples, arrays, enumerables, and Routed<T> are supported.")]
+  private static partial void LogNonMessageReturnType(ILogger logger, string? typeName);
 }

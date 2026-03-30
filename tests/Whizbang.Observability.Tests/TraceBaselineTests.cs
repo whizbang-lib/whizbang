@@ -160,9 +160,8 @@ public class TraceBaselineTests {
       stage4?.SetTag("whizbang.lifecycle.stage", "PostDistributeInline");
     }
 
-    using (var stage5 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostDistributeAsync")) {
-      stage5?.SetTag("whizbang.lifecycle.stage", "PostDistributeAsync");
-    }
+    using var stage5 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostDistributeAsync");
+    stage5?.SetTag("whizbang.lifecycle.stage", "PostDistributeAsync");
   }
 
   /// <summary>
@@ -189,11 +188,10 @@ public class TraceBaselineTests {
       h2?.SetStatus(ActivityStatusCode.Ok);
     }
 
-    using (var h3 = WhizbangActivitySource.Tracing.StartActivity("Handler: AnalyticsHandler")) {
-      h3?.SetTag("whizbang.handler.name", "AnalyticsHandler");
-      h3?.SetTag("whizbang.trace.explicit", true);
-      h3?.SetStatus(ActivityStatusCode.Ok);
-    }
+    using var h3 = WhizbangActivitySource.Tracing.StartActivity("Handler: AnalyticsHandler");
+    h3?.SetTag("whizbang.handler.name", "AnalyticsHandler");
+    h3?.SetTag("whizbang.trace.explicit", true);
+    h3?.SetStatus(ActivityStatusCode.Ok);
   }
 
   /// <summary>

@@ -25,7 +25,6 @@ namespace ECommerce.Integration.Tests;
 /// Integration tests that verify the BFF.API service processes outbox messages end-to-end.
 /// These tests verify the ACTUAL application configuration matches what the infrastructure tests prove works.
 /// </summary>
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
 public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
   private string? _connectionString;  // Connection string pointing to the fixture's unique database
@@ -456,12 +455,8 @@ public class PublishedMessageRecord {
 /// <summary>
 /// Test service instance provider with fixed instance ID.
 /// </summary>
-public class TestServiceInstanceProvider : Whizbang.Core.Observability.IServiceInstanceProvider {
-  public TestServiceInstanceProvider(Guid instanceId) {
-    InstanceId = instanceId;
-  }
-
-  public Guid InstanceId { get; }
+public class TestServiceInstanceProvider(Guid instanceId) : Whizbang.Core.Observability.IServiceInstanceProvider {
+  public Guid InstanceId { get; } = instanceId;
   public string ServiceName => "BFF.API";
   public string HostName => "test-host";
   public int ProcessId => 12345;

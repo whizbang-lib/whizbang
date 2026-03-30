@@ -27,7 +27,7 @@ namespace Whizbang.Core.Attributes;
 /// public sealed record OrderShippedEvent(Guid OrderId, Guid CustomerId, string TrackingNumber);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#signal-tag</docs>
+/// <docs>fundamentals/messages/message-tags#signal-tag</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
 public sealed class SignalTagAttribute : MessageTagAttribute {
   /// <summary>

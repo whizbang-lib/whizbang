@@ -1,6 +1,6 @@
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Sqlite;
-using Whizbang.Sequencing.Tests;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Tests;
 
@@ -32,5 +32,5 @@ public class DapperSequenceProviderTests : SequenceProviderContractTests, IDispo
     GC.SuppressFinalize(this);
   }
 
-  private sealed class TestFixture : DapperTestBase { }
+  private sealed class TestFixture : DapperTestBase;
 }

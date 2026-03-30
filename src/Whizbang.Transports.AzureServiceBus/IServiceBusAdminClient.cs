@@ -6,7 +6,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Interface abstraction for ServiceBusAdministrationClient to enable testing.
 /// Wraps Azure SDK's ServiceBusAdministrationClient which uses sealed classes.
 /// </summary>
-/// <docs>transports/azure-service-bus#admin-client</docs>
+/// <docs>messaging/transports/azure-service-bus#admin-client</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
 public interface IServiceBusAdminClient {
   #region Namespace Management
@@ -55,6 +55,48 @@ public interface IServiceBusAdminClient {
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   Task CreateSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    int maxDeliveryCount,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Creates a subscription on a topic with session support.
+  /// When requiresSession is true, the subscription only accepts messages with a SessionId set.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="requiresSession">If true, the subscription requires session-enabled messages for FIFO ordering.</param>
+  /// <param name="maxDeliveryCount">The maximum number of delivery attempts before dead-lettering.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  Task CreateSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    bool requiresSession,
+    int maxDeliveryCount,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gets the properties of an existing subscription.
+  /// Used to check if a subscription requires sessions for auto-migration.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The subscription properties.</returns>
+  Task<SubscriptionProperties> GetSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Deletes a subscription from a topic.
+  /// Used during auto-migration when RequiresSession needs to change (ASB does not allow toggling it).
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  Task DeleteSubscriptionAsync(
     string topicName,
     string subscriptionName,
     CancellationToken cancellationToken = default);

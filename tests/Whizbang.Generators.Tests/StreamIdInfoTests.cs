@@ -79,13 +79,16 @@ public class StreamIdInfoTests {
     );
 
     // Act
-    var (eventType, propertyName, propertyType, isPropertyValueType) = info;
+    var (eventType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty, isPropertyInitOnly) = info;
 
     // Assert
     await Assert.That(eventType).IsEqualTo("global::MyApp.Events.ProductCreatedEvent");
     await Assert.That(propertyName).IsEqualTo("ProductId");
     await Assert.That(propertyType).IsEqualTo("global::MyApp.ProductId");
     await Assert.That(isPropertyValueType).IsTrue();
+    await Assert.That(hasGenerate).IsFalse();
+    await Assert.That(onlyIfEmpty).IsFalse();
+    await Assert.That(isPropertyInitOnly).IsFalse();
   }
 
   [Test]
@@ -187,13 +190,16 @@ public class CommandStreamIdInfoTests {
     );
 
     // Act
-    var (commandType, propertyName, propertyType, isPropertyValueType) = info;
+    var (commandType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty, isPropertyInitOnly) = info;
 
     // Assert
     await Assert.That(commandType).IsEqualTo("global::MyApp.Commands.CreateProductCommand");
     await Assert.That(propertyName).IsEqualTo("ProductId");
     await Assert.That(propertyType).IsEqualTo("global::MyApp.ProductId");
     await Assert.That(isPropertyValueType).IsTrue();
+    await Assert.That(hasGenerate).IsFalse();
+    await Assert.That(onlyIfEmpty).IsFalse();
+    await Assert.That(isPropertyInitOnly).IsFalse();
   }
 
 }

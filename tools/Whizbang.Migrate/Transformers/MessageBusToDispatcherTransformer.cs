@@ -67,8 +67,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -164,12 +163,8 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms IMessageBus to IDispatcher in type declarations.
   /// </summary>
-  private sealed class MessageBusTypeRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public MessageBusTypeRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class MessageBusTypeRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node) {
       if (node.Identifier.Text == "IMessageBus") {
@@ -209,13 +204,9 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that renames _messageBus fields to _dispatcher.
   /// </summary>
-  private sealed class FieldRenameRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
+  private sealed class FieldRenameRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
     private readonly HashSet<string> _renamedFields = [];
-
-    public FieldRenameRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
 
     public override SyntaxNode? VisitFieldDeclaration(FieldDeclarationSyntax node) {
       var newVariables = new List<VariableDeclaratorSyntax>();
@@ -260,7 +251,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
       if (paramName.Contains("messageBus", StringComparison.OrdinalIgnoreCase) ||
           paramName.Contains("MessageBus", StringComparison.Ordinal)) {
-        var newName = _getDispatcherParamName(paramName);
+        var newName = _getDispatcherParamName();
         var newIdentifier = SyntaxFactory.Identifier(newName)
             .WithLeadingTrivia(node.Identifier.LeadingTrivia)
             .WithTrailingTrivia(node.Identifier.TrailingTrivia);
@@ -292,7 +283,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
                             parent is ArgumentSyntax;
 
         if (isMemberAccess) {
-          var newName = name.Contains('_') ? _getDispatcherFieldName(name) : _getDispatcherParamName(name);
+          var newName = name.Contains('_') ? _getDispatcherFieldName(name) : _getDispatcherParamName();
 
           return SyntaxFactory.IdentifierName(newName)
               .WithLeadingTrivia(node.GetLeadingTrivia())
@@ -312,7 +303,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
       return "dispatcher";
     }
 
-    private static string _getDispatcherParamName(string paramName) {
+    private static string _getDispatcherParamName() {
       // messageBus -> dispatcher
       // bus -> dispatcher
       return "dispatcher";
@@ -322,14 +313,9 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms method calls like InvokeAsync to LocalInvokeAsync.
   /// </summary>
-  private sealed class MethodCallRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public MethodCallRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class MethodCallRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       // First visit children to apply other transformations

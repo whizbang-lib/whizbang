@@ -33,7 +33,7 @@ public class DispatcherCascadeNullEnvelopeTests {
   public record NullEnvelopeCommand(string Data, Guid StreamId);
   public record NullEnvelopeResult(string Processed);
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record NullEnvelopeEvent([property: StreamId] Guid StreamId, string ProcessedData) : IEvent;
 
   // ============================================
@@ -42,7 +42,7 @@ public class DispatcherCascadeNullEnvelopeTests {
 
   public static class NullEnvelopeCascadeTracker {
     private static readonly List<(string? userId, string? tenantId)> _capturedContexts = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -58,7 +58,7 @@ public class DispatcherCascadeNullEnvelopeTests {
 
     public static IReadOnlyList<(string? userId, string? tenantId)> GetCapturedContexts() {
       lock (_lock) {
-        return _capturedContexts.ToList();
+        return [.. _capturedContexts];
       }
     }
 
@@ -85,12 +85,8 @@ public class DispatcherCascadeNullEnvelopeTests {
     }
   }
 
-  public class NullEnvelopeEventReceptor : IReceptor<NullEnvelopeEvent> {
-    private readonly IMessageContextAccessor _messageContextAccessor;
-
-    public NullEnvelopeEventReceptor(IMessageContextAccessor messageContextAccessor) {
-      _messageContextAccessor = messageContextAccessor;
-    }
+  public class NullEnvelopeEventReceptor(IMessageContextAccessor messageContextAccessor) : IReceptor<NullEnvelopeEvent> {
+    private readonly IMessageContextAccessor _messageContextAccessor = messageContextAccessor;
 
     public ValueTask HandleAsync(NullEnvelopeEvent message, CancellationToken cancellationToken = default) {
       // Capture the message context that should have been established by EstablishMessageContextForCascade
@@ -134,7 +130,7 @@ public class DispatcherCascadeNullEnvelopeTests {
     var command = new NullEnvelopeCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with RunAs to set UserId in parent scope
-    await dispatcher.RunAs("user-123").SendAsync(command);
+    await dispatcher.RunAs("user-123").ForAllTenants().SendAsync(command);
 
     // Assert - Event receptor should see UserId from parent scope
     await Assert.That(NullEnvelopeCascadeTracker.Count).IsEqualTo(1);
@@ -154,7 +150,7 @@ public class DispatcherCascadeNullEnvelopeTests {
     var command = new NullEnvelopeCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with WithTenant to set TenantId in parent scope
-    await dispatcher.AsSystem().WithTenant("tenant-456").SendAsync(command);
+    await dispatcher.AsSystem().ForTenant("tenant-456").SendAsync(command);
 
     // Assert - Event receptor should see TenantId from parent scope
     await Assert.That(NullEnvelopeCascadeTracker.Count).IsEqualTo(1);
@@ -174,7 +170,7 @@ public class DispatcherCascadeNullEnvelopeTests {
     var command = new NullEnvelopeCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with both UserId and TenantId
-    await dispatcher.RunAs("user-999").WithTenant("tenant-789").SendAsync(command);
+    await dispatcher.RunAs("user-999").ForTenant("tenant-789").SendAsync(command);
 
     // Assert - Event receptor should see both
     await Assert.That(NullEnvelopeCascadeTracker.Count).IsEqualTo(1);

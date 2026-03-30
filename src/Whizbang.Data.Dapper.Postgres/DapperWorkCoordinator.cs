@@ -36,7 +36,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
@@ -46,63 +46,54 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Dapper implementation of IWorkCoordinator for lease-based work coordination.
 /// Uses the PostgreSQL process_work_batch function for atomic operations.
 /// </summary>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
-public class DapperWorkCoordinator(
+public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
-  ILogger<DapperWorkCoordinator>? logger = null
+  ILogger<DapperWorkCoordinator>? logger = null,
+  int commandTimeoutSeconds = 5
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
+  private readonly int _commandTimeoutSeconds = commandTimeoutSeconds;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var instanceId = request.InstanceId;
-      var serviceName = request.ServiceName;
-      var hostName = request.HostName;
-      var processId = request.ProcessId;
-      var outboxCompletionsCount = request.OutboxCompletions.Length;
-      var outboxFailuresCount = request.OutboxFailures.Length;
-      var inboxCompletionsCount = request.InboxCompletions.Length;
-      var inboxFailuresCount = request.InboxFailures.Length;
-      var newOutboxCount = request.NewOutboxMessages.Length;
-      var newInboxCount = request.NewInboxMessages.Length;
-      var flags = request.Flags;
-      _logger.LogDebug(
-        "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
-        instanceId,
-        serviceName,
-        hostName,
-        processId,
-        outboxCompletionsCount,
-        outboxFailuresCount,
-        inboxCompletionsCount,
-        inboxFailuresCount,
-        newOutboxCount,
-        newInboxCount,
-        flags
-      );
+    if (_logger is not null) {
+      LogProcessingWorkBatch(_logger, request.InstanceId, request.ServiceName, request.HostName, request.ProcessId,
+        request.OutboxCompletions.Length, request.OutboxFailures.Length,
+        request.InboxCompletions.Length, request.InboxFailures.Length,
+        request.NewOutboxMessages.Length, request.NewInboxMessages.Length, request.Flags);
     }
 
     await using var connection = new NpgsqlConnection(_connectionString);
 
-    // Hook PostgreSQL RAISE NOTICE messages for debugging (before opening connection)
-    // Notices are only generated when WorkBatchFlags.DebugMode is set in SQL function
+    // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
+    // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
     connection.Notice += _onNotice;
 
     await connection.OpenAsync(cancellationToken);
 
-    // Serialize all work batch data
-    var serializedData = _serializeWorkBatchData(request);
+    var commandDefinition = _buildCommandDefinition(request, cancellationToken);
+    var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
 
-    // Execute the process_work_batch function (new signature after decomposition)
+    return _categorizeResults(resultList);
+  }
+
+  /// <summary>
+  /// Builds the CommandDefinition for the process_work_batch SQL function call.
+  /// </summary>
+  private CommandDefinition _buildCommandDefinition(
+    ProcessWorkBatchRequest request,
+    CancellationToken cancellationToken
+  ) {
+    var serializedData = _serializeWorkBatchData(request);
     var now = DateTimeOffset.UtcNow;
-    var sql = @"
+
+    const string sql = @"
       SELECT * FROM process_work_batch(
         @p_instance_id::uuid,
         @p_service_name::varchar,
@@ -142,7 +133,7 @@ public class DapperWorkCoordinator(
       p_partition_count = request.PartitionCount,
       p_outbox_completions = serializedData.OutboxCompletions,
       p_inbox_completions = serializedData.InboxCompletions,
-      p_perspective_event_completions = "[]",  // Not used - perspective events managed internally
+      p_perspective_event_completions = serializedData.PerspectiveEventCompletions,
       p_perspective_completions = serializedData.PerspectiveCompletions,  // Checkpoint-level completions
       p_outbox_failures = serializedData.OutboxFailures,
       p_inbox_failures = serializedData.InboxFailures,
@@ -159,141 +150,71 @@ public class DapperWorkCoordinator(
       p_sync_inquiries = serializedData.SyncInquiries
     };
 
-    var commandDefinition = new CommandDefinition(
+    return new CommandDefinition(
       sql,
       parameters,
+      commandTimeout: _commandTimeoutSeconds,
       cancellationToken: cancellationToken
     );
+  }
 
-    var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
-    var resultList = results.ToList();
+  /// <summary>
+  /// Executes the work batch query with structured exception handling and logging.
+  /// </summary>
+  private async Task<List<WorkBatchRow>> _executeWorkBatchQueryAsync(
+    NpgsqlConnection connection,
+    CommandDefinition commandDefinition,
+    ProcessWorkBatchRequest request
+  ) {
+    try {
+      var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
+      return [.. results];
+    } catch (NpgsqlException ex) when (ex.InnerException is TimeoutException || ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase)) {
+      if (_logger is not null) {
+        LogWorkBatchTimedOut(_logger, _commandTimeoutSeconds, request.InstanceId, request.ServiceName, ex);
+      }
+      throw;
+    } catch (OperationCanceledException ex) {
+      if (_logger is not null) {
+        LogWorkBatchCancelled(_logger, request.InstanceId, request.ServiceName, ex);
+      }
+      throw;
+    } catch (Exception ex) {
+      if (_logger is not null) {
+        LogWorkBatchFailed(_logger, request.InstanceId, request.ServiceName, ex);
+      }
+      throw;
+    }
+  }
 
-    // Map results to WorkBatch - deserialize envelopes from database
-    var outboxWork = resultList
-      .Where(r => r.source == "outbox")
-      .Select(r => {
-        if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
-          throw new InvalidOperationException($"Outbox work {r.work_id} missing message_type or message_data");
-        }
+  /// <summary>
+  /// Categorizes work batch rows by source type into the appropriate work lists.
+  /// </summary>
+  private WorkBatch _categorizeResults(List<WorkBatchRow> resultList) {
+    var outboxWork = new List<OutboxWork>();
+    var inboxWork = new List<InboxWork>();
+    var perspectiveWork = new List<PerspectiveWork>();
+    var syncInquiryResults = new List<SyncInquiryResult>();
 
-        var envelope = _deserializeEnvelope(r.message_type, r.message_data);
-        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
-        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+    foreach (var r in resultList) {
+      switch (r.source) {
+        case "outbox":
+          outboxWork.Add(_mapOutboxWork(r));
+          break;
+        case "inbox":
+          inboxWork.Add(_mapInboxWork(r));
+          break;
+        case "perspective":
+          perspectiveWork.Add(_mapPerspectiveWork(r));
+          break;
+        case "sync_result":
+          syncInquiryResults.Add(_mapSyncInquiryResult(r));
+          break;
+      }
+    }
 
-        var flags = WorkBatchFlags.None;
-        if (r.is_newly_stored) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
-
-        if (r.is_orphaned) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        // Extract message type - prefer direct column, fall back to parsing EnvelopeType if null (backward compat)
-        var messageType = !string.IsNullOrWhiteSpace(r.message_type)
-          ? r.message_type
-          : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
-
-        return new OutboxWork {
-          MessageId = r.work_id,
-          Destination = r.destination!,
-          Envelope = jsonEnvelope,
-          EnvelopeType = r.envelope_type!,
-          MessageType = messageType,
-          StreamId = r.work_stream_id,
-          PartitionNumber = r.partition_number,
-          Attempts = r.attempts,
-          Status = (MessageProcessingStatus)r.status,
-          Flags = flags
-        };
-      })
-      .ToList();
-
-    var inboxWork = resultList
-      .Where(r => r.source == "inbox")
-      .Select(r => {
-        if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
-          throw new InvalidOperationException($"Inbox work {r.work_id} missing message_type or message_data");
-        }
-
-        var envelope = _deserializeEnvelope(r.message_type, r.message_data);
-        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
-        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
-
-        var flags = WorkBatchFlags.None;
-        if (r.is_newly_stored) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
-
-        if (r.is_orphaned) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        return new InboxWork {
-          MessageId = r.work_id,
-          Envelope = jsonEnvelope,
-          MessageType = r.message_type,
-          StreamId = r.work_stream_id,
-          PartitionNumber = r.partition_number,
-          Status = (MessageProcessingStatus)r.status,
-          Flags = flags
-        };
-      })
-      .ToList();
-
-    var perspectiveWork = resultList
-      .Where(r => r.source == "perspective")
-      .Select(r => {
-        var flags = WorkBatchFlags.None;
-        if (r.is_newly_stored) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
-
-        if (r.is_orphaned) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        return new PerspectiveWork {
-          StreamId = r.work_stream_id ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-          PerspectiveName = r.perspective_name ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
-          LastProcessedEventId = null,
-          Status = (PerspectiveProcessingStatus)r.status,
-          PartitionNumber = r.partition_number,
-          Flags = flags
-        };
-      })
-      .ToList();
-
-    // Parse sync inquiry results
-    // SQL returns: source='sync_result', work_id=inquiry_id, work_stream_id=stream_id,
-    //              partition_number=pending_count, status=processed_count,
-    //              message_data=pending_event_ids JSON, metadata={"processed_event_ids":[...]}
-    var syncInquiryResults = resultList
-      .Where(r => r.source == "sync_result")
-      .Select(r => new SyncInquiryResult {
-        InquiryId = r.work_id,
-        StreamId = r.work_stream_id ?? Guid.Empty,
-        PendingCount = r.partition_number ?? 0,
-        ProcessedCount = r.status,
-        PendingEventIds = _parsePendingEventIds(r.message_data),
-        ProcessedEventIds = _parseProcessedEventIds(r.metadata)
-      })
-      .ToList();
-
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var outboxWorkCount = outboxWork.Count;
-      var inboxWorkCount = inboxWork.Count;
-      var perspectiveWorkCount = perspectiveWork.Count;
-      var syncResultsCount = syncInquiryResults.Count;
-      _logger.LogDebug(
-        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
-        outboxWorkCount,
-        inboxWorkCount,
-        perspectiveWorkCount,
-        syncResultsCount
-      );
+    if (_logger is not null) {
+      LogWorkBatchProcessed(_logger, outboxWork.Count, inboxWork.Count, perspectiveWork.Count, syncInquiryResults.Count);
     }
 
     return new WorkBatch {
@@ -302,6 +223,91 @@ public class DapperWorkCoordinator(
       PerspectiveWork = perspectiveWork,
       SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
     };
+  }
+
+  /// <summary>
+  /// Maps a WorkBatchRow with source "sync_result" to a SyncInquiryResult.
+  /// </summary>
+  private SyncInquiryResult _mapSyncInquiryResult(WorkBatchRow r) {
+    return new SyncInquiryResult {
+      InquiryId = r.work_id,
+      StreamId = r.work_stream_id ?? Guid.Empty,
+      PendingCount = r.partition_number ?? 0,
+      ProcessedCount = r.status,
+      PendingEventIds = _parsePendingEventIds(r.message_data),
+      ProcessedEventIds = _parseProcessedEventIds(r.metadata)
+    };
+  }
+
+  private OutboxWork _mapOutboxWork(WorkBatchRow r) {
+    if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
+      throw new InvalidOperationException($"Outbox work {r.work_id} missing message_type or message_data");
+    }
+
+    var envelope = _deserializeEnvelope(r.message_type, r.message_data);
+    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+
+    var messageType = !string.IsNullOrWhiteSpace(r.message_type)
+      ? r.message_type
+      : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
+
+    return new OutboxWork {
+      MessageId = r.work_id,
+      Destination = r.destination!,
+      Envelope = jsonEnvelope,
+      EnvelopeType = r.envelope_type!,
+      MessageType = messageType,
+      StreamId = r.work_stream_id,
+      PartitionNumber = r.partition_number,
+      Attempts = r.attempts,
+      Status = (MessageProcessingStatus)r.status,
+      Flags = _buildFlags(r.is_newly_stored, r.is_orphaned)
+    };
+  }
+
+  private InboxWork _mapInboxWork(WorkBatchRow r) {
+    if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
+      throw new InvalidOperationException($"Inbox work {r.work_id} missing message_type or message_data");
+    }
+
+    var envelope = _deserializeEnvelope(r.message_type, r.message_data);
+    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+
+    return new InboxWork {
+      MessageId = r.work_id,
+      Envelope = jsonEnvelope,
+      MessageType = r.message_type,
+      StreamId = r.work_stream_id,
+      PartitionNumber = r.partition_number,
+      Attempts = r.attempts,
+      Status = (MessageProcessingStatus)r.status,
+      Flags = _buildFlags(r.is_newly_stored, r.is_orphaned)
+    };
+  }
+
+  private static PerspectiveWork _mapPerspectiveWork(WorkBatchRow r) {
+    return new PerspectiveWork {
+      WorkId = r.work_id,
+      StreamId = r.work_stream_id ?? throw new InvalidOperationException("Perspective work must have StreamId"),
+      PerspectiveName = r.perspective_name ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
+      LastProcessedEventId = null,
+      Status = (PerspectiveProcessingStatus)r.status,
+      PartitionNumber = r.partition_number,
+      Flags = _buildFlags(r.is_newly_stored, r.is_orphaned)
+    };
+  }
+
+  private static WorkBatchOptions _buildFlags(bool isNewlyStored, bool isOrphaned) {
+    var flags = WorkBatchOptions.None;
+    if (isNewlyStored) {
+      flags |= WorkBatchOptions.NewlyStored;
+    }
+    if (isOrphaned) {
+      flags |= WorkBatchOptions.Orphaned;
+    }
+    return flags;
   }
 
   private string _serializeCompletions(MessageCompletion[] completions) {
@@ -337,18 +343,11 @@ public class DapperWorkCoordinator(
     var json = JsonSerializer.Serialize(messages, typeInfo);
 
     // Log the first message for debugging
-    if (messages.Length > 0 && _logger?.IsEnabled(LogLevel.Debug) == true) {
-      // OutboxMessage is non-generic - access properties directly
+    if (messages.Length > 0 && _logger is not null) {
       var firstMessage = messages[0];
-      var messageId = firstMessage.MessageId;
-      var destination = firstMessage.Destination;
-      var envelopeType = firstMessage.EnvelopeType;
-      var hopsCount = firstMessage.Envelope.Hops.Count;
-      var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
-
-      _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
-        messageId, destination, envelopeType, hopsCount);
-      _logger.LogDebug("First outbox message JSON: {Json}", jsonPreview);
+      var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
+      LogSerializingOutboxMessage(_logger, firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType, firstMessage.Envelope.Hops?.Count ?? 0);
+      LogOutboxMessageJson(_logger, jsonPreview);
     }
 
     return json;
@@ -387,21 +386,30 @@ public class DapperWorkCoordinator(
     return JsonSerializer.Serialize(messageIds, typeInfo);
   }
 
-  private string _serializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
+  private string _serializePerspectiveEventCompletions(PerspectiveEventCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
     }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveEventCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveEventCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
-  private string _serializePerspectiveFailures(PerspectiveCheckpointFailure[] failures) {
+  private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string _serializePerspectiveFailures(PerspectiveCursorFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
     }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
@@ -420,8 +428,8 @@ public class DapperWorkCoordinator(
   /// </summary>
   private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     // Log the envelope data for debugging
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      _logger.LogDebug("Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}", envelopeTypeName, envelopeDataJson);
+    if (_logger is not null) {
+      LogDeserializingEnvelope(_logger, envelopeTypeName, envelopeDataJson);
     }
 
     // Always deserialize as MessageEnvelope<JsonElement> to support covariance casting to IMessageEnvelope<object>
@@ -431,30 +439,28 @@ public class DapperWorkCoordinator(
 
     // Deserialize the complete envelope as MessageEnvelope<JsonElement>
     var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement>");
+      ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
 
     // Log result for debugging
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var messageId = envelope.MessageId;
-      var hopsCount = envelope.Hops.Count;
-      _logger.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", messageId, hopsCount);
+    if (_logger is not null) {
+      LogDeserializedEnvelope(_logger, envelope.MessageId.Value, envelope.Hops?.Count ?? 0);
     }
 
     return envelope;
   }
 
   /// <summary>
-  /// Reports perspective checkpoint completion directly (out-of-band).
-  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Reports perspective cursor completion directly (out-of-band).
+  /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// </summary>
   public async Task ReportPerspectiveCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_checkpoint_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
       new {
         StreamId = completion.StreamId,
         PerspectiveName = completion.PerspectiveName,
@@ -465,17 +471,17 @@ public class DapperWorkCoordinator(
   }
 
   /// <summary>
-  /// Reports perspective checkpoint failure directly (out-of-band).
-  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Reports perspective cursor failure directly (out-of-band).
+  /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// </summary>
   public async Task ReportPerspectiveFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_checkpoint_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
       new {
         StreamId = failure.StreamId,
         PerspectiveName = failure.PerspectiveName,
@@ -489,26 +495,27 @@ public class DapperWorkCoordinator(
   /// Gets the current checkpoint for a perspective stream.
   /// Returns null if no checkpoint exists yet.
   /// </summary>
-  public async Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+  public async Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
     Guid streamId,
     string perspectiveName,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
-    var result = await connection.QueryFirstOrDefaultAsync<CheckpointQueryResult>(
-      "SELECT stream_id, perspective_name, last_event_id, status FROM wh_perspective_checkpoints WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
+    var result = await connection.QueryFirstOrDefaultAsync<CursorQueryResult>(
+      "SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM wh_perspective_cursors WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
       new { StreamId = streamId, PerspectiveName = perspectiveName });
 
     if (result == null) {
       return null;
     }
 
-    return new PerspectiveCheckpointInfo {
+    return new PerspectiveCursorInfo {
       StreamId = result.stream_id,
       PerspectiveName = result.perspective_name,
       LastEventId = result.last_event_id,
-      Status = (PerspectiveProcessingStatus)result.status
+      Status = (PerspectiveProcessingStatus)result.status,
+      RewindTriggerEventId = result.rewind_trigger_event_id
     };
   }
 
@@ -524,7 +531,7 @@ public class DapperWorkCoordinator(
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
     }
 
     var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
@@ -538,14 +545,12 @@ public class DapperWorkCoordinator(
   }
 
   /// <summary>
-  /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
-  /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
+  /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
+  /// Notices are only generated when WorkBatchOptions.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var severity = args.Notice.Severity;
-      var message = args.Notice.MessageText;
-      _logger.LogDebug("PostgreSQL Notice [{Severity}]: {Message}", severity, message);
+    if (_logger is not null) {
+      LogPostgresNotice(_logger, args.Notice.Severity, args.Notice.MessageText);
     }
   }
 
@@ -558,6 +563,7 @@ public class DapperWorkCoordinator(
       OutboxFailures: _serializeFailures(request.OutboxFailures),
       InboxCompletions: _serializeCompletions(request.InboxCompletions),
       InboxFailures: _serializeFailures(request.InboxFailures),
+      PerspectiveEventCompletions: _serializePerspectiveEventCompletions(request.PerspectiveEventCompletions),
       PerspectiveCompletions: _serializePerspectiveCompletions(request.PerspectiveCompletions),
       PerspectiveFailures: _serializePerspectiveFailures(request.PerspectiveFailures),
       NewOutboxMessages: _serializeNewOutboxMessages(request.NewOutboxMessages),
@@ -608,11 +614,77 @@ public class DapperWorkCoordinator(
           ids.Add(id);
         }
       }
-      return ids.Count > 0 ? ids.ToArray() : [];
+      return ids.Count > 0 ? [.. ids] : [];
     } catch {
       return null;
     }
   }
+
+  #region LoggerMessage Declarations
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}"
+  )]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage requires flat parameters matching the structured log template")]
+  static partial void LogProcessingWorkBatch(ILogger logger, Guid instanceId, string serviceName, string hostName, int processId,
+    int outboxCompletions, int outboxFailures, int inboxCompletions, int inboxFailures, int newOutbox, int newInbox, WorkBatchOptions flags);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results"
+  )]
+  static partial void LogWorkBatchProcessed(ILogger logger, int outboxWork, int inboxWork, int perspectiveWork, int syncResults);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}"
+  )]
+  static partial void LogSerializingOutboxMessage(ILogger logger, Guid messageId, string? destination, string envelopeType, int hopsCount);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "First outbox message JSON: {Json}"
+  )]
+  static partial void LogOutboxMessageJson(ILogger logger, string json);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}"
+  )]
+  static partial void LogDeserializingEnvelope(ILogger logger, string envelopeType, string envelopeJson);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}"
+  )]
+  static partial void LogDeserializedEnvelope(ILogger logger, Guid messageId, int hopsCount);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "PostgreSQL Notice [{Severity}]: {Message}"
+  )]
+  static partial void LogPostgresNotice(ILogger logger, string severity, string message);
+
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "process_work_batch timed out after {TimeoutSeconds}s for instance {InstanceId} ({ServiceName})"
+  )]
+  static partial void LogWorkBatchTimedOut(ILogger logger, int timeoutSeconds, Guid instanceId, string serviceName, Exception ex);
+
+  [LoggerMessage(
+    Level = LogLevel.Information,
+    Message = "process_work_batch cancelled for instance {InstanceId} ({ServiceName})"
+  )]
+  static partial void LogWorkBatchCancelled(ILogger logger, Guid instanceId, string serviceName, Exception ex);
+
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "process_work_batch failed for instance {InstanceId} ({ServiceName})"
+  )]
+  static partial void LogWorkBatchFailed(ILogger logger, Guid instanceId, string serviceName, Exception ex);
+
+  #endregion
 }
 
 /// <summary>
@@ -640,14 +712,15 @@ internal class WorkBatchRow {
 }
 
 /// <summary>
-/// DTO for querying perspective checkpoint info.
+/// DTO for querying perspective cursor info.
 /// Uses snake_case to match PostgreSQL column names.
 /// </summary>
-internal class CheckpointQueryResult {
+internal class CursorQueryResult {
   public Guid stream_id { get; set; }
   public string perspective_name { get; set; } = string.Empty;
   public Guid? last_event_id { get; set; }
   public short status { get; set; }
+  public Guid? rewind_trigger_event_id { get; set; }
 }
 
 /// <summary>
@@ -659,6 +732,7 @@ internal sealed record SerializedWorkBatchData(
   string OutboxFailures,
   string InboxCompletions,
   string InboxFailures,
+  string PerspectiveEventCompletions,
   string PerspectiveCompletions,
   string PerspectiveFailures,
   string NewOutboxMessages,

@@ -172,7 +172,27 @@ public interface IMessageTagHook<TAttribute> where TAttribute : MessageTagAttrib
 | `Message` | `object` | The original message object |
 | `MessageType` | `Type` | The message's runtime type |
 | `Payload` | `JsonElement` | JSON payload with extracted properties |
-| `Scope` | `IReadOnlyDictionary<string, object?>?` | Scope data (tenant, user, correlation ID, etc.) |
+| `Scope` | `IScopeContext?` | Security scope context (tenant, user, roles, permissions) |
+| `Stage` | `LifecycleStage` | The lifecycle stage at which this hook is being invoked |
+
+### Stage-Based Filtering
+
+Hooks fire at **every** lifecycle stage. Use `context.Stage` to decide when to act:
+
+```csharp
+public async ValueTask<JsonElement?> OnTaggedMessageAsync(
+    TagContext<NotificationTagAttribute> context,
+    CancellationToken ct) {
+  // Only send notifications after perspective data is committed
+  if (context.Stage != LifecycleStage.PostPerspectiveInline)
+    return null;
+
+  // Send notification...
+  return null;
+}
+```
+
+The `LifecycleStage` enum has 20 values. The special value `AfterReceptorCompletion` (-1) fires synchronously after the receptor completes, before any lifecycle stages.
 
 ## Hook Priority
 
@@ -309,6 +329,15 @@ services.AddWhizbang(options => {
 1. Check hook is registered for the correct attribute type
 2. Verify hook is registered with DI (automatically done by UseHook)
 3. Check `TagProcessingMode` - if using `AsLifecycleStage`, hooks fire later
+
+### Hook firing multiple times?
+
+This is expected. `ProcessTagsAsync` is called from multiple places (Dispatcher, ReceptorInvoker, PerspectiveWorker) at different lifecycle stages. Use `context.Stage` to filter:
+
+```csharp
+if (context.Stage != LifecycleStage.PostPerspectiveInline)
+  return null; // Skip — only act when data is committed
+```
 
 ### Multi-assembly issues?
 

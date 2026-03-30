@@ -460,6 +460,444 @@ public class AutoPopulateProcessorTests {
 
   #endregion
 
+  #region Additional Processor Coverage Tests
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_NullHops_DoesNotThrowAsync() {
+    // Arrange - envelope with null hops
+    var processor = new AutoPopulateProcessor();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "SentAt",
+      PropertyType = typeof(DateTimeOffset?),
+      PopulateKind = PopulateKind.Timestamp,
+      TimestampKind = TimestampKind.SentAt
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8100);
+
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = null!
+    };
+
+    // Act - should not throw
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - no hop was added
+    await Task.CompletedTask;
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_NoCurrentHop_DoesNotAddMetadataAsync() {
+    // Arrange - envelope with only causation hops (no current hop)
+    var processor = new AutoPopulateProcessor();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "SentAt",
+      PropertyType = typeof(DateTimeOffset?),
+      PopulateKind = PopulateKind.Timestamp,
+      TimestampKind = TimestampKind.SentAt
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8101);
+
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Causation,
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "CausationService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 1
+          },
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    var initialHopCount = envelope.Hops.Count;
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    await Assert.That(envelope.Hops.Count).IsEqualTo(initialHopCount);
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_QueuedAtTimestamp_ReturnsNullAndSkipsAsync() {
+    // Arrange - QueuedAt timestamps are set later by WorkCoordinatorPublisherWorker, not here
+    var processor = new AutoPopulateProcessor();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "QueuedAt",
+      PropertyType = typeof(DateTimeOffset?),
+      PopulateKind = PopulateKind.Timestamp,
+      TimestampKind = TimestampKind.QueuedAt
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8102);
+
+    var envelope = _createTestEnvelope();
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - QueuedAt returns null, so no "auto:QueuedAt" metadata key should be present
+    var metadata = envelope.GetMetadata("auto:QueuedAt");
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_DeliveredAtTimestamp_ReturnsNullAndSkipsAsync() {
+    // Arrange - DeliveredAt timestamps are set later by TransportConsumerWorker
+    var processor = new AutoPopulateProcessor();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "DeliveredAt",
+      PropertyType = typeof(DateTimeOffset?),
+      PopulateKind = PopulateKind.Timestamp,
+      TimestampKind = TimestampKind.DeliveredAt
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8103);
+
+    var envelope = _createTestEnvelope();
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - DeliveredAt returns null, so no "auto:DeliveredAt" metadata key should be present
+    var metadata = envelope.GetMetadata("auto:DeliveredAt");
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_ContextWithNullScope_SkipsAsync() {
+    // Arrange - Context registration but hop has no scope values
+    var processor = new AutoPopulateProcessor();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "CreatedByCtx",
+      PropertyType = typeof(string),
+      PopulateKind = PopulateKind.Context,
+      ContextKind = ContextKind.UserId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8104);
+
+    // Envelope with no scope on hop
+    var envelope = _createTestEnvelope();
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - No metadata added for this specific key since no scope on hop
+    var metadata = envelope.GetMetadata("auto:CreatedByCtx");
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_ServiceInstanceId_StoresGuidAsync() {
+    // Arrange
+    var processor = new AutoPopulateProcessor();
+    var envelope = _createTestEnvelope();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "InstanceId",
+      PropertyType = typeof(Guid),
+      PopulateKind = PopulateKind.Service,
+      ServiceKind = ServiceKind.InstanceId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8105);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    var metadata = envelope.GetMetadata("auto:InstanceId");
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Value.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.String); // Guids serialize as strings
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_ServiceHostName_StoresStringAsync() {
+    // Arrange
+    var processor = new AutoPopulateProcessor();
+    var envelope = _createTestEnvelope();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "HostName",
+      PropertyType = typeof(string),
+      PopulateKind = PopulateKind.Service,
+      ServiceKind = ServiceKind.HostName
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8106);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    var metadata = envelope.GetMetadata("auto:HostName");
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Value.GetString()).IsEqualTo("localhost");
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_ServiceProcessId_StoresIntAsync() {
+    // Arrange
+    var processor = new AutoPopulateProcessor();
+    var envelope = _createTestEnvelope();
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "ProcessId",
+      PropertyType = typeof(int),
+      PopulateKind = PopulateKind.Service,
+      ServiceKind = ServiceKind.ProcessId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8107);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    var metadata = envelope.GetMetadata("auto:ProcessId");
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Value.GetInt32()).IsEqualTo(12345);
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_IdentifierCausationId_StoresGuidAsync() {
+    // Arrange
+    var processor = new AutoPopulateProcessor();
+    var causationId = MessageId.New();
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          CausationId = causationId
+        }
+      ]
+    };
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "CausationId",
+      PropertyType = typeof(Guid?),
+      PopulateKind = PopulateKind.Identifier,
+      IdentifierKind = IdentifierKind.CausationId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8108);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    var metadata = envelope.GetMetadata("auto:CausationId");
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Value.GetGuid()).IsEqualTo(causationId.Value);
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_IdentifierStreamId_StoresStringAsync() {
+    // Arrange
+    var processor = new AutoPopulateProcessor();
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          StreamId = "stream-123"
+        }
+      ]
+    };
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "StreamId",
+      PropertyType = typeof(string),
+      PopulateKind = PopulateKind.Identifier,
+      IdentifierKind = IdentifierKind.StreamId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8109);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    var metadata = envelope.GetMetadata("auto:StreamId");
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Value.GetString()).IsEqualTo("stream-123");
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_IdentifierCorrelationIdNull_SkipsAsync() {
+    // Arrange - CorrelationId is null on hop
+    var processor = new AutoPopulateProcessor();
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = null
+        }
+      ]
+    };
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "NullCorrelationId",
+      PropertyType = typeof(Guid?),
+      PopulateKind = PopulateKind.Identifier,
+      IdentifierKind = IdentifierKind.CorrelationId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8110);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - CorrelationId is null, so this specific metadata key should not be present
+    var metadata = envelope.GetMetadata("auto:NullCorrelationId");
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_IdentifierStreamIdEmpty_SkipsAsync() {
+    // Arrange - StreamId is empty
+    var processor = new AutoPopulateProcessor();
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          StreamId = ""
+        }
+      ]
+    };
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "EmptyStreamId",
+      PropertyType = typeof(string),
+      PopulateKind = PopulateKind.Identifier,
+      IdentifierKind = IdentifierKind.StreamId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8111);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - empty StreamId, so this specific metadata key should not be present
+    var metadata = envelope.GetMetadata("auto:EmptyStreamId");
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_IdentifierCausationIdNull_SkipsAsync() {
+    // Arrange - CausationId is null
+    var processor = new AutoPopulateProcessor();
+    var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          CausationId = null
+        }
+      ]
+    };
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "NullCausationId",
+      PropertyType = typeof(Guid?),
+      PopulateKind = PopulateKind.Identifier,
+      IdentifierKind = IdentifierKind.CausationId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8112);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert - null CausationId, so this specific metadata key should not be present
+    var metadata = envelope.GetMetadata("auto:NullCausationId");
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task AutoPopulateProcessor_ProcessAutoPopulate_ContextTenantId_StoresTenantAsync() {
+    // Arrange
+    var processor = new AutoPopulateProcessor();
+    var envelope = _createTestEnvelopeWithSecurity("user-x", "tenant-x");
+    var registration = new AutoPopulateRegistration {
+      MessageType = typeof(TestAutoPopulateMessage),
+      PropertyName = "TenantIdProp",
+      PropertyType = typeof(string),
+      PopulateKind = PopulateKind.Context,
+      ContextKind = ContextKind.TenantId
+    };
+    var registry = new TestAutoPopulateRegistry([registration]);
+    AutoPopulateRegistry.Register(registry, priority: 8113);
+
+    // Act
+    processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
+
+    // Assert
+    var metadata = envelope.GetMetadata("auto:TenantIdProp");
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Value.GetString()).IsEqualTo("tenant-x");
+  }
+
+  #endregion
+
   #region Test Helpers
 
   private sealed record TestMessage(Guid Id);
@@ -471,15 +909,15 @@ public class AutoPopulateProcessorTests {
   /// <summary>
   /// Test implementation of IAutoPopulateRegistry for unit tests.
   /// </summary>
-  private sealed class TestAutoPopulateRegistry : IAutoPopulateRegistry {
-    private readonly AutoPopulateRegistration[] _registrations;
-
-    public TestAutoPopulateRegistry(AutoPopulateRegistration[] registrations) {
-      _registrations = registrations;
-    }
+  private sealed class TestAutoPopulateRegistry(AutoPopulateRegistration[] registrations) : IAutoPopulateRegistry {
+    private readonly AutoPopulateRegistration[] _registrations = registrations;
 
     public IEnumerable<AutoPopulateRegistration> GetRegistrationsFor(Type messageType) {
       return _registrations.Where(r => r.MessageType == messageType);
+    }
+
+    public IEnumerable<AutoPopulateRegistration> GetAllRegistrations() {
+      return _registrations;
     }
   }
 
@@ -520,7 +958,7 @@ public class AutoPopulateProcessorTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          SecurityContext = new SecurityContext { UserId = userId, TenantId = tenantId }
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = tenantId })
         }
       ]
     };

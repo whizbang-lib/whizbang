@@ -56,7 +56,7 @@ public static class AnalyzerTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -66,7 +66,7 @@ public static class AnalyzerTestHelper {
 
     // Create compilation with analyzers
     var compilationWithAnalyzers = compilation.WithAnalyzers(
-        ImmutableArray.Create<DiagnosticAnalyzer>(analyzer));
+        [analyzer]);
 
     // Get analyzer diagnostics only (exclude compiler diagnostics)
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();

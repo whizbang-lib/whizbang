@@ -4,10 +4,14 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
@@ -17,9 +21,10 @@ namespace Whizbang.Core.Workers;
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
-/// <docs>components/workers/service-bus-consumer</docs>
+/// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
@@ -27,16 +32,15 @@ public partial class ServiceBusConsumerWorker(
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
   ServiceBusConsumerOptions? options = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null
   ) : BackgroundService {
+#pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
   private readonly List<ISubscription> _subscriptions = [];
@@ -128,178 +132,224 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-    // Restore distributed trace context from the incoming message's TraceParent
-    // This enables cross-service tracing by linking spans from sender to receiver
-    Activity? inboxActivity = null;
-    var traceParent = envelope.Hops
-      .Where(h => h.Type == HopType.Current)
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      // Start a new activity as child of the sender's span
-      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
-      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
-        $"Inbox {messageType}",
-        ActivityKind.Consumer,
-        parentContext
-      );
-      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
-      inboxActivity?.SetTag("messaging.operation", "receive");
-      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
-    }
+    var inboxActivity = _startInboxActivity(envelope, envelopeType);
 
     try {
-      // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
       var scopedProvider = scope.ServiceProvider;
-
-      // Establish FULL security context FIRST (before any business logic)
-      // This sets BOTH IScopeContextAccessor.Current AND IMessageContextAccessor.Current
-      // so all scoped services can access security context via either mechanism
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
-
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-
       LogProcessingMessage(_logger, envelope.MessageId);
 
-      // 1. Serialize envelope to InboxMessage
-      // Pass scope so we can resolve IEnvelopeSerializer if needed
-      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
-
-      // 2. Queue for atomic deduplication via process_work_batch
-      strategy.QueueInboxMessage(newInboxMessage);
-
-      // DIAGNOSTIC: Log before flush
-      LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
-
-      // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct);
-
-      // DIAGNOSTIC: Log after flush
-      LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
-
-      // Extended diagnostic logging for perspective work
-      var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[ServiceBusConsumerWorker DIAG] Message {envelope.MessageId} flush result:");
-        Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   InboxWork: {workBatch.InboxWork.Count}, PerspectiveWork: {workBatch.PerspectiveWork.Count}");
-        if (workBatch.PerspectiveWork.Count > 0) {
-          foreach (var pw in workBatch.PerspectiveWork) {
-            Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   - Perspective: {pw.PerspectiveName}, StreamId: {pw.StreamId}, LastProcessedEventId: {pw.LastProcessedEventId}");
-          }
-        } else {
-          Console.WriteLine("[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
-        }
-      }
-
-      // 4. Check if work was returned - empty means duplicate (already processed)
-      var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
-
-      // DIAGNOSTIC: Log work batch details for this message
-      LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);
-
+      // 1. Serialize and deduplicate via work coordinator
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
       if (myWork.Count == 0) {
         LogMessageAlreadyProcessed(_logger, envelope.MessageId);
         return;
       }
-
       LogMessageAcceptedForProcessing(_logger, envelope.MessageId, myWork.Count);
 
-      // 5. Process using OrderedStreamProcessor (maintains stream ordering)
-      // NOTE: Inline perspective invocation has been removed - perspectives are now processed via:
-      // 1. process_work_batch automatically creates perspective checkpoints (Migration 006)
-      // 2. PerspectiveWorker picks up checkpoints and processes them asynchronously
-      // This provides better reliability, scalability, and separation of concerns.
+      // 2. PreInbox lifecycle, process work, PostInbox lifecycle
+      var receptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
+      await _invokePreInboxLifecycleAsync(myWork, receptorInvoker, ct);
+      await _processInboxWorkItemsAsync(myWork, strategy, ct);
+      await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scopedProvider, ct);
 
-      // PreInbox lifecycle stages (before local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-        foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PreInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not tracked for inbox work
-          };
-
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
-
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
-        }
-      }
-
-      await _orderedProcessor.ProcessInboxWorkAsync(
-        myWork,
-        processor: async (work) => {
-          // Deserialize event from work item
-          var @event = _deserializeEvent(work);
-
-          // Mark as EventStored - perspectives will be processed via PerspectiveWorker
-          // from checkpoints created by process_work_batch
-          if (@event is IEvent) {
-            return MessageProcessingStatus.EventStored;
-          }
-
-          // Non-event messages (if any) - just mark as stored
-          return MessageProcessingStatus.EventStored;
-        },
-        completionHandler: (msgId, status) => {
-          strategy.QueueInboxCompletion(msgId, status);
-          LogQueuedCompletion(_logger, msgId, status);
-        },
-        failureHandler: (msgId, status, error) => {
-          strategy.QueueInboxFailure(msgId, status, error);
-          LogQueuedFailure(_logger, msgId, error);
-        },
-        ct
-      );
-
-      // PostInbox lifecycle stages (after local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-        foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not tracked for inbox work
-          };
-
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
-
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
-        }
-      }
-
-      // 6. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, ct);
-
+      // 3. Report completions/failures back to database
+      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, ct);
       LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
-
-      // Scope will be disposed automatically by 'await using' at end of method
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
       inboxActivity?.SetTag("exception.message", ex.Message);
       LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
-      throw; // Let the transport handle retry/dead-letter
+      throw;
     } finally {
       inboxActivity?.Dispose();
     }
+  }
+
+  /// <summary>
+  /// Starts a distributed trace activity linked to the sender's span via TraceParent.
+  /// </summary>
+  private static Activity? _startInboxActivity(IMessageEnvelope envelope, string? envelopeType) {
+    var traceParent = envelope.Hops
+      .Where(h => h.Type == HopType.Current)
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is null || !ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      return null;
+    }
+
+    var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
+    var activity = WhizbangActivitySource.Transport.StartActivity(
+      $"Inbox {messageType}", ActivityKind.Consumer, parentContext);
+    activity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
+    activity?.SetTag("messaging.operation", "receive");
+    activity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
+    return activity;
+  }
+
+  /// <summary>
+  /// Serializes envelope to InboxMessage and flushes through work coordinator for deduplication.
+  /// </summary>
+  private async Task<List<InboxWork>> _serializeAndDeduplicateAsync(
+    IMessageEnvelope envelope, string? envelopeType,
+    IWorkCoordinatorStrategy strategy, IServiceProvider scopedProvider, CancellationToken ct) {
+    var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
+    strategy.QueueInboxMessage(newInboxMessage);
+    LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: ct);
+    LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
+    var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
+    LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);
+    return myWork;
+  }
+
+  /// <summary>
+  /// Invokes PreInbox lifecycle stages (PreInboxAsync + PreInboxInline) for all work items.
+  /// </summary>
+  private async Task _invokePreInboxLifecycleAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
+    if (receptorInvoker is null || _lifecycleMessageDeserializer is null) {
+      return;
+    }
+
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PreInboxAsync,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = null
+      };
+
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+    }
+  }
+
+  /// <summary>
+  /// Processes inbox work items through the OrderedStreamProcessor for stream ordering.
+  /// </summary>
+  private async Task _processInboxWorkItemsAsync(
+    List<InboxWork> myWork, IWorkCoordinatorStrategy strategy, CancellationToken ct) {
+    await _orderedProcessor.ProcessInboxWorkAsync(
+      myWork,
+      processor: async (work) => {
+        _ = _deserializeEvent(work);
+        return MessageProcessingStatus.EventStored;
+      },
+      completionHandler: (msgId, status) => {
+        strategy.QueueInboxCompletion(msgId, status);
+        LogQueuedCompletion(_logger, msgId, status);
+      },
+      failureHandler: (msgId, status, error) => {
+        strategy.QueueInboxFailure(msgId, status, error);
+        LogQueuedFailure(_logger, msgId, error);
+      },
+      ct
+    );
+  }
+
+  /// <summary>
+  /// Invokes PostInbox lifecycle stages and PostLifecycle for events without perspectives.
+  /// </summary>
+  private async Task _invokePostInboxLifecycleAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker,
+    IServiceProvider scopedProvider, CancellationToken ct) {
+    if (receptorInvoker is null || _lifecycleMessageDeserializer is null) {
+      return;
+    }
+
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostInboxAsync,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = null
+      };
+
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
+      if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
+        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, ct);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Invokes PostLifecycle stages for an event without perspectives.
+  /// </summary>
+  private static async Task _invokePostLifecycleForEventAsync(
+    InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
+    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, CancellationToken ct) {
+    var coordinator = scopedProvider.GetService<ILifecycleCoordinator>();
+    if (coordinator is not null) {
+      var eventId = work.Envelope.MessageId.Value;
+      var tracking = coordinator.BeginTracking(
+        eventId, typedEnvelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, ct);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
+      coordinator.AbandonTracking(eventId);
+    } else {
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, ct);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+    }
+  }
+
+  private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
+    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+  }
+
+  /// <summary>
+  /// Checks if the given message type is an event type that has NO associated perspectives.
+  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
+  /// Events without perspectives need PostLifecycle fired here immediately.
+  /// </summary>
+  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      // No perspectives registered at all - all events are "without perspectives"
+      return true;
+    }
+
+    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+
+    var perspectives = registry.GetRegisteredPerspectives();
+    foreach (var perspective in perspectives) {
+      foreach (var eventType in perspective.EventTypes) {
+        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
+        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
+          return false; // This event type has at least one perspective
+        }
+      }
+    }
+
+    return true; // No perspectives handle this event type
   }
 
   /// <summary>
@@ -317,7 +367,7 @@ public partial class ServiceBusConsumerWorker(
     if (string.IsNullOrWhiteSpace(envelopeTypeFromTransport)) {
       throw new InvalidOperationException(
         $"EnvelopeType is required from transport but was null/empty. MessageId: {envelope.MessageId}. " +
-        $"This indicates a bug in the transport layer - envelope type must be preserved during transmission.");
+        "This indicates a bug in the transport layer - envelope type must be preserved during transmission.");
     }
 
     // Extract message type from envelope type string
@@ -343,22 +393,20 @@ public partial class ServiceBusConsumerWorker(
       throw new InvalidOperationException(
         $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"This indicates double-serialization or incorrect envelope creation. " +
-        $"Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +
-        $"not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
+        "This indicates double-serialization or incorrect envelope creation. " +
+        "Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +
+        "not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
       // Strongly-typed envelope - need to serialize it to JsonElement form for storage
-      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>();
-      if (serializer == null) {
-        throw new InvalidOperationException(
+      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>()
+        ?? throw new InvalidOperationException(
           "IEnvelopeSerializer is required but not registered. " +
           "Ensure you call services.AddWhizbang() to register core services.");
-      }
 
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
       var boundMethod = genericEnvelopeMethod!.MakeGenericMethod(payloadType);
-      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, new object[] { envelope })!;
+      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, [envelope])!;
       jsonEnvelope = serialized.JsonEnvelope;
 
       // NOTE: We use envelopeTypeFromTransport instead of serialized.EnvelopeType
@@ -377,14 +425,16 @@ public partial class ServiceBusConsumerWorker(
       isEvent = payload is IEvent;
     }
 
-    // Extract simple type name for handler name (last part after last '.')
-    var lastDotIndex = messageTypeName.LastIndexOf('.');
-    var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
-      : messageTypeName.Split(',')[0].Trim();
+    // Extract simple type name for handler name
+    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);
+
+    // Guard: fail-fast if StreamId is Guid.Empty for events
+    if (isEvent) {
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "ServiceBusConsumer.Inbox", messageTypeName);
+    }
 
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
@@ -395,6 +445,7 @@ public partial class ServiceBusConsumerWorker(
       EnvelopeType = envelopeTypeFromTransport,  // Use the original type from transport!
       StreamId = streamId,
       IsEvent = isEvent,
+      Scope = envelope.GetCurrentScope()?.Scope,
       MessageType = messageTypeName
     };
 
@@ -417,7 +468,7 @@ public partial class ServiceBusConsumerWorker(
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
     }
 
     var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
@@ -467,7 +518,7 @@ public partial class ServiceBusConsumerWorker(
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    var firstHop = envelope.Hops.FirstOrDefault();
+    var firstHop = envelope.Hops?.FirstOrDefault();
     if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
         streamIdElem.ValueKind == JsonValueKind.String) {
       var streamIdStr = streamIdElem.GetString();

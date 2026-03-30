@@ -17,7 +17,7 @@ public static class LifecycleReceptorTestExtensions {
   /// Uses PostPerspectiveInline lifecycle stage for deterministic synchronization.
   /// </summary>
   /// <typeparam name="TEvent">The event type to wait for.</typeparam>
-  /// <param name="host">The host containing the ILifecycleReceptorRegistry service.</param>
+  /// <param name="host">The host containing the IReceptorRegistry service.</param>
   /// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
   /// <param name="timeoutMilliseconds">Maximum time to wait in milliseconds (default: 15000ms).</param>
   /// <exception cref="TimeoutException">Thrown if perspective processing doesn't complete within timeout.</exception>
@@ -65,7 +65,7 @@ public static class LifecycleReceptorTestExtensions {
     var receptor = new PerspectiveCompletionReceptor<TEvent>(completionSource, perspectiveName);
 
     // Get registry from host
-    var registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = host.Services.GetRequiredService<IReceptorRegistry>();
 
     // Register receptor at PostPerspectiveInline stage (blocking, guarantees persistence)
     registry.Register<TEvent>(receptor, LifecycleStage.PostPerspectiveInline);
@@ -83,7 +83,7 @@ public static class LifecycleReceptorTestExtensions {
   /// Waits for multiple perspective processing completions for different event types.
   /// Useful when a command triggers multiple events that update different perspectives.
   /// </summary>
-  /// <param name="host">The host containing the ILifecycleReceptorRegistry service.</param>
+  /// <param name="host">The host containing the IReceptorRegistry service.</param>
   /// <param name="eventTypes">Array of event types to wait for.</param>
   /// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
   /// <param name="timeoutMilliseconds">Maximum time to wait in milliseconds (default: 15000ms).</param>
@@ -128,7 +128,7 @@ public static class LifecycleReceptorTestExtensions {
     // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
     var completionSources = eventTypes.Select(_ => new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
     var receptors = new List<object>();
-    var registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = host.Services.GetRequiredService<IReceptorRegistry>();
 
     try {
       // Register receptors for each event type
@@ -144,9 +144,9 @@ public static class LifecycleReceptorTestExtensions {
         receptors.Add(receptor);
 
         // Register using reflection (since we don't know TEvent at compile time)
-        var registerMethod = typeof(ILifecycleReceptorRegistry).GetMethod(nameof(ILifecycleReceptorRegistry.Register))!
+        var registerMethod = typeof(IReceptorRegistry).GetMethod(nameof(IReceptorRegistry.Register))!
           .MakeGenericMethod(eventType);
-        registerMethod.Invoke(registry, new[] { receptor, LifecycleStage.PostPerspectiveInline });
+        registerMethod.Invoke(registry, [receptor, LifecycleStage.PostPerspectiveInline]);
       }
 
       // Wait for all completions with timeout
@@ -159,9 +159,9 @@ public static class LifecycleReceptorTestExtensions {
         var eventType = eventTypes[i];
         var receptor = receptors[i];
 
-        var unregisterMethod = typeof(ILifecycleReceptorRegistry).GetMethod(nameof(ILifecycleReceptorRegistry.Unregister))!
+        var unregisterMethod = typeof(IReceptorRegistry).GetMethod(nameof(IReceptorRegistry.Unregister))!
           .MakeGenericMethod(eventType);
-        unregisterMethod.Invoke(registry, new[] { receptor, LifecycleStage.PostPerspectiveInline });
+        unregisterMethod.Invoke(registry, [receptor, LifecycleStage.PostPerspectiveInline]);
       }
     }
   }

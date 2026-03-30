@@ -31,7 +31,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var services = new ServiceCollection();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
-      new RoutingOptions().OwnDomains(ownedDomains.ToArray())));
+      new RoutingOptions().OwnDomains([.. ownedDomains])));
     var serviceProvider = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
@@ -145,7 +145,7 @@ public class TransportConsumerWorkerProvisioningTests {
         parallelizeStreams: false,
         logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>()),
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
+      metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>()
     );
   }

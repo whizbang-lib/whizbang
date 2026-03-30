@@ -136,7 +136,7 @@ public class RabbitMQConnectionRetryTests {
     var retry = new RabbitMQConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync((string)null!); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync((string)null!))
       .Throws<ArgumentException>();
   }
 
@@ -147,7 +147,7 @@ public class RabbitMQConnectionRetryTests {
     var retry = new RabbitMQConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync(""); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(""))
       .Throws<ArgumentException>();
   }
 
@@ -162,7 +162,7 @@ public class RabbitMQConnectionRetryTests {
     var retry = new RabbitMQConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync((ConnectionFactory)null!); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync((ConnectionFactory)null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -179,7 +179,7 @@ public class RabbitMQConnectionRetryTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync(factory, cts.Token); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory, cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -195,7 +195,7 @@ public class RabbitMQConnectionRetryTests {
     var factory = new ConnectionFactory { Uri = new Uri("amqp://invalid-host:5672") };
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateConnectionWithRetryAsync(factory); })
+    await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory))
       .Throws<BrokerUnreachableException>();
   }
 

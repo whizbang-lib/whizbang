@@ -161,8 +161,7 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
       var lineNumber = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
 
       // H02: Check for nested handler classes (Wolverine IHandle<T>)
-      var parentClass = classDecl.Parent as ClassDeclarationSyntax;
-      if (parentClass != null) {
+      if (classDecl.Parent is ClassDeclarationSyntax parentClass) {
         var isHandler = classDecl.BaseList?.Types
             .Any(t => {
               var typeName = t.Type.ToString();
@@ -209,8 +208,7 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -294,12 +292,8 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms IHandle to IReceptor in base lists.
   /// </summary>
-  private sealed class HandlerToReceptorRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public HandlerToReceptorRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class HandlerToReceptorRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitSimpleBaseType(SimpleBaseTypeSyntax node) {
       var typeName = node.Type.ToString();
@@ -329,12 +323,8 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms Handle methods to ReceiveAsync.
   /// </summary>
-  private sealed class HandleMethodRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public HandleMethodRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class HandleMethodRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node) {
       var methodName = node.Identifier.Text;
@@ -351,7 +341,7 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
               });
 
           if (implementsHandler) {
-            var newName = "ReceiveAsync";
+            const string newName = "ReceiveAsync";
 
             var newIdentifier = SyntaxFactory.Identifier(newName)
                 .WithLeadingTrivia(node.Identifier.LeadingTrivia)
@@ -376,12 +366,8 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that removes [WolverineHandler] attributes.
   /// </summary>
-  private sealed class WolverineAttributeRemover : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public WolverineAttributeRemover(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class WolverineAttributeRemover(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitAttributeList(AttributeListSyntax node) {
       var newAttributes = new List<AttributeSyntax>();
@@ -418,12 +404,8 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms MessageContext to MessageEnvelope (H06).
   /// </summary>
-  private sealed class MessageContextRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public MessageContextRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class MessageContextRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node) {
       if (node.Identifier.Text == "MessageContext") {
@@ -448,12 +430,8 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms LocalMessage patterns and IMessageBus to IDispatcher (H04).
   /// </summary>
-  private sealed class LocalMessageRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public LocalMessageRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class LocalMessageRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node) {
       // Transform IMessageBus to IDispatcher
@@ -500,17 +478,16 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
                   : SyntaxFactory.ArgumentList();
 
               // Build: _dispatcher.LocalInvokeAsync<T>(innerMessage)
-              var memberAccess = node.Expression as MemberAccessExpressionSyntax;
-              if (memberAccess != null) {
+              if (node.Expression is MemberAccessExpressionSyntax memberAccess) {
                 var newExpression = SyntaxFactory.MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
                     memberAccess.Expression,
                     SyntaxFactory.GenericName(
                         SyntaxFactory.Identifier("LocalInvokeAsync"),
                         SyntaxFactory.TypeArgumentList(
-                            SyntaxFactory.SeparatedList<TypeSyntax>(new[] {
+                            SyntaxFactory.SeparatedList<TypeSyntax>([
                                 SyntaxFactory.ParseTypeName(innerType)
-                            }))));
+                            ]))));
 
                 var newInvocation = SyntaxFactory.InvocationExpression(newExpression, newArgList)
                     .WithLeadingTrivia(node.GetLeadingTrivia())

@@ -5,7 +5,7 @@ namespace Whizbang.Core.Resilience;
 /// <summary>
 /// Represents the possible states of a subscription.
 /// </summary>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 public enum SubscriptionStatus {
   /// <summary>
   /// Initial state - subscription has not been attempted yet.
@@ -38,22 +38,19 @@ public enum SubscriptionStatus {
 /// where the worker can continue processing with some subscriptions while others are recovering.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionStateTests.cs</tests>
-public class SubscriptionState {
-  /// <summary>
-  /// Initializes a new instance of <see cref="SubscriptionState"/> for the specified destination.
-  /// </summary>
-  /// <param name="destination">The transport destination being tracked.</param>
-  /// <exception cref="ArgumentNullException">Thrown when <paramref name="destination"/> is null.</exception>
-  public SubscriptionState(TransportDestination destination) {
-    Destination = destination ?? throw new ArgumentNullException(nameof(destination));
-  }
+/// <remarks>
+/// Initializes a new instance of <see cref="SubscriptionState"/> for the specified destination.
+/// </remarks>
+/// <param name="destination">The transport destination being tracked.</param>
+/// <exception cref="ArgumentNullException">Thrown when <paramref name="destination"/> is null.</exception>
+public class SubscriptionState(TransportDestination destination) {
 
   /// <summary>
   /// The transport destination this state tracks.
   /// </summary>
-  public TransportDestination Destination { get; }
+  public TransportDestination Destination { get; } = destination ?? throw new ArgumentNullException(nameof(destination));
 
   /// <summary>
   /// Current status of the subscription.

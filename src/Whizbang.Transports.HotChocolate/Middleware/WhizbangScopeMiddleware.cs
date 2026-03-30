@@ -9,7 +9,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// ASP.NET Core middleware that extracts scope from HTTP context and sets it in the scope context accessor.
 /// Supports extraction from JWT claims and custom headers.
 /// </summary>
-/// <docs>graphql/scoping#middleware</docs>
+/// <docs>apis/graphql/scoping#middleware</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/ScopedQueryTests.cs</tests>
 /// <example>
 /// // In Program.cs or Startup.cs
@@ -22,14 +22,9 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 ///     options.TenantIdHeaderName = "X-Tenant-Id";
 /// });
 /// </example>
-public class WhizbangScopeMiddleware {
-  private readonly RequestDelegate _next;
-  private readonly WhizbangScopeOptions _options;
-
-  public WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions? options = null) {
-    _next = next;
-    _options = options ?? new WhizbangScopeOptions();
-  }
+public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions? options = null) {
+  private readonly RequestDelegate _next = next;
+  private readonly WhizbangScopeOptions _options = options ?? new WhizbangScopeOptions();
 
   public async Task InvokeAsync(HttpContext context, IScopeContextAccessor scopeContextAccessor) {
     // Build scope from claims and headers
@@ -127,34 +122,20 @@ public class WhizbangScopeMiddleware {
   }
 
   private HashSet<string> _extractRoles(HttpContext context) {
-    var roles = new HashSet<string>();
-
     var rolesClaim = context.User?.FindAll(_options.RolesClaimType);
-    if (rolesClaim != null) {
-      foreach (var claim in rolesClaim) {
-        if (!string.IsNullOrEmpty(claim.Value)) {
-          roles.Add(claim.Value);
-        }
-      }
-    }
-
-    return roles;
+    return rolesClaim?
+      .Select(claim => claim.Value)
+      .Where(value => !string.IsNullOrEmpty(value))
+      .ToHashSet() ?? [];
   }
 
   private HashSet<Permission> _extractPermissions(HttpContext context) {
-    var permissions = new HashSet<Permission>();
-
     var permClaims = context.User?.FindAll(_options.PermissionsClaimType);
-    if (permClaims != null) {
-      foreach (var claim in permClaims) {
-        if (!string.IsNullOrEmpty(claim.Value)) {
-          // Permission has an implicit conversion from string
-          permissions.Add(new Permission(claim.Value));
-        }
-      }
-    }
-
-    return permissions;
+    return permClaims?
+      .Select(claim => claim.Value)
+      .Where(value => !string.IsNullOrEmpty(value))
+      .Select(value => new Permission(value))
+      .ToHashSet() ?? [];
   }
 
   private HashSet<SecurityPrincipalId> _extractPrincipals(HttpContext context) {
@@ -176,10 +157,8 @@ public class WhizbangScopeMiddleware {
     // Add group principals
     var groupClaims = context.User?.FindAll(_options.GroupsClaimType);
     if (groupClaims != null) {
-      foreach (var claim in groupClaims) {
-        if (!string.IsNullOrEmpty(claim.Value)) {
-          principals.Add(SecurityPrincipalId.Group(claim.Value));
-        }
+      foreach (var value in groupClaims.Select(claim => claim.Value).Where(v => !string.IsNullOrEmpty(v))) {
+        principals.Add(SecurityPrincipalId.Group(value));
       }
     }
 
@@ -204,7 +183,7 @@ public class WhizbangScopeMiddleware {
 /// Configuration options for scope extraction middleware.
 /// Supports fallback claim types for common identity provider variations.
 /// </summary>
-/// <docs>graphql/scoping#options</docs>
+/// <docs>apis/graphql/scoping#options</docs>
 /// <example>
 /// services.Configure&lt;WhizbangScopeOptions&gt;(options => {
 ///     options.TenantIdClaimType = "tenant_id";

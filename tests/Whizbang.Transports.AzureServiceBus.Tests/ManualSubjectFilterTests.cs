@@ -26,7 +26,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// <docs>components/transports/azure-service-bus#sqlfilter-syntax</docs>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]
-[Timeout(60_000)]  // 60s timeout for fail-fast
+[Timeout(120_000)]  // 120s timeout — retry on quota exhaustion needs headroom
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
@@ -55,7 +55,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     Console.WriteLine($"[MANUAL TEST] Filtered subscription: {FILTERED_SUBSCRIPTION}");
     Console.WriteLine($"[MANUAL TEST] All-messages subscription: {ALL_MESSAGES_SUBSCRIPTION}");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain any stale messages from previous test runs
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
@@ -65,7 +65,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This is the exact format TransportPublishStrategy would generate for a nested class
-    var subjectWithPlus = "jdx.contracts.chat.chatconversationscontracts+createcommand";
+    const string subjectWithPlus = "jdx.contracts.chat.chatconversationscontracts+createcommand";
 
     var message = new ServiceBusMessage("test payload for + character") {
       MessageId = Guid.NewGuid().ToString(),
@@ -123,7 +123,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     Console.WriteLine("[MANUAL TEST] Control test: SqlFilter LIKE pattern with '.' only (no '+')...");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain any stale messages
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
@@ -132,7 +132,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This is what the Subject SHOULD look like after normalizing '+' to '.'
-    var subjectWithDots = "jdx.contracts.chat.chatconversationscontracts.createcommand";
+    const string subjectWithDots = "jdx.contracts.chat.chatconversationscontracts.createcommand";
 
     var message = new ServiceBusMessage("test payload for . character") {
       MessageId = Guid.NewGuid().ToString(),
@@ -179,7 +179,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     Console.WriteLine("[MANUAL TEST] Testing multiple '+' characters in Subject...");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
     await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
@@ -187,7 +187,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // Simulates a doubly-nested class: OuterClass+InnerClass+DeepestClass
-    var subjectWithMultiplePlus = "jdx.contracts.chat.outer+inner+createcommand";
+    const string subjectWithMultiplePlus = "jdx.contracts.chat.outer+inner+createcommand";
 
     var message = new ServiceBusMessage("test payload for multiple + characters") {
       MessageId = Guid.NewGuid().ToString(),
@@ -231,7 +231,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
 
     Console.WriteLine("[MANUAL TEST] Negative test: Non-matching subject should NOT be received...");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
     await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
@@ -239,7 +239,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This subject does NOT match 'jdx.contracts.chat.%'
-    var nonMatchingSubject = "other.namespace.somecommand";
+    const string nonMatchingSubject = "other.namespace.somecommand";
 
     var message = new ServiceBusMessage("test payload for non-matching subject") {
       MessageId = Guid.NewGuid().ToString(),
@@ -282,20 +282,29 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// Helper method to drain stale messages from a subscription.
   /// </summary>
   private static async Task _drainSubscriptionAsync(ServiceBusClient client, string topicName, string subscriptionName) {
-    var receiver = client.CreateReceiver(topicName, subscriptionName);
-    var drained = 0;
-    for (var i = 0; i < 100; i++) {
-      var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-      if (msg == null) {
-        break;
-      }
+    // Retry on ConnectionsQuotaExceeded — emulator has limited connections
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        var receiver = client.CreateReceiver(topicName, subscriptionName);
+        var drained = 0;
+        for (var i = 0; i < 100; i++) {
+          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+          if (msg == null) {
+            break;
+          }
 
-      await receiver.CompleteMessageAsync(msg);
-      drained++;
-    }
-    await receiver.DisposeAsync();
-    if (drained > 0) {
-      Console.WriteLine($"[MANUAL TEST] Drained {drained} stale messages from {subscriptionName}");
+          await receiver.CompleteMessageAsync(msg);
+          drained++;
+        }
+        await receiver.DisposeAsync();
+        if (drained > 0) {
+          Console.WriteLine($"[MANUAL TEST] Drained {drained} stale messages from {subscriptionName}");
+        }
+        return; // Success
+      } catch (Azure.Messaging.ServiceBus.ServiceBusException ex) when (ex.Reason == Azure.Messaging.ServiceBus.ServiceBusFailureReason.QuotaExceeded) {
+        Console.WriteLine($"[MANUAL TEST] Connection quota exceeded on attempt {attempt + 1}, waiting 2s...");
+        await Task.Delay(2000);
+      }
     }
   }
 }

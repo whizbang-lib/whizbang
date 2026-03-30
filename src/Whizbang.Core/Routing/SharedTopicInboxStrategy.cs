@@ -17,8 +17,12 @@ namespace Whizbang.Core.Routing;
 /// RabbitMQ: Uses routing key pattern matching with wildcards.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#shared-topic-inbox</docs>
-public sealed class SharedTopicInboxStrategy : IInboxRoutingStrategy {
+/// <docs>fundamentals/dispatcher/routing#shared-topic-inbox</docs>
+/// <remarks>
+/// Creates a shared topic inbox strategy with custom topic name.
+/// </remarks>
+/// <param name="inboxTopic">The shared inbox topic name.</param>
+public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingStrategy {
   /// <summary>
   /// The system command namespace that all services automatically subscribe to.
   /// </summary>
@@ -29,21 +33,13 @@ public sealed class SharedTopicInboxStrategy : IInboxRoutingStrategy {
   /// </summary>
   public static string SystemCommandNamespace => SYSTEM_COMMAND_NAMESPACE;
 
-  private readonly string _inboxTopic;
+  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
 
   /// <summary>
   /// Creates a shared topic inbox strategy with default topic name.
   /// </summary>
   public SharedTopicInboxStrategy()
       : this("inbox") { }
-
-  /// <summary>
-  /// Creates a shared topic inbox strategy with custom topic name.
-  /// </summary>
-  /// <param name="inboxTopic">The shared inbox topic name.</param>
-  public SharedTopicInboxStrategy(string inboxTopic) {
-    _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-  }
 
   /// <inheritdoc />
   public InboxSubscription GetSubscription(

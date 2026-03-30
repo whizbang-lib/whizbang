@@ -12,13 +12,13 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the UpdateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
-/// to avoid topic conflicts, but different test classes run in parallel.
+/// All tests share a single fixture (PostgreSQL database + hosts) for performance.
+/// Database cleanup between tests ensures isolation.
 /// </summary>
 [NotInParallel("ServiceBus")]
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
+[Timeout(120_000)]
 public class UpdateProductWorkflowTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
   private static readonly ProductId _testProdUpdateName = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -32,37 +32,14 @@ public class UpdateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var testIndex = _getTestIndex();
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-
-    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
-  }
-
-  private static int _getTestIndex() {
-    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
-    return 2; // UpdateProductWorkflowTests = index 2
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
-    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
-    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
-    if (_fixture != null) {
-      try {
-        // Drain any remaining messages from Service Bus subscriptions
-        await _fixture.CleanupDatabaseAsync();
-      } catch (Exception ex) {
-        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
-      }
-
-      // Dispose fixture to stop hosts and close connections
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public async Task TeardownAsync() {
+    // Don't dispose - shared fixture is reused across tests
   }
 
 
@@ -74,7 +51,6 @@ public class UpdateProductWorkflowTests {
   /// 4. Updated product is queryable via lenses
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_Name_UpdatesPerspectivesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -130,7 +106,6 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating all product fields works correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_AllFields_UpdatesPerspectivesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -189,7 +164,6 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating only the price works correctly (partial update).
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_PriceOnly_UpdatesOnlyPriceAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -244,7 +218,6 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating product description and image URL works correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_DescriptionAndImage_UpdatesBothFieldsAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -300,7 +273,6 @@ public class UpdateProductWorkflowTests {
   /// Tests that multiple sequential updates accumulate correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_MultipleSequentialUpdates_AccumulatesChangesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -386,7 +358,6 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating a product does NOT affect its inventory levels.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_DoesNotAffectInventoryAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");

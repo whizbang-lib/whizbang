@@ -26,6 +26,9 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_LowercaseClassName_GeneratesTableNameWithoutLeadingUnderscoreAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_PerspectiveAtExactThreshold_GeneratesWarningAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_ClassWithBaseListButNotPerspective_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithPerspective_GeneratesEntriesArrayAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithMultiplePerspectives_GeneratesEntriesForEachAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_EntriesSqlMatchesConcatenatedSqlAsync</tests>
 /// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
 /// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (model_data, metadata, scope).
@@ -37,6 +40,7 @@ namespace Whizbang.Generators;
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Read table name configuration from MSBuild properties
     var tableNameConfig = context.AnalyzerConfigOptionsProvider.Select(
@@ -92,8 +96,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Simple contains check to match any perspective interface
-          return originalDef.Contains("IPerspectiveFor");
+          // Match IPerspectiveBase — unified marker for all perspective types
+          return originalDef.Contains("IPerspectiveBase");
         })
         .ToList();
 
@@ -112,11 +116,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
     // Extract simple name for display (last part after last + or .)
     var className = clrTypeName.Contains('+')
-        ? clrTypeName.Substring(clrTypeName.LastIndexOf('+') + 1)
-        : clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1);
+        ? clrTypeName[(clrTypeName.LastIndexOf('+') + 1)..]
+        : clrTypeName[(clrTypeName.LastIndexOf('.') + 1)..];
     // Extract table base name from CLR name (remove + to merge nested names)
     // This ensures nested classes get unique table names: Activity+Projection → ActivityProjection
-    var tableBaseName = clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1).Replace("+", "");
+    var tableBaseName = clrTypeName[(clrTypeName.LastIndexOf('.') + 1)..].Replace("+", "");
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
@@ -125,7 +129,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Use shared utility to include inherited properties from base model classes
     var modelProperties = modelType is INamedTypeSymbol namedModelType
         ? namedModelType.GetAllProperties().ToList()
-        : modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic).ToList();
+        : [.. modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic)];
 
     var propertyCount = modelProperties.Count;
     var estimatedSize = _estimateJsonSize(propertyCount);
@@ -216,7 +220,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       }
     }
 
-    return physicalFields.ToArray();
+    return [.. physicalFields];
   }
 
   /// <summary>
@@ -368,11 +372,13 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         "PerspectiveSchemaSnippets.sql",
         "CREATE_INDEXES_SNIPPET");
 
-    // Build SQL content
+    // Build SQL content — collect per-perspective SQL for both concatenated Sql and individual Entries[]
     var sqlBuilder = new StringBuilder();
     sqlBuilder.AppendLine("-- Whizbang Perspective Tables - Auto-Generated");
     sqlBuilder.AppendLine("-- 3-Column JSONB Pattern: model_data (projection state), metadata (correlation/causation), scope (tenant/user)");
     sqlBuilder.AppendLine();
+
+    var perspectiveEntries = new System.Collections.Generic.List<(string Name, string Sql)>();
 
     foreach (var perspective in perspectives) {
       // Report size warning if estimated size is large
@@ -411,25 +417,32 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         var insertPos = tableCode.LastIndexOf(");", StringComparison.Ordinal);
         if (insertPos > 0) {
           // Add physical columns with proper comma separation
-          tableCode = tableCode.Substring(0, insertPos) + ",\n" + physicalColumnsSql + "\n" + tableCode.Substring(insertPos);
+          tableCode = tableCode[..insertPos] + ",\n" + physicalColumnsSql + "\n" + tableCode[insertPos..];
         }
       }
 
-      sqlBuilder.AppendLine(tableCode);
-      sqlBuilder.AppendLine();
+      // Build per-perspective SQL (table + indexes)
+      var perspectiveSqlBuilder = new StringBuilder();
+      perspectiveSqlBuilder.AppendLine(tableCode);
+      perspectiveSqlBuilder.AppendLine();
 
       // Generate standard indexes from snippet
       var indexesCode = createIndexesSnippet
           .Replace("__TABLE_NAME__", perspective.TableName);
 
-      sqlBuilder.AppendLine(indexesCode);
+      perspectiveSqlBuilder.AppendLine(indexesCode);
 
       // Generate physical field indexes
       var physicalIndexesSql = _generatePhysicalIndexesSql(perspective.TableName, perspective.PhysicalFields);
       if (!string.IsNullOrEmpty(physicalIndexesSql)) {
-        sqlBuilder.AppendLine(physicalIndexesSql);
+        perspectiveSqlBuilder.AppendLine(physicalIndexesSql);
       }
 
+      // Collect per-perspective entry
+      perspectiveEntries.Add((perspective.ClassName, perspectiveSqlBuilder.ToString()));
+
+      // Append to concatenated SQL (backward compat)
+      sqlBuilder.Append(perspectiveSqlBuilder);
       sqlBuilder.AppendLine();
     }
 
@@ -451,6 +464,20 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    public const string Sql = @\"");
     schemaBuilder.Append(sqlBuilder.ToString().Replace("\"", "\"\""));  // Escape quotes for verbatim string
     schemaBuilder.AppendLine("\";");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>");
+    schemaBuilder.AppendLine("    /// Per-perspective SQL entries for individual hash tracking.");
+    schemaBuilder.AppendLine("    /// Each entry maps a perspective name to its DDL (CREATE TABLE + indexes).");
+    schemaBuilder.AppendLine("    /// </summary>");
+    schemaBuilder.AppendLine("    public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries = new System.Collections.Generic.KeyValuePair<string, string>[] {");
+    foreach (var (name, sql) in perspectiveEntries) {
+      schemaBuilder.Append("        new System.Collections.Generic.KeyValuePair<string, string>(\"");
+      schemaBuilder.Append(name);
+      schemaBuilder.Append("\", @\"");
+      schemaBuilder.Append(sql.Replace("\"", "\"\""));
+      schemaBuilder.AppendLine("\"),");
+    }
+    schemaBuilder.AppendLine("    };");
     schemaBuilder.AppendLine("}");
 
     // Add source file as C# code

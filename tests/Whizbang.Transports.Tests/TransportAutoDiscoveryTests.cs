@@ -277,7 +277,7 @@ public class TransportAutoDiscoveryTests {
   [Test]
   public async Task TransportAutoDiscovery_DiscoverReceptors_ShouldNotThrowAsync() {
     // Arrange
-    var discovery = new TransportAutoDiscovery();
+    _ = new TransportAutoDiscovery();
 
     // Act & Assert - DiscoverReceptors is a placeholder that does nothing for now
     // Future: Will integrate with source generator to auto-discover IReceptor implementations

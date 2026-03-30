@@ -10,31 +10,24 @@ namespace Whizbang.Core.Lenses;
 /// Factory for creating scoped lens instances with composable filtering.
 /// Resolves lens instances from DI and applies scope filters based on current context.
 /// </summary>
-/// <docs>core-concepts/scoped-lenses</docs>
+/// <docs>fundamentals/lenses/scoped-lenses</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
-public sealed class ScopedLensFactory : IScopedLensFactory {
-  private readonly IServiceProvider _serviceProvider;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
-  private readonly LensOptions _lensOptions;
-  private readonly ISystemEventEmitter _eventEmitter;
-
-  /// <summary>
-  /// Creates a new ScopedLensFactory.
-  /// </summary>
-  /// <param name="serviceProvider">Service provider for resolving lens instances.</param>
-  /// <param name="scopeContextAccessor">Accessor for current scope context.</param>
-  /// <param name="lensOptions">Lens configuration options.</param>
-  /// <param name="eventEmitter">System event emitter for security events.</param>
-  public ScopedLensFactory(
-      IServiceProvider serviceProvider,
-      IScopeContextAccessor scopeContextAccessor,
-      LensOptions lensOptions,
-      ISystemEventEmitter eventEmitter) {
-    _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-    _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
-    _lensOptions = lensOptions ?? throw new ArgumentNullException(nameof(lensOptions));
-    _eventEmitter = eventEmitter ?? throw new ArgumentNullException(nameof(eventEmitter));
-  }
+/// <remarks>
+/// Creates a new ScopedLensFactory.
+/// </remarks>
+/// <param name="serviceProvider">Service provider for resolving lens instances.</param>
+/// <param name="scopeContextAccessor">Accessor for current scope context.</param>
+/// <param name="lensOptions">Lens configuration options.</param>
+/// <param name="eventEmitter">System event emitter for security events.</param>
+public sealed class ScopedLensFactory(
+    IServiceProvider serviceProvider,
+    IScopeContextAccessor scopeContextAccessor,
+    LensOptions lensOptions,
+    ISystemEventEmitter eventEmitter) : IScopedLensFactory {
+  private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
+  private readonly LensOptions _lensOptions = lensOptions ?? throw new ArgumentNullException(nameof(lensOptions));
+  private readonly ISystemEventEmitter _eventEmitter = eventEmitter ?? throw new ArgumentNullException(nameof(eventEmitter));
 
   // === Legacy API (string-based scope names) ===
 
@@ -45,7 +38,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
     var scopeDefinition = _lensOptions.GetScope(scopeName)
       ?? throw new ArgumentException($"Scope '{scopeName}' is not defined. Define it using LensOptions.DefineScope().", nameof(scopeName));
 
-    // Convert string-based scope to ScopeFilter flags
+    // Convert string-based scope to ScopeFilters flags
     var filters = _convertScopeDefinitionToFilter(scopeDefinition);
     return GetLens<TLens>(filters);
   }
@@ -53,19 +46,19 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
   // === Primary API: Composable flags ===
 
   /// <inheritdoc/>
-  public TLens GetLens<TLens>(ScopeFilter filters) where TLens : ILensQuery {
+  public TLens GetLens<TLens>(ScopeFilters filters) where TLens : ILensQuery {
     var filterInfo = _buildFilterInfo(filters);
     return _resolveLensWithFilter<TLens>(filterInfo);
   }
 
   /// <inheritdoc/>
-  public TLens GetLens<TLens>(ScopeFilter filters, Permission requiredPermission) where TLens : ILensQuery {
+  public TLens GetLens<TLens>(ScopeFilters filters, Permission requiredPermission) where TLens : ILensQuery {
     _checkPermission(requiredPermission, typeof(TLens).Name);
     return GetLens<TLens>(filters);
   }
 
   /// <inheritdoc/>
-  public TLens GetLens<TLens>(ScopeFilter filters, params Permission[] anyOfPermissions) where TLens : ILensQuery {
+  public TLens GetLens<TLens>(ScopeFilters filters, params Permission[] anyOfPermissions) where TLens : ILensQuery {
     ArgumentNullException.ThrowIfNull(anyOfPermissions);
 
     if (anyOfPermissions.Length == 0) {
@@ -80,64 +73,64 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
 
   /// <inheritdoc/>
   public TLens GetGlobalLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.None);
+    GetLens<TLens>(ScopeFilters.None);
 
   /// <inheritdoc/>
   public TLens GetTenantLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.Tenant);
+    GetLens<TLens>(ScopeFilters.Tenant);
 
   /// <inheritdoc/>
   public TLens GetUserLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.Tenant | ScopeFilter.User);
+    GetLens<TLens>(ScopeFilters.Tenant | ScopeFilters.User);
 
   /// <inheritdoc/>
   public TLens GetOrganizationLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.Tenant | ScopeFilter.Organization);
+    GetLens<TLens>(ScopeFilters.Tenant | ScopeFilters.Organization);
 
   /// <inheritdoc/>
   public TLens GetCustomerLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.Tenant | ScopeFilter.Customer);
+    GetLens<TLens>(ScopeFilters.Tenant | ScopeFilters.Customer);
 
   /// <inheritdoc/>
   public TLens GetPrincipalLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.Tenant | ScopeFilter.Principal);
+    GetLens<TLens>(ScopeFilters.Tenant | ScopeFilters.Principal);
 
   /// <inheritdoc/>
   public TLens GetMyOrSharedLens<TLens>() where TLens : ILensQuery =>
-    GetLens<TLens>(ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal);
+    GetLens<TLens>(ScopeFilters.Tenant | ScopeFilters.User | ScopeFilters.Principal);
 
   // === Event Store Query Methods ===
 
   /// <inheritdoc/>
-  public IEventStoreQuery GetEventStoreQuery(ScopeFilter filters) {
+  public IEventStoreQuery GetEventStoreQuery(ScopeFilters filters) {
     var filterInfo = _buildFilterInfo(filters);
     return _resolveEventStoreQueryWithFilter(filterInfo);
   }
 
   /// <inheritdoc/>
-  public IEventStoreQuery GetEventStoreQuery(ScopeFilter filters, Permission requiredPermission) {
+  public IEventStoreQuery GetEventStoreQuery(ScopeFilters filters, Permission requiredPermission) {
     _checkPermission(requiredPermission, "EventStoreQuery");
     return GetEventStoreQuery(filters);
   }
 
   /// <inheritdoc/>
   public IEventStoreQuery GetGlobalEventStoreQuery() =>
-    GetEventStoreQuery(ScopeFilter.None);
+    GetEventStoreQuery(ScopeFilters.None);
 
   /// <inheritdoc/>
   public IEventStoreQuery GetTenantEventStoreQuery() =>
-    GetEventStoreQuery(ScopeFilter.Tenant);
+    GetEventStoreQuery(ScopeFilters.Tenant);
 
   /// <inheritdoc/>
   public IEventStoreQuery GetUserEventStoreQuery() =>
-    GetEventStoreQuery(ScopeFilter.Tenant | ScopeFilter.User);
+    GetEventStoreQuery(ScopeFilters.Tenant | ScopeFilters.User);
 
   // === Private Helper Methods ===
 
-  private ScopeFilterInfo _buildFilterInfo(ScopeFilter filters) {
-    if (filters == ScopeFilter.None) {
+  private ScopeFilterInfo _buildFilterInfo(ScopeFilters filters) {
+    if (filters == ScopeFilters.None) {
       return new ScopeFilterInfo {
-        Filters = ScopeFilter.None,
+        Filters = ScopeFilters.None,
         SecurityPrincipals = new HashSet<SecurityPrincipalId>()
       };
     }
@@ -177,7 +170,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
 
   private void _checkPermission(Permission requiredPermission, string resourceType) {
     var context = _scopeContextAccessor.Current;
-    if (context is null || !context.HasPermission(requiredPermission)) {
+    if (context?.HasPermission(requiredPermission) != true) {
       _emitAccessDenied(requiredPermission, resourceType, context);
       throw new AccessDeniedException(
         requiredPermission,
@@ -189,7 +182,7 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
 
   private void _checkAnyPermission(Permission[] permissions, string resourceType) {
     var context = _scopeContextAccessor.Current;
-    if (context is null || !context.HasAnyPermission(permissions)) {
+    if (context?.HasAnyPermission(permissions) != true) {
       // Report the first permission as the "required" one
       _emitAccessDenied(permissions[0], resourceType, context);
       throw new AccessDeniedException(
@@ -213,21 +206,21 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
     });
   }
 
-  private static ScopeFilter _convertScopeDefinitionToFilter(ScopeDefinition scopeDefinition) {
+  private static ScopeFilters _convertScopeDefinitionToFilter(ScopeDefinition scopeDefinition) {
     if (scopeDefinition.NoFilter) {
-      return ScopeFilter.None;
+      return ScopeFilters.None;
     }
 
-    var filters = ScopeFilter.None;
+    var filters = ScopeFilters.None;
 
     // Map property names to filter flags
     if (!string.IsNullOrEmpty(scopeDefinition.FilterPropertyName)) {
       filters |= scopeDefinition.FilterPropertyName switch {
-        "TenantId" => ScopeFilter.Tenant,
-        "UserId" => ScopeFilter.User,
-        "OrganizationId" => ScopeFilter.Organization,
-        "CustomerId" => ScopeFilter.Customer,
-        _ => ScopeFilter.None
+        "TenantId" => ScopeFilters.Tenant,
+        "UserId" => ScopeFilters.User,
+        "OrganizationId" => ScopeFilters.Organization,
+        "CustomerId" => ScopeFilters.Customer,
+        _ => ScopeFilters.None
       };
     }
 
@@ -235,11 +228,11 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
     if (scopeDefinition.FilterInterfaceType is not null) {
       var interfaceName = scopeDefinition.FilterInterfaceType.Name;
       filters |= interfaceName switch {
-        "ITenantScoped" => ScopeFilter.Tenant,
-        "IUserScoped" => ScopeFilter.Tenant | ScopeFilter.User,
-        "IOrganizationScoped" => ScopeFilter.Tenant | ScopeFilter.Organization,
-        "ICustomerScoped" => ScopeFilter.Tenant | ScopeFilter.Customer,
-        _ => ScopeFilter.None
+        "ITenantScoped" => ScopeFilters.Tenant,
+        "IUserScoped" => ScopeFilters.Tenant | ScopeFilters.User,
+        "IOrganizationScoped" => ScopeFilters.Tenant | ScopeFilters.Organization,
+        "ICustomerScoped" => ScopeFilters.Tenant | ScopeFilters.Customer,
+        _ => ScopeFilters.None
       };
     }
 

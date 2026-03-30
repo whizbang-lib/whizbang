@@ -8,7 +8,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Utilities for reading MSBuild properties from analyzer configuration.
 /// Used by generators to read user configuration such as table naming options.
 /// </summary>
-/// <docs>source-generators/configuration</docs>
+/// <docs>extending/source-generators/configuration</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/ConfigurationUtilitiesTests.cs</tests>
 public static class ConfigurationUtilities {
   /// <summary>
@@ -65,7 +65,7 @@ public static class ConfigurationUtilities {
   /// <returns>Array of trimmed, non-empty suffixes</returns>
   public static string[] ParseSuffixList(string suffixList) {
     if (string.IsNullOrWhiteSpace(suffixList)) {
-      return Array.Empty<string>();
+      return [];
     }
 
     var parts = suffixList.Split(',');
@@ -78,7 +78,7 @@ public static class ConfigurationUtilities {
       }
     }
 
-    return result.ToArray();
+    return [.. result];
   }
 
   /// <summary>
@@ -92,7 +92,7 @@ public static class ConfigurationUtilities {
   /// </example>
   public static TableNameConfig SelectTableNameConfig(
       AnalyzerConfigOptionsProvider provider,
-      System.Threading.CancellationToken cancellationToken) {
+      System.Threading.CancellationToken _cancellationToken) {
     return GetTableNameConfig(provider.GlobalOptions);
   }
 
@@ -128,7 +128,7 @@ public static class ConfigurationUtilities {
   /// </example>
   public static int? SelectMaxIdentifierLengthOverride(
       AnalyzerConfigOptionsProvider provider,
-      System.Threading.CancellationToken cancellationToken) {
+      System.Threading.CancellationToken _cancellationToken) {
     return GetMaxIdentifierLengthOverride(provider.GlobalOptions);
   }
 }

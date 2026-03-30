@@ -46,21 +46,18 @@ public static class WhizbangDiagnostics {
   /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldDisplayFormattedOutputAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldFilterByCategoryAsync</tests>
   [ExcludeFromCodeCoverage]
-  public static string Diagnostics(DiagnosticCategory categories = DiagnosticCategory.All, bool printToConsole = true) {
+  public static string Diagnostics(DiagnosticCategories categories = DiagnosticCategories.All, bool printToConsole = true) {
     var filteredEntries = _entries.Where(e => (e.Category & categories) != 0).ToList();
 
     if (filteredEntries.Count == 0) {
-      var emptyMessage = "No diagnostic information available for the specified categories.";
-      if (printToConsole) {
-        Console.WriteLine(emptyMessage);
-      }
+      const string emptyMessage = "No diagnostic information available for the specified categories.";
       return emptyMessage;
     }
 
     var output = new System.Text.StringBuilder();
     output.AppendLine("═══════════════════════════════════════════════════════════════");
     output.AppendLine("Whizbang Source Generators - Build Diagnostics");
-    if (categories != DiagnosticCategory.All) {
+    if (categories != DiagnosticCategories.All) {
       output.AppendLine(CultureInfo.InvariantCulture, $"Categories: {categories}");
     }
     output.AppendLine("═══════════════════════════════════════════════════════════════");
@@ -85,13 +82,4 @@ public static class WhizbangDiagnostics {
     return result;
   }
 
-  /// <summary>
-  /// Prints all collected diagnostic information from all generators.
-  /// This is a convenience method that calls Diagnostics(printToConsole: true).
-  /// </summary>
-  [ExcludeFromCodeCoverage]
-  [Obsolete("Use Diagnostics() instead. This method will be removed in a future version.")]
-  public static void PrintDiagnostics() {
-    Diagnostics(printToConsole: true);
-  }
 }

@@ -47,8 +47,8 @@ public class TransportConsumerWorkerSecurityContextTests {
   [Test]
   public async Task HandleMessage_EstablishesSecurityContext_BeforeInvokingReceptorsAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     // Use capturing accessor to verify value is set (AsyncLocal behavior requires this)
     var capturingAccessor = new CapturingScopeContextAccessor();
@@ -90,8 +90,8 @@ public class TransportConsumerWorkerSecurityContextTests {
   [Test]
   public async Task HandleMessage_SetsMessageContextAccessor_WithUserIdAndTenantIdAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     // Use capturing accessor to verify IMessageContextAccessor.Current is set
@@ -166,8 +166,8 @@ public class TransportConsumerWorkerSecurityContextTests {
   [Test]
   public async Task HandleMessage_EstablishFullContext_SetsBothAccessorsAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     // Use capturing accessors for both
@@ -209,7 +209,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = System.DateTimeOffset.UtcNow,
@@ -219,12 +219,12 @@ public class TransportConsumerWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = userId,
             TenantId = tenantId
-          }
+          })
         }
-      }
+      ]
     };
   }
 
@@ -232,7 +232,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = System.DateTimeOffset.UtcNow,
@@ -242,9 +242,9 @@ public class TransportConsumerWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = null  // No security context
+          Scope = null  // No security context
         }
-      }
+      ]
     };
   }
 
@@ -265,6 +265,11 @@ public class TransportConsumerWorkerSecurityContextTests {
         CapturedContext = value; // Capture for verification
         ScopeContextAccessor.CurrentContext = value; // Also set the real AsyncLocal
       }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
     }
   }
 

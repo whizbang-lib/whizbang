@@ -36,7 +36,7 @@ public static class WhizbangModelBuilderExtensions {
       _configureServiceInstance(modelBuilder);
       _configureMessageDeduplication(modelBuilder);
       _configureMessageAssociations(modelBuilder);
-      _configurePerspectiveCheckpoints(modelBuilder);
+      _configurePerspectiveCursors(modelBuilder);
       return modelBuilder;
     }
   }
@@ -181,10 +181,10 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configurePerspectiveCheckpoints(ModelBuilder modelBuilder) {
-    modelBuilder.Entity<PerspectiveCheckpointRecord>(entity => {
+  private static void _configurePerspectiveCursors(ModelBuilder modelBuilder) {
+    modelBuilder.Entity<PerspectiveCursorRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
-      entity.ToTable("wh_perspective_checkpoints");
+      entity.ToTable("wh_perspective_cursors");
       entity.HasKey(e => new { e.StreamId, e.PerspectiveName });
 
       entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID).IsRequired();
@@ -195,8 +195,8 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.Error).HasColumnName("error");
 
       // Indexes
-      entity.HasIndex(e => e.Status).HasDatabaseName("idx_perspective_checkpoints_status");
-      entity.HasIndex(e => e.ProcessedAt).HasDatabaseName("idx_perspective_checkpoints_processed_at");
+      entity.HasIndex(e => e.Status).HasDatabaseName("idx_perspective_cursors_status");
+      entity.HasIndex(e => e.ProcessedAt).HasDatabaseName("idx_perspective_cursors_processed_at");
     });
   }
 }

@@ -30,7 +30,8 @@ internal sealed record PerspectiveInfo(
     EventValidationError[]? EventValidationErrors = null,
     string[]? MustExistEventTypes = null,
     EventReturnTypeInfo[]? EventReturnTypes = null,
-    PhysicalFieldInfoCompact[]? PhysicalFields = null
+    PhysicalFieldInfoCompact[]? PhysicalFields = null,
+    bool IsWithActionsInterface = false
 );
 
 /// <summary>

@@ -394,19 +394,13 @@ public class SubscriptionRetryHelperTests {
   // Mock Transport
   // ==========================================================================
 
-  private sealed class MockTransport : ITransport {
-    private readonly bool _alwaysFail;
-    private readonly int _failFirstNAttempts;
-    private readonly bool _returnDisconnectableSubscription;
+  private sealed class MockTransport(bool alwaysFail = false, int failFirstNAttempts = 0, bool returnDisconnectableSubscription = false) : ITransport {
+    private readonly bool _alwaysFail = alwaysFail;
+    private readonly int _failFirstNAttempts = failFirstNAttempts;
+    private readonly bool _returnDisconnectableSubscription = returnDisconnectableSubscription;
     private int _attemptCount;
 
     public int SubscribeCallCount { get; private set; }
-
-    public MockTransport(bool alwaysFail = false, int failFirstNAttempts = 0, bool returnDisconnectableSubscription = false) {
-      _alwaysFail = alwaysFail;
-      _failFirstNAttempts = failFirstNAttempts;
-      _returnDisconnectableSubscription = returnDisconnectableSubscription;
-    }
 
     public bool IsInitialized => true;
 

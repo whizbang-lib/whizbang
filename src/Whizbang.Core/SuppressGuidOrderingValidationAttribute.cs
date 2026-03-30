@@ -28,11 +28,10 @@ namespace Whizbang.Core;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/whizbang-ids#suppress-ordering-validation</docs>
+/// <docs>fundamentals/identity/whizbang-ids#suppress-ordering-validation</docs>
 [AttributeUsage(
     AttributeTargets.Method |
     AttributeTargets.Class,
     AllowMultiple = false,
     Inherited = false)]
-public sealed class SuppressGuidOrderingValidationAttribute : Attribute {
-}
+public sealed class SuppressGuidOrderingValidationAttribute : Attribute;

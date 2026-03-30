@@ -139,12 +139,12 @@ public class PerspectiveWorkerStrategyTests {
     // Arrange - Set up handler to suppress unobserved task exceptions from this test
     // The test intentionally throws an exception from the worker, which may not be observed
     // before GC runs during parallel test execution
-    EventHandler<UnobservedTaskExceptionEventArgs> handler = (s, e) => {
+    void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is InvalidOperationException ioe &&
           ioe.Message == "Test exception") {
         e.SetObserved();
       }
-    };
+    }
     TaskScheduler.UnobservedTaskException += handler;
 
     try {
@@ -402,8 +402,8 @@ public class PerspectiveWorkerStrategyTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public int ReportCompletionCallCount { get; private set; }
     public int ReportFailureCallCount { get; private set; }
-    public List<PerspectiveCheckpointCompletion> CompletionsReceivedViaProcessWorkBatch { get; } = [];
-    public List<PerspectiveCheckpointFailure> FailuresReceivedViaProcessWorkBatch { get; } = [];
+    public List<PerspectiveCursorCompletion> CompletionsReceivedViaProcessWorkBatch { get; } = [];
+    public List<PerspectiveCursorFailure> FailuresReceivedViaProcessWorkBatch { get; } = [];
     public bool ReturnWorkOnEveryCycle { get; set; }
     public PerspectiveWork? PerspectiveWorkTemplate { get; set; }
 
@@ -445,7 +445,7 @@ public class PerspectiveWorkerStrategyTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       ReportCompletionCallCount++;
       _completionReported.TrySetResult();
@@ -453,17 +453,17 @@ public class PerspectiveWorkerStrategyTests {
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       ReportFailureCallCount++;
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -509,7 +509,7 @@ public class PerspectiveWorkerStrategyTests {
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
     public bool ShouldThrow { get; set; }
 
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Task<PerspectiveCursorCompletion> RunAsync(
       Guid streamId,
       string perspectiveName,
       Guid? lastProcessedEventId,
@@ -518,13 +518,19 @@ public class PerspectiveWorkerStrategyTests {
         throw new InvalidOperationException("Test exception");
       }
 
-      return Task.FromResult(new PerspectiveCheckpointCompletion {
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),
         Status = PerspectiveProcessingStatus.Completed
       });
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   /// <summary>

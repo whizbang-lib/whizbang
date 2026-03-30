@@ -17,7 +17,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithValidCommandEndpoint_GeneratesCodeAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -40,14 +40,14 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrderCommandMutation");
+    await Assert.That(code).Contains("CreateOrderCommandMutation");
   }
 
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutGraphQLMutation_DoesNotGenerateCodeAsync() {
     // Arrange - only has RestRoute, no GraphQLMutation
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -76,7 +76,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_CreatesPartialClassAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -94,14 +94,14 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("public partial class PlaceOrderCommandMutation");
+    await Assert.That(code).Contains("public partial class PlaceOrderCommandMutation");
   }
 
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_InheritsFromGraphQLMutationBaseAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -119,7 +119,7 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GraphQLMutationBase<");
+    await Assert.That(code).Contains("GraphQLMutationBase<");
     await Assert.That(code).Contains("ProcessOrderCommand");
     await Assert.That(code).Contains("OrderResult");
   }
@@ -128,7 +128,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_AddsExtendObjectTypeAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -146,14 +146,14 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[ExtendObjectType(HotChocolate.Language.OperationTypeNames.Mutation)]");
+    await Assert.That(code).Contains("[ExtendObjectType(HotChocolate.Language.OperationTypeNames.Mutation)]");
   }
 
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_CreatesMutationMethodWithCorrectNameAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -171,7 +171,7 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("public async Task<");
+    await Assert.That(code).Contains("public async Task<");
     await Assert.That(code).Contains("CancelOrderAsync");
   }
 
@@ -179,7 +179,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_InjectsDispatcherAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -197,7 +197,7 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("IDispatcher _dispatcher");
+    await Assert.That(code).Contains("IDispatcher _dispatcher");
     await Assert.That(code).Contains("public RefundOrderCommandMutation(IDispatcher dispatcher)");
   }
 
@@ -205,7 +205,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_DispatchesViaLocalInvokeAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -223,14 +223,14 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("_dispatcher.LocalInvokeAsync<");
+    await Assert.That(code).Contains("_dispatcher.LocalInvokeAsync<");
   }
 
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_UsesCorrectNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -248,14 +248,14 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace MyCompany.Orders.Commands.Generated");
+    await Assert.That(code).Contains("namespace MyCompany.Orders.Commands.Generated");
   }
 
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomRequestType_GeneratesExecuteWithRequestAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -281,7 +281,7 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrderRequest request");
+    await Assert.That(code).Contains("CreateOrderRequest request");
     await Assert.That(code).Contains("ExecuteWithRequestAsync");
   }
 
@@ -289,7 +289,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutCustomRequestType_UsesCommandAsParameterAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -309,7 +309,7 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("SimpleCommand command");
+    await Assert.That(code).Contains("SimpleCommand command");
     await Assert.That(code).Contains("ExecuteAsync(command");
   }
 
@@ -317,7 +317,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_HandlesMultipleMutationsAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -342,7 +342,7 @@ public class GraphQLMutationTypeGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Command1Mutation");
+    await Assert.That(code).Contains("Command1Mutation");
     await Assert.That(code).Contains("Command2Mutation");
   }
 
@@ -350,7 +350,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_IncludesAutoGeneratedHeaderAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -368,7 +368,7 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("<auto-generated/>");
+    await Assert.That(code).Contains("<auto-generated/>");
     await Assert.That(code).Contains("DO NOT EDIT");
   }
 
@@ -376,7 +376,7 @@ public class GraphQLMutationTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_IncludesNullableEnableAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Whizbang.Core;
       using Whizbang.Transports.Mutations;
 
@@ -394,6 +394,6 @@ public class GraphQLMutationTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("#nullable enable");
+    await Assert.That(code).Contains("#nullable enable");
   }
 }

@@ -15,6 +15,7 @@ namespace __NAMESPACE__;
 /// with JsonContextRegistry for AOT-compatible polymorphic serialization.
 /// </summary>
 public static class MessageJsonContextInitializer {
+  /// <summary>Registers all discovered message types for polymorphic serialization with JsonContextRegistry.</summary>
   // CA2255: Intentional use of ModuleInitializer in library code for AOT-compatible JSON context registration
 #pragma warning disable CA2255
   [ModuleInitializer]

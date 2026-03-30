@@ -13,16 +13,18 @@ namespace Whizbang.Generators;
 /// Emits WHIZ070 error when [VectorField] attribute is used but the required package is not referenced.
 /// This ensures users get a helpful compile-time error guiding them to add the necessary package.
 /// </summary>
-/// <docs>diagnostics/whiz070</docs>
+/// <docs>operations/diagnostics/whiz070</docs>
 /// <tests>tests/Whizbang.Generators.Tests/VectorDependencyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string PGVECTOR_ASSEMBLY_NAME = "Pgvector.EntityFrameworkCore";
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      ImmutableArray.Create(DiagnosticDescriptors.VectorFieldMissingPackage);
+      [DiagnosticDescriptors.VectorFieldMissingPackage];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
@@ -46,8 +48,7 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
     // Check if any referenced assembly is Pgvector.EntityFrameworkCore
     foreach (var reference in compilation.References) {
       var assemblySymbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
-      if (assemblySymbol is not null &&
-          assemblySymbol.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal)) {
+      if (assemblySymbol?.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal) == true) {
         return true;
       }
     }

@@ -4,10 +4,30 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
+
+/// <summary>
+/// Groups the shared parameters for lifecycle invocation methods in <see cref="LifecycleInvocationHelper"/>.
+/// </summary>
+/// <param name="OutboxMessages">Outbox messages to process</param>
+/// <param name="InboxMessages">Inbox messages to process</param>
+/// <param name="ScopeFactory">Service scope factory for creating per-message scopes to resolve IReceptorInvoker</param>
+/// <param name="LifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
+/// <param name="Logger">Optional logger for error reporting</param>
+/// <param name="EnableLifecycleTracing">Whether to create lifecycle OpenTelemetry spans. When false, lifecycle logic still runs but no spans are emitted.</param>
+/// <param name="Metrics">Optional lifecycle metrics for stage/receptor instrumentation</param>
+public readonly record struct DistributeLifecycleContext(
+  IReadOnlyList<OutboxMessage> OutboxMessages,
+  IReadOnlyList<InboxMessage> InboxMessages,
+  IServiceScopeFactory? ScopeFactory,
+  ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
+  ILogger? Logger,
+  bool EnableLifecycleTracing = true,
+  LifecycleMetrics? Metrics = null);
 
 /// <summary>
 /// Static helper for invoking lifecycle receptors at async and inline stages.
@@ -24,6 +44,18 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 public static class LifecycleInvocationHelper {
+  private const string METRIC_STAGE = "stage";
+  private const string METRIC_MESSAGE_TYPE = "message_type";
+
+  /// <summary>
+  /// Groups lifecycle invocation dependencies to reduce parameter count in internal methods.
+  /// </summary>
+  private readonly record struct LifecycleInvocationDependencies(
+    IServiceScopeFactory? ScopeFactory,
+    ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
+    ILogger? Logger,
+    bool EnableLifecycleTracing,
+    LifecycleMetrics? Metrics);
 
   /// <summary>
   /// Invokes lifecycle receptors for outbox and inbox messages at async and inline stages.
@@ -31,61 +63,38 @@ public static class LifecycleInvocationHelper {
   /// </summary>
   /// <param name="asyncStage">The async lifecycle stage (e.g., PostDistributeAsync)</param>
   /// <param name="inlineStage">The inline lifecycle stage (e.g., PostDistributeInline)</param>
-  /// <param name="outboxMessages">Outbox messages to process</param>
-  /// <param name="inboxMessages">Inbox messages to process</param>
-  /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
-  /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
-  /// <param name="logger">Optional logger for error reporting</param>
-  /// <param name="enableLifecycleTracing">Whether to create lifecycle OpenTelemetry spans. When false, lifecycle logic still runs but no spans are emitted.</param>
+  /// <param name="context">The lifecycle context containing messages, scope factory, deserializer, and options</param>
   /// <param name="ct">Cancellation token</param>
-  /// <remarks>
-  /// <para>
-  /// <strong>Usage Pattern:</strong>
-  /// </para>
-  /// <code>
-  /// await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-  ///   LifecycleStage.PostDistributeAsync,
-  ///   LifecycleStage.PostDistributeInline,
-  ///   _queuedOutboxMessages,
-  ///   _queuedInboxMessages,
-  ///   _lifecycleInvoker,
-  ///   _lifecycleMessageDeserializer,
-  ///   _logger,
-  ///   enableLifecycleTracing: true,
-  ///   ct
-  /// );
-  /// </code>
-  /// <para>
-  /// <strong>Thread Safety Guarantee:</strong> Collections are snapshotted before backgrounding,
-  /// so the main thread can safely modify the original collections while the background task iterates.
-  /// </para>
-  /// </remarks>
   public static async ValueTask InvokeDistributeLifecycleStagesAsync(
     LifecycleStage asyncStage,
     LifecycleStage inlineStage,
-    IReadOnlyList<OutboxMessage> outboxMessages,
-    IReadOnlyList<InboxMessage> inboxMessages,
-    ILifecycleInvoker? lifecycleInvoker,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
-    ILogger? logger,
-    bool enableLifecycleTracing = true,
+    DistributeLifecycleContext context,
     CancellationToken ct = default) {
 
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     // The main thread may modify the original collections while the background task iterates
-    var outboxSnapshot = outboxMessages.ToArray();
-    var inboxSnapshot = inboxMessages.ToArray();
+    var outboxSnapshot = context.OutboxMessages.ToArray();
+    var inboxSnapshot = context.InboxMessages.ToArray();
+    var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
     // Invoke async stage (non-blocking, backgrounded)
-    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, logger, enableLifecycleTracing, ct);
+    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
 
     // Invoke inline stage (blocking, sequential)
-    if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
+    if (context.ScopeFactory is null || context.LifecycleMessageDeserializer is null) {
       return;
     }
 
-    await _processOutboxMessagesAsync(outboxSnapshot, inlineStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
-    await _processInboxMessagesAsync(inboxSnapshot, inlineStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
+    context.Metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, inlineStage.ToString()));
+    var stageSw = Stopwatch.StartNew();
+
+    await _processOutboxMessagesAsync(outboxSnapshot, inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, ct);
+    await _processInboxMessagesAsync(inboxSnapshot, inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, ct);
+
+    stageSw.Stop();
+    context.Metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
+      new KeyValuePair<string, object?>(METRIC_STAGE, inlineStage.ToString()),
+      new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"));
   }
 
   /// <summary>
@@ -93,50 +102,20 @@ public static class LifecycleInvocationHelper {
   /// Snapshots collections before Task.Run to prevent "Collection was modified" exceptions.
   /// </summary>
   /// <param name="asyncStage">The async lifecycle stage (e.g., DistributeAsync)</param>
-  /// <param name="outboxMessages">Outbox messages to process</param>
-  /// <param name="inboxMessages">Inbox messages to process</param>
-  /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
-  /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
-  /// <param name="logger">Optional logger for error reporting</param>
-  /// <param name="enableLifecycleTracing">Whether to create lifecycle OpenTelemetry spans. When false, lifecycle logic still runs but no spans are emitted.</param>
+  /// <param name="context">The lifecycle context containing messages, scope factory, deserializer, and options</param>
   /// <param name="ct">Cancellation token</param>
-  /// <remarks>
-  /// <para>
-  /// <strong>Usage Pattern (async-only stages like DistributeAsync):</strong>
-  /// </para>
-  /// <code>
-  /// await LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStageAsync(
-  ///   LifecycleStage.DistributeAsync,
-  ///   _queuedOutboxMessages,
-  ///   _queuedInboxMessages,
-  ///   _lifecycleInvoker,
-  ///   _lifecycleMessageDeserializer,
-  ///   _logger,
-  ///   enableLifecycleTracing: true,
-  ///   ct
-  /// );
-  /// </code>
-  /// <para>
-  /// <strong>Thread Safety Guarantee:</strong> Collections are snapshotted before backgrounding,
-  /// so the main thread can safely modify the original collections while the background task iterates.
-  /// </para>
-  /// </remarks>
   public static void InvokeAsyncOnlyLifecycleStage(
     LifecycleStage asyncStage,
-    IReadOnlyList<OutboxMessage> outboxMessages,
-    IReadOnlyList<InboxMessage> inboxMessages,
-    ILifecycleInvoker? lifecycleInvoker,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
-    ILogger? logger,
-    bool enableLifecycleTracing = true,
+    DistributeLifecycleContext context,
     CancellationToken ct = default) {
 
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
-    var outboxSnapshot = outboxMessages.ToArray();
-    var inboxSnapshot = inboxMessages.ToArray();
+    var outboxSnapshot = context.OutboxMessages.ToArray();
+    var inboxSnapshot = context.InboxMessages.ToArray();
+    var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
-    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, logger, enableLifecycleTracing, ct);
+    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
   }
 
   /// <summary>
@@ -147,21 +126,30 @@ public static class LifecycleInvocationHelper {
       OutboxMessage[] outboxSnapshot,
       InboxMessage[] inboxSnapshot,
       LifecycleStage asyncStage,
-      ILifecycleInvoker? lifecycleInvoker,
-      ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
-      ILogger? logger,
-      bool enableLifecycleTracing,
+      LifecycleInvocationDependencies deps,
       CancellationToken ct) {
     return Task.Run(async () => {
-      if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
+      if (deps.ScopeFactory is null || deps.LifecycleMessageDeserializer is null) {
         return;
       }
 
+      deps.Metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()));
+      var stageSw = Stopwatch.StartNew();
+
       try {
-        await _processOutboxMessagesAsync(outboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
-        await _processInboxMessagesAsync(inboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
+        await _processOutboxMessagesAsync(outboxSnapshot, asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics, ct);
+        await _processInboxMessagesAsync(inboxSnapshot, asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics, ct);
       } catch (Exception ex) {
-        _logLifecycleError(logger, asyncStage, ex);
+        _logLifecycleError(deps.Logger, asyncStage, ex);
+        deps.Metrics?.ReceptorErrors.Add(1,
+          new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"),
+          new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+      } finally {
+        stageSw.Stop();
+        deps.Metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
+          new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"));
       }
     }, ct);
   }
@@ -180,61 +168,95 @@ public static class LifecycleInvocationHelper {
   }
 
   /// <summary>
-  /// Extracts parent ActivityContext from message hops for trace correlation.
-  /// Uses the last hop's TraceParent to link lifecycle spans to the original HTTP request.
-  /// </summary>
-  private static ActivityContext _extractParentContext(IReadOnlyList<MessageHop> hops) {
-    var traceParent = hops
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      return parentContext;
-    }
-
-    return default;
-  }
-
-  /// <summary>
-  /// Processes outbox messages for a given lifecycle stage.
+  /// Processes outbox messages for a given lifecycle stage using scoped IReceptorInvoker.
+  /// ReceptorInvoker handles all context establishment (security, message context, trace parenting).
   /// </summary>
   private static async Task _processOutboxMessagesAsync(
       OutboxMessage[] messages,
       LifecycleStage stage,
-      ILifecycleInvoker lifecycleInvoker,
+      IServiceScopeFactory scopeFactory,
       ILifecycleMessageDeserializer lifecycleMessageDeserializer,
       bool enableLifecycleTracing,
+      LifecycleMetrics? metrics,
       CancellationToken ct) {
     foreach (var outboxMsg in messages) {
-      var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
+      var extracted = EnvelopeContextExtractor.ExtractFromHops(outboxMsg.Envelope.Hops);
+      var parentContext = extracted.TraceContext;
 
       using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var context = _createLifecycleContext(stage, MessageSource.Outbox);
         var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
         var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-        await lifecycleInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
+
+        metrics?.ReceptorInvocations.Add(1,
+          new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
+        var receptorSw = Stopwatch.StartNew();
+        try {
+          await using var scope = scopeFactory.CreateAsyncScope();
+          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
+          }
+        } catch (Exception ex) {
+          metrics?.ReceptorErrors.Add(1,
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType),
+            new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+          throw;
+        } finally {
+          receptorSw.Stop();
+          metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
+        }
       }
     }
   }
 
   /// <summary>
-  /// Processes inbox messages for a given lifecycle stage.
+  /// Processes inbox messages for a given lifecycle stage using scoped IReceptorInvoker.
+  /// ReceptorInvoker handles all context establishment (security, message context, trace parenting).
   /// </summary>
   private static async Task _processInboxMessagesAsync(
       InboxMessage[] messages,
       LifecycleStage stage,
-      ILifecycleInvoker lifecycleInvoker,
+      IServiceScopeFactory scopeFactory,
       ILifecycleMessageDeserializer lifecycleMessageDeserializer,
       bool enableLifecycleTracing,
+      LifecycleMetrics? metrics,
       CancellationToken ct) {
     foreach (var inboxMsg in messages) {
-      var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
+      var extracted = EnvelopeContextExtractor.ExtractFromHops(inboxMsg.Envelope.Hops);
+      var parentContext = extracted.TraceContext;
 
       using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var context = _createLifecycleContext(stage, MessageSource.Inbox);
         var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
         var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-        await lifecycleInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
+
+        metrics?.ReceptorInvocations.Add(1,
+          new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
+        var receptorSw = Stopwatch.StartNew();
+        try {
+          await using var scope = scopeFactory.CreateAsyncScope();
+          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
+          }
+        } catch (Exception ex) {
+          metrics?.ReceptorErrors.Add(1,
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType),
+            new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+          throw;
+        } finally {
+          receptorSw.Stop();
+          metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
+        }
       }
     }
   }

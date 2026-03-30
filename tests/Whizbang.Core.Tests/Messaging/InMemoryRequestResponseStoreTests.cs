@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -97,6 +98,89 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var nonExpiredResult = await waitTask;
     await Assert.That(nonExpiredResult).IsNotNull();
     await Assert.That(((MessageEnvelope<string>)nonExpiredResult!).Payload).IsEqualTo("response");
+  }
+
+  [Test]
+  public async Task WaitForResponseAsync_WhenCancelled_ShouldReturnNullAsync() {
+    // Arrange
+    var store = new InMemoryRequestResponseStore();
+    var correlationId = CorrelationId.New();
+    var requestId = MessageId.New();
+
+    await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+    using var cts = new CancellationTokenSource();
+    var waitTask = store.WaitForResponseAsync(correlationId, cts.Token);
+
+    // Act - cancel the wait
+    cts.Cancel();
+
+    var result = await waitTask;
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task WaitForResponseAsyncGeneric_WhenRequestNotFound_ShouldReturnNullAsync() {
+    // Arrange
+    var store = new InMemoryRequestResponseStore();
+    var correlationId = CorrelationId.New();
+
+    // Act
+    var result = await store.WaitForResponseAsync<string>(correlationId, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task WaitForResponseAsyncGeneric_WithResponse_ShouldReturnTypedEnvelopeAsync() {
+    // Arrange
+    var store = new InMemoryRequestResponseStore();
+    var correlationId = CorrelationId.New();
+    var requestId = MessageId.New();
+
+    var response = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "typed response",
+      Hops = []
+    };
+
+    await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+    // Start waiting and then provide response
+    var waitTask = store.WaitForResponseAsync<string>(correlationId, CancellationToken.None);
+    await Task.Delay(10);
+    await store.SaveResponseAsync(correlationId, response, CancellationToken.None);
+
+    // Act
+    var result = await waitTask;
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Payload).IsEqualTo("typed response");
+  }
+
+  [Test]
+  public async Task WaitForResponseAsyncGeneric_WhenCancelled_ShouldReturnNullAsync() {
+    // Arrange
+    var store = new InMemoryRequestResponseStore();
+    var correlationId = CorrelationId.New();
+    var requestId = MessageId.New();
+
+    await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+    using var cts = new CancellationTokenSource();
+    var waitTask = store.WaitForResponseAsync<string>(correlationId, cts.Token);
+
+    // Act
+    cts.Cancel();
+
+    var result = await waitTask;
+
+    // Assert
+    await Assert.That(result).IsNull();
   }
 
   [Test]

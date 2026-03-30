@@ -16,6 +16,8 @@ namespace Whizbang.Generators;
 /// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
 /// <param name="HasTraceAttribute">True if receptor class has [WhizbangTrace] attribute for explicit tracing.</param>
 /// <param name="IsMessageAnEvent">True if the message type implements IEvent. Used to determine if perspective sync should be generated.</param>
+/// <param name="IsPolymorphicMessageType">True if the message type is an interface or non-sealed class, meaning concrete subtypes should be expanded at compile time.</param>
+/// <param name="HasFireDuringReplayAttribute">True if receptor class has [FireDuringReplay] attribute, indicating it should fire during replay/rebuild.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -26,7 +28,9 @@ public sealed record ReceptorInfo(
     string? DefaultRouting = null,
     SyncAttributeInfo[]? SyncAttributes = null,
     bool HasTraceAttribute = false,
-    bool IsMessageAnEvent = false
+    bool IsMessageAnEvent = false,
+    bool IsPolymorphicMessageType = false,
+    bool HasFireDuringReplayAttribute = false
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.

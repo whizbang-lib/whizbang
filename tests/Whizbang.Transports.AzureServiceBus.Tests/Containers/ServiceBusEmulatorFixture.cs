@@ -66,38 +66,49 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       );
     }
 
-    Console.WriteLine($"[ServiceBusEmulator] Starting Azure Service Bus Emulator with config: {_configFilePath}");
+    Console.WriteLine($"[ServiceBusEmulator] Initializing Azure Service Bus Emulator (port {_port})...");
 
     // Generate docker-compose content (use consistent file path)
     var dockerComposeContent = _generateDockerComposeContent();
     await File.WriteAllTextAsync(_dockerComposeFile, dockerComposeContent, cancellationToken);
 
+    var containerName = $"whizbang-test-servicebus-{_port}";
+    var projectName = $"whizbang-azure-servicebus-{_port}";
+
     try {
-      // CRITICAL: Force cleanup any stale containers from previous test runs
-      // This handles the case where tests were aborted without proper cleanup
-      Console.WriteLine("[ServiceBusEmulator] Cleaning up any stale containers...");
-      await _forceCleanupContainersAsync(cancellationToken);
+      // Check if emulator container is already running (reuse from previous test run)
+      var existingState = await _getContainerStateAsync(containerName, cancellationToken);
+      if (existingState == "running") {
+        Console.WriteLine($"[ServiceBusEmulator] Reusing existing container '{containerName}'");
+        _client = new ServiceBusClient(ConnectionString);
 
-      // Stop any existing containers on this port (via docker-compose with full cleanup)
-      // Using -v to remove volumes and --remove-orphans to clean orphaned containers
-      // Use explicit project name to ensure consistent network naming
-      var projectName = $"sbtest{_port}";
-      await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile, cancellationToken);
+        // Quick warmup to verify connectivity
+        await _warmupAsync(cancellationToken);
 
-      // Also remove the network explicitly in case docker-compose didn't
-      await _removeNetworkAsync($"{projectName}_default", cancellationToken);
+        Console.WriteLine("[ServiceBusEmulator] ✅ Existing emulator verified and ready!");
+        _isInitialized = true;
+        return;
+      }
 
-      // Give Docker a moment to fully release resources
-      await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+      // Container not running — start fresh
+      if (existingState != null) {
+        Console.WriteLine($"[ServiceBusEmulator] Found stopped container '{containerName}' (state: {existingState}), cleaning up...");
+        await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile, cancellationToken);
+        await _removeNetworkAsync($"{projectName}_default", cancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+      } else {
+        // No container at all — clean up any stale artifacts
+        await _forceCleanupContainersAsync(cancellationToken);
+      }
 
-      // Start containers with explicit project name and --force-recreate
+      // Start containers
+      Console.WriteLine($"[ServiceBusEmulator] Starting containers for '{containerName}'...");
       await _runDockerComposeAsync($"-p {projectName} up -d --force-recreate", _dockerComposeFile, cancellationToken);
 
       // Wait for emulator to be ready
       Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
-      var containerName = $"whizbang-test-servicebus-{_port}";
-      var maxWaitSeconds = 180;
-      var pollIntervalSeconds = 5;
+      const int maxWaitSeconds = 180;
+      const int pollIntervalSeconds = 5;
       var elapsed = 0;
 
       while (elapsed < maxWaitSeconds) {
@@ -124,7 +135,6 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       }
 
       // Wait for AMQP connections to be fully ready
-      // The emulator reports "Successfully Up" but AMQP connections may not be ready yet
       Console.WriteLine("[ServiceBusEmulator] Waiting 40 seconds for AMQP connections to stabilize...");
       await Task.Delay(TimeSpan.FromSeconds(40), cancellationToken);
 
@@ -159,22 +169,15 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[ServiceBusEmulator] Stopping emulator...");
-
     // Check dead letter queues before shutdown for diagnostics
     if (_client != null) {
       await CheckDeadLetterQueuesAsync();
       await _client.DisposeAsync();
     }
 
-    if (File.Exists(_dockerComposeFile)) {
-      var projectName = $"sbtest{_port}";
-      await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile);
-      await _removeNetworkAsync($"{projectName}_default");
-      File.Delete(_dockerComposeFile);
-    }
-
-    Console.WriteLine("[ServiceBusEmulator] ✅ Emulator stopped");
+    // Keep containers running for reuse across test runs.
+    // To remove: docker rm -f whizbang-test-servicebus-{port} whizbang-test-mssql-{port}
+    Console.WriteLine($"[ServiceBusEmulator] Keeping containers running for reuse (port {_port})");
   }
 
   /// <summary>
@@ -260,19 +263,20 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     // Mounts Config.json which defines:
     // - topic-00 with sub-00-a subscription
     // - topic-01 with sub-01-a subscription
-    return $@"services:
+    return $"""
+services:
   servicebus-emulator:
     container_name: whizbang-test-servicebus-{_port}
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     ports:
-      - ""{_port}:5672""
+      - "{_port}:5672"
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
       - SQL_SERVER=mssql
       - CONFIG_PATH=/ServiceBus_Emulator/ConfigFiles/Config.json
     volumes:
-      - ""{_configFilePath}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro""
+      - "{_configFilePath}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro"
     depends_on:
       - mssql
     mem_limit: 4g
@@ -281,12 +285,13 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     container_name: whizbang-test-mssql-{_port}
     image: mcr.microsoft.com/mssql/server:2022-latest
     ports:
-      - ""{_port + 10000}:1433""
+      - "{_port + 10000}:1433"
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
     mem_limit: 4g
-";
+
+""";
   }
 
   private async Task _warmupAsync(CancellationToken cancellationToken = default) {
@@ -297,8 +302,8 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     Console.WriteLine("[ServiceBusEmulator] Warming up...");
 
     // Warmup topic-00
-    var topicName = "topic-00";
-    var subscriptionName = "sub-00-a";
+    const string topicName = "topic-00";
+    const string subscriptionName = "sub-00-a";
 
     var sender = _client.CreateSender(topicName);
     var receiver = _client.CreateReceiver(topicName, subscriptionName);
@@ -349,11 +354,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       CreateNoWindow = true
     };
 
-    using var process = Process.Start(psi);
-    if (process == null) {
-      throw new InvalidOperationException("Failed to start docker compose process");
-    }
-
+    using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start docker compose process");
     await process.WaitForExitAsync(cancellationToken);
 
     if (process.ExitCode != 0) {
@@ -438,6 +439,30 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     } catch {
       // Ignore cleanup errors
     }
+  }
+
+  /// <summary>
+  /// Gets the Docker container state (running, exited, etc.) or null if container doesn't exist.
+  /// </summary>
+  private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {
+    var psi = new ProcessStartInfo {
+      FileName = "docker",
+      Arguments = $"inspect --format={{{{.State.Status}}}} {containerName}",
+      RedirectStandardOutput = true,
+      RedirectStandardError = true,
+      UseShellExecute = false,
+      CreateNoWindow = true
+    };
+
+    using var process = Process.Start(psi);
+    if (process == null) {
+      return null;
+    }
+
+    var output = await process.StandardOutput.ReadToEndAsync(ct);
+    await process.WaitForExitAsync(ct);
+
+    return process.ExitCode != 0 ? null : output.Trim();
   }
 
   /// <summary>

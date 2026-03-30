@@ -1,0 +1,14 @@
+<Project>
+  <!-- Whizbang Message Registry: compiler settings for NuGet consumers -->
+  <PropertyGroup>
+    <!-- Consumers can set WhizbangEmitMessageRegistry=false to opt out -->
+    <WhizbangEmitMessageRegistry Condition="'$(WhizbangEmitMessageRegistry)' == ''">true</WhizbangEmitMessageRegistry>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WhizbangEmitMessageRegistry)' == 'true'">
+    <!-- Enable emitting compiler-generated files (only if consumer hasn't already set it) -->
+    <EmitCompilerGeneratedFiles Condition="'$(EmitCompilerGeneratedFiles)' == ''">true</EmitCompilerGeneratedFiles>
+    <!-- Default output path for generated files (only if consumer hasn't already set it) -->
+    <CompilerGeneratedFilesOutputPath Condition="'$(CompilerGeneratedFilesOutputPath)' == ''">$(BaseIntermediateOutputPath)generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+</Project>

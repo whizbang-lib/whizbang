@@ -51,7 +51,10 @@ public class EFCoreSnippets {
       //
       entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
-      entity.ComplexProperty(e => e.Scope, s => s.ToJson("scope"));
+      entity.ComplexProperty(e => e.Scope, s => {
+        s.ToJson("scope");
+        s.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
+      });
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
@@ -74,7 +77,6 @@ __PHYSICAL_FIELD_CONFIGS__
     });
     #endregion
   }
-
 
 
 
@@ -142,11 +144,9 @@ __PHYSICAL_FIELD_CONFIGS__
     services.AddScoped<global::Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
       var jsonOptions = global::Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
-      var perspectiveInvoker = sp.GetService<global::Whizbang.Core.Perspectives.IPerspectiveInvoker>();
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
-        jsonOptions,
-        perspectiveInvoker
+        jsonOptions
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
@@ -172,28 +172,66 @@ __PHYSICAL_FIELD_CONFIGS__
       services.AddSingleton<global::Whizbang.Core.Messaging.IWorkChannelWriter, global::Whizbang.Core.Messaging.WorkChannelWriter>();
     }
 
-    // Register scoped work coordinator strategy for dispatcher outbox routing
-    // ScopedWorkCoordinatorStrategy batches operations within a scope (e.g., HTTP request)
-    // This enables the dispatcher to route messages to outbox when no local receptor exists
-    services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
-      var coordinator = sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkCoordinator>();
+    // Register singleton timer-based strategies (shared across scopes)
+    // Interval and Batch strategies use background timers and must be singletons.
+    // They resolve IWorkCoordinator per-flush via IServiceScopeFactory (singleton-safe).
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_MetricsAreNull_FlushRecordsNothingAsync</tests>
+    // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:IntervalStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
+    // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:BatchStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
+    services.AddSingleton<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
-      var channelWriter = sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
-      var dependencies = new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
-        LifecycleInvoker = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleInvoker>(),
-        LifecycleMessageDeserializer = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
-      };
-      return new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
-        coordinator,
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>>();
+      return new global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy(
+        coordinator: null,
         instanceProvider,
-        channelWriter,
         options,
         logger,
-        dependencies
+        scopeFactory,
+        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
+        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
       );
+    });
+    services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
+      var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
+      var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>>();
+      return new global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy(
+        coordinator: null,
+        instanceProvider,
+        options,
+        logger,
+        scopeFactory,
+        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
+        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+      );
+    });
+
+    // Register scoped strategy factory - selects based on WorkCoordinatorOptions.Strategy
+    // Interval/Batch return the shared singleton wrapped in NonDisposingStrategyAdapter
+    // to prevent scope disposal from destroying the singleton instance.
+    // Scoped/Immediate create per-scope instances via the factory.
+    services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
+      var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+      return options.Strategy switch {
+        global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Interval =>
+          new global::Whizbang.Core.Messaging.NonDisposingStrategyAdapter(
+            sp.GetRequiredService<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>()),
+        global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Batch =>
+          new global::Whizbang.Core.Messaging.NonDisposingStrategyAdapter(
+            sp.GetRequiredService<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>()),
+        _ => global::Whizbang.Core.Messaging.WorkCoordinatorStrategyFactory.Create(options.Strategy, sp)
+      };
     });
 
     // Register IEventStoreQuery - scoped (for web APIs, receptors)
@@ -245,10 +283,12 @@ __PHYSICAL_FIELD_CONFIGS__
     // NOTE: Requires AddPooledDbContextFactory<__DBCONTEXT_FQN__>() instead of AddDbContext<__DBCONTEXT_FQN__>()
     services.AddTransient<global::Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
       var dbContextFactory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<__DBCONTEXT_FQN__>>();
+      var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();
+      var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();
       var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {
         [typeof(__MODEL_TYPE__)] = "__TABLE_NAME__"
       };
-      var lensFactory = new global::Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames);
+      var lensFactory = new global::Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames, scopeContextAccessor, whizbangOptions);
       return new global::Whizbang.Core.Lenses.FactoryOwnedLensQuery<__MODEL_TYPE__>(lensFactory);
     });
 

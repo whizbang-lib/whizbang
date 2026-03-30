@@ -9,7 +9,7 @@ namespace Whizbang.Data.Postgres;
 /// PostgreSQL database readiness check implementation.
 /// Verifies database connectivity and presence of required Whizbang tables (inbox, outbox, eventstore).
 /// </summary>
-/// <docs>workers/database-readiness</docs>
+/// <docs>operations/workers/database-readiness</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithRunningDatabaseAndSchema_ReturnsTrueAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithInvalid_connectionString_ReturnsFalseAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithMissingTables_ReturnsFalseAsync</tests>

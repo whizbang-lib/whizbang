@@ -25,19 +25,19 @@ namespace Whizbang.Core.Dispatch;
 ///   <item><b>Receptor class attribute</b> - applies to all returns from handler</item>
 ///   <item><b>Individual Routed&lt;T&gt; wrapper</b> - explicit per-item routing</item>
 ///   <item><b>Collection Routed&lt;T&gt; wrapper</b> - applies to all items in collection</item>
-///   <item><b>System default</b> - DispatchMode.Outbox</item>
+///   <item><b>System default</b> - DispatchModes.Outbox</item>
 /// </list>
 /// </remarks>
 /// <example>
 /// <code>
 /// // Message type with enforced local routing (highest priority)
-/// [DefaultRouting(DispatchMode.Local)]
+/// [DefaultRouting(DispatchModes.Local)]
 /// public record CacheInvalidatedEvent : IEvent {
 ///   public required string Key { get; init; }
 /// }
 ///
 /// // Receptor with default local routing for all returns
-/// [DefaultRouting(DispatchMode.Local)]
+/// [DefaultRouting(DispatchModes.Local)]
 /// public class CacheManagementHandler : IReceptor&lt;InvalidateCacheCommand, CacheInvalidatedEvent&gt; {
 ///   public ValueTask&lt;CacheInvalidatedEvent&gt; HandleAsync(InvalidateCacheCommand cmd, CancellationToken ct) {
 ///     return ValueTask.FromResult(new CacheInvalidatedEvent { Key = cmd.CacheKey });
@@ -45,12 +45,12 @@ namespace Whizbang.Core.Dispatch;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DefaultRoutingAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
-public sealed class DefaultRoutingAttribute(DispatchMode mode) : Attribute {
+public sealed class DefaultRoutingAttribute(DispatchModes mode) : Attribute {
   /// <summary>
   /// Gets the default dispatch mode for the decorated type.
   /// </summary>
-  public DispatchMode Mode { get; } = mode;
+  public DispatchModes Mode { get; } = mode;
 }

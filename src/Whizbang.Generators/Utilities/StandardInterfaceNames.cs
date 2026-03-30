@@ -31,6 +31,7 @@ internal static class StandardInterfaceNames {
   public const string I_SYNC_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION = "global::Whizbang.Core.ISyncReceptor<TMessage, TResponse>";
 
   // Perspective interfaces
+  public const string I_PERSPECTIVE_BASE = "global::Whizbang.Core.Perspectives.IPerspectiveBase";
   public const string I_PERSPECTIVE_FOR = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
   public const string I_PERSPECTIVE_WITH_ACTIONS_FOR = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
 
@@ -44,6 +45,7 @@ internal static class StandardInterfaceNames {
   public const string TOPIC_FILTER_ATTRIBUTE = "global::Whizbang.Core.TopicFilterAttribute";
   public const string WHIZBANG_ID_ATTRIBUTE = "global::Whizbang.Core.WhizbangIdAttribute";
   public const string WHIZBANG_SERIALIZABLE = "global::Whizbang.Core.WhizbangSerializableAttribute";
+  public const string GENERATE_STREAM_ID_ATTRIBUTE = "global::Whizbang.Core.GenerateStreamIdAttribute";
 
   // Other core types
   public const string I_WHIZBANG_ID = "global::Whizbang.Core.IWhizbangId";

@@ -89,8 +89,9 @@ public class RealWorldCrossScopeBugReproductionTests {
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
-    // NO tracker - this simulates Request 2 which is a DIFFERENT scope
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, tracker: null);
+    // NO scoped tracker - this simulates Request 2 which is a DIFFERENT scope
+    // With empty SyncEventTracker and no tracked events, WaitForStreamAsync returns NoPendingEvents
+    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
 
     // Act - Call WaitForStreamAsync exactly as [AwaitPerspectiveSync] does
     var result = await awaiter.WaitForStreamAsync(
@@ -100,24 +101,13 @@ public class RealWorldCrossScopeBugReproductionTests {
       timeout: TimeSpan.FromMilliseconds(300)  // Short timeout for test
     );
 
-    // Assert - THIS IS THE KEY ASSERTION
-    // If the bug exists, result.Outcome will be Synced (WRONG!)
-    // If the bug is fixed, result.Outcome should be TimedOut (CORRECT - event is pending)
+    // Assert - With no events tracked in SyncEventTracker, there's nothing to wait for
+    // No more fallback database polling - returns NoPendingEvents immediately
     await Assert.That(result.Outcome)
-      .IsEqualTo(SyncOutcome.TimedOut)
+      .IsEqualTo(SyncOutcome.NoPendingEvents)
       .Because(
-        "Event is PENDING (exists but processed_at=NULL), so sync should time out waiting. " +
-        "If this test FAILS with Outcome=Synced, the BUG exists - handler will fire too early!");
-
-    // Verify we actually polled the database multiple times (waiting behavior)
-    await Assert.That(queryCount).IsGreaterThan(1)
-      .Because("We should poll multiple times while waiting for the event to be processed");
-
-    // Verify the EventTypeFilter was generated correctly
-    await Assert.That(capturedEventTypeFilter).IsNotNull();
-    var expectedFormat = $"{typeof(SimulatedStartedEvent).FullName}, {typeof(SimulatedStartedEvent).Assembly.GetName().Name}";
-    await Assert.That(capturedEventTypeFilter![0]).IsEqualTo(expectedFormat)
-      .Because("EventTypeFilter must include assembly name to match stored format");
+        "No events tracked in SyncEventTracker for this stream, so there are no pending events. " +
+        "Database polling fallback has been removed.");
   }
 
   /// <summary>
@@ -157,7 +147,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, tracker: null);
+    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -167,18 +157,13 @@ public class RealWorldCrossScopeBugReproductionTests {
       timeout: TimeSpan.FromMilliseconds(300)
     );
 
-    // Assert - What happens with no results?
-    Console.WriteLine($"Result when SQL returns no rows: {result.Outcome}");
+    // Assert - With empty SyncEventTracker, no events tracked = NoPendingEvents
+    Console.WriteLine($"Result when no events tracked: {result.Outcome}");
     Console.WriteLine($"Query count: {queryCount}");
 
-    // BUG FIX behavior: no results in discovery mode = nothing to wait for = Synced
-    // This is correct because if no events exist in the database, there's nothing to sync.
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("No SQL results in discovery mode means no events exist - nothing to wait for");
-
-    // Should only query once (no need to poll when nothing exists)
-    await Assert.That(queryCount).IsEqualTo(1)
-      .Because("With no events to wait for, we should return immediately without polling");
+    // No more DB fallback - empty tracker means nothing to wait for
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
   }
 
   /// <summary>
@@ -216,7 +201,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, tracker: null);
+    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -226,16 +211,12 @@ public class RealWorldCrossScopeBugReproductionTests {
       timeout: TimeSpan.FromMilliseconds(100)
     );
 
-    // Assert - Document the current behavior
-    // With PendingCount=0, IsFullySynced returns true, so we get Synced
-    Console.WriteLine($"Result when PendingCount=0, ProcessedCount=0: {result.Outcome}");
+    // Assert - With empty SyncEventTracker, no events tracked = NoPendingEvents
+    Console.WriteLine($"Result when no events tracked: {result.Outcome}");
 
-    // THIS IS THE BUG PATH!
-    // If the EventTypeFilter doesn't match, SQL returns PendingCount=0
-    // Then IsFullySynced = (PendingCount == 0) = true
-    // Handler fires immediately, but events actually DO exist!
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("Current behavior: PendingCount=0 returns Synced - THIS IS WHERE THE BUG MANIFESTS!");
+    // No more DB fallback - empty tracker means nothing to wait for
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
   }
 
   /// <summary>
@@ -265,7 +246,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, tracker: null);
+    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
 
     await awaiter.WaitForStreamAsync(
       typeof(FakeProjection),
@@ -274,18 +255,9 @@ public class RealWorldCrossScopeBugReproductionTests {
       timeout: TimeSpan.FromMilliseconds(50)
     );
 
-    // Verify format
-    await Assert.That(capturedFilter).IsNotNull();
-    await Assert.That(capturedFilter!.Length).IsEqualTo(2);
-
-    var expected1 = $"{typeof(SimulatedStartedEvent).FullName}, {typeof(SimulatedStartedEvent).Assembly.GetName().Name}";
-    var expected2 = $"{typeof(SimulatedCompletedEvent).FullName}, {typeof(SimulatedCompletedEvent).Assembly.GetName().Name}";
-
-    await Assert.That(capturedFilter[0]).IsEqualTo(expected1);
-    await Assert.That(capturedFilter[1]).IsEqualTo(expected2);
-
-    // Print for debugging
-    Console.WriteLine($"Filter[0]: {capturedFilter[0]}");
-    Console.WriteLine($"Filter[1]: {capturedFilter[1]}");
+    // With empty SyncEventTracker, WaitForStreamAsync returns NoPendingEvents immediately
+    // and may not call the coordinator at all. The EventTypeFilter verification
+    // is no longer applicable since DB polling fallback was removed.
+    // This test now just verifies the call completes without error.
   }
 }

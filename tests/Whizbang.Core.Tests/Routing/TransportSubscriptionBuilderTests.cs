@@ -303,12 +303,8 @@ public class TransportSubscriptionBuilderTests {
 
   #region Test Helpers
 
-  private sealed class TestEventNamespaceRegistry : IEventNamespaceRegistry {
-    private readonly HashSet<string> _namespaces;
-
-    public TestEventNamespaceRegistry(IEnumerable<string> namespaces) {
-      _namespaces = new HashSet<string>(namespaces, StringComparer.OrdinalIgnoreCase);
-    }
+  private sealed class TestEventNamespaceRegistry(IEnumerable<string> namespaces) : IEventNamespaceRegistry {
+    private readonly HashSet<string> _namespaces = new(namespaces, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Creates an empty registry (no auto-discovered namespaces).</summary>
     public static TestEventNamespaceRegistry Empty => new([]);

@@ -11,15 +11,19 @@ namespace Whizbang.Generators;
 /// Roslyn analyzer that detects incorrect Guid usage patterns.
 /// Enforces the use of TrackedGuid or [WhizbangId] types instead of raw Guid generation.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids#analyzer</docs>
+/// <docs>fundamentals/identity/whizbang-ids#analyzer</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class GuidUsageAnalyzer : DiagnosticAnalyzer {
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
-      DiagnosticDescriptors.GuidNewGuidUsage,
-      DiagnosticDescriptors.GuidCreateVersion7Usage,
-      DiagnosticDescriptors.RawGuidWhereIdExpected
-  );
+  /// <inheritdoc/>
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+  [
+    DiagnosticDescriptors.GuidNewGuidUsage,
+    DiagnosticDescriptors.GuidCreateVersion7Usage,
+    DiagnosticDescriptors.RawGuidWhereIdExpected
+,
+  ];
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
@@ -32,8 +36,7 @@ public class GuidUsageAnalyzer : DiagnosticAnalyzer {
     var invocation = (InvocationExpressionSyntax)context.Node;
 
     // Check what method is being invoked
-    var memberAccess = invocation.Expression as MemberAccessExpressionSyntax;
-    if (memberAccess is null) {
+    if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess) {
       return;
     }
 

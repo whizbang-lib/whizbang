@@ -25,10 +25,7 @@
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Data.Dapper.Sqlite/Whizbang.Data.Dapper.Sqlite.csproj" />
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <!-- PrivateAssets prevents TUnit from discovering tests in the referenced test project -->
-    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" PrivateAssets="all" />
-    <!-- PrivateAssets prevents TUnit from discovering tests in the referenced test project -->
-    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" PrivateAssets="all" />
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
   </ItemGroup>
 
 </Project>

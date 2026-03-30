@@ -13,7 +13,7 @@ namespace Whizbang.Core.Policies;
 /// This class is designed to be pooled to minimize heap allocations.
 /// Use PolicyContextPool to rent and return instances.
 /// </remarks>
-/// <docs>infrastructure/policies</docs>
+/// <docs>operations/infrastructure/policies</docs>
 public class PolicyContext {
   /// <summary>
   /// The message being processed.
@@ -275,7 +275,7 @@ public class PolicyContext {
 
     throw new InvalidOperationException(
         $"Message type {MessageType.Name} does not have a property marked with [StreamId] attribute. " +
-        $"Add [StreamId] to a Guid property to enable stream ID extraction."
+        "Add [StreamId] to a Guid property to enable stream ID extraction."
     );
   }
 }

@@ -1,5 +1,6 @@
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -11,7 +12,105 @@ namespace Whizbang.Core.Tests.Security;
 /// </summary>
 [Category("Security")]
 public class ScopedMessageContextTests {
-  // === UserId Tests ===
+  // === InitiatingContext Priority Tests (SOURCE OF TRUTH) ===
+
+  [Test]
+  public async Task UserId_WithInitiatingContext_ReturnsInitiatingUserIdAsync() {
+    // Arrange
+    var scopeAccessor = new ScopeContextAccessor();
+    var messageAccessor = new MessageContextAccessor();
+
+    // Set InitiatingContext (should be highest priority)
+    scopeAccessor.InitiatingContext = new TestMessageContext { UserId = "initiating-user", TenantId = "initiating-tenant" };
+
+    // Set ScopeContext with different value (should be ignored)
+    var extraction = _createExtraction("scope-user", "scope-tenant");
+    scopeAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    // Set MessageContext with different value (should be ignored)
+    messageAccessor.Current = new TestMessageContext { UserId = "message-user", TenantId = "message-tenant" };
+
+    var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
+
+    // Act
+    var userId = scopedContext.UserId;
+
+    // Assert - InitiatingContext takes priority (SOURCE OF TRUTH)
+    await Assert.That(userId).IsEqualTo("initiating-user");
+  }
+
+  [Test]
+  public async Task TenantId_WithInitiatingContext_ReturnsInitiatingTenantIdAsync() {
+    // Arrange
+    var scopeAccessor = new ScopeContextAccessor();
+    var messageAccessor = new MessageContextAccessor();
+
+    // Set InitiatingContext (should be highest priority)
+    scopeAccessor.InitiatingContext = new TestMessageContext { UserId = "initiating-user", TenantId = "initiating-tenant" };
+
+    // Set ScopeContext with different value (should be ignored)
+    var extraction = _createExtraction("scope-user", "scope-tenant");
+    scopeAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    // Set MessageContext with different value (should be ignored)
+    messageAccessor.Current = new TestMessageContext { UserId = "message-user", TenantId = "message-tenant" };
+
+    var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
+
+    // Act
+    var tenantId = scopedContext.TenantId;
+
+    // Assert - InitiatingContext takes priority (SOURCE OF TRUTH)
+    await Assert.That(tenantId).IsEqualTo("initiating-tenant");
+  }
+
+  [Test]
+  public async Task UserId_WithInitiatingContextNull_FallsBackToScopeContextAsync() {
+    // Arrange
+    var scopeAccessor = new ScopeContextAccessor();
+    var messageAccessor = new MessageContextAccessor();
+
+    // InitiatingContext is null - should fall back to ScopeContext
+    scopeAccessor.InitiatingContext = null;
+
+    // Set ScopeContext (should be used as fallback)
+    var extraction = _createExtraction("scope-user", "scope-tenant");
+    scopeAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    messageAccessor.Current = new TestMessageContext { UserId = "message-user" };
+
+    var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
+
+    // Act
+    var userId = scopedContext.UserId;
+
+    // Assert - Falls back to ScopeContext
+    await Assert.That(userId).IsEqualTo("scope-user");
+  }
+
+  [Test]
+  public async Task UserId_WithInitiatingContextUserIdNull_FallsBackToScopeContextAsync() {
+    // Arrange
+    var scopeAccessor = new ScopeContextAccessor();
+    var messageAccessor = new MessageContextAccessor();
+
+    // InitiatingContext exists but UserId is null
+    scopeAccessor.InitiatingContext = new TestMessageContext { UserId = null, TenantId = "initiating-tenant" };
+
+    // Set ScopeContext (should be used as fallback for UserId)
+    var extraction = _createExtraction("scope-user", "scope-tenant");
+    scopeAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
+
+    // Act
+    var userId = scopedContext.UserId;
+
+    // Assert - Falls back to ScopeContext since InitiatingContext.UserId is null
+    await Assert.That(userId).IsEqualTo("scope-user");
+  }
+
+  // === UserId Tests (Backward Compatibility) ===
 
   [Test]
   public async Task UserId_WithScopeContext_ReturnsScopeUserIdAsync() {
@@ -36,8 +135,9 @@ public class ScopedMessageContextTests {
   public async Task UserId_WithoutScopeContext_FallsBackToMessageContextAsync() {
     // Arrange
     var scopeAccessor = new ScopeContextAccessor { Current = null };
-    var messageAccessor = new MessageContextAccessor();
-    messageAccessor.Current = new TestMessageContext { UserId = "message-user" };
+    var messageAccessor = new MessageContextAccessor {
+      Current = new TestMessageContext { UserId = "message-user" }
+    };
 
     var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
 
@@ -88,8 +188,9 @@ public class ScopedMessageContextTests {
   public async Task TenantId_WithoutScopeContext_FallsBackToMessageContextAsync() {
     // Arrange
     var scopeAccessor = new ScopeContextAccessor { Current = null };
-    var messageAccessor = new MessageContextAccessor();
-    messageAccessor.Current = new TestMessageContext { TenantId = "message-tenant" };
+    var messageAccessor = new MessageContextAccessor {
+      Current = new TestMessageContext { TenantId = "message-tenant" }
+    };
 
     var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
 
@@ -285,5 +386,7 @@ public class ScopedMessageContextTests {
     public string? UserId { get; init; }
     public string? TenantId { get; init; }
     public IReadOnlyDictionary<string, object> Metadata { get; init; } = new Dictionary<string, object>();
+    public IScopeContext? ScopeContext { get; init; }
+    public ICallerInfo? CallerInfo => null;
   }
 }

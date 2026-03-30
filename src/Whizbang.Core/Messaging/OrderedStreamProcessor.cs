@@ -17,27 +17,22 @@ namespace Whizbang.Core.Messaging;
 /// Events from the same stream are processed sequentially to preserve order.
 /// Events from different streams CAN be processed in parallel (configurable).
 /// </summary>
-public partial class OrderedStreamProcessor {
-  private readonly bool _parallelizeStreams;
-  private readonly ILogger<OrderedStreamProcessor>? _logger;
-
-  /// <summary>
-  /// Creates a new OrderedStreamProcessor.
-  /// </summary>
-  /// <param name="parallelizeStreams">
-  /// When true, different streams can be processed concurrently.
-  /// When false, all streams processed sequentially (safer, simpler debugging).
-  /// </param>
-  /// <param name="logger">Optional logger</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
-  public OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
-    _parallelizeStreams = parallelizeStreams;
-    _logger = logger;
-  }
+/// <remarks>
+/// Creates a new OrderedStreamProcessor.
+/// </remarks>
+/// <param name="parallelizeStreams">
+/// When true, different streams can be processed concurrently.
+/// When false, all streams processed sequentially (safer, simpler debugging).
+/// </param>
+/// <param name="logger">Optional logger</param>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
+public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
+  private readonly bool _parallelizeStreams = parallelizeStreams;
+  private readonly ILogger<OrderedStreamProcessor>? _logger = logger;
 
   /// <summary>
   /// Processes inbox work maintaining stream order.
@@ -73,7 +68,7 @@ public partial class OrderedStreamProcessor {
       .GroupBy(w => w.StreamId ?? Guid.Empty)  // NULL stream = no ordering required, group together
       .Select(g => new StreamBatch<InboxWork> {
         StreamId = g.Key,
-        Messages = g.OrderBy(m => m.MessageId).ToList()  // Ensure ordering by message_id (UUIDv7)
+        Messages = [.. g.OrderBy(m => m.MessageId)]  // Ensure ordering by message_id (UUIDv7)
       })
       .ToList();
 
@@ -83,9 +78,7 @@ public partial class OrderedStreamProcessor {
 
     if (_parallelizeStreams) {
       // Process different streams in parallel
-      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-        await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-      });
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token));
     } else {
       // Process streams sequentially (safer default)
       foreach (var streamBatch in streamGroups) {
@@ -129,7 +122,7 @@ public partial class OrderedStreamProcessor {
       .GroupBy(w => w.StreamId ?? Guid.Empty)
       .Select(g => new StreamBatch<OutboxWork> {
         StreamId = g.Key,
-        Messages = g.OrderBy(m => m.MessageId).ToList()  // Order by message_id (UUIDv7)
+        Messages = [.. g.OrderBy(m => m.MessageId)]  // Order by message_id (UUIDv7)
       })
       .ToList();
 
@@ -138,9 +131,7 @@ public partial class OrderedStreamProcessor {
     }
 
     if (_parallelizeStreams) {
-      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-        await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-      });
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token));
     } else {
       foreach (var streamBatch in streamGroups) {
         if (ct.IsCancellationRequested) {
@@ -172,31 +163,19 @@ public partial class OrderedStreamProcessor {
     }
 
     // Process messages in this stream SEQUENTIALLY (strict ordering)
-    foreach (var message in streamBatch.Messages) {
+    var callbacks = new MessageProcessingCallbacks<InboxWork>(processor, completionHandler, failureHandler, _logInboxMessageSuccess, _logInboxMessageFailure);
+    for (int idx = 0; idx < streamBatch.Messages.Count; idx++) {
       if (ct.IsCancellationRequested) {
         break;
       }
 
-      try {
-        var completedStatus = await processor(message);
-        completionHandler(message.MessageId, completedStatus);
-
-        if (_logger != null) {
-          LogSuccessfullyProcessedMessage(_logger, message.MessageId, streamBatch.StreamId, completedStatus);
-        }
-      } catch (Exception ex) {
-        if (_logger != null) {
-          LogFailedToProcessMessage(_logger, ex, message.MessageId, streamBatch.StreamId);
-        }
-
-        // Determine what succeeded before failure
-        var partialStatus = message.Status;  // What was already completed
-        failureHandler(message.MessageId, partialStatus, ex.Message);
-
+      var message = streamBatch.Messages[idx];
+      if (!await _tryProcessSingleMessageAsync(
+        message, message.MessageId, message.Status, streamBatch.StreamId,
+        callbacks)) {
         // STOP processing this stream on failure (maintain ordering)
-        // Remaining messages will be retried in next batch
         if (_logger != null) {
-          LogStoppingStreamProcessing(_logger, streamBatch.StreamId, streamBatch.Messages.Count - streamBatch.Messages.IndexOf(message) - 1);
+          LogStoppingStreamProcessing(_logger, streamBatch.StreamId, streamBatch.Messages.Count - idx - 1);
         }
         break;
       }
@@ -218,32 +197,71 @@ public partial class OrderedStreamProcessor {
       LogProcessingOutboxStream(_logger, streamBatch.StreamId == Guid.Empty ? "NULL" : streamBatch.StreamId.ToString(), streamBatch.Messages.Count);
     }
 
+    var callbacks = new MessageProcessingCallbacks<OutboxWork>(processor, completionHandler, failureHandler, _logOutboxMessageSuccess, _logOutboxMessageFailure);
     foreach (var message in streamBatch.Messages) {
       if (ct.IsCancellationRequested) {
         break;
       }
 
-      try {
-        var completedStatus = await processor(message);
-        completionHandler(message.MessageId, completedStatus);
-
-        if (_logger != null) {
-          LogSuccessfullyProcessedOutboxMessage(_logger, message.MessageId, streamBatch.StreamId);
-        }
-      } catch (Exception ex) {
-        if (_logger != null) {
-          LogFailedToProcessOutboxMessage(_logger, ex, message.MessageId, streamBatch.StreamId);
-        }
-
-        var partialStatus = message.Status;
-        failureHandler(message.MessageId, partialStatus, ex.Message);
-
-        if (_logger != null) {
-          LogStoppingOutboxStreamProcessing(_logger, streamBatch.StreamId);
-        }
+      if (!await _tryProcessSingleMessageAsync(
+        message, message.MessageId, message.Status, streamBatch.StreamId,
+        callbacks)) {
         break;
       }
     }
+  }
+
+  /// <summary>
+  /// Groups processing callbacks and loggers for stream message processing.
+  /// </summary>
+  private readonly record struct MessageProcessingCallbacks<TWork>(
+    Func<TWork, Task<MessageProcessingStatus>> Processor,
+    Action<Guid, MessageProcessingStatus> CompletionHandler,
+    Action<Guid, MessageProcessingStatus, string> FailureHandler,
+    Action<ILogger, Guid, Guid, MessageProcessingStatus> SuccessLogger,
+    Action<ILogger, Exception, Guid, Guid> FailureLogger);
+
+  /// <summary>
+  /// Tries to process a single message. Returns false if processing failed (caller should stop the stream).
+  /// </summary>
+  private async Task<bool> _tryProcessSingleMessageAsync<TWork>(
+    TWork message,
+    Guid messageId,
+    MessageProcessingStatus currentStatus,
+    Guid streamId,
+    MessageProcessingCallbacks<TWork> callbacks) {
+    try {
+      var completedStatus = await callbacks.Processor(message);
+      callbacks.CompletionHandler(messageId, completedStatus);
+
+      if (_logger != null) {
+        callbacks.SuccessLogger(_logger, messageId, streamId, completedStatus);
+      }
+      return true;
+    } catch (Exception ex) {
+      if (_logger != null) {
+        callbacks.FailureLogger(_logger, ex, messageId, streamId);
+      }
+
+      callbacks.FailureHandler(messageId, currentStatus, ex.Message);
+      return false;
+    }
+  }
+
+  private static void _logInboxMessageSuccess(ILogger logger, Guid messageId, Guid streamId, MessageProcessingStatus status) {
+    LogSuccessfullyProcessedMessage(logger, messageId, streamId, status);
+  }
+
+  private static void _logInboxMessageFailure(ILogger logger, Exception ex, Guid messageId, Guid streamId) {
+    LogFailedToProcessMessage(logger, ex, messageId, streamId);
+  }
+
+  private static void _logOutboxMessageSuccess(ILogger logger, Guid messageId, Guid streamId, MessageProcessingStatus _) {
+    LogSuccessfullyProcessedOutboxMessage(logger, messageId, streamId);
+  }
+
+  private static void _logOutboxMessageFailure(ILogger logger, Exception ex, Guid messageId, Guid streamId) {
+    LogFailedToProcessOutboxMessage(logger, ex, messageId, streamId);
   }
 
   /// <summary>

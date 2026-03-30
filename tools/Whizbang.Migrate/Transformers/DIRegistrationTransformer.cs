@@ -90,8 +90,7 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -146,12 +145,8 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms Wolverine/Marten method calls to Whizbang equivalents.
   /// </summary>
-  private sealed class DIMethodCallRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public DIMethodCallRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class DIMethodCallRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var methodName = _getMethodName(node);
@@ -161,24 +156,21 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
       }
 
       // Handle IntegrateWithWolverine - remove entirely
-      if (_methodsToRemove.Contains(methodName)) {
-        // Get the expression before the method call (the chained call)
-        if (node.Expression is MemberAccessExpressionSyntax memberAccess) {
-          _changes.Add(new CodeChange(
-              node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
-              ChangeType.MethodCallReplacement,
-              $"Removed '{methodName}()' (not needed in Whizbang)",
-              $".{methodName}()",
-              ""));
+      if (_methodsToRemove.Contains(methodName) && node.Expression is MemberAccessExpressionSyntax memberAccess) {
+        _changes.Add(new CodeChange(
+            node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.MethodCallReplacement,
+            $"Removed '{methodName}()' (not needed in Whizbang)",
+            $".{methodName}()",
+            ""));
 
-          // Return just the expression part, removing the method call
-          return Visit(memberAccess.Expression);
-        }
+        // Return just the expression part, removing the method call
+        return Visit(memberAccess.Expression);
       }
 
       // Handle AddWolverine -> AddWhizbang
       if (methodName == "AddWolverine") {
-        var newMethodName = "AddWhizbang";
+        const string newMethodName = "AddWhizbang";
         var newNode = _replaceMethodName(node, newMethodName);
 
         _changes.Add(new CodeChange(
@@ -193,7 +185,7 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
 
       // Handle UseWolverine -> UseWhizbang
       if (methodName == "UseWolverine") {
-        var newMethodName = "UseWhizbang";
+        const string newMethodName = "UseWhizbang";
         var newNode = _replaceMethodName(node, newMethodName);
 
         _changes.Add(new CodeChange(
@@ -208,7 +200,7 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
 
       // Handle AddMarten -> AddWhizbangEventStore
       if (methodName == "AddMarten") {
-        var newMethodName = "AddWhizbangEventStore";
+        const string newMethodName = "AddWhizbangEventStore";
         var newNode = _replaceMethodName(node, newMethodName);
 
         _changes.Add(new CodeChange(

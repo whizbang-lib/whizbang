@@ -10,14 +10,12 @@ namespace ECommerce.ShippingWorker.Receptors;
 /// This demonstrates that EVENTS can have RECEPTORS (not just perspectives!)
 /// </summary>
 public class PaymentShippingReceptor(IDispatcher dispatcher, ILogger<PaymentShippingReceptor> logger) : IReceptor<PaymentProcessedEvent, CreateShipmentCommand> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<PaymentShippingReceptor> _logger = logger;
 
   public async ValueTask<CreateShipmentCommand> HandleAsync(
     PaymentProcessedEvent message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Payment processed for order {OrderId}, initiating shipment creation",
       message.OrderId);
 
@@ -28,9 +26,9 @@ public class PaymentShippingReceptor(IDispatcher dispatcher, ILogger<PaymentShip
     };
 
     // Dispatch the command
-    await _dispatcher.SendAsync(createShipmentCommand);
+    await dispatcher.SendAsync(createShipmentCommand);
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Dispatched create shipment command for order {OrderId}",
       message.OrderId);
 

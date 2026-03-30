@@ -67,9 +67,10 @@ public class OrderedStreamProcessorTests {
     var stream3 = _idProvider.NewGuid();
 
     var processedStreams = new ConcurrentBag<Guid>();
-    var processingStarted = new Dictionary<Guid, DateTimeOffset>();
-    var processingCompleted = new Dictionary<Guid, DateTimeOffset>();
-    var lockObj = new object();
+
+    // Barrier: proves all 3 streams enter concurrently (signal-based, no timing)
+    var allStreamsEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var enteredCount = 0;
 
     // Create messages from 3 different streams
     var messages = new List<InboxWork> {
@@ -86,19 +87,15 @@ public class OrderedStreamProcessorTests {
       messages,
       processor: async work => {
         var streamId = work.StreamId!.Value;
-
-        lock (lockObj) {
-          if (!processingStarted.ContainsKey(streamId)) {
-            processingStarted[streamId] = DateTimeOffset.UtcNow;
-          }
-        }
-
         processedStreams.Add(streamId);
-        await Task.Delay(10);  // Simulate work
 
-        lock (lockObj) {
-          processingCompleted[streamId] = DateTimeOffset.UtcNow;
+        // First message per stream enters the barrier; when all 3 enter, concurrency is proven
+        if (Interlocked.Increment(ref enteredCount) >= 3) {
+          allStreamsEntered.TrySetResult();
         }
+
+        // All first-message handlers wait until all 3 streams have entered
+        await allStreamsEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         return MessageProcessingStatus.EventStored;
       },
@@ -106,30 +103,11 @@ public class OrderedStreamProcessorTests {
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - All 3 streams processed
+    // Assert - All 3 streams processed (if we reach here, concurrent execution was proven by the barrier)
     await Assert.That(processedStreams.Distinct()).Count().IsEqualTo(3);
     await Assert.That(processedStreams).Contains(stream1);
     await Assert.That(processedStreams).Contains(stream2);
     await Assert.That(processedStreams).Contains(stream3);
-
-    // Verify concurrent processing (at least 2 streams overlapped)
-    var hasOverlap = false;
-    foreach (var stream in processingStarted.Keys) {
-      var otherStreams = processingStarted.Keys.Where(s => s != stream);
-      foreach (var other in otherStreams) {
-        if (processingStarted[stream] < processingCompleted[other] &&
-            processingCompleted[stream] > processingStarted[other]) {
-          hasOverlap = true;
-          break;
-        }
-      }
-      if (hasOverlap) {
-        break;
-      }
-    }
-
-    await Assert.That(hasOverlap).IsTrue()
-      .Because("With parallelizeStreams=true, different streams should be processed concurrently");
   }
 
   [Test]
@@ -544,9 +522,10 @@ public class OrderedStreamProcessorTests {
     var stream3 = _idProvider.NewGuid();
 
     var processedStreams = new ConcurrentBag<Guid>();
-    var processingStarted = new Dictionary<Guid, DateTimeOffset>();
-    var processingCompleted = new Dictionary<Guid, DateTimeOffset>();
-    var lockObj = new object();
+
+    // Barrier: proves all 3 streams enter concurrently (signal-based, no timing)
+    var allStreamsEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var enteredCount = 0;
 
     var messages = new List<OutboxWork> {
       _createOutboxWork(stream1),
@@ -562,19 +541,15 @@ public class OrderedStreamProcessorTests {
       messages,
       processor: async work => {
         var streamId = work.StreamId!.Value;
-
-        lock (lockObj) {
-          if (!processingStarted.ContainsKey(streamId)) {
-            processingStarted[streamId] = DateTimeOffset.UtcNow;
-          }
-        }
-
         processedStreams.Add(streamId);
-        await Task.Delay(10);  // Simulate work
 
-        lock (lockObj) {
-          processingCompleted[streamId] = DateTimeOffset.UtcNow;
+        // First message per stream enters the barrier; when all 3 enter, concurrency is proven
+        if (Interlocked.Increment(ref enteredCount) >= 3) {
+          allStreamsEntered.TrySetResult();
         }
+
+        // All first-message handlers wait until all 3 streams have entered
+        await allStreamsEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         return MessageProcessingStatus.Published;
       },
@@ -582,7 +557,7 @@ public class OrderedStreamProcessorTests {
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - All 3 streams processed
+    // Assert - All 3 streams processed (if we reach here, concurrent execution was proven by the barrier)
     await Assert.That(processedStreams.Distinct()).Count().IsEqualTo(3);
   }
 
@@ -695,7 +670,7 @@ public class OrderedStreamProcessorTests {
       StreamId = null,  // No stream ID
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -712,7 +687,7 @@ public class OrderedStreamProcessorTests {
       PartitionNumber = 0,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -726,7 +701,7 @@ public class OrderedStreamProcessorTests {
       StreamId = streamId,
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -743,7 +718,7 @@ public class OrderedStreamProcessorTests {
       PartitionNumber = 0,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
   }
 
@@ -787,5 +762,6 @@ public class OrderedStreamProcessorTests {
     }
 
     public SecurityContext? GetCurrentSecurityContext() => null;
+    public ScopeContext? GetCurrentScope() => null;
   }
 }

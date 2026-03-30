@@ -16,7 +16,7 @@ namespace Whizbang.Core;
 /// This class is registered as a singleton by default in <see cref="ServiceCollectionExtensions.AddWhizbang"/>.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/time-provider</docs>
+/// <docs>fundamentals/identity/time-provider</docs>
 public sealed class SystemTimeProvider : ITimeProvider {
   private readonly TimeProvider _timeProvider;
 

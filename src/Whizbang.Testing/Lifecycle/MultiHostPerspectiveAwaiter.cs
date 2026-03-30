@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Lifecycle;
 
@@ -11,10 +13,12 @@ namespace Whizbang.Testing.Lifecycle;
 /// Useful for integration tests with separate Inventory and BFF hosts that both process the same events.
 /// </summary>
 /// <typeparam name="TEvent">The event type being processed by perspectives.</typeparam>
-public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
+public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDisposable
   where TEvent : IEvent {
 
-  private readonly List<(IHost Host, ILifecycleReceptorRegistry Registry, CountingReceptor Receptor, TaskCompletionSource<bool> Tcs)> _hostRegistrations = [];
+  private readonly List<(IHost Host, IReceptorRegistry Registry, CountingReceptor Receptor, TaskCompletionSource<bool> Tcs)> _hostRegistrations = [];
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
   private bool _disposed;
 
   /// <summary>
@@ -29,7 +33,7 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
         continue;  // Skip hosts with no expected perspectives
       }
 
-      var registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      var registry = host.Services.GetRequiredService<IReceptorRegistry>();
       // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
       var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
       var receptor = new CountingReceptor(tcs, expectedPerspectives);
@@ -50,13 +54,11 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
       return;  // Nothing to wait for
     }
 
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
+    var tasks = _hostRegistrations.Select(r => r.Tcs.Task);
     try {
-      var tasks = _hostRegistrations.Select(r => r.Tcs.Task);
-      await Task.WhenAll(tasks).WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+      await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+          Task.WhenAll(tasks), timeout, string.Empty, cancellationToken);
+    } catch (TimeoutException) {
       var status = string.Join(", ", _hostRegistrations.Select(r =>
         $"{r.Host.Services.GetType().Name}: {r.Receptor.Count}/{r.Receptor.Expected}"));
       throw new TimeoutException($"Not all perspectives completed within {timeout}. Status: [{status}]");
@@ -89,19 +91,13 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
   /// <summary>
   /// Internal receptor that counts completions and signals when expected count is reached.
   /// </summary>
-  private sealed class CountingReceptor : IReceptor<TEvent>, IAcceptsLifecycleContext {
-    private readonly TaskCompletionSource<bool> _tcs;
-    private readonly int _expected;
+  private sealed class CountingReceptor(TaskCompletionSource<bool> tcs, int expected) : IReceptor<TEvent>, IAcceptsLifecycleContext {
+    private readonly TaskCompletionSource<bool> _tcs = tcs;
     private readonly ConcurrentDictionary<string, byte> _completedPerspectives = new();
     private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
-    public int Expected => _expected;
+    public int Expected { get; } = expected;
     public int Count => _completedPerspectives.Count;
-
-    public CountingReceptor(TaskCompletionSource<bool> tcs, int expected) {
-      _tcs = tcs;
-      _expected = expected;
-    }
 
     public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
       var context = _asyncLocalContext.Value;
@@ -109,7 +105,7 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
 
       // Track unique perspectives (deduplicate by perspective type)
       if (_completedPerspectives.TryAdd(perspectiveKey, 0)) {
-        if (_completedPerspectives.Count >= _expected) {
+        if (_completedPerspectives.Count >= Expected) {
           _tcs.TrySetResult(true);
         }
       }

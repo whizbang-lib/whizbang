@@ -3,7 +3,7 @@ using Whizbang.Generators.Shared.Limits;
 namespace Whizbang.Data.EFCore.Postgres.Generators.Limits;
 
 /// <summary>
-/// <docs>infrastructure/database-limits</docs>
+/// <docs>operations/infrastructure/database-limits</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Limits/PostgresLimitsTests.cs</tests>
 /// PostgreSQL identifier limits.
 /// PostgreSQL uses 63 bytes as the maximum identifier length (NAMEDATALEN - 1).

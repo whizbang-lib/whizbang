@@ -5,7 +5,7 @@ namespace Whizbang.Core.ValueObjects;
 /// Implements IWhizbangId for use with generic API constraints.
 /// Enforces UUIDv7 requirement - v4 Guids are rejected.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids#generic-whizbang-id</docs>
+/// <docs>fundamentals/identity/whizbang-ids#generic-whizbang-id</docs>
 public readonly struct WhizbangId : IWhizbangId, IEquatable<WhizbangId>, IComparable<WhizbangId> {
   private readonly TrackedGuid _tracked;
 

@@ -58,10 +58,7 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   /// <summary>
   /// DbContext configured with physical fields as shadow properties.
   /// </summary>
-  private sealed class UnifiedQueryDbContext : DbContext {
-    public UnifiedQueryDbContext(DbContextOptions<UnifiedQueryDbContext> options)
-        : base(options) { }
-
+  private sealed class UnifiedQueryDbContext(DbContextOptions<UnifiedQuerySyntaxTests.UnifiedQueryDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 

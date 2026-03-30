@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 public static class DbContextInitializationRegistry {
   private static readonly List<DbContextInitializer> _initializers = [];
   private static readonly object _lock = new();
+  private static int _initialized;
 
   /// <summary>
   /// Represents a DbContext initialization delegate.
@@ -52,6 +53,13 @@ public static class DbContextInitializationRegistry {
       IServiceProvider serviceProvider,
       ILogger? logger = null,
       CancellationToken cancellationToken = default) {
+    if (Interlocked.CompareExchange(ref _initialized, 1, 0) == 1) {
+      if (logger is not null) {
+        DbContextInitializationLog.AlreadyInitialized(logger);
+      }
+      return;
+    }
+
     List<DbContextInitializer> initializersCopy;
 
     lock (_lock) {
@@ -106,4 +114,9 @@ internal static partial class DbContextInitializationLog {
       Level = LogLevel.Information,
       Message = "All Whizbang DbContext(s) initialized successfully")]
   public static partial void InitializationComplete(ILogger logger);
+
+  [LoggerMessage(
+      Level = LogLevel.Debug,
+      Message = "Whizbang database already initialized, skipping")]
+  public static partial void AlreadyInitialized(ILogger logger);
 }

@@ -1,3 +1,5 @@
+#pragma warning disable CS0618
+
 namespace Whizbang.Core.Lenses;
 
 /// <summary>
@@ -5,7 +7,7 @@ namespace Whizbang.Core.Lenses;
 /// Used for transient ILensQuery registration - each injection creates factory + query.
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
-/// <docs>lenses/lens-query-factory</docs>
+/// <docs>fundamentals/lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
 public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDisposable, IDisposable
     where TModel : class {
@@ -22,6 +24,16 @@ public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDi
     _factory = factory ?? throw new ArgumentNullException(nameof(factory));
     _inner = factory.GetQuery<TModel>();
   }
+
+  /// <inheritdoc />
+  public IScopedLensAccess<TModel> Scope(QueryScope scope) => _inner.Scope(scope);
+
+  /// <inheritdoc />
+  public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) =>
+      _inner.ScopeOverride(scope, overrideValues);
+
+  /// <inheritdoc />
+  public IScopedLensAccess<TModel> DefaultScope => _inner.DefaultScope;
 
   /// <inheritdoc />
   public IQueryable<PerspectiveRow<TModel>> Query => _inner.Query;

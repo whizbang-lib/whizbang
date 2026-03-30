@@ -32,7 +32,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// </summary>
 public static class TemplateUtilities {
   // CA1861: Prefer static readonly over constant array arguments for better performance
-  private static readonly string[] _lineSeparators = { "\r\n", "\r", "\n" };
+  private static readonly string[] _lineSeparators = ["\r\n", "\r", "\n"];
   /// <summary>
   /// Replaces a #region block with generated code, preserving indentation.
   /// Regex pattern matches: #region NAME ... #endregion with any content/whitespace between.
@@ -53,72 +53,105 @@ public static class TemplateUtilities {
     // Use simple string search instead of regex to avoid catastrophic backtracking
     // This is more efficient for large templates (migration scripts can be 50KB+)
     var regionStart = $"#region {regionName}";
-    var regionEnd = "#endregion";
+    const string regionEnd = "#endregion";
 
     var startIdx = template.IndexOf(regionStart, StringComparison.Ordinal);
     if (startIdx < 0) {
-      // Region not found, return original
-      return template;
+      return template;  // Region not found
     }
 
-    // Find matching #endregion after the region start
     var endIdx = template.IndexOf(regionEnd, startIdx, StringComparison.Ordinal);
     if (endIdx < 0) {
-      // No matching #endregion found, return original
-      return template;
+      return template;  // No matching #endregion found
     }
 
     // Capture leading whitespace for indentation (look back from #region)
-    var indentStart = startIdx;
-    while (indentStart > 0 && template[indentStart - 1] != '\n' && template[indentStart - 1] != '\r') {
-      indentStart--;
-    }
-    var indentation = template.Substring(indentStart, startIdx - indentStart);
+    var indentStart = _findLineStart(template, startIdx);
+    var indentation = template[indentStart..startIdx];
 
     // Indent the replacement code to match the region's indentation
     var indentedReplacement = IndentCode(replacement.TrimEnd(), indentation);
 
-    // Find where to start the replacement (beginning of region line including indentation)
-    var replaceStart = indentStart;
-
-    // Find end of #endregion
+    // Find boundaries and trailing content
     var replaceEnd = endIdx + regionEnd.Length;
+    var trailing = _captureTrailingContent(template, ref replaceEnd);
+    _consumeLineEnding(template, ref replaceEnd);
 
-    // Capture any trailing content after #endregion on the same line (e.g., semicolon)
+    // Build the result
+    var suffix = template[replaceEnd..];
+    indentedReplacement = _applyTrailingAndNewline(indentedReplacement, trailing, suffix);
+
+    return template[..indentStart] + indentedReplacement + suffix;
+  }
+
+  /// <summary>
+  /// Finds the start of the line containing the given position, scanning backward to the
+  /// preceding newline character.
+  /// </summary>
+  private static int _findLineStart(string template, int position) {
+    var lineStart = position;
+    while (lineStart > 0 && template[lineStart - 1] != '\n' && template[lineStart - 1] != '\r') {
+      lineStart--;
+    }
+    return lineStart;
+  }
+
+  /// <summary>
+  /// Captures any trailing content after #endregion on the same line (e.g., semicolon).
+  /// Advances replaceEnd past the trailing content.
+  /// </summary>
+  private static string _captureTrailingContent(string template, ref int replaceEnd) {
+#pragma warning disable S125 // Descriptive comment with code-like example, not dead code
     // This handles inline patterns like: const string x = #region X ... #endregion;
+#pragma warning restore S125
     var trailingContent = new System.Text.StringBuilder();
     while (replaceEnd < template.Length && template[replaceEnd] != '\n' && template[replaceEnd] != '\r') {
       trailingContent.Append(template[replaceEnd]);
       replaceEnd++;
     }
+    return trailingContent.ToString();
+  }
 
-    // Consume the line ending (handle \r\n, \r, or \n)
-    if (replaceEnd < template.Length) {
-      if (template[replaceEnd] == '\r') {
-        replaceEnd++;
-        if (replaceEnd < template.Length && template[replaceEnd] == '\n') {
-          replaceEnd++;
-        }
-      } else if (template[replaceEnd] == '\n') {
-        replaceEnd++;
-      }
+  /// <summary>
+  /// Consumes the line ending at the current position (handles \r\n, \r, or \n).
+  /// </summary>
+  private static void _consumeLineEnding(string template, ref int position) {
+    if (position >= template.Length) {
+      return;
     }
 
-    // Build the result - add trailing content (like semicolon) after replacement
-    var suffix = template.Substring(replaceEnd);
-    var trailing = trailingContent.ToString();
+    var isCarriageReturn = template[position] == '\r';
+    var isLineFeed = template[position] == '\n';
 
-    // If there's trailing content (like ";"), append it directly to the replacement
+    if (!isCarriageReturn && !isLineFeed) {
+      return;
+    }
+
+    position++;
+
+    // Handle \r\n pair
+    if (isCarriageReturn && position < template.Length && template[position] == '\n') {
+      position++;
+    }
+  }
+
+  /// <summary>
+  /// Applies trailing content and ensures a newline separator if there's a suffix.
+  /// </summary>
+  private static string _applyTrailingAndNewline(string indentedReplacement, string trailing, string suffix) {
     if (trailing.Length > 0) {
       indentedReplacement = indentedReplacement.TrimEnd() + trailing;
     }
 
-    // Add newline after replacement if there's content after
-    if (suffix.Length > 0 && !indentedReplacement.EndsWith("\n", StringComparison.Ordinal) && !indentedReplacement.EndsWith("\r", StringComparison.Ordinal)) {
-      indentedReplacement += "\n";
-    }
+    var needsNewline = suffix.Length > 0 && !_endsWithNewline(indentedReplacement);
+    return needsNewline ? indentedReplacement + "\n" : indentedReplacement;
+  }
 
-    return template.Substring(0, replaceStart) + indentedReplacement + suffix;
+  /// <summary>
+  /// Checks whether the string ends with a newline character (\n or \r).
+  /// </summary>
+  private static bool _endsWithNewline(string value) {
+    return value.EndsWith("\n", StringComparison.Ordinal) || value.EndsWith("\r", StringComparison.Ordinal);
   }
 
   /// <summary>
@@ -193,7 +226,7 @@ public static class TemplateUtilities {
       }
 
       if (line.StartsWith(indentationToRemove, StringComparison.Ordinal)) {
-        return line.Substring(indentationToRemove.Length);
+        return line[indentationToRemove.Length..];
       }
       return line;
     });

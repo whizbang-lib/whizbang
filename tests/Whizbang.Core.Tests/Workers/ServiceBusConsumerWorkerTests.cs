@@ -134,12 +134,8 @@ internal sealed class TestSubscription : ISubscription {
 /// <summary>
 /// Test double for IWorkCoordinatorStrategy
 /// </summary>
-internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-  private readonly Func<WorkBatch> _flushFunc;
-
-  public TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) {
-    _flushFunc = flushFunc;
-  }
+internal sealed class TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) : IWorkCoordinatorStrategy {
+  private readonly Func<WorkBatch> _flushFunc = flushFunc;
 
   public void QueueOutboxMessage(OutboxMessage message) { }
   public void QueueInboxMessage(InboxMessage message) { }
@@ -148,7 +144,7 @@ internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     return Task.FromResult(_flushFunc());
   }
 }

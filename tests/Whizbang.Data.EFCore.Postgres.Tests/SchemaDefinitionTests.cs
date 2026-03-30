@@ -18,7 +18,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query for all Whizbang tables
-    var sql = @"
+    const string sql = @"
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -40,7 +40,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_outbox");
     await Assert.That(tables).Contains("wh_event_store");
     await Assert.That(tables).Contains("wh_receptor_processing");
-    await Assert.That(tables).Contains("wh_perspective_checkpoints");
+    await Assert.That(tables).Contains("wh_perspective_cursors");
     await Assert.That(tables).Contains("wh_request_response");
     await Assert.That(tables).Contains("wh_sequences");
   }
@@ -52,7 +52,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query perspective table columns
-    var sql = @"
+    const string sql = @"
       SELECT column_name, data_type, is_nullable
       FROM information_schema.columns
       WHERE table_name = 'wh_per_order'
@@ -97,13 +97,13 @@ public class SchemaDefinitionTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task PerspectiveCheckpoints_ShouldHaveCompositePrimaryKeyAsync() {
+  public async Task PerspectiveCursors_ShouldHaveCompositePrimaryKeyAsync() {
     // Arrange
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
     // Act - Query constraint information
-    var sql = @"
+    const string sql = @"
       SELECT
         tc.constraint_name,
         kcu.column_name,
@@ -112,7 +112,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
       JOIN information_schema.key_column_usage kcu
         ON tc.constraint_name = kcu.constraint_name
         AND tc.table_schema = kcu.table_schema
-      WHERE tc.table_name = 'wh_perspective_checkpoints'
+      WHERE tc.table_name = 'wh_perspective_cursors'
         AND tc.constraint_type = 'PRIMARY KEY'
       ORDER BY kcu.ordinal_position";
 
@@ -137,7 +137,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query foreign key constraints
-    var sql = @"
+    const string sql = @"
       SELECT
         tc.constraint_name,
         kcu.column_name,
@@ -170,13 +170,13 @@ public class SchemaDefinitionTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task PerspectiveCheckpoints_ShouldHaveForeignKeyToEventStoreAsync() {
+  public async Task PerspectiveCursors_ShouldHaveForeignKeyToEventStoreAsync() {
     // Arrange
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
     // Act - Query foreign key constraints
-    var sql = @"
+    const string sql = @"
       SELECT
         tc.constraint_name,
         kcu.column_name,
@@ -189,7 +189,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
       JOIN information_schema.constraint_column_usage AS ccu
         ON ccu.constraint_name = tc.constraint_name
         AND ccu.table_schema = tc.table_schema
-      WHERE tc.table_name = 'wh_perspective_checkpoints'
+      WHERE tc.table_name = 'wh_perspective_cursors'
         AND tc.constraint_type = 'FOREIGN KEY'";
 
     await using var command = new NpgsqlCommand(sql, connection);
@@ -215,7 +215,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query unique indexes
-    var sql = @"
+    const string sql = @"
       SELECT
         i.indexname,
         i.indexdef
@@ -244,7 +244,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query partial indexes
-    var sql = @"
+    const string sql = @"
       SELECT
         i.indexname,
         i.tablename,
@@ -253,7 +253,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
       JOIN pg_class c ON c.relname = i.tablename
       JOIN pg_index idx ON idx.indrelid = c.oid
       JOIN pg_class ic ON ic.oid = idx.indexrelid
-      WHERE i.tablename IN ('wh_receptor_processing', 'wh_perspective_checkpoints')
+      WHERE i.tablename IN ('wh_receptor_processing', 'wh_perspective_cursors')
         AND pg_get_indexdef(idx.indexrelid) LIKE '%WHERE%'
       ORDER BY i.indexname";
 
@@ -267,13 +267,13 @@ public class SchemaDefinitionTests : EFCoreTestBase {
 
     // Assert - Partial indexes exist
     await Assert.That(partialIndexes).ContainsKey("idx_receptor_processing_status");
-    await Assert.That(partialIndexes).ContainsKey("idx_perspective_checkpoints_catching_up");
-    await Assert.That(partialIndexes).ContainsKey("idx_perspective_checkpoints_failed");
+    await Assert.That(partialIndexes).ContainsKey("idx_perspective_cursors_catching_up");
+    await Assert.That(partialIndexes).ContainsKey("idx_perspective_cursors_failed");
 
     // Assert - Partial index definitions contain status checks
     await Assert.That(partialIndexes["idx_receptor_processing_status"]).Contains("WHERE");
-    await Assert.That(partialIndexes["idx_perspective_checkpoints_catching_up"]).Contains("WHERE");
-    await Assert.That(partialIndexes["idx_perspective_checkpoints_failed"]).Contains("WHERE");
+    await Assert.That(partialIndexes["idx_perspective_cursors_catching_up"]).Contains("WHERE");
+    await Assert.That(partialIndexes["idx_perspective_cursors_failed"]).Contains("WHERE");
   }
 
   [Test]
@@ -283,7 +283,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query indexes on wh_per_order
-    var sql = @"
+    const string sql = @"
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'wh_per_order'
@@ -320,7 +320,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_outbox");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_receptor_processing");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_cursors");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_request_response");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_sequences");
 
@@ -342,7 +342,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'

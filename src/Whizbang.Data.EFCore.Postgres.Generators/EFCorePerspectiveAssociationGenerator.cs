@@ -21,15 +21,15 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_GeneratesJsonFormatForDatabaseAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_AbstractClass_IsIgnoredAsync</tests>
 [Generator]
+#pragma warning disable S1144 // Initialize is a public method implementing IIncrementalGenerator interface
 public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
-
   public void Initialize(IncrementalGeneratorInitializationContext context) {
+#pragma warning restore S1144
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => _extractPerspectiveAssociationInfo(ctx, ct)
-    ).Where(static infos => infos is not null && infos.Length > 0)
+    ).Where(static infos => infos?.Length > 0)
      .SelectMany(static (infos, _) => infos!.ToImmutableArray());
 
     // Collect all perspectives and generate registration code
@@ -51,13 +51,11 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
   private static PerspectiveAssociationInfo[]? _extractPerspectiveAssociationInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
 
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;
     }
 
@@ -66,11 +64,14 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for all IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Look for all perspective interfaces: IPerspectiveBase, IPerspectiveFor, IPerspectiveWithActionsFor
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return originalDef.Contains("IPerspectiveFor") && i.TypeArguments.Length > 1;
+          return (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", StringComparison.Ordinal) ||
+                  originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", StringComparison.Ordinal) ||
+                  originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", StringComparison.Ordinal))
+                 && i.TypeArguments.Length > 1;
         })
         .ToList();
 
@@ -159,7 +160,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       isFirstAssociation = false;
 
       // Generate C# code that appends JSON object
-      associations.AppendLine($"    json.Append(\"    {{\");");
+      associations.AppendLine("    json.Append(\"    {\");");
       associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{perspective.MessageTypeName}\\\", \");");
       associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
       associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspective.PerspectiveClrTypeName}\\\", \");");

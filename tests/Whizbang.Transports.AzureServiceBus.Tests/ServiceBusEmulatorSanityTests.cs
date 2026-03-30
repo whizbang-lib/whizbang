@@ -29,15 +29,15 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
   [Test]
   public async Task ServiceBusEmulator_SendAndReceive_WorksAsync() {
     // All tests use the same topics (topic-00)
-    var topicName = "topic-00";
-    var subscriptionName = "sub-00-a";
+    const string topicName = "topic-00";
+    const string subscriptionName = "sub-00-a";
     var connectionString = _fixture.ConnectionString;
 
     Console.WriteLine("[SANITY TEST] Starting Azure Service Bus Emulator sanity test...");
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
 
     // Create Service Bus client directly from connection string
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain stale messages before test (warmup messages remain from initialization)
     Console.WriteLine("[SANITY TEST] Draining stale messages...");
@@ -110,14 +110,14 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
   [Test]
   public async Task ServiceBusEmulator_InventoryTopic_WorksAsync() {
     // All tests use the same topics (topic-01)
-    var topicName = "topic-01";
-    var subscriptionName = "sub-01-a";
+    const string topicName = "topic-01";
+    const string subscriptionName = "sub-01-a";
     var connectionString = _fixture.ConnectionString;
 
     Console.WriteLine("[SANITY TEST] Testing second generic topic...");
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
 
-    await using var client = new ServiceBusClient(connectionString);
+    var client = _fixture.Client;
 
     // Drain stale messages before test (warmup messages remain from initialization)
     Console.WriteLine("[SANITY TEST] Draining stale messages...");

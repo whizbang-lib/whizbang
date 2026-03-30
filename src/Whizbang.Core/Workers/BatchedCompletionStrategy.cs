@@ -21,25 +21,20 @@ namespace Whizbang.Core.Workers;
 /// immediate consistency, use <see cref="InstantCompletionStrategy"/> instead.
 /// </para>
 /// </remarks>
-/// <docs>workers/perspective-worker</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_ReportCompletionAsync_DoesNotCallCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_GetPendingCompletions_ReturnsCollectedCompletions_Async</tests>
-public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
-  private readonly CompletionTracker<PerspectiveCheckpointCompletion> _completions;
-  private readonly CompletionTracker<PerspectiveCheckpointFailure> _failures;
-
-  public BatchedCompletionStrategy(
-    TimeSpan? retryTimeout = null,
-    double backoffMultiplier = 2.0,
-    TimeSpan? maxTimeout = null
-  ) {
-    _completions = new CompletionTracker<PerspectiveCheckpointCompletion>(
+public sealed class BatchedCompletionStrategy(
+  TimeSpan? retryTimeout = null,
+  double backoffMultiplier = 2.0,
+  TimeSpan? maxTimeout = null
+  ) : IPerspectiveCompletionStrategy {
+  private readonly CompletionTracker<PerspectiveCursorCompletion> _completions = new(
       retryTimeout, backoffMultiplier, maxTimeout
     );
-    _failures = new CompletionTracker<PerspectiveCheckpointFailure>(
+  private readonly CompletionTracker<PerspectiveCursorFailure> _failures = new(
       retryTimeout, backoffMultiplier, maxTimeout
     );
-  }
 
   /// <inheritdoc />
   /// <remarks>
@@ -47,7 +42,7 @@ public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
   /// The completion will be reported on the next poll cycle when PerspectiveWorker calls GetPendingCompletions().
   /// </remarks>
   public Task ReportCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
     _completions.Add(completion);
@@ -60,7 +55,7 @@ public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
   /// The failure will be reported on the next poll cycle when PerspectiveWorker calls GetPendingFailures().
   /// </remarks>
   public Task ReportFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
     _failures.Add(failure);
@@ -72,7 +67,7 @@ public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
   /// Returns all completions with status = Pending (not yet sent to coordinator).
   /// PerspectiveWorker will pass these to ProcessWorkBatchAsync on the next poll cycle.
   /// </remarks>
-  public TrackedCompletion<PerspectiveCheckpointCompletion>[] GetPendingCompletions() {
+  public TrackedCompletion<PerspectiveCursorCompletion>[] GetPendingCompletions() {
     return _completions.GetPending();
   }
 
@@ -81,14 +76,14 @@ public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
   /// Returns all failures with status = Pending (not yet sent to coordinator).
   /// PerspectiveWorker will pass these to ProcessWorkBatchAsync on the next poll cycle.
   /// </remarks>
-  public TrackedCompletion<PerspectiveCheckpointFailure>[] GetPendingFailures() {
+  public TrackedCompletion<PerspectiveCursorFailure>[] GetPendingFailures() {
     return _failures.GetPending();
   }
 
   /// <inheritdoc />
   public void MarkAsSent(
-    TrackedCompletion<PerspectiveCheckpointCompletion>[] completions,
-    TrackedCompletion<PerspectiveCheckpointFailure>[] failures,
+    TrackedCompletion<PerspectiveCursorCompletion>[] completions,
+    TrackedCompletion<PerspectiveCursorFailure>[] failures,
     DateTimeOffset sentAt) {
     _completions.MarkAsSent(completions, sentAt);
     _failures.MarkAsSent(failures, sentAt);

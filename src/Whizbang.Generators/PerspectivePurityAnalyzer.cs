@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -96,6 +97,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       description: "Perspectives may be replayed during system recovery. Injected services must be pure (deterministic, no side effects). Mark the service with [PureService] or suppress this warning if you're certain the service is pure."
   );
 
+  /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
       ApplyMethodIsAsync,
       ApplyMethodUsesAwait,
@@ -105,6 +107,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       NonPureServiceInjected
   );
 
+  /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
@@ -246,11 +249,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
     // For class types, also check implemented interfaces
     if (typeSymbol is INamedTypeSymbol namedType) {
-      foreach (var iface in namedType.AllInterfaces) {
-        if (_hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute")) {
-          return true;
-        }
-      }
+      return namedType.AllInterfaces.Any(iface =>
+        _hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute"));
     }
 
     return false;
@@ -262,13 +262,9 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
-    // Check if type implements IPerspectiveFor<TModel, TEvent...> or IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent...>
-    foreach (var iface in typeSymbol.AllInterfaces) {
-      var interfaceName = iface.ToDisplayString();
-      if (interfaceName.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
-          interfaceName.StartsWith("Whizbang.Core.Perspectives.IGlobalPerspectiveFor<", StringComparison.Ordinal)) {
-        return true;
-      }
+    // Use shared discovery helper for consistent perspective detection
+    if (Utilities.PerspectiveDiscoveryHelper.IsPerspectiveClass(typeSymbol)) {
+      return true;
     }
     return false;
   }

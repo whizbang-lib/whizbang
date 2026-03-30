@@ -36,7 +36,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidNewGuid_GeneratesInterceptorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -54,7 +54,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert - Should generate an interceptor file
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("TrackedGuid");
   }
 
@@ -65,7 +65,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidCreateVersion7_GeneratesInterceptorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -83,7 +83,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert - Should generate an interceptor file
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("TrackedGuid");
     await Assert.That(generatedSource).Contains("Version7");
   }
@@ -95,7 +95,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_MultipleGuidCalls_GeneratesMultipleInterceptorsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -132,7 +132,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressOnMethod_NoInterceptionAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -166,7 +166,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressOnClass_NoInterceptionAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -206,7 +206,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesFullyQualifiedNamesAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -226,9 +226,9 @@ public class GuidInterceptorGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should use global:: for all type references
-    await Assert.That(generatedSource!).Contains("global::System.Guid");
+    await Assert.That(generatedSource).Contains("global::System.Guid");
     await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.TrackedGuid");
-    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadata");
+    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadatas");
   }
 
   /// <summary>
@@ -238,7 +238,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_NewGuid_IncludesV4MetadataAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -256,7 +256,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("Version4");
+    await Assert.That(generatedSource).Contains("Version4");
     await Assert.That(generatedSource).Contains("SourceMicrosoft");
   }
 
@@ -267,7 +267,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_CreateVersion7_IncludesV7MetadataAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -285,7 +285,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("Version7");
+    await Assert.That(generatedSource).Contains("Version7");
     await Assert.That(generatedSource).Contains("SourceMicrosoft");
   }
 
@@ -300,7 +300,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_InterceptedCall_ReportsWHIZ058DiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -328,7 +328,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressedCall_ReportsWHIZ059DiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -362,7 +362,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidEmpty_NotInterceptedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -391,7 +391,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidParse_NotInterceptedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -421,7 +421,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_NestedClass_InterceptsCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -441,7 +441,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 
   /// <summary>
@@ -451,7 +451,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_LambdaExpression_InterceptsCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -472,7 +472,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 
   /// <summary>
@@ -482,7 +482,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_AsyncMethod_InterceptsCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading.Tasks;
 
@@ -502,7 +502,7 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
 
   // ========================================
@@ -516,7 +516,7 @@ public class GuidInterceptorGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_EmptySource_NoOutputAsync() {
     // Arrange
-    var source = """
+    const string source = """
             namespace TestApp;
 
             public class MyService {

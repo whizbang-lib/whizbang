@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
@@ -30,15 +29,14 @@ namespace Whizbang.Testing.Lifecycle;
 public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   where TEvent : IEvent {
 
-  private readonly ILifecycleReceptorRegistry _inventoryRegistry;
-  private readonly ILifecycleReceptorRegistry _bffRegistry;
+  private readonly IReceptorRegistry _inventoryRegistry;
+  private readonly IReceptorRegistry _bffRegistry;
   private readonly CountingPerspectiveReceptor<TEvent> _inventoryReceptor;
   private readonly CountingPerspectiveReceptor<TEvent> _bffReceptor;
   private readonly TaskCompletionSource<bool> _inventoryCompletionSource;
   private readonly TaskCompletionSource<bool> _bffCompletionSource;
   private readonly int _inventoryPerspectives;
   private readonly int _bffPerspectives;
-  private readonly ILogger<PerspectiveCompletionWaiter<TEvent>>? _logger;
 
   /// <summary>
   /// Creates a new perspective completion waiter for two hosts (inventory and BFF pattern).
@@ -48,19 +46,16 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <param name="bffRegistry">Lifecycle registry for the BFF/frontend host.</param>
   /// <param name="inventoryPerspectives">Number of perspectives expected on inventory host.</param>
   /// <param name="bffPerspectives">Number of perspectives expected on BFF host.</param>
-  /// <param name="logger">Optional logger.</param>
   public PerspectiveCompletionWaiter(
-    ILifecycleReceptorRegistry inventoryRegistry,
-    ILifecycleReceptorRegistry bffRegistry,
+    IReceptorRegistry inventoryRegistry,
+    IReceptorRegistry bffRegistry,
     int inventoryPerspectives,
-    int bffPerspectives,
-    ILogger<PerspectiveCompletionWaiter<TEvent>>? logger = null) {
+    int bffPerspectives) {
 
     _inventoryRegistry = inventoryRegistry ?? throw new ArgumentNullException(nameof(inventoryRegistry));
     _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
     _inventoryPerspectives = inventoryPerspectives;
     _bffPerspectives = bffPerspectives;
-    _logger = logger;
 
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
     Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");

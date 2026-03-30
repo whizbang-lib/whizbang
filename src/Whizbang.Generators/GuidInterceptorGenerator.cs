@@ -28,15 +28,18 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.SuppressGuidInterceptionAttribute";
   private const string SUPPRESS_ATTRIBUTE_NAME = "SuppressGuidInterceptionAttribute";
   private const string SUPPRESS_SHORT_NAME = "SuppressGuidInterception";
+  private const string METHOD_NEW_GUID = "NewGuid";
+  private const string GUID_VERSION_7 = "Version7";
 
   // Third-party library patterns
-  private static readonly (string TypePattern, string MethodName, string Version, string Source)[] _thirdPartyMethods = {
-    ("Marten.Schema.Identity.CombGuidIdGeneration", "NewGuid", "Version7", "SourceMarten"),
-    ("UUIDNext.Uuid", "NewDatabaseFriendly", "Version7", "SourceUuidNext"),
-    ("UUIDNext.Uuid", "NewSequential", "Version7", "SourceUuidNext"),
-    ("Medo.Uuid7", "NewUuid7", "Version7", "SourceMedo"),
-  };
+  private static readonly (string TypePattern, string MethodName, string Version, string Source)[] _thirdPartyMethods = [
+    ("Marten.Schema.Identity.CombGuidIdGeneration", METHOD_NEW_GUID, GUID_VERSION_7, "SourceMarten"),
+    ("UUIDNext.Uuid", "NewDatabaseFriendly", GUID_VERSION_7, "SourceUuidNext"),
+    ("UUIDNext.Uuid", "NewSequential", GUID_VERSION_7, "SourceUuidNext"),
+    ("Medo.Uuid7", "NewUuid7", GUID_VERSION_7, "SourceMedo"),
+  ];
 
+  /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Check if interception is enabled via MSBuild property
     var interceptionEnabled = context.AnalyzerConfigOptionsProvider.Select(
@@ -71,18 +74,20 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         compilationAndCalls,
         static (ctx, data) => {
-          var compilation = data.Left.Left.Left;
           var intercepted = data.Left.Left.Right;
           var suppressed = data.Left.Right;
           var enabled = data.Right;
-          _generateInterceptors(ctx, compilation, intercepted, suppressed, enabled);
+          _generateInterceptors(ctx, intercepted, suppressed, enabled);
         }
     );
   }
 
+  // S3776: Complexity is from sequential validation checks with early returns — already well-structured
+#pragma warning disable S3776
   private static (GuidInterceptionInfo? Intercepted, SuppressedGuidInterceptionInfo? Suppressed) _extractGuidCallInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
+#pragma warning restore S3776
 
     var invocation = (InvocationExpressionSyntax)context.Node;
     var memberAccess = (MemberAccessExpressionSyntax)invocation.Expression;
@@ -114,31 +119,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       return (null, null);
     }
 
-    string? guidVersion = null;
-    string? guidSource = null;
-
-    // Check for System.Guid methods
-    if (containingType == GUID_TYPE) {
-      if (methodName == "NewGuid") {
-        guidVersion = "Version4";
-        guidSource = "SourceMicrosoft";
-      } else if (methodName == "CreateVersion7") {
-        guidVersion = "Version7";
-        guidSource = "SourceMicrosoft";
-      }
-    }
-
-    // Check for third-party methods
-    if (guidVersion is null) {
-      foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
-        if (containingType == typePattern && methodName == method) {
-          guidVersion = version;
-          guidSource = source;
-          break;
-        }
-      }
-    }
-
+    var (guidVersion, guidSource) = _resolveGuidVersionAndSource(containingType, methodName);
     if (guidVersion is null || guidSource is null) {
       return (null, null);
     }
@@ -178,6 +159,31 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     ), null);
   }
 
+  /// <summary>
+  /// Resolves the GUID version and source metadata for a given containing type and method name.
+  /// Checks System.Guid methods first, then third-party library methods.
+  /// </summary>
+  private static (string? Version, string? Source) _resolveGuidVersionAndSource(string containingType, string methodName) {
+    // Check for System.Guid methods
+    if (containingType == GUID_TYPE) {
+      if (methodName == METHOD_NEW_GUID) {
+        return ("Version4", "SourceMicrosoft");
+      }
+      if (methodName == "CreateVersion7") {
+        return (GUID_VERSION_7, "SourceMicrosoft");
+      }
+    }
+
+    // Check for third-party methods
+    foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
+      if (containingType == typePattern && methodName == method) {
+        return (version, source);
+      }
+    }
+
+    return (null, null);
+  }
+
   private static string? _checkSuppression(
       GeneratorSyntaxContext context,
       InvocationExpressionSyntax invocation,
@@ -186,34 +192,27 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // Walk up the syntax tree to find containing method and type
     var current = invocation.Parent;
     while (current is not null) {
-      if (current is MethodDeclarationSyntax methodDecl) {
-        if (_hasSuppressAttribute(context, methodDecl.AttributeLists, ct)) {
-          return "SuppressGuidInterceptionAttribute on method";
-        }
-      } else if (current is LocalFunctionStatementSyntax localFunc) {
-        if (_hasSuppressAttribute(context, localFunc.AttributeLists, ct)) {
-          return "SuppressGuidInterceptionAttribute on local function";
-        }
-      } else if (current is TypeDeclarationSyntax typeDecl) {
-        if (_hasSuppressAttribute(context, typeDecl.AttributeLists, ct)) {
-          return "SuppressGuidInterceptionAttribute on type";
-        }
+      if (current is MethodDeclarationSyntax methodDecl &&
+          _hasSuppressAttribute(context, methodDecl.AttributeLists, ct)) {
+        return "SuppressGuidInterceptionAttribute on method";
+      } else if (current is LocalFunctionStatementSyntax localFunc &&
+                 _hasSuppressAttribute(context, localFunc.AttributeLists, ct)) {
+        return "SuppressGuidInterceptionAttribute on local function";
+      } else if (current is TypeDeclarationSyntax typeDecl &&
+                 _hasSuppressAttribute(context, typeDecl.AttributeLists, ct)) {
+        return "SuppressGuidInterceptionAttribute on type";
       }
       current = current.Parent;
     }
 
     // Check assembly-level attributes
     var compilation = context.SemanticModel.Compilation;
-    foreach (var attr in compilation.Assembly.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
-      if (attrName == SUPPRESS_ATTRIBUTE ||
-          attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
-          attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME) {
-        return "SuppressGuidInterceptionAttribute on assembly";
-      }
-    }
-
-    return null;
+    return compilation.Assembly.GetAttributes().Any(attr =>
+        attr.AttributeClass?.ToDisplayString() == SUPPRESS_ATTRIBUTE ||
+        attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
+        attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME)
+      ? "SuppressGuidInterceptionAttribute on assembly"
+      : null;
   }
 
   private static bool _hasSuppressAttribute(
@@ -240,7 +239,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private static string _sanitizeFileName(string filePath) {
     // Extract just the filename without extension and sanitize
     var fileName = System.IO.Path.GetFileNameWithoutExtension(filePath);
-    return new string(fileName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+    return new string([.. fileName.Select(c => char.IsLetterOrDigit(c) ? c : '_')]);
   }
 
   private static INamedTypeSymbol? _getContainingTypeSymbol(
@@ -270,48 +269,78 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         .Where(t => t.SpanStart < position &&
                    t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
 
-    foreach (var trivia in triviaList) {
-      if (trivia.GetStructure() is PragmaWarningDirectiveTriviaSyntax pragma) {
-        var isDisable = pragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword);
-        var codes = pragma.ErrorCodes
-            .OfType<IdentifierNameSyntax>()
-            .Select(id => id.Identifier.Text)
-            .ToList();
-
-        if (isDisable && (codes.Contains("WHIZ055") || codes.Contains("WHIZ056"))) {
-          // Found a disable before the invocation - check if there's a restore after
-          var restoreTrivia = root.DescendantTrivia()
-              .Where(t => t.SpanStart > trivia.SpanStart &&
-                         t.SpanStart < position &&
-                         t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
-
-          var wasRestored = restoreTrivia.Any(rt => {
-            if (rt.GetStructure() is PragmaWarningDirectiveTriviaSyntax restorePragma) {
-              var isRestore = restorePragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword);
-              var restoreCodes = restorePragma.ErrorCodes
-                  .OfType<IdentifierNameSyntax>()
-                  .Select(id => id.Identifier.Text)
-                  .ToList();
-              return isRestore && (restoreCodes.Contains("WHIZ055") || restoreCodes.Contains("WHIZ056") || restoreCodes.Count == 0);
-            }
-            return false;
-          });
-
-          if (!wasRestored) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
+    return triviaList.Any(trivia => _isActiveDisablePragma(trivia, root, position));
   }
 
+  /// <summary>
+  /// Checks if a pragma trivia is an active WHIZ055/WHIZ056 disable that hasn't been restored before the given position.
+  /// </summary>
+  private static bool _isActiveDisablePragma(SyntaxTrivia trivia, SyntaxNode root, int position) {
+    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax pragma) {
+      return false;
+    }
+
+    var isDisable = pragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword);
+    if (!isDisable) {
+      return false;
+    }
+
+    var codes = pragma.ErrorCodes
+        .OfType<IdentifierNameSyntax>()
+        .Select(id => id.Identifier.Text)
+        .ToList();
+
+    if (!codes.Contains("WHIZ055") && !codes.Contains("WHIZ056")) {
+      return false;
+    }
+
+    // Found a disable before the invocation - check if there's a restore after the disable but before the position
+    return !_wasRestoredBefore(root, trivia.SpanStart, position);
+  }
+
+  /// <summary>
+  /// Checks if a pragma disable was restored between the disable position and the target position.
+  /// </summary>
+  private static bool _wasRestoredBefore(SyntaxNode root, int disableStart, int position) {
+    var restoreTrivia = root.DescendantTrivia()
+        .Where(t => t.SpanStart > disableStart &&
+                   t.SpanStart < position &&
+                   t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
+
+    return restoreTrivia.Any(rt => _isMatchingRestore(rt));
+  }
+
+  /// <summary>
+  /// Checks if a pragma trivia is a restore directive for WHIZ055/WHIZ056 (or a blanket restore).
+  /// </summary>
+  private static bool _isMatchingRestore(SyntaxTrivia trivia) {
+    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax restorePragma) {
+      return false;
+    }
+
+    var isRestore = restorePragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword);
+    if (!isRestore) {
+      return false;
+    }
+
+    var restoreCodes = restorePragma.ErrorCodes
+        .OfType<IdentifierNameSyntax>()
+        .Select(id => id.Identifier.Text)
+        .ToList();
+
+    return restoreCodes.Contains("WHIZ055") || restoreCodes.Contains("WHIZ056") || restoreCodes.Count == 0;
+  }
+
+  // S3776: Code generation method — complexity from sequential template building with conditional paths
+#pragma warning disable S3776
+#pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
-      Compilation compilation,
-      ImmutableArray<GuidInterceptionInfo> intercepted,
+            ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
+#pragma warning restore S1144
+#pragma warning restore S3776
 
     // Report diagnostics for intercepted calls (always, even when disabled)
     foreach (var info in intercepted) {
@@ -373,27 +402,27 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     foreach (var info in intercepted) {
       sb.AppendLine();
-      sb.AppendLine($"    /// <summary>");
+      sb.AppendLine("    /// <summary>");
       sb.AppendLine($"    /// Intercepts {info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}() at {info.FilePath}:{info.LineNumber}");
-      sb.AppendLine($"    /// </summary>");
+      sb.AppendLine("    /// </summary>");
       sb.AppendLine($"    [global::System.Runtime.CompilerServices.InterceptsLocation(\"{_escapeString(info.FilePath)}\", {info.LineNumber}, {info.ColumnNumber})]");
       sb.AppendLine($"    internal static global::Whizbang.Core.ValueObjects.TrackedGuid {info.InterceptorMethodName}() {{");
 
       // Generate the actual call based on the original method
       var originalCall = info.OriginalMethod switch {
-        "NewGuid" when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.NewGuid()",
+        METHOD_NEW_GUID when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.NewGuid()",
         "CreateVersion7" when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.CreateVersion7()",
-        "NewGuid" => $"{info.FullyQualifiedTypeName}.NewGuid()",
+        METHOD_NEW_GUID => $"{info.FullyQualifiedTypeName}.NewGuid()",
         "NewSequential" => $"{info.FullyQualifiedTypeName}.NewSequential()",
         "NewDatabaseFriendly" => $"{info.FullyQualifiedTypeName}.NewDatabaseFriendly(global::UUIDNext.Database.PostgreSql)",
         "NewUuid7" => $"{info.FullyQualifiedTypeName}.NewUuid7().ToGuid()",
         _ => $"{info.FullyQualifiedTypeName}.{info.OriginalMethod}()"
       };
 
-      sb.AppendLine($"      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
+      sb.AppendLine("      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
       sb.AppendLine($"          {originalCall},");
-      sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidSource});");
-      sb.AppendLine($"    }}");
+      sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadatas.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadatas.{info.GuidSource});");
+      sb.AppendLine("    }");
     }
 
     sb.AppendLine("  }");

@@ -26,7 +26,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
 
   [Test]
-  public async Task Capabilities_ReturnsPublishSubscribeReliableAndOrderedAsync() {
+  public async Task Capabilities_DefaultOptions_IncludesOrderedAsync() {
     // Arrange
     var jsonOptions = new JsonSerializerOptions {
       TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -40,9 +40,35 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     var capabilities = transport.Capabilities;
 
-    // Assert - Azure Service Bus supports PublishSubscribe, Reliable, and Ordered
+    // Assert - EnableSessions defaults to true, so Ordered is included out of the box
     await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
     await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsTrue()
+      .Because("FIFO ordering works out of the box — EnableSessions defaults to true");
+  }
+
+  [Test]
+  public async Task Capabilities_WithEnableSessions_ReturnsOrderedAsync() {
+    // Arrange
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = new AzureServiceBusTransport(
+      _fixture.Client,
+      jsonOptions,
+      options
+    );
+
+    // Act
+    var capabilities = transport.Capabilities;
+
+    // Assert - With EnableSessions, Ordered IS claimed
+    await Assert.That((capabilities & TransportCapabilities.PublishSubscribe) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.Reliable) != 0).IsTrue();
+    await Assert.That((capabilities & TransportCapabilities.BulkPublish) != 0).IsTrue();
     await Assert.That((capabilities & TransportCapabilities.Ordered) != 0).IsTrue();
   }
 
@@ -142,9 +168,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Arrange - use CreateCombinedOptions which includes all registered contexts
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
+    // Non-session subscription (sub-01-a has RequiresSession=false in Config.json)
+    var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
-      jsonOptions
+      jsonOptions,
+      options
     );
 
     await transport.InitializeAsync();
@@ -175,12 +204,13 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     );
 
     try {
-      // Warmup subscription using harness
+      // Warmup subscription — use longer timeout for session processors under parallel load
       await SubscriptionWarmup.WarmupAsync(
         transport,
         publishDestination,
         () => _createTestEnvelopeWithContent(warmupId),
-        warmupAwaiter
+        warmupAwaiter,
+        timeout: TimeSpan.FromSeconds(60)
       );
 
       // Act: Publish the actual test message
@@ -205,9 +235,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       TypeInfoResolver = TestJsonContext.Default
     };
 
+    // Non-session subscription (sub-00-a has RequiresSession=false)
+    var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
-      jsonOptions
+      jsonOptions,
+      options
     );
 
     await transport.InitializeAsync();
@@ -310,9 +343,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     var destination = new TransportDestination("topic-00");
 
     // Act & Assert
-    await Assert.That(async () => {
-      await transport.SendAsync<TestMessage, TestMessage>(envelope, destination);
-    }).Throws<NotSupportedException>();
+    await Assert.That(async () => await transport.SendAsync<TestMessage, TestMessage>(envelope, destination)).Throws<NotSupportedException>();
   }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
@@ -328,7 +359,10 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };

@@ -14,7 +14,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <summary>
 /// Extension methods for registering RabbitMQ transport with dependency injection.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public static class ServiceCollectionExtensions {
   /// <summary>
   /// Registers RabbitMQ transport as the ITransport implementation.
@@ -107,17 +107,18 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IMessagePublishStrategy>(sp => {
       var transport = sp.GetRequiredService<ITransport>();
       var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
+      var loggerFactory = sp.GetService<ILoggerFactory>();
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
       if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
         // Use the configured inbox topic from outbox strategy
-        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic);
+        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic, loggerFactory);
       }
 
       // Fall back to default inbox topic
-      return new TransportPublishStrategy(transport, readinessCheck);
+      return new TransportPublishStrategy(transport, readinessCheck, loggerFactory);
     });
 
     return services;

@@ -8,14 +8,14 @@ namespace Whizbang.Core.Security;
 /// </summary>
 /// <remarks>
 /// Implement this interface to extract security information from different sources:
-/// - MessageHop.SecurityContext (propagated from previous hop)
+/// - MessageHop.Scope (propagated from previous hop via ScopeDelta)
 /// - Message payload (e.g., embedded JWT token)
 /// - Transport metadata (Service Bus properties, Kafka headers)
 ///
 /// Extractors should return null if they cannot handle the message, allowing
 /// the next extractor in priority order to try.
 /// </remarks>
-/// <docs>core-concepts/message-security#extractors</docs>
+/// <docs>fundamentals/security/message-security#extractors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
 /// <example>
 /// public class JwtPayloadExtractor : ISecurityContextExtractor {

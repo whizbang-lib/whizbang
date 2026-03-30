@@ -34,7 +34,7 @@ public class EventNamespaceRegistryTests {
   [Test]
   public async Task Register_WithNull_ThrowsArgumentNullExceptionAsync() {
     // Act
-    var action = () => EventNamespaceRegistry.Register(null!);
+    void action() => EventNamespaceRegistry.Register(null!);
 
     // Assert
     await Assert.That(action).Throws<ArgumentNullException>()
@@ -103,7 +103,7 @@ public class EventNamespaceRegistryTests {
   [Test]
   public async Task GetAllNamespaces_WithDuplicates_DeduplicatesNamespacesAsync() {
     // Arrange - use unique namespace for this test
-    var uniqueNs = "dedup_test.shared.events";
+    const string uniqueNs = "dedup_test.shared.events";
     var source1 = new TestEventNamespaceSource(perspectiveNamespaces: [uniqueNs]);
     var source2 = new TestEventNamespaceSource(receptorNamespaces: [uniqueNs]);
     EventNamespaceRegistry.Register(source1);

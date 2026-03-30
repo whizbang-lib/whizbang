@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Hubs;
 /// AOT-compatible hub (untyped - strongly-typed hubs not supported with Native AOT).
 /// </summary>
 public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
-  private readonly ILogger<ProductInventoryHub> _logger = logger;
 
   /// <summary>
   /// Called when a client connects to the hub
@@ -17,7 +16,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
     var connectionId = Context.ConnectionId;
     var userId = Context.User?.Identity?.Name ?? "Anonymous";
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client connected to ProductInventoryHub: ConnectionId={ConnectionId}, UserId={UserId}",
       connectionId,
       userId
@@ -33,13 +32,13 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
     var connectionId = Context.ConnectionId;
 
     if (exception != null) {
-      _logger.LogError(
+      logger.LogError(
         exception,
         "Client disconnected from ProductInventoryHub with error: ConnectionId={ConnectionId}",
         connectionId
       );
     } else {
-      _logger.LogInformation(
+      logger.LogInformation(
         "Client disconnected from ProductInventoryHub: ConnectionId={ConnectionId}",
         connectionId
       );
@@ -54,7 +53,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   public async Task SubscribeToProductAsync(string productId) {
     await Groups.AddToGroupAsync(Context.ConnectionId, $"product-{productId}");
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client subscribed to product updates: ConnectionId={ConnectionId}, ProductId={ProductId}",
       Context.ConnectionId,
       productId
@@ -67,7 +66,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   public async Task UnsubscribeFromProductAsync(string productId) {
     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"product-{productId}");
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client unsubscribed from product updates: ConnectionId={ConnectionId}, ProductId={ProductId}",
       Context.ConnectionId,
       productId
@@ -80,7 +79,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   public async Task SubscribeToAllProductsAsync() {
     await Groups.AddToGroupAsync(Context.ConnectionId, "all-products");
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client subscribed to all product updates: ConnectionId={ConnectionId}",
       Context.ConnectionId
     );
@@ -92,7 +91,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   public async Task UnsubscribeFromAllProductsAsync() {
     await Groups.RemoveFromGroupAsync(Context.ConnectionId, "all-products");
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Client unsubscribed from all product updates: ConnectionId={ConnectionId}",
       Context.ConnectionId
     );

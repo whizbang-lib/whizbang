@@ -67,7 +67,7 @@ public static class ServiceCollectionExtensions {
     if (options.AutoProvisionInfrastructure) {
       var hasAdminClient = services.Any(sd => sd.ServiceType == typeof(IServiceBusAdminClient));
       if (!hasAdminClient) {
-        services.AddSingleton<IServiceBusAdminClient>(sp => {
+        services.AddSingleton<IServiceBusAdminClient>(_ => {
           var adminClient = new ServiceBusAdministrationClient(connectionString);
           return new ServiceBusAdminClientWrapper(adminClient);
         });
@@ -89,10 +89,12 @@ public static class ServiceCollectionExtensions {
       try {
         transport.InitializeAsync().GetAwaiter().GetResult();
         logger?.LogInformation("Transport initialized (using shared client)");
+#pragma warning disable S2139 // Intentional log-and-rethrow: DI factory exceptions are often swallowed or wrapped, so logging here ensures the root cause is captured for diagnostics.
       } catch (Exception ex) {
         logger?.LogError(ex, "Failed to initialize transport during registration");
         throw;
       }
+#pragma warning restore S2139
 
       return transport;
     });
@@ -111,17 +113,18 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IMessagePublishStrategy>(sp => {
       var transport = sp.GetRequiredService<ITransport>();
       var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
+      var loggerFactory = sp.GetService<ILoggerFactory>();
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
       if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
         // Use the configured inbox topic from outbox strategy
-        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic);
+        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic, loggerFactory);
       }
 
       // Fall back to default inbox topic
-      return new TransportPublishStrategy(transport, readinessCheck);
+      return new TransportPublishStrategy(transport, readinessCheck, loggerFactory);
     });
 
     return services;
@@ -146,7 +149,7 @@ public static class ServiceCollectionExtensions {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
     // Register admin client wrapper
-    services.AddSingleton<IServiceBusAdminClient>(sp => {
+    services.AddSingleton<IServiceBusAdminClient>(_ => {
       var adminClient = new ServiceBusAdministrationClient(connectionString);
       return new ServiceBusAdminClientWrapper(adminClient);
     });

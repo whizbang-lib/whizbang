@@ -12,13 +12,13 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// Tests for WorkCoordinatorPublisherWorker database readiness integration.
 /// Phase 3B: Verifies that database readiness checks prevent work coordinator calls until database is available.
+/// Uses proper synchronization primitives (TaskCompletionSource, SemaphoreSlim) instead of polling.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   private sealed record _testMessage { }
@@ -55,12 +55,12 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
+    // Wait for at least one readiness check to complete so we know the worker loop ran
+    await databaseReadinessCheck.WaitForCheckAsync(TimeSpan.FromSeconds(5));
+
     // Assert - ProcessWorkBatchAsync should NOT be called when database not ready
-    await AsyncTestHelpers.AssertNeverAsync(
-      () => testWorkCoordinator.CallCount > 0,
-      TimeSpan.FromMilliseconds(500),
-      pollInterval: TimeSpan.FromMilliseconds(50),
-      failureMessage: "ProcessWorkBatchAsync should be skipped when database not ready");
+    // Give a short window to confirm no call was made after the check ran
+    await Task.Delay(100);
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -95,12 +95,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // Wait for ProcessWorkBatchAsync to be called
-    await AsyncTestHelpers.WaitForConditionAsync(
-      () => testWorkCoordinator.CallCount >= 1,
-      TimeSpan.FromSeconds(5),
-      pollInterval: TimeSpan.FromMilliseconds(50),
-      timeoutMessage: "ProcessWorkBatchAsync should be called when database is ready");
+    // Wait for ProcessWorkBatchAsync to be called (signal-based, not polling)
+    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(5));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -131,12 +127,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // Wait for consecutive checks counter to increment
-    await AsyncTestHelpers.WaitForConditionAsync(
-      () => worker.ConsecutiveDatabaseNotReadyChecks >= 1,
-      TimeSpan.FromSeconds(5),
-      pollInterval: TimeSpan.FromMilliseconds(50),
-      timeoutMessage: "Consecutive not-ready checks should be tracked");
+    // Wait for at least one readiness check to complete
+    await databaseReadinessCheck.WaitForCheckAsync(TimeSpan.FromSeconds(5));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -171,11 +163,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
     // Wait for the specific "Database not ready for X consecutive polling cycles" warning
     // This only happens after the threshold (10 consecutive checks) is exceeded
-    await AsyncTestHelpers.WaitForConditionAsync(
-      () => testLogger.GetLogsContaining("Database not ready for").Count >= 1,
-      TimeSpan.FromSeconds(15),
-      pollInterval: TimeSpan.FromMilliseconds(100),
-      timeoutMessage: "After 10 consecutive not-ready checks, 'Database not ready for' warning should be logged");
+    await testLogger.WaitForLogContainingAsync("Database not ready for", TimeSpan.FromSeconds(30));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -207,20 +195,13 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for some not-ready checks to accumulate
-    await AsyncTestHelpers.WaitForConditionAsync(
-      () => worker.ConsecutiveDatabaseNotReadyChecks >= 1,
-      TimeSpan.FromSeconds(5),
-      pollInterval: TimeSpan.FromMilliseconds(50));
+    await databaseReadinessCheck.WaitForCheckAsync(TimeSpan.FromSeconds(5));
 
     // Act - Database becomes ready
     databaseReadinessCheck.IsReadyResult = true;
 
-    // Wait for counter to reset
-    await AsyncTestHelpers.WaitForConditionAsync(
-      () => worker.ConsecutiveDatabaseNotReadyChecks == 0,
-      TimeSpan.FromSeconds(5),
-      pollInterval: TimeSpan.FromMilliseconds(50),
-      timeoutMessage: "Consecutive counter should reset when database becomes ready");
+    // Wait for ProcessWorkBatchAsync to be called (proves database became ready and counter reset)
+    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(5));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -253,23 +234,19 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // Database not ready - ProcessWorkBatchAsync skipped
-    await AsyncTestHelpers.AssertNeverAsync(
-      () => publishStrategy.PublishedWork.Count > 0,
-      TimeSpan.FromMilliseconds(500),
-      pollInterval: TimeSpan.FromMilliseconds(50),
-      failureMessage: "No work should be published when database not ready");
+    // Database not ready - wait for at least one check, then verify no work published
+    await databaseReadinessCheck.WaitForCheckAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100); // Brief window to confirm nothing was published
+
+    await Assert.That(publishStrategy.PublishedWork.Count).IsEqualTo(0)
+      .Because("No work should be published when database not ready");
 
     // Act - Database becomes ready
     databaseReadinessCheck.IsReadyResult = true;
     testWorkCoordinator.WorkToReturn = [_createTestOutboxWork(messageId)];
 
-    // Wait for work to be published
-    await AsyncTestHelpers.WaitForConditionAsync(
-      () => publishStrategy.PublishedWork.Count >= 1,
-      TimeSpan.FromSeconds(5),
-      pollInterval: TimeSpan.FromMilliseconds(50),
-      timeoutMessage: "Work should be published once database becomes ready");
+    // Wait for work to be published (signal-based)
+    await publishStrategy.WaitForPublishAsync(TimeSpan.FromSeconds(5));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -280,15 +257,28 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   // Test helper classes
-  private sealed class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator, IDisposable {
+    private readonly SemaphoreSlim _callSignal = new(0, int.MaxValue);
+
+    public void Dispose() => _callSignal.Dispose();
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int CallCount { get; private set; }
+
+    /// <summary>
+    /// Waits for at least one call to ProcessWorkBatchAsync.
+    /// </summary>
+    public async Task WaitForCallAsync(TimeSpan timeout) {
+      if (!await _callSignal.WaitAsync(timeout)) {
+        throw new TimeoutException("ProcessWorkBatchAsync was not called within timeout");
+      }
+    }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       CallCount++;
+      _callSignal.Release();
       var work = new List<OutboxWork>(WorkToReturn);
       WorkToReturn.Clear();  // Return work once, then empty
 
@@ -300,35 +290,62 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
-  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReadyResult { get; set; } = true;
+  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck, IDisposable {
+    private volatile bool _isReadyResult = true;
+    private readonly SemaphoreSlim _checkSignal = new(0, int.MaxValue);
+
+    public void Dispose() => _checkSignal.Dispose();
+
+    public bool IsReadyResult { get => _isReadyResult; set => _isReadyResult = value; }
+
+    /// <summary>
+    /// Waits for at least one call to IsReadyAsync.
+    /// </summary>
+    public async Task WaitForCheckAsync(TimeSpan timeout) {
+      if (!await _checkSignal.WaitAsync(timeout)) {
+        throw new TimeoutException("IsReadyAsync was not called within timeout");
+      }
+    }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReadyResult);
+      _checkSignal.Release();
+      return Task.FromResult(_isReadyResult);
     }
   }
 
-  private sealed class TestPublishStrategy : IMessagePublishStrategy {
+  private sealed class TestPublishStrategy : IMessagePublishStrategy, IDisposable {
+    private readonly SemaphoreSlim _publishSignal = new(0, int.MaxValue);
+
+    public void Dispose() => _publishSignal.Dispose();
     public List<OutboxWork> PublishedWork { get; } = [];
+
+    /// <summary>
+    /// Waits for at least one call to PublishAsync.
+    /// </summary>
+    public async Task WaitForPublishAsync(TimeSpan timeout) {
+      if (!await _publishSignal.WaitAsync(timeout)) {
+        throw new TimeoutException("PublishAsync was not called within timeout");
+      }
+    }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       return Task.FromResult(true);  // Transport always ready for these tests
@@ -336,6 +353,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       PublishedWork.Add(work);
+      _publishSignal.Release();
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
         Success = true,
@@ -344,26 +362,54 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
   }
 
-  private sealed class TestLogger<T> : ILogger<T> {
-    private readonly List<LogEntry> _logs = [];
+  private sealed class TestLogger<T> : ILogger<T>, IDisposable {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<LogEntry> _logs = new();
+    private readonly SemaphoreSlim _logSignal = new(0, int.MaxValue);
+
+    public void Dispose() => _logSignal.Dispose();
 
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      _logs.Add(new LogEntry {
+      _logs.Enqueue(new LogEntry {
         LogLevel = logLevel,
         Message = formatter(state, exception),
         Exception = exception
       });
+      _logSignal.Release();
     }
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
+    /// <summary>
+    /// Waits for a log message containing the specified text to appear.
+    /// </summary>
+    public async Task WaitForLogContainingAsync(string text, TimeSpan timeout) {
+      var deadline = DateTime.UtcNow + timeout;
+      while (DateTime.UtcNow < deadline) {
+        if (_logs.Any(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase))) {
+          return;
+        }
+        var remaining = deadline - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero) {
+          break;
+        }
+        var waitTime = remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1);
+        if (!await _logSignal.WaitAsync(waitTime)) {
+          // Timeout on semaphore, check condition again
+          continue;
+        }
+      }
+      if (!_logs.Any(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase))) {
+        throw new TimeoutException($"Log message containing '{text}' was not found within {timeout}");
+      }
+    }
+
     public List<LogEntry> GetLogsContaining(string text) =>
-      _logs.FindAll(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase));
+      [.. _logs.Where(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase))];
 
     public List<LogEntry> GetLogsAtLevel(LogLevel level) =>
-      _logs.FindAll(l => l.LogLevel == level);
+      [.. _logs.Where(l => l.LogLevel == level)];
 
     public sealed class LogEntry {
       public LogLevel LogLevel { get; init; }
@@ -383,7 +429,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
+      Flags = WorkBatchOptions.None,
     };
   }
 

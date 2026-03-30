@@ -45,30 +45,33 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       ReceivedCompletions.AddRange(request.OutboxCompletions);
       ReceivedFailures.AddRange(request.OutboxFailures);
 
+      var work = new List<OutboxWork>(WorkToReturn);
+      WorkToReturn.Clear();  // Return work once, then empty
+
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [.. WorkToReturn],
+        OutboxWork = work,
         InboxWork = [],
         PerspectiveWork = []
       });
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -76,9 +79,10 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     public ConcurrentBag<OutboxWork> PublishedWork { get; } = [];
     public Func<OutboxWork, MessagePublishResult>? PublishResultFunc { get; set; }
     public TimeSpan PublishDelay { get; set; } = TimeSpan.Zero;
+    public bool IsReadyResult { get; set; } = true;
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(true);
+      return Task.FromResult(IsReadyResult);
     }
 
     public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
@@ -120,11 +124,10 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
-
-    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    _ = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act & Assert - verify work was published
     // Note: Full worker integration will be tested separately
@@ -162,7 +165,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -197,7 +200,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       });
     }
 
@@ -209,6 +212,99 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     await Assert.That(results).Count().IsEqualTo(5);
     await Assert.That(results.All(r => r.Success)).IsTrue();
     await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task TransportNotReady_MessageRequeuedToChannelAsync() {
+    // Arrange
+    var workCoordinator = new TestWorkCoordinator();
+    var messageId = Guid.CreateVersion7();
+    workCoordinator.WorkToReturn = [
+      new OutboxWork {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+        MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+        StreamId = Guid.CreateVersion7(),
+        PartitionNumber = 1,
+        Attempts = 0,
+        Status = MessageProcessingStatus.Stored,
+        Flags = WorkBatchOptions.None,
+      }
+    ];
+    var publishStrategy = new TestPublishStrategy { IsReadyResult = false };
+    var instanceProvider = _createTestInstanceProvider();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _createHostedServiceCollection(workCoordinator, publishStrategy, instanceProvider, channelWriter);
+
+    // Act — start worker, wait for requeue signal (deterministic), then stop
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await worker.StartAsync(cts.Token);
+
+    // Wait for the deterministic requeue signal — fires when TryWrite is called after initial WriteAsync
+    await channelWriter.RequeueSignal.WaitAsync(cts.Token);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — the message must be re-queued via TryWrite (WrittenWork will have >1 entry)
+    // First write is from _processWorkBatchAsync, subsequent writes are re-queues from publisher loop
+    await Assert.That(channelWriter.WrittenWork.Count).IsGreaterThan(1)
+      .Because("Transport-not-ready must re-queue work to the channel via TryWrite to prevent message loss");
+    await Assert.That(channelWriter.WrittenWork.All(w => w.MessageId == messageId)).IsTrue()
+      .Because("All re-queued messages should be the same work item");
+  }
+
+  [Test]
+  public async Task TransportException_MessageRequeuedToChannelAsync() {
+    // Arrange
+    var workCoordinator = new TestWorkCoordinator();
+    var messageId = Guid.CreateVersion7();
+    workCoordinator.WorkToReturn = [
+      new OutboxWork {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+        MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+        StreamId = Guid.CreateVersion7(),
+        PartitionNumber = 1,
+        Attempts = 0,
+        Status = MessageProcessingStatus.Stored,
+        Flags = WorkBatchOptions.None,
+      }
+    ];
+    var publishStrategy = new TestPublishStrategy {
+      PublishResultFunc = _ => new MessagePublishResult {
+        MessageId = messageId,
+        Success = false,
+        CompletedStatus = MessageProcessingStatus.Stored,
+        Error = "Transport connection failed",
+        Reason = MessageFailureReason.TransportException
+      }
+    };
+    var instanceProvider = _createTestInstanceProvider();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _createHostedServiceCollection(workCoordinator, publishStrategy, instanceProvider, channelWriter);
+
+    // Act — start worker, wait for requeue signal (deterministic), then stop
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await worker.StartAsync(cts.Token);
+
+    // Wait for the deterministic requeue signal
+    await channelWriter.RequeueSignal.WaitAsync(cts.Token);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — the message must be re-queued via TryWrite after transport exception
+    await Assert.That(channelWriter.WrittenWork.Count).IsGreaterThan(1)
+      .Because("Transport exception must re-queue work to the channel via TryWrite to prevent message loss");
+    await Assert.That(channelWriter.WrittenWork.All(w => w.MessageId == messageId)).IsTrue()
+      .Because("All re-queued messages should be the same work item");
   }
 
   private static ServiceInstanceProvider _createTestInstanceProvider() {
@@ -234,10 +330,37 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     return services;
   }
 
-  // Test helper - Mock work channel writer
+  private static ServiceProvider _createHostedServiceCollection(
+    IWorkCoordinator workCoordinator,
+    IMessagePublishStrategy publishStrategy,
+    IServiceInstanceProvider instanceProvider,
+    IWorkChannelWriter workChannelWriter) {
+
+    var services = new ServiceCollection();
+    services.AddSingleton(workCoordinator);
+    services.AddSingleton(publishStrategy);
+    services.AddSingleton(instanceProvider);
+    services.AddSingleton(workChannelWriter);
+    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
+      PollingIntervalMilliseconds = 100
+    }));
+    services.AddLogging();
+    services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    return services.BuildServiceProvider();
+  }
+
+  // Test helper - Mock work channel writer with deterministic signals
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
+    private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _writeCount;
     public List<OutboxWork> WrittenWork { get; } = [];
+
+    /// <summary>
+    /// Deterministic signal that fires when a message is re-queued (TryWrite called after initial WriteAsync).
+    /// Use this instead of Task.Delay to wait for requeue behavior.
+    /// </summary>
+    public Task RequeueSignal => _requeueSignal.Task;
 
     public TestWorkChannelWriter() {
       _channel = System.Threading.Channels.Channel.CreateUnbounded<OutboxWork>();
@@ -247,12 +370,19 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
       WrittenWork.Add(work);
+      Interlocked.Increment(ref _writeCount);
       return _channel.Writer.WriteAsync(work, ct);
     }
 
     public bool TryWrite(OutboxWork work) {
       WrittenWork.Add(work);
-      return _channel.Writer.TryWrite(work);
+      var count = Interlocked.Increment(ref _writeCount);
+      var result = _channel.Writer.TryWrite(work);
+      // Signal when a requeue happens (write count > 1 means re-queued)
+      if (count > 1) {
+        _requeueSignal.TrySetResult();
+      }
+      return result;
     }
 
     public void Complete() {

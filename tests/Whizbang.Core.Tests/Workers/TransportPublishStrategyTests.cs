@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -66,6 +67,46 @@ public class TransportPublishStrategyTests {
     }
   }
 
+  private sealed class BulkPublishCapableTestTransport : ITransport {
+    private bool _isInitialized;
+
+    public bool IsInitialized => _isInitialized;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable | TransportCapabilities.BulkPublish;
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) {
+      _isInitialized = true;
+      return Task.CompletedTask;
+    }
+
+    public List<(IReadOnlyList<BulkPublishItem> Items, TransportDestination Destination)> PublishBatchCalls { get; } = [];
+    public Func<IReadOnlyList<BulkPublishItem>, TransportDestination, Task<IReadOnlyList<BulkPublishItemResult>>>? PublishBatchHandler { get; set; }
+
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public async Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(IReadOnlyList<BulkPublishItem> items, TransportDestination destination, CancellationToken cancellationToken = default) {
+      PublishBatchCalls.Add((items, destination));
+
+      if (PublishBatchHandler is not null) {
+        return await PublishBatchHandler(items, destination);
+      }
+
+      // Default: all succeed
+      return items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true }).ToList();
+    }
+
+    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
+      where TRequest : notnull
+      where TResponse : notnull {
+      throw new NotImplementedException();
+    }
+  }
+
   [Test]
   public async Task Constructor_NullTransport_ThrowsArgumentNullExceptionAsync() {
     // Arrange
@@ -94,7 +135,7 @@ public class TransportPublishStrategyTests {
   public async Task IsReadyAsync_DefaultReadinessCheck_ReturnsTrueAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -110,7 +151,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_SuccessfulPublish_ShouldReturnSuccessResultAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -125,7 +166,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -146,7 +187,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport {
       PublishResult = Task.FromResult<Exception?>(new InvalidOperationException("Transport unavailable"))
     };
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -161,7 +202,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 1,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -179,7 +220,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithNullScope_ShouldPublishSuccessfullyAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -194,7 +235,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -209,7 +250,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -225,7 +266,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -261,7 +302,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -296,7 +337,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -331,7 +372,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -366,7 +407,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -400,7 +441,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -439,7 +480,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -472,7 +513,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -502,7 +543,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -535,7 +576,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -566,7 +607,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -605,7 +646,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -642,7 +683,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -679,7 +720,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -714,7 +755,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -751,7 +792,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     // Act
@@ -769,5 +810,517 @@ public class TransportPublishStrategyTests {
       .Because("RoutingKey must match SqlFilter pattern '[Subject] LIKE 'jdx.contracts.chat.%'");
     await Assert.That(routingKey)
       .IsEqualTo("jdx.contracts.chat.activitytrackedcommand");
+  }
+
+  // ========================================
+  // BULK PUBLISH TESTS
+  // ========================================
+
+  [Test]
+  public async Task SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    // Act & Assert
+    await Assert.That(strategy.SupportsBulkPublish).IsTrue();
+  }
+
+  [Test]
+  public async Task SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    // Act & Assert
+    await Assert.That(strategy.SupportsBulkPublish).IsFalse();
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_SingleDestination_CallsTransportOnceAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    // Same StreamId → same batch group (stream-aware grouping)
+    var sharedStreamId = Guid.CreateVersion7();
+    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
+    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp", sharedStreamId);
+
+    // Act
+    var results = await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
+
+    // Assert
+    await Assert.That(results.Count).IsEqualTo(2);
+    await Assert.That(results[0].Success).IsTrue();
+    await Assert.That(results[1].Success).IsTrue();
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+    await Assert.That(transport.PublishBatchCalls[0].Destination.Address).IsEqualTo("myapp.orders.events");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var eventWork1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
+    var eventWork2 = _createEventOutboxWork("myapp.users.events", "MyApp.Users.Events.UserCreatedEvent, MyApp");
+    var commandWork = _createCommandOutboxWork("MyApp.Commands.CreateTenantCommand, MyApp");
+
+    // Act
+    var results = await strategy.PublishBatchAsync([eventWork1, eventWork2, commandWork], CancellationToken.None);
+
+    // Assert — 3 groups: myapp.orders.events, myapp.users.events, inbox
+    await Assert.That(results.Count).IsEqualTo(3);
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(3);
+
+    var addresses = transport.PublishBatchCalls.Select(c => c.Destination.Address).OrderBy(a => a).ToList();
+    await Assert.That(addresses).Contains("inbox");
+    await Assert.That(addresses).Contains("myapp.orders.events");
+    await Assert.That(addresses).Contains("myapp.users.events");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var eventStoreOnly = _createEventOutboxWork(null, "MyApp.Events.LocalEvent, MyApp");
+    var normalEvent = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
+
+    // Act
+    var results = await strategy.PublishBatchAsync([eventStoreOnly, normalEvent], CancellationToken.None);
+
+    // Assert — event-store-only skipped, normal event published
+    await Assert.That(results.Count).IsEqualTo(2);
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+    // Only 1 transport call (for the normal event)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    // Make transport throw for the orders topic
+    transport.PublishBatchHandler = (items, destination) => {
+      if (destination.Address == "myapp.orders.events") {
+        throw new InvalidOperationException("Transport unavailable for orders");
+      }
+      return Task.FromResult<IReadOnlyList<BulkPublishItemResult>>(
+        items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true }).ToList());
+    };
+
+    var ordersEvent = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
+    var usersEvent = _createEventOutboxWork("myapp.users.events", "MyApp.Users.Events.UserCreatedEvent, MyApp");
+
+    // Act
+    var results = await strategy.PublishBatchAsync([ordersEvent, usersEvent], CancellationToken.None);
+
+    // Assert — orders event fails, users event succeeds
+    await Assert.That(results.Count).IsEqualTo(2);
+    var ordersResult = results.First(r => r.MessageId == ordersEvent.MessageId);
+    var usersResult = results.First(r => r.MessageId == usersEvent.MessageId);
+    await Assert.That(ordersResult.Success).IsFalse();
+    await Assert.That(ordersResult.Error).Contains("Transport unavailable");
+    await Assert.That(usersResult.Success).IsTrue();
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var sharedStreamId = Guid.CreateVersion7();
+    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
+    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp", sharedStreamId);
+
+    // Act
+    await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
+
+    // Assert — each item should have its own routing key
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+    var items = transport.PublishBatchCalls[0].Items;
+    await Assert.That(items).Count().IsEqualTo(2);
+    await Assert.That(items[0].RoutingKey).IsEqualTo("myapp.orders.events.ordercreatedevent");
+    await Assert.That(items[1].RoutingKey).IsEqualTo("myapp.orders.events.orderupdatedevent");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    // Act
+    var results = await strategy.PublishBatchAsync([], CancellationToken.None);
+
+    // Assert
+    await Assert.That(results.Count).IsEqualTo(0);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync() {
+    // Arrange — transport returns mixed per-item results
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var sharedStreamId = Guid.CreateVersion7();
+    var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
+    var work2 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderUpdatedEvent, MyApp", sharedStreamId);
+
+    transport.PublishBatchHandler = (items, _) => {
+      var results = new List<BulkPublishItemResult> {
+        new() { MessageId = items[0].MessageId, Success = true },
+        new() { MessageId = items[1].MessageId, Success = false, Error = "Message too large" }
+      };
+      return Task.FromResult<IReadOnlyList<BulkPublishItemResult>>(results);
+    };
+
+    // Act
+    var results = await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
+
+    // Assert
+    await Assert.That(results.Count).IsEqualTo(2);
+    var result1 = results.First(r => r.MessageId == work1.MessageId);
+    var result2 = results.First(r => r.MessageId == work2.MessageId);
+    await Assert.That(result1.Success).IsTrue();
+    await Assert.That(result2.Success).IsFalse();
+    await Assert.That(result2.Error).Contains("Message too large");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var work1 = _createEventOutboxWork(null, "MyApp.Events.Event1, MyApp");
+    var work2 = _createEventOutboxWork("", "MyApp.Events.Event2, MyApp");
+
+    // Act
+    var results = await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
+
+    // Assert
+    await Assert.That(results.Count).IsEqualTo(2);
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+    await Assert.That(results.All(r => r.CompletedStatus == MessageProcessingStatus.Published)).IsTrue();
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(0);
+  }
+
+  // Helper to create event OutboxWork
+  private static OutboxWork _createEventOutboxWork(string? destination, string messageType, Guid? streamId = null) {
+    var messageId = Guid.CreateVersion7();
+    return new OutboxWork {
+      MessageId = messageId,
+      Destination = destination,
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core",
+      MessageType = messageType,
+      StreamId = streamId ?? Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+  }
+
+  // ========================================
+  // STREAMID FLOW TESTS (FIFO Ordering)
+  // ========================================
+
+  [Test]
+  public async Task PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = streamId,
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination!.Metadata).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination.Metadata!.ContainsKey("StreamId")).IsTrue()
+      .Because("StreamId must be carried in destination metadata for transports to use for ordering");
+    await Assert.That(transport.LastPublishedDestination.Metadata["StreamId"].GetString())
+      .IsEqualTo(streamId.ToString());
+  }
+
+  [Test]
+  public async Task PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = null,
+      PartitionNumber = null,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // Metadata should either be null or not contain StreamId
+    var hasStreamId = transport.LastPublishedDestination!.Metadata?.ContainsKey("StreamId") ?? false;
+    await Assert.That(hasStreamId).IsFalse()
+      .Because("Null StreamId should not add StreamId to metadata — no ordering requirement");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamId = Guid.CreateVersion7();
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = streamId,
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    await strategy.PublishBatchAsync([work], CancellationToken.None);
+
+    // Assert
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+    var bulkItem = transport.PublishBatchCalls[0].Items[0];
+    await Assert.That(bulkItem.StreamId).IsEqualTo(streamId)
+      .Because("StreamId must flow from OutboxWork to BulkPublishItem for transport-level FIFO");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_WithNullStreamId_LeavesStreamIdNullAsync() {
+    // Arrange
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = null,
+      PartitionNumber = null,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+
+    // Act
+    await strategy.PublishBatchAsync([work], CancellationToken.None);
+
+    // Assert
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
+    var bulkItem = transport.PublishBatchCalls[0].Items[0];
+    await Assert.That(bulkItem.StreamId).IsNull()
+      .Because("Null StreamId should remain null — no ordering requirement");
+  }
+
+  // ========================================
+  // STREAM-AWARE BATCH GROUPING TESTS
+  // ========================================
+
+  [Test]
+  public async Task PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync() {
+    // Arrange — 2 messages same address, different streams → 2 separate batch calls
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamA = Guid.CreateVersion7();
+    var streamB = Guid.CreateVersion7();
+    var msg1 = Guid.CreateVersion7();
+    var msg2 = Guid.CreateVersion7();
+
+    var workItems = new List<OutboxWork> {
+      new() {
+        MessageId = msg1, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg1),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+        StreamId = streamA, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg2, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg2),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderUpdatedEvent, MyApp",
+        StreamId = streamB, PartitionNumber = 2, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      }
+    };
+
+    // Act
+    await strategy.PublishBatchAsync(workItems, CancellationToken.None);
+
+    // Assert — 2 batch calls (one per stream)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(2)
+      .Because("Messages with different StreamIds should be in separate batch calls for FIFO correctness");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync() {
+    // Arrange — 2 messages same address, same stream → 1 batch call
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamId = Guid.CreateVersion7();
+    var msg1 = Guid.CreateVersion7();
+    var msg2 = Guid.CreateVersion7();
+
+    var workItems = new List<OutboxWork> {
+      new() {
+        MessageId = msg1, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg1),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+        StreamId = streamId, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg2, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg2),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderUpdatedEvent, MyApp",
+        StreamId = streamId, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      }
+    };
+
+    // Act
+    await strategy.PublishBatchAsync(workItems, CancellationToken.None);
+
+    // Assert — 1 batch call (same stream)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1)
+      .Because("Messages with the same StreamId should stay in the same batch call");
+    await Assert.That(transport.PublishBatchCalls[0].Items).Count().IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync() {
+    // Arrange — 3 messages: 1 with streamA, 1 with streamB, 1 with null → 3 groups
+    var transport = new BulkPublishCapableTestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var streamA = Guid.CreateVersion7();
+    var streamB = Guid.CreateVersion7();
+    var msg1 = Guid.CreateVersion7();
+    var msg2 = Guid.CreateVersion7();
+    var msg3 = Guid.CreateVersion7();
+
+    var workItems = new List<OutboxWork> {
+      new() {
+        MessageId = msg1, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg1),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+        StreamId = streamA, PartitionNumber = 1, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg2, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg2),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderUpdatedEvent, MyApp",
+        StreamId = streamB, PartitionNumber = 2, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      },
+      new() {
+        MessageId = msg3, Destination = "myapp.orders.events",
+        Envelope = _createTestEnvelope(msg3),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderDeletedEvent, MyApp]], Whizbang.Core",
+        MessageType = "MyApp.Orders.Events.OrderDeletedEvent, MyApp",
+        StreamId = null, PartitionNumber = null, Attempts = 0,
+        Status = MessageProcessingStatus.Stored, Flags = WorkBatchOptions.None
+      }
+    };
+
+    // Act
+    await strategy.PublishBatchAsync(workItems, CancellationToken.None);
+
+    // Assert — 3 batch calls (streamA, streamB, null)
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(3)
+      .Because("Each unique StreamId (including null) should result in a separate batch call");
+  }
+
+  // Helper to create command OutboxWork
+  private static OutboxWork _createCommandOutboxWork(string messageType) {
+    var messageId = Guid.CreateVersion7();
+    return new OutboxWork {
+      MessageId = messageId,
+      Destination = "createtenantcommand", // Will be re-routed to inbox
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core",
+      MessageType = messageType,
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
   }
 }

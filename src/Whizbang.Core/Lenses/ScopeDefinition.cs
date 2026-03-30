@@ -27,22 +27,19 @@ namespace Whizbang.Core.Lenses;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/scoped-lenses#scope-definition</docs>
+/// <docs>fundamentals/lenses/scoped-lenses#scope-definition</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
-public sealed class ScopeDefinition {
-  /// <summary>
-  /// Creates a new scope definition with the specified name.
-  /// </summary>
-  /// <param name="name">The unique name for this scope (e.g., "Tenant", "User", "Global").</param>
-  public ScopeDefinition(string name) {
-    Name = name ?? throw new ArgumentNullException(nameof(name));
-  }
+/// <remarks>
+/// Creates a new scope definition with the specified name.
+/// </remarks>
+/// <param name="name">The unique name for this scope (e.g., "Tenant", "User", "Global").</param>
+public sealed class ScopeDefinition(string name) {
 
   /// <summary>
   /// The unique name for this scope.
   /// Used to select the scope when creating lenses via <see cref="IScopedLensFactory"/>.
   /// </summary>
-  public string Name { get; }
+  public string Name { get; } = name ?? throw new ArgumentNullException(nameof(name));
 
   /// <summary>
   /// The property name to filter by (e.g., "TenantId", "UserId").

@@ -33,22 +33,22 @@ public class WorkBatchCoordinatorTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -81,7 +81,7 @@ public class WorkBatchCoordinatorTests {
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {
@@ -104,7 +104,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(instanceId);
+    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
 
     // Assert - outbox work should be in channel
     var canRead = outboxChannel.Reader.TryRead(out var readWork);
@@ -125,7 +125,7 @@ public class WorkBatchCoordinatorTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {
@@ -148,7 +148,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(instanceId);
+    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
 
     // Assert - perspective work should be in channel
     var canRead = perspectiveChannel.Reader.TryRead(out var readWork);
@@ -172,7 +172,7 @@ public class WorkBatchCoordinatorTests {
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
     var perspectiveWork = new PerspectiveWork {
       StreamId = Guid.CreateVersion7(),
@@ -180,7 +180,7 @@ public class WorkBatchCoordinatorTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {
@@ -203,7 +203,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(instanceId);
+    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
 
     // Assert - both channels should have work
     await Assert.That(outboxChannel.Reader.TryRead(out var readOutboxWork)).IsTrue();

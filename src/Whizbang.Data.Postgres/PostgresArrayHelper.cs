@@ -9,6 +9,7 @@ namespace Whizbang.Data.Postgres;
 /// Provides type-safe conversion between C# arrays and PostgreSQL array types.
 /// </summary>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresArrayHelperTests.cs</tests>
+#pragma warning disable S3265 // NpgsqlDbType supports bitwise ops for array types (e.g. Array | Uuid) per Npgsql API design
 public static class PostgresArrayHelper {
   /// <summary>
   /// Converts a C# UUID array to a PostgreSQL UUID[] parameter.
@@ -20,7 +21,7 @@ public static class PostgresArrayHelper {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresArrayHelperTests.cs:ToUuidArray_NullInput_CreatesEmptyArrayParameterAsync</tests>
   public static NpgsqlParameter ToUuidArray(Guid[]? guids) {
     return new NpgsqlParameter {
-      Value = guids ?? Array.Empty<Guid>(),
+      Value = guids ?? [],
       NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid
     };
   }
@@ -35,7 +36,7 @@ public static class PostgresArrayHelper {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresArrayHelperTests.cs:ToVarcharArray_NullInput_CreatesEmptyArrayParameterAsync</tests>
   public static NpgsqlParameter ToVarcharArray(string[]? strings) {
     return new NpgsqlParameter {
-      Value = strings ?? Array.Empty<string>(),
+      Value = strings ?? [],
       NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Varchar
     };
   }
@@ -50,7 +51,7 @@ public static class PostgresArrayHelper {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresArrayHelperTests.cs:ToIntegerArray_NullInput_CreatesEmptyArrayParameterAsync</tests>
   public static NpgsqlParameter ToIntegerArray(int[]? integers) {
     return new NpgsqlParameter {
-      Value = integers ?? Array.Empty<int>(),
+      Value = integers ?? [],
       NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer
     };
   }
@@ -62,6 +63,6 @@ public static class PostgresArrayHelper {
   /// <returns>NpgsqlParameter configured for empty UUID[] array</returns>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresArrayHelperTests.cs:EmptyUuidArray_CreatesEmptyUuidArrayParameterAsync</tests>
   public static NpgsqlParameter EmptyUuidArray() {
-    return ToUuidArray(Array.Empty<Guid>());
+    return ToUuidArray([]);
   }
 }

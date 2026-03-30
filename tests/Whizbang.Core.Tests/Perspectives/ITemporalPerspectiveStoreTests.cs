@@ -75,7 +75,7 @@ public class ITemporalPerspectiveStoreTests {
     await Assert.That(type.IsGenericTypeDefinition).IsTrue();
 
     var typeParam = type.GetGenericArguments()[0];
-    var constraints = typeParam.GetGenericParameterConstraints();
+    _ = typeParam.GetGenericParameterConstraints();
     // The "class" constraint is expressed as a reference type constraint
     await Assert.That((typeParam.GenericParameterAttributes &
         System.Reflection.GenericParameterAttributes.ReferenceTypeConstraint) != 0).IsTrue();

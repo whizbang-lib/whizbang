@@ -26,34 +26,22 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 [Category("Integration")]
 [Category("Lifecycle")]
 [NotInParallel("ServiceBus")]
-[Skip("Flaky in CI due to lifecycle receptor timing issues - see plan file soft-wibbling-nova.md")]
+[Timeout(120_000)]
 public class PerspectiveLifecycleTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
-
-    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      try {
-        await _fixture.CleanupDatabaseAsync();
-      } catch (Exception ex) {
-        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
-      }
-
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public async Task TeardownAsync() {
+    // Don't dispose - shared fixture is reused across tests
   }
 
   // ========================================
@@ -113,7 +101,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveInline);
 
     try {
@@ -189,7 +177,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -272,7 +260,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -324,7 +312,7 @@ public class PerspectiveLifecycleTests {
       postInlineCompletion,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostPerspectiveInline);
 
@@ -406,7 +394,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
 
     try {
@@ -435,7 +423,6 @@ public class PerspectiveLifecycleTests {
   /// Tests that the stage fires during the event processing loop, not just once per batch.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task PostPerspectiveInline_FiresForEachEvent_MultipleInvocationsAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -506,7 +493,7 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
 
     // Create receptors for all 4 stages
     var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -582,7 +569,7 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
 
     // Track invocation order using timestamps
     var invocationOrder = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset>();
@@ -676,7 +663,7 @@ public class PerspectiveLifecycleTests {
       InitialStock = 42
     };
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     var queryCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Receptor that completes at PostPerspectiveAsync
@@ -742,7 +729,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
 
     try {

@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("Dispatcher")]
 [NotInParallel]
 public class DispatcherSyncTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   // Test Messages - unique names to avoid conflicts with other tests
   public record DispatcherSyncCreateOrderCommand(Guid CustomerId, decimal Amount);
@@ -27,7 +27,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
 
   // Event uses [DefaultRouting(Local)] for local cascade test verification.
   // (System default is Outbox for cross-service delivery)
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record DispatcherSyncOrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId, decimal Amount) : IEvent;
   public record DispatcherSyncLogCommand(string Message);
 
@@ -198,12 +198,8 @@ public class DispatcherSyncTests : DiagnosticTestBase {
     }
   }
 
-  public class VoidSyncLogReceptor : ISyncReceptor<DispatcherSyncLogCommand> {
-    private readonly Action _onExecute;
-
-    public VoidSyncLogReceptor(Action onExecute) {
-      _onExecute = onExecute;
-    }
+  public class VoidSyncLogReceptor(Action onExecute) : ISyncReceptor<DispatcherSyncLogCommand> {
+    private readonly Action _onExecute = onExecute;
 
     public void Handle(DispatcherSyncLogCommand message) {
       _onExecute();
@@ -214,13 +210,8 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   /// Test dispatcher that supports sync receptor invocation.
   /// This will fail until we implement GetSyncReceptorInvoker in the base Dispatcher.
   /// </summary>
-  public class TestSyncDispatcher : Core.Dispatcher {
-    private readonly List<object>? _publishedEvents;
-
-    public TestSyncDispatcher(IServiceProvider serviceProvider, List<object>? publishedEvents = null)
-        : base(serviceProvider, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null)) {
-      _publishedEvents = publishedEvents;
-    }
+  public class TestSyncDispatcher(IServiceProvider serviceProvider, List<object>? publishedEvents = null) : Core.Dispatcher(serviceProvider, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null)) {
+    private readonly List<object>? _publishedEvents = publishedEvents;
 
     // These abstract methods need to be implemented for the test dispatcher
     // They will delegate to the generated code patterns
@@ -297,7 +288,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
       return null;
     }
 
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
       // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }

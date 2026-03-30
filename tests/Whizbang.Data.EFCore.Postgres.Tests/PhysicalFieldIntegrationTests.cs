@@ -54,10 +54,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// DbContext that configures physical fields as shadow properties for PostgreSQL.
   /// </summary>
-  private sealed class PhysicalFieldIntegrationDbContext : DbContext {
-    public PhysicalFieldIntegrationDbContext(DbContextOptions<PhysicalFieldIntegrationDbContext> options)
-        : base(options) { }
-
+  private sealed class PhysicalFieldIntegrationDbContext(DbContextOptions<PhysicalFieldIntegrationTests.PhysicalFieldIntegrationDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 
@@ -573,7 +570,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           Category = "Electronics",
           IsActive = true,
           Description = "Entry-level widget for beginners",
-          Tags = new List<string> { "basic", "entry" }
+          Tags = ["basic", "entry"]
         }
       },
       new {
@@ -584,7 +581,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           Category = "Electronics",
           IsActive = true,
           Description = "Professional widget for advanced users",
-          Tags = new List<string> { "professional", "advanced" }
+          Tags = ["professional", "advanced"]
         }
       },
       new {
@@ -595,7 +592,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           Category = "Premium",
           IsActive = false,  // Discontinued
           Description = "Premium discontinued widget",
-          Tags = new List<string> { "premium", "discontinued" }
+          Tags = ["premium", "discontinued"]
         }
       }
     };

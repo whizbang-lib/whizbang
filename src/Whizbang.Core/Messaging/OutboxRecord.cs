@@ -1,3 +1,4 @@
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -33,7 +34,7 @@ public sealed class OutboxRecord {
   /// Used by outbox processor to route messages.
   /// Null indicates event-store-only mode (transport is bypassed).
   /// </summary>
-  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteLocal_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
@@ -64,11 +65,11 @@ public sealed class OutboxRecord {
 
   /// <summary>
   /// Scope information for multi-tenancy stored as JSON.
-  /// Contains tenant/user/partition information for query filtering.
-  /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
+  /// Contains tenant/user/customer/organization information for query filtering.
+  /// Schema: { "t": "...", "u": "...", "c": "...", "o": "...", "ap": [...], "ex": [...] }
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
-  public MessageScope? Scope { get; set; }
+  public PerspectiveScope? Scope { get; set; }
 
 
   /// <summary>

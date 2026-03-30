@@ -243,9 +243,12 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
   private async Task<AzureServiceBusTransport> _createTransportAsync() {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
+    // Explicitly disable sessions — emulator subscriptions have RequiresSession=false
+    var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
-      jsonOptions
+      jsonOptions,
+      options
     );
 
     await transport.InitializeAsync();
@@ -276,7 +279,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Metadata = new Dictionary<string, JsonElement> {
+            ["AggregateId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
+          }
         }
       ]
     };

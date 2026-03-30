@@ -37,7 +37,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_UserLensInterface_RegistersInterfaceToImplementationAsync() {
     // Arrange - User interface extending ILensQuery, with implementation
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -67,7 +67,7 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("AddLensServices");
+    await Assert.That(code).Contains("AddLensServices");
     await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
   }
 
@@ -75,7 +75,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_SelfRegistration_EnabledByDefault_RegistersBothAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -99,7 +99,7 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should register interface → implementation
-    await Assert.That(code!).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
+    await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
     // Should also register self (default behavior)
     await Assert.That(code).Contains("AddTransient<global::TestApp.OrderLens>");
     // Verify options class is generated
@@ -111,7 +111,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_AbstractLens_SkipsRegistrationAsync() {
     // Arrange - Abstract class should be skipped
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -136,14 +136,14 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should NOT contain registration for abstract class
-    await Assert.That(code!).DoesNotContain("BaseLens");
+    await Assert.That(code).DoesNotContain("BaseLens");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_AbstractBaseWithConcreteChild_RegistersOnlyChildAsync() {
     // Arrange - Abstract base, concrete child
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -173,7 +173,7 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should register concrete child
-    await Assert.That(code!).Contains("OrderLens");
+    await Assert.That(code).Contains("OrderLens");
     // But NOT the abstract base
     await Assert.That(code).DoesNotContain("BaseLens");
   }
@@ -183,7 +183,7 @@ public class ServiceRegistrationGeneratorTests {
   public async Task Generator_DirectWhizbangImplementation_RegistersAgainstWhizbangInterfaceAsync() {
     // Arrange - Class directly implementing ILensQuery<T> (not through user interface)
     // Should be registered against the ILensQuery<T> interface
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -208,14 +208,14 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should register against ILensQuery<Order>
-    await Assert.That(code!).Contains("AddTransient<global::Whizbang.Core.Lenses.ILensQuery<global::TestApp.Order>, global::TestApp.DirectLensQuery>");
+    await Assert.That(code).Contains("AddTransient<global::Whizbang.Core.Lenses.ILensQuery<global::TestApp.Order>, global::TestApp.DirectLensQuery>");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleLenses_RegistersAllAsync() {
     // Arrange - Multiple user interfaces and implementations
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -254,7 +254,7 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("IOrderLens, global::TestApp.OrderLens");
+    await Assert.That(code).Contains("IOrderLens, global::TestApp.OrderLens");
     await Assert.That(code).Contains("IProductLens, global::TestApp.ProductLens");
     await Assert.That(code).Contains("ICustomerLens, global::TestApp.CustomerLens");
   }
@@ -267,7 +267,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_UserPerspectiveInterface_RegistersInterfaceToImplementationAsync() {
     // Arrange - User interface extending IPerspectiveFor<>
-    var source = """
+    const string source = """
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
 
@@ -296,7 +296,7 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("AddPerspectiveServices");
+    await Assert.That(code).Contains("AddPerspectiveServices");
     await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderPerspective, global::TestApp.OrderPerspective>");
   }
 
@@ -304,7 +304,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_AbstractPerspective_SkipsRegistrationAsync() {
     // Arrange - Abstract perspective class should be skipped
-    var source = """
+    const string source = """
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
 
@@ -331,7 +331,7 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("BasePerspective");
+    await Assert.That(code).DoesNotContain("BasePerspective");
   }
 
   [Test]
@@ -339,7 +339,7 @@ public class ServiceRegistrationGeneratorTests {
   public async Task Generator_DirectPerspectiveImplementation_RegistersAgainstWhizbangInterfaceAsync() {
     // Arrange - Class directly implementing IPerspectiveFor<> (no user interface)
     // Should be registered against the IPerspectiveFor<,> interface
-    var source = """
+    const string source = """
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
 
@@ -368,7 +368,7 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should register against IPerspectiveFor<OrderModel, OrderCreatedEvent>
-    await Assert.That(code!).Contains("AddTransient<global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestApp.OrderModel, global::TestApp.OrderCreatedEvent>, global::TestApp.DirectPerspective>");
+    await Assert.That(code).Contains("AddTransient<global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestApp.OrderModel, global::TestApp.OrderCreatedEvent>, global::TestApp.DirectPerspective>");
   }
 
   // ===========================================
@@ -379,7 +379,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_CombinedLensAndPerspective_GeneratesBothMethodsAsync() {
     // Arrange - Both lens and perspective with user interfaces
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -419,7 +419,7 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("AddPerspectiveServices");
+    await Assert.That(code).Contains("AddPerspectiveServices");
     await Assert.That(code).Contains("AddLensServices");
     await Assert.That(code).Contains("AddAllWhizbangServices");
     await Assert.That(code).Contains("IOrderPerspective, global::TestApp.OrderPerspective");
@@ -430,7 +430,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_NoUserInterfaces_GeneratesEmptyMethodsAsync() {
     // Arrange - No user interfaces
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -460,7 +460,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_NestedUserInterface_RegistersWithFullNameAsync() {
     // Arrange - Nested class implementing user interface
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -487,7 +487,7 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should use full name for nested class
-    await Assert.That(code!).Contains("OuterClass.NestedOrderLens");
+    await Assert.That(code).Contains("OuterClass.NestedOrderLens");
   }
 
   // ===========================================
@@ -498,7 +498,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_OptionsClass_GeneratedCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -521,7 +521,7 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("public sealed class ServiceRegistrationOptions");
+    await Assert.That(code).Contains("public sealed class ServiceRegistrationOptions");
     await Assert.That(code).Contains("public bool IncludeSelfRegistration");
     await Assert.That(code).Contains("= true"); // Default value
   }
@@ -534,7 +534,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_ReportsInfoDiagnostic_WhenServiceDiscoveredAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -563,7 +563,7 @@ public class ServiceRegistrationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_ReportsInfoDiagnostic_WhenAbstractClassSkippedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading;
@@ -587,5 +587,46 @@ public class ServiceRegistrationGeneratorTests {
     // Assert - Should have WHIZ041 info diagnostic
     var diagnostics = result.Diagnostics;
     await Assert.That(diagnostics.Any(d => d.Id == "WHIZ041")).IsTrue();
+  }
+
+  // ===========================================
+  // IPerspectiveWithActionsFor TESTS
+  // ===========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IPerspectiveWithActionsFor_RegistersServiceAsync() {
+    // Arrange — Perspective using only IPerspectiveWithActionsFor
+    const string source = """
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+            using System;
+
+            namespace TestApp;
+
+            public record DeletedEvent : IEvent {
+              [StreamId]
+              public Guid Id { get; init; }
+            }
+
+            public record OrderModel {
+              [StreamId]
+              public Guid Id { get; init; }
+            }
+
+            public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, DeletedEvent> {
+              public ApplyResult<OrderModel> Apply(OrderModel current, DeletedEvent @event)
+                => ApplyResult<OrderModel>.Purge();
+            }
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ServiceRegistrationGenerator>(source);
+
+    // Assert — WithActionsFor perspective must be registered in DI
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("OrderPurgePerspective")
+      .Because("IPerspectiveWithActionsFor perspectives must be registered in DI");
   }
 }
