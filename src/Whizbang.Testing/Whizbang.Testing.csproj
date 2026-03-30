@@ -14,6 +14,10 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Bogus" />
+    <!-- Use TUnit.Core + TUnit.Assertions (not full TUnit) to avoid pulling in TUnit.Engine,
+         which generates a MicrosoftTestingPlatformEntryPoint and breaks Stryker.NET mutation testing -->
+    <PackageReference Include="TUnit.Core" />
+    <PackageReference Include="TUnit.Assertions" />
     <!-- Container fixtures for integration testing -->
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Testcontainers.PostgreSql" />
