@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -90,7 +91,8 @@ public static class AuditOutboxMessageBuilder {
     var auditEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = auditJson,
-      Hops = sourceHops
+      Hops = sourceHops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     var auditEventType = typeof(EventAudited);

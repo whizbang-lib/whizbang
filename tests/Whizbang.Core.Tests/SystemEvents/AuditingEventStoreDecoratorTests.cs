@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -366,7 +367,8 @@ public class AuditingEventStoreDecoratorTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -406,7 +408,8 @@ public class AuditingEventStoreDecoratorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = delta
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -446,7 +449,8 @@ public class AuditingEventStoreDecoratorTests {
           Scope = delta,
           CorrelationId = new CorrelationId(correlationGuid)
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -508,7 +512,8 @@ public class AuditingEventStoreDecoratorTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

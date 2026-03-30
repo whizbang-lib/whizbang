@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -48,7 +49,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Serialize typed envelope to JsonElement envelope for OutboxMessage
@@ -104,7 +106,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Serialize typed envelope to JsonElement envelope for OutboxMessage
@@ -160,7 +163,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Serialize typed envelope to JsonElement envelope for InboxMessage
@@ -752,7 +756,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = System.Text.Json.JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = System.Text.Json.JsonSerializer.Deserialize<MessageEnvelope<System.Text.Json.JsonElement>>(envelopeJson, jsonOptions)!;
@@ -777,7 +782,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.New(),
       Payload = new _testEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var json = System.Text.Json.JsonSerializer.Serialize((object)envelope, jsonOptions);
     return System.Text.Json.JsonSerializer.Deserialize<MessageEnvelope<System.Text.Json.JsonElement>>(json, jsonOptions)!;

@@ -1,3 +1,4 @@
+using Whizbang.Core.Dispatch;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -301,6 +302,7 @@ public class ThroughputBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -326,6 +328,7 @@ public class ThroughputBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 

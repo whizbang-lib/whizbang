@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 
@@ -237,9 +239,10 @@ public class TransportManager(
           CorrelationId = context.CorrelationId,
           CausationId = context.CausationId,
           Scope = scopeDelta,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
   }
 }

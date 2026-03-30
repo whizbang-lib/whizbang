@@ -7,6 +7,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -68,7 +70,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = messageId,
       Payload = payload,
-      Hops = hops
+      Hops = hops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Assert
@@ -101,7 +104,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = [_createHop()]
+      Hops = [_createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -121,7 +125,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop()]
+      Hops = [_createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var newHop = _createHop(topic: "added-hop");
 
@@ -139,7 +144,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(topic: "first")]
+      Hops = [_createHop(topic: "first")],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -163,7 +169,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -179,7 +186,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -199,7 +207,8 @@ public class MessageEnvelopeTests {
         _createHop(topic: "first-topic"),
         _createHop(),
         _createHop(topic: "latest-topic")
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -218,7 +227,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(topic: "current-topic"),
         _createHop(type: HopType.Causation, topic: "causation-topic")
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -238,7 +248,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -257,7 +268,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(streamId: "stream-1"),
         _createHop(streamId: "stream-2")
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -276,7 +288,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(streamId: "current-stream"),
         _createHop(type: HopType.Causation, streamId: "causation-stream")
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -296,7 +309,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -316,7 +330,8 @@ public class MessageEnvelopeTests {
         _createHop(partitionIndex: 1),
         _createHop(),
         _createHop(partitionIndex: 5)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -335,7 +350,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(partitionIndex: 3),
         _createHop(type: HopType.Causation, partitionIndex: 99)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -355,7 +371,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -374,7 +391,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(sequenceNumber: 10L),
         _createHop(sequenceNumber: 42L)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -393,7 +411,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(sequenceNumber: 7L),
         _createHop(type: HopType.Causation, sequenceNumber: 999L)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -413,7 +432,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -429,7 +449,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -452,7 +473,8 @@ public class MessageEnvelopeTests {
       Payload = new TestPayload("test"),
       Hops = [
         _createHop(type: HopType.Causation, scope: causationScope)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -474,7 +496,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -490,7 +513,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -511,7 +535,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(scope: scope)]
+      Hops = [_createHop(scope: scope)],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -536,7 +561,8 @@ public class MessageEnvelopeTests {
       Payload = new TestPayload("test"),
       Hops = [
         _createHop(type: HopType.Causation, scope: causationScope)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -563,7 +589,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [hop, _createHop()]
+      Hops = [hop, _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -580,7 +607,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -603,7 +631,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(correlationId: correlationId)]
+      Hops = [_createHop(correlationId: correlationId)],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -619,7 +648,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -635,7 +665,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop()]
+      Hops = [_createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -656,7 +687,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(causationId: causationId)]
+      Hops = [_createHop(causationId: causationId)],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -672,7 +704,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -692,7 +725,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -711,7 +745,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(metadata: metadata)]
+      Hops = [_createHop(metadata: metadata)],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -736,7 +771,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(metadata: metadata1),
         _createHop(metadata: metadata2)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -758,7 +794,8 @@ public class MessageEnvelopeTests {
       Payload = new TestPayload("test"),
       Hops = [
         _createHop(type: HopType.Causation, metadata: causationMetadata)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -774,7 +811,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -794,7 +832,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -821,7 +860,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(metadata: metadata1),
         _createHop(metadata: metadata2)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -849,7 +889,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(metadata: currentMetadata),
         _createHop(type: HopType.Causation, metadata: causationMetadata)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -867,7 +908,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -887,7 +929,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -903,7 +946,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -928,7 +972,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(trail: trail1),
         _createHop(trail: trail2)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -955,7 +1000,8 @@ public class MessageEnvelopeTests {
       Hops = [
         _createHop(trail: currentTrail),
         _createHop(type: HopType.Causation, trail: causationTrail)
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -979,7 +1025,8 @@ public class MessageEnvelopeTests {
         _createHop(),
         _createHop(trail: trail),
         _createHop()
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1000,7 +1047,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1016,7 +1064,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = [_createHop(), _createHop()]
+      Hops = [_createHop(), _createHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1037,7 +1086,8 @@ public class MessageEnvelopeTests {
         _createHop(type: HopType.Causation, topic: "causation-1"),
         _createHop(topic: "current-2"),
         _createHop(type: HopType.Causation, topic: "causation-2")
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1059,7 +1109,8 @@ public class MessageEnvelopeTests {
     var envelope = new MessageEnvelope<TestPayload> {
       MessageId = MessageId.New(),
       Payload = new TestPayload("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1079,7 +1130,8 @@ public class MessageEnvelopeTests {
         _createHop(topic: "current-1"),
         _createHop(type: HopType.Causation, topic: "causation-1"),
         _createHop(topic: "current-2")
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

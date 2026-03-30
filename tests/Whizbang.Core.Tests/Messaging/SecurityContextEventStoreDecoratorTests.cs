@@ -4,6 +4,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -127,7 +128,8 @@ public sealed class SecurityContextEventStoreDecoratorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = "original-user" })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

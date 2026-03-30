@@ -14,6 +14,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -311,7 +312,8 @@ public class TransportConsumerWorkerPostLifecycleTests {
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     return new InboxWork {
       MessageId = eventId,
@@ -324,7 +326,8 @@ public class TransportConsumerWorkerPostLifecycleTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = new MessageId(eventId),
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

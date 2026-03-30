@@ -2,6 +2,8 @@ using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Execution;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 
@@ -45,6 +47,7 @@ public class MultiStreamExecutorBenchmarks {
       var envelope = new MessageEnvelope<TestCommand> {
         MessageId = MessageId.New(),
         Payload = message,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = []
       };
       envelope.AddHop(new MessageHop {

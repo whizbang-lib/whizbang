@@ -15,6 +15,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -65,7 +66,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - establish security context using helper
@@ -119,7 +121,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -166,7 +169,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - should not throw
@@ -220,7 +224,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

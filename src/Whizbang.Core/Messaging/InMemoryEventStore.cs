@@ -6,10 +6,12 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Messaging;
 
@@ -79,9 +81,10 @@ public class InMemoryEventStore : IEventStore {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return AppendAsync(streamId, envelope, cancellationToken);
@@ -167,7 +170,8 @@ public class InMemoryEventStore : IEventStore {
         var typedEnvelope = new MessageEnvelope<IEvent> {
           MessageId = envelope.MessageId,
           Payload = eventPayload,
-          Hops = envelope.Hops
+          Hops = envelope.Hops,
+          DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
         };
         yield return typedEnvelope;
       }
@@ -232,7 +236,8 @@ public class InMemoryEventStore : IEventStore {
           eventEnvelopes.Add(new MessageEnvelope<IEvent> {
             MessageId = messageId,
             Payload = eventPayload,
-            Hops = hops
+            Hops = hops,
+            DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Outbox, Source = MessageSource.Local }
           });
         }
       }

@@ -11,6 +11,7 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -1072,7 +1073,8 @@ public class PerspectiveWorkerSecurityContextTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act: Simulate what PerspectiveWorker._establishSecurityContextAsync does when extraction fails
@@ -1268,7 +1270,8 @@ public class PerspectiveWorkerSecurityContextTests {
               Type = HopType.Current,
               ServiceInstance = ServiceInstanceInfo.Unknown,
               Scope = scopeDelta
-            }]
+            }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           };
 
           result.Add(envelope);
@@ -1332,7 +1335,8 @@ public class PerspectiveWorkerSecurityContextTests {
               Type = HopType.Current,
               ServiceInstance = ServiceInstanceInfo.Unknown,
               Scope = null  // NO SCOPE - GetCurrentScope() will return null
-            }]
+            }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           };
 
           result.Add(envelope);

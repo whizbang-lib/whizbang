@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 #pragma warning disable CA1707 // Test method naming uses underscores by convention
 
@@ -23,7 +24,7 @@ public class WorkChannelWriterInFlightTests {
       MessageId = messageId ?? Guid.NewGuid(),
       Destination = "test-topic",
       Status = MessageProcessingStatus.Stored,
-      Envelope = new MessageEnvelope<JsonElement> { MessageId = MessageId.New(), Payload = default, Hops = [] },
+      Envelope = new MessageEnvelope<JsonElement> { MessageId = MessageId.New(), Payload = default, Hops = [], DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local } },
       EnvelopeType = "TestEnvelope",
       MessageType = "TestMessage",
       Attempts = 0

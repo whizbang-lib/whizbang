@@ -1,3 +1,5 @@
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Dispatch;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using TUnit.Assertions;
@@ -133,7 +135,8 @@ public class IMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = correlationId
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -163,7 +166,8 @@ public class IMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           CausationId = causationId
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -198,7 +202,8 @@ public class IMessageSerializerTests {
             ["timeout-ms"] = JsonSerializer.SerializeToElement(5000)
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -228,7 +233,8 @@ public class IMessageSerializerTests {
           },
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -259,7 +265,8 @@ public class IMessageSerializerTests {
           StreamId = "order-123",
           PartitionIndex = 5
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -291,7 +298,8 @@ public class IMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           SequenceNumber = 42
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -321,7 +329,8 @@ public class IMessageSerializerTests {
           },
           Timestamp = timestamp
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -352,7 +361,8 @@ public class IMessageSerializerTests {
           StreamId = string.Empty,
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -388,7 +398,8 @@ public class IMessageSerializerTests {
           },
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -427,7 +438,8 @@ public class IMessageSerializerTests {
           Type = HopType.Causation,
           Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2)
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     return envelope;
   }

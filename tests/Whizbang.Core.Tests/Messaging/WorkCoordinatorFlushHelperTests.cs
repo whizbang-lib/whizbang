@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -228,7 +229,8 @@ public class WorkCoordinatorFlushHelperTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -295,7 +297,8 @@ public class WorkCoordinatorFlushHelperTests {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
 
       return Task.FromResult(new WorkBatch {

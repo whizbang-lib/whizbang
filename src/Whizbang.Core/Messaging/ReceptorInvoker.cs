@@ -47,6 +47,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IServiceProvider _scopedProvider;
   private readonly IEventCascader? _eventCascader;
   private readonly IPerspectiveSyncAwaiter? _syncAwaiter;
+  private readonly HashSet<string> _ownedDomains;
   private ILogger? _logger;
 
   /// <summary>
@@ -108,6 +109,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _scopedProvider = scopedProvider;
     _eventCascader = eventCascader;
     _syncAwaiter = syncAwaiter;
+
+    // Resolve owned domains for lifecycle stage filtering (AOT-safe, no reflection)
+    var routingOptions = scopedProvider.GetService<Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>>()?.Value;
+    _ownedDomains = routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
   }
 
   /// <inheritdoc/>
@@ -157,6 +162,28 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Resolve scope for tag processing — use security context or extracted scope from hops
     var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
+
+    // Owned-domain lifecycle filtering (AOT-safe, no reflection):
+    // PreOutboxInline: fire owned events (going to other services) + non-owned commands (going to inbox)
+    //                  skip owned commands (stay local) + non-owned events (shouldn't be published by this service)
+    // PostInboxInline: fire non-owned events (subscribed) + owned commands (sent to us by another service)
+    //                  skip owned events (self-echo) + non-owned commands (routing error)
+    if (_ownedDomains.Count > 0 && receptors.Count > 0) {
+      var isOwned = _isOwnedNamespace(messageType.Namespace);
+      var isEvent = message is IEvent;
+      if (stage == LifecycleStage.PreOutboxInline && (isOwned ? !isEvent : isEvent)) {
+        return; // skip owned commands + non-owned events at outbox stage
+      }
+      if (stage == LifecycleStage.PostInboxInline && (isOwned ? isEvent : !isEvent)) {
+        return; // skip owned events (self-echo) + non-owned commands at inbox stage
+      }
+    }
+
+    // Double-fire prevention placeholder — the actual dedup requires dispatch-mode context
+    // which is not available at the ReceptorInvoker level. The lifecycle tracking system
+    // (LifecycleTrackingState._firedStages) handles this for coordinator-tracked events.
+    // For cascade-path events, the _dispatchByModeAsync mode flags prevent double invocation
+    // by only executing stages matching the dispatch mode (Local vs Outbox vs Both).
 
     if (receptors.Count == 0) {
       await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
@@ -511,6 +538,28 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (tagProcessor is not null) {
       await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, cancellationToken).ConfigureAwait(false);
     }
+  }
+
+  /// <summary>
+  /// Checks whether a namespace belongs to this service's owned domains.
+  /// Uses hierarchical matching: exact match or child namespace (prefix with '.' separator).
+  /// AOT-safe — string comparison only, no reflection.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
+  private bool _isOwnedNamespace(string? ns) {
+    if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
+      return false;
+    }
+    if (_ownedDomains.Contains(ns)) {
+      return true;
+    }
+    foreach (var owned in _ownedDomains) {
+      var prefix = owned.EndsWith('.') ? owned : owned + ".";
+      if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static partial class Log {

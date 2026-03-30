@@ -1,8 +1,8 @@
 # Transport Routing Architecture
 
 **Status**: Design Document
-**Version**: v0.3.0 (Proposed)
-**Last Updated**: 2025-11-08
+**Version**: v0.4.0 (Owned-Domain Routing)
+**Last Updated**: 2026-03-29
 **Owner**: Phil Carbone
 
 ---
@@ -23,7 +23,8 @@ This document defines the **policy-based transport routing architecture** for Wh
 
 1. [Architecture Overview](#architecture-overview)
 2. [Policy-Based Routing](#policy-based-routing)
-3. [Transport Models](#transport-models)
+3. [Owned-Domain Routing](#owned-domain-routing)
+4. [Transport Models](#transport-models)
 4. [Auto-Discovery](#auto-discovery)
 5. [Complete Examples](#complete-examples)
 6. [Sequence Diagrams](#sequence-diagrams)
@@ -139,6 +140,78 @@ Message Arrives ← Dispatcher ← Bridge ← Transport ← Kafka/ServiceBus/etc
                        ↓
                     Receptor
 ```
+
+---
+
+## Owned-Domain Routing
+
+When a service declares domain ownership via `RoutingOptions.OwnDomains()`, Whizbang enforces **asymmetric routing** — events and commands in owned namespaces are handled locally and never published to the transport.
+
+### How It Works
+
+Events and commands flow through the outbox for event store persistence and perspective processing. The **destination** field on the outbox message controls whether the transport publishes it:
+
+| Scenario | Destination | Outbox Table | Event Store | Transport |
+|----------|-------------|:------------:|:-----------:|:---------:|
+| Non-owned event | `"orders"` | Yes | Yes | Yes |
+| Owned event | `null` | Yes | Yes | **No** |
+| Non-owned command (no local receptor) | `"inbox"` | Yes | — | Yes |
+| Owned command (no local receptor) | — | **No** | — | **No** |
+
+When `_resolveEventTopic()` detects an event in an owned namespace, it returns `null`. The existing `TransportPublishStrategy` already skips transport for null destinations (event-store-only path).
+
+### Namespace Matching
+
+Ownership uses **hierarchical matching** — the same logic as `EventSubscriptionDiscovery`:
+
+```csharp
+// Exact match
+routing.OwnDomains("JDX.Contracts.Chat");
+// → "JDX.Contracts.Chat" events are owned
+
+// Child namespaces are also owned
+// → "JDX.Contracts.Chat.Common" is owned too
+```
+
+### Configuration
+
+```csharp
+services.AddWhizbang()
+    .WithRouting(routing => {
+        routing
+            .OwnDomains("MyApp.Orders", "MyApp.Users")  // events/commands in these namespaces stay local
+            .SubscribeTo("MyApp.Payments.Events");       // subscribe to events from other services
+    });
+```
+
+### Opting Out: Explicit Cross-Service Broadcast
+
+If an owned event genuinely needs cross-service delivery, use `Route.Outbox()` or `Route.Both()` explicitly in the receptor return:
+
+```csharp
+// Receptor in OrderService (owns "MyApp.Orders")
+public class PlaceOrderHandler : IReceptor<PlaceOrderCommand, Routed<OrderCreatedEvent>> {
+    public ValueTask<Routed<OrderCreatedEvent>> HandleAsync(PlaceOrderCommand message, CancellationToken ct) {
+        var @event = new OrderCreatedEvent { OrderId = message.OrderId };
+        // Explicitly broadcast to other services despite being in an owned namespace
+        return Route.Both(@event).AsValueTask();
+    }
+}
+```
+
+### Why This Matters
+
+Without owned-domain routing, every event produced by a service's own receptors goes to the transport — even though no other service subscribes to it. This causes:
+
+1. **Outbox flooding** — thousands of unnecessary outbox messages with valid destinations
+2. **Queue backpressure** — downstream queues (e.g., BFF) fill up with events they don't need
+3. **Self-consumption loops** — if subscription filtering has gaps, the service processes its own events again, creating cascading event storms
+
+### Related
+
+- **Source code**: [`src/Whizbang.Core/Dispatcher.cs` — `_isOwnedNamespace()`, `_resolveEventTopic()`](../src/Whizbang.Core/Dispatcher.cs)
+- **Tests**: [`tests/Whizbang.Core.Tests/Dispatcher/DispatcherOwnedDomainTests.cs`](../tests/Whizbang.Core.Tests/Dispatcher/DispatcherOwnedDomainTests.cs)
+- **Subscription filtering**: [`src/Whizbang.Core/Routing/EventSubscriptionDiscovery.cs`](../src/Whizbang.Core/Routing/EventSubscriptionDiscovery.cs)
 
 ---
 

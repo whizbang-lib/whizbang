@@ -4,6 +4,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Pooling;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Policies.Tests;
 
@@ -128,7 +130,8 @@ public class PolicyContextPoolTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

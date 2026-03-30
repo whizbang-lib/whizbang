@@ -10,6 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -65,7 +66,8 @@ public class ScopedWorkCoordinatorStrategyTests {
             ProcessId = 12345
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Serialize to JsonElement envelope
@@ -99,7 +101,8 @@ public class ScopedWorkCoordinatorStrategyTests {
             ProcessId = 12345
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Serialize to JsonElement envelope
@@ -165,7 +168,8 @@ public class ScopedWorkCoordinatorStrategyTests {
             ProcessId = 12345
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Serialize to JsonElement envelope
@@ -245,7 +249,8 @@ public class ScopedWorkCoordinatorStrategyTests {
             ProcessId = 12345
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     var envelope1Json = JsonSerializer.Serialize((object)envelope1, jsonOptions);
@@ -278,7 +283,8 @@ public class ScopedWorkCoordinatorStrategyTests {
             ProcessId = 12345
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     var envelope2Json = JsonSerializer.Serialize((object)envelope2, jsonOptions);
@@ -311,7 +317,8 @@ public class ScopedWorkCoordinatorStrategyTests {
             ProcessId = 12345
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     var envelope3Json = JsonSerializer.Serialize((object)envelope3, jsonOptions);
@@ -614,7 +621,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -647,7 +655,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -992,7 +1001,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -1018,7 +1028,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent2> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent2(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -1393,7 +1404,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -1430,7 +1442,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;

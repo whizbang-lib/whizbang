@@ -1,3 +1,4 @@
+using Whizbang.Core.Dispatch;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

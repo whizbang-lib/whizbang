@@ -5,6 +5,8 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Security;
 
@@ -515,7 +517,8 @@ public class MessageSecurityContextProviderTests {
           Topic = "system-seeding",
           Scope = null  // NO security context - this is the problem!
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act & Assert - Should throw because no security context and AllowAnonymous = false
@@ -562,7 +565,8 @@ public class MessageSecurityContextProviderTests {
             TenantId = null  // System operations may not have tenant
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Should succeed because security context is present
@@ -595,7 +599,8 @@ public class MessageSecurityContextProviderTests {
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

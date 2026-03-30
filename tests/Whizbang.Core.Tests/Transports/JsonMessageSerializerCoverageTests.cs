@@ -9,6 +9,8 @@ using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Transports;
 
@@ -85,7 +87,8 @@ public class JsonMessageSerializerCoverageTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "options-only", Amount = 10 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -118,7 +121,8 @@ public class JsonMessageSerializerCoverageTests {
     var original = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "options-roundtrip", Amount = 77 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await serializer.SerializeAsync(original);
 
@@ -144,7 +148,8 @@ public class JsonMessageSerializerCoverageTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "context-only", Amount = 33 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -167,7 +172,8 @@ public class JsonMessageSerializerCoverageTests {
     var original = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "context-roundtrip", Amount = 44 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await serializer.SerializeAsync(original);
 
@@ -192,7 +198,8 @@ public class JsonMessageSerializerCoverageTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "not-found", Amount = 0 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act & Assert - context path returns null, throw path exercised
@@ -215,7 +222,8 @@ public class JsonMessageSerializerCoverageTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "not-found", Amount = 0 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await validSerializer.SerializeAsync(envelope);
 
@@ -457,7 +465,8 @@ public class JsonMessageSerializerCoverageTests {
           CorrelationId = correlationId,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -505,7 +514,8 @@ public class JsonMessageSerializerCoverageTests {
           CorrelationId = null,
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -620,7 +630,8 @@ public class JsonMessageSerializerCoverageTests {
     IMessageEnvelope envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "runtime-type", Amount = 5 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Pass as IMessageEnvelope (the parameter type) to verify GetType() usage

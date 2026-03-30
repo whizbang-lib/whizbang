@@ -1,3 +1,5 @@
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -157,7 +159,8 @@ public static class TransportTestHarness {
             ServiceInstance = ServiceInstanceInfo.Unknown,
             TraceParent = System.Diagnostics.Activity.Current?.Id
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       contentSelector
     );

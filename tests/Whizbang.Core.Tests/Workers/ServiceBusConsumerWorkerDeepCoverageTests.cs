@@ -16,6 +16,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -1166,7 +1167,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
             ["AggregateId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1189,7 +1191,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
             ["AggregateId"] = JsonDocument.Parse($"\"{aggregateId}\"").RootElement
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1210,7 +1213,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
           },
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1234,7 +1238,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
             ["AggregateId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

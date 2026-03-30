@@ -5,6 +5,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Contracts;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -94,7 +95,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
           ServiceInstance = customServiceInstance,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     registry.Register(envelope);
 
@@ -381,7 +383,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
         StreamId = aggregateId,
         Payload = payload
       },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     envelope.AddHop(new MessageHop {

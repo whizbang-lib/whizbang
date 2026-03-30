@@ -5,6 +5,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Generated;
 
@@ -145,7 +146,8 @@ public class InfrastructureJsonContextTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - This would fail before the fix with "No JsonTypeInfo found"
@@ -165,7 +167,8 @@ public class InfrastructureJsonContextTests {
     var envelope = new MessageEnvelope<ICommand> {
       MessageId = MessageId.New(),
       Payload = new TestCommand { Data = "Test" },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -184,7 +187,8 @@ public class InfrastructureJsonContextTests {
     var envelope = new MessageEnvelope<IMessage> {
       MessageId = MessageId.New(),
       Payload = new TestEvent { Name = "Test" },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -203,7 +207,8 @@ public class InfrastructureJsonContextTests {
     var envelope = new MessageEnvelope<object> {
       MessageId = MessageId.New(),
       Payload = new TestEvent { Name = "ObjectPayload" },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

@@ -14,4 +14,10 @@ public sealed class EnvelopeMetadata {
   public required MessageId MessageId { get; init; }
   /// <summary>The ordered list of hops recording the message's journey through the system.</summary>
   public required List<MessageHop> Hops { get; init; }
+  /// <summary>
+  /// Dispatch context describing how the message was dispatched (mode + source).
+  /// Nullable for backward compatibility with v1 events stored before this field existed.
+  /// </summary>
+  [System.Text.Json.Serialization.JsonPropertyName("dc")]
+  public MessageDispatchContext? DispatchContext { get; init; }
 }

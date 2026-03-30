@@ -10,6 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -30,7 +31,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = hops ?? []
+      Hops = hops ?? [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1033,7 +1035,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = null!
+        Hops = null!,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
