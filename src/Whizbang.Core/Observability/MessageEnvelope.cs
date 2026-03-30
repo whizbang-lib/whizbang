@@ -87,7 +87,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     Payload = payload;
     Hops = hops;
     Version = version;
-    // v1 envelopes (pre-DispatchContext) default to Outbox/Local — the original cascade behavior
+    // v1 envelopes (pre-DispatchContext) default to Outbox/Local — the original cascade behavior.
+    // Explicit fallback tests: tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs
     DispatchContext = dispatchContext ?? new MessageDispatchContext {
       Mode = Dispatch.DispatchModes.Outbox,
       Source = Messaging.MessageSource.Local

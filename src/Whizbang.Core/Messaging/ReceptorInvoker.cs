@@ -164,25 +164,25 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
 
     // Owned-domain lifecycle filtering (AOT-safe, no reflection):
-    // PreOutboxInline: fire owned events (going to other services) + non-owned commands (going to inbox)
-    //                  skip owned commands (stay local) + non-owned events (shouldn't be published by this service)
-    // PostInboxInline: fire non-owned events (subscribed) + owned commands (sent to us by another service)
-    //                  skip owned events (self-echo) + non-owned commands (routing error)
+    // PreOutbox (Inline/Async): fire owned events + non-owned commands, skip owned commands + non-owned events
+    // PostInbox (Inline/Async): fire non-owned events + owned commands, skip owned events (self-echo) + non-owned commands
+    var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxAsync;
+    var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxAsync;
     if (_ownedDomains.Count > 0 && receptors.Count > 0) {
       var isOwned = _isOwnedNamespace(messageType.Namespace);
       var isEvent = message is IEvent;
-      if (stage == LifecycleStage.PreOutboxInline && (isOwned ? !isEvent : isEvent)) {
+      if (isPreOutbox && (isOwned ? !isEvent : isEvent)) {
         return; // skip owned commands + non-owned events at outbox stage
       }
-      if (stage == LifecycleStage.PostInboxInline && (isOwned ? isEvent : !isEvent)) {
+      if (isPostInbox && (isOwned ? isEvent : !isEvent)) {
         return; // skip owned events (self-echo) + non-owned commands at inbox stage
       }
     }
 
     // Double-fire prevention: if the envelope was dispatched with LocalDispatch flag,
-    // the handler already fired at LocalImmediateInline → skip PreOutboxInline.
+    // the handler already fired at LocalImmediate → skip PreOutbox.
     // Only applies when owned domains are configured (preserves backward compat).
-    if (_ownedDomains.Count > 0 && stage == LifecycleStage.PreOutboxInline && receptors.Count > 0
+    if (_ownedDomains.Count > 0 && isPreOutbox && receptors.Count > 0
         && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
       return;
     }
