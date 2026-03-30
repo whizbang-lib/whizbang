@@ -111,7 +111,7 @@ DECLARE
   v_has_outbox_work BOOLEAN := false;
   v_has_inbox_work BOOLEAN := false;
 BEGIN
-  -- Read batch limits from wh_settings (fall back to defaults if not configured)
+  -- Read settings from wh_settings (fall back to defaults if not configured)
   SELECT COALESCE(
     (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'max_work_items_per_tick'),
     100
@@ -121,6 +121,13 @@ BEGIN
     (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'max_work_items_per_stream'),
     25
   ) INTO v_max_work_items_per_stream;
+
+  -- Stale threshold: override from wh_settings if configured, else use function parameter
+  -- Default 30s (not 600s) — 30 missed 1-second heartbeats is more than enough to declare dead
+  p_stale_threshold_seconds := COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stale_threshold_seconds'),
+    p_stale_threshold_seconds
+  );
 
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;

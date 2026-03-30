@@ -165,7 +165,7 @@ public sealed record ProcessWorkBatchRequest {
   /// How long before an instance is considered stale in seconds (default: 600 = 10 minutes).
   /// Instances with expired heartbeats are cleaned up and their work redistributed.
   /// </summary>
-  public int StaleThresholdSeconds { get; init; } = 600;
+  public int StaleThresholdSeconds { get; init; } = 30;
 }
 
 /// <summary>
@@ -916,7 +916,7 @@ public readonly record struct ProcessWorkBatchContext(
   WorkBatchOptions Flags = WorkBatchOptions.None,
   int PartitionCount = 10_000,
   int LeaseSeconds = 300,
-  int StaleThresholdSeconds = 600);
+  int StaleThresholdSeconds = 30);
 
 /// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
