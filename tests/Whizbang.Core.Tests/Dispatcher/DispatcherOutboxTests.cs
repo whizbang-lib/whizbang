@@ -9,6 +9,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -74,7 +75,8 @@ public class DispatcherOutboxTests {
       var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return new SerializedEnvelope(
         jsonEnvelope,

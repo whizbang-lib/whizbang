@@ -6,6 +6,8 @@ using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.AutoPopulate;
 
@@ -479,7 +481,8 @@ public class AutoPopulateProcessorTests {
     var envelope = new MessageEnvelope<TestAutoPopulateMessage> {
       MessageId = MessageId.New(),
       Payload = new TestAutoPopulateMessage(Guid.NewGuid()),
-      Hops = null!
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - should not throw
@@ -517,7 +520,8 @@ public class AutoPopulateProcessorTests {
           },
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     var initialHopCount = envelope.Hops.Count;
@@ -694,7 +698,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           CausationId = causationId
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),
@@ -734,7 +739,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           StreamId = "stream-123"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),
@@ -774,7 +780,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),
@@ -813,7 +820,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           StreamId = ""
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),
@@ -852,7 +860,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           CausationId = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),
@@ -937,7 +946,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -960,7 +970,8 @@ public class AutoPopulateProcessorTests {
           Topic = "test-topic",
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = tenantId })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -980,7 +991,8 @@ public class AutoPopulateProcessorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1002,7 +1014,8 @@ public class AutoPopulateProcessorTests {
           Topic = "test-topic",
           CorrelationId = correlationId
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

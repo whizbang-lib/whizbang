@@ -1,5 +1,8 @@
 using System.Text.Json;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Observability;
 
@@ -52,7 +55,8 @@ public static class MessageEnvelopeExtensions {
     return new MessageEnvelope<object> {
       MessageId = jsonEnvelope.MessageId,
       Payload = deserializedPayload,
-      Hops = jsonEnvelope.Hops
+      Hops = jsonEnvelope.Hops,
+      DispatchContext = jsonEnvelope.DispatchContext
     };
   }
 
@@ -90,7 +94,8 @@ public static class MessageEnvelopeExtensions {
     return new MessageEnvelope<T> {
       MessageId = jsonEnvelope.MessageId,
       Payload = deserializedPayload,
-      Hops = jsonEnvelope.Hops
+      Hops = jsonEnvelope.Hops,
+      DispatchContext = jsonEnvelope.DispatchContext
     };
   }
 }

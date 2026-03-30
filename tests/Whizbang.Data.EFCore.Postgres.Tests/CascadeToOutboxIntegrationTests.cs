@@ -379,6 +379,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = messageData.MessageId,
         Payload = messageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = messageData.Hops
       };
 
@@ -517,6 +518,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = messageData.MessageId,
         Payload = messageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = messageData.Hops
       };
 
@@ -606,6 +608,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
     var eventEnvelope = new MessageEnvelope<EventStoreSecurityTestEvent> {
       MessageId = MessageId.New(),
       Payload = testEvent,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -983,6 +986,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [hop]
     };
 

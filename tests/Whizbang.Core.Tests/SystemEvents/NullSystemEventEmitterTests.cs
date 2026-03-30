@@ -5,6 +5,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -20,7 +21,8 @@ public class NullSystemEventEmitterTests {
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

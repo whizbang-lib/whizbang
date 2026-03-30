@@ -13,6 +13,7 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Async;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -433,7 +434,8 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
@@ -448,7 +450,8 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       StreamId = Guid.CreateVersion7(),

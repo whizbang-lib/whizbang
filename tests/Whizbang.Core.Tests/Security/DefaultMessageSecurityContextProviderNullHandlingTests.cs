@@ -1,5 +1,7 @@
 using System.Text.Json;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -183,6 +185,7 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -219,6 +222,7 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -264,6 +268,8 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   /// Test envelope with null Payload to simulate deserialization edge case.
   /// </summary>
   private sealed class TestEnvelopeWithNullPayload(MessageId messageId) : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public MessageId MessageId { get; } = messageId;
     public object Payload => null!; // Simulates null payload from bad deserialization
     public List<MessageHop> Hops { get; } = [];
@@ -281,6 +287,8 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   /// Test envelope with null Hops to simulate deserialization edge case.
   /// </summary>
   private sealed class TestEnvelopeWithNullHops(MessageId messageId) : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public MessageId MessageId { get; } = messageId;
     public object Payload => new { };
     public List<MessageHop> Hops => null!; // Simulates null Hops from bad deserialization

@@ -4,6 +4,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Contracts;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -86,7 +87,8 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var response = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "response",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Start waiting and saving response in parallel
@@ -144,7 +146,8 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var response = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "typed response",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(30), CancellationToken.None);
@@ -193,7 +196,8 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var response = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "early response",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - save response BEFORE saving request (race condition scenario)

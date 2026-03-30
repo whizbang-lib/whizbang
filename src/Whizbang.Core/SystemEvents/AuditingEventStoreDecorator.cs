@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Audit;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
@@ -81,9 +82,10 @@ public sealed class AuditingEventStoreDecorator(
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Emit audit event if eligible
@@ -224,9 +226,10 @@ public sealed class AuditingEventStoreDecorator(
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     // Serialize the envelope to JsonElement form for the outbox
@@ -234,7 +237,8 @@ public sealed class AuditingEventStoreDecorator(
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = envelope.MessageId,
       Payload = serializedPayload,
-      Hops = envelope.Hops
+      Hops = envelope.Hops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     var eventType = typeof(EventAudited);

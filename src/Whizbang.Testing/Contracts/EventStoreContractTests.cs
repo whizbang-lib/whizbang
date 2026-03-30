@@ -1,3 +1,4 @@
+using Whizbang.Core.Dispatch;
 using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -415,7 +416,8 @@ public abstract class EventStoreContractTests {
         StreamId = aggregateId,
         Payload = payload
       },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Add the first hop (dispatch hop)

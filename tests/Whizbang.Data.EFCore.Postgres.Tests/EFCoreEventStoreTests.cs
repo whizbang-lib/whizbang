@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -60,7 +61,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
             ProcessId = 123
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -99,7 +101,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -143,7 +146,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -203,7 +207,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -247,7 +252,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -299,7 +305,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -348,7 +355,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
             ProcessId = 123
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, firstEvent);
 
@@ -395,7 +403,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -451,11 +460,13 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderCreatedEvent created => new MessageEnvelope<OrderCreatedEvent> {
           MessageId = MessageId.New(),
           Payload = created,
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = [CreateTestHop()]
         } as object,
         OrderShippedEvent shipped => new MessageEnvelope<OrderShippedEvent> {
           MessageId = MessageId.New(),
           Payload = shipped,
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = [CreateTestHop()]
         } as object,
         _ => throw new InvalidOperationException("Unknown event type")
@@ -511,7 +522,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created1 = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = orderId, CustomerName = "Customer 1" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, created1);
     eventIds.Add(created1.MessageId.Value);
@@ -519,7 +531,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var shipped1 = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = orderId, TrackingNumber = "TRACK001" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, shipped1);
     eventIds.Add(shipped1.MessageId.Value);
@@ -556,7 +569,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Customer 0"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, firstEvent);
 
@@ -590,7 +604,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = Guid.NewGuid(), CustomerName = "Test" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, created);
 
@@ -598,7 +613,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var shipped = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = Guid.NewGuid(), TrackingNumber = "TRACK001" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, shipped);
 
@@ -898,7 +914,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "No Hops"
       },
-      Hops = null!
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -926,7 +943,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = [CreateTestHop()]
+        Hops = [CreateTestHop()],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -960,7 +978,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = [CreateTestHop()]
+        Hops = [CreateTestHop()],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -991,7 +1010,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Only Event"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, envelope);
 
@@ -1022,7 +1042,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = [CreateTestHop()]
+        Hops = [CreateTestHop()],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -1054,7 +1075,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = streamId, CustomerName = "Customer 1" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, created);
     eventIds.Add(created.MessageId.Value);
@@ -1062,7 +1084,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var shipped = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = streamId, TrackingNumber = "TRACK001" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, shipped);
     eventIds.Add(shipped.MessageId.Value);
@@ -1091,14 +1114,16 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = streamId, CustomerName = "Customer 1" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, created);
 
     var shipped = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = streamId, TrackingNumber = "TRACK001" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, shipped);
 
@@ -1131,7 +1156,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = [CreateTestHop()]
+        Hops = [CreateTestHop()],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -1177,14 +1203,16 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = streamId, CustomerName = "Customer 1" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, created);
 
     var shipped = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = streamId, TrackingNumber = "TRACK001" },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await eventStore.AppendAsync(streamId, shipped);
 
@@ -1410,7 +1438,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Test"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await eventStore.AppendAsync(streamId, envelope);
@@ -1440,7 +1469,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Test"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await eventStore.AppendAsync(streamId, envelope);
@@ -1575,7 +1605,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Test"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1600,7 +1631,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Test"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1625,7 +1657,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Test"
       },
-      Hops = [CreateTestHop()]
+      Hops = [CreateTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

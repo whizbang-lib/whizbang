@@ -1,3 +1,4 @@
+using Whizbang.Core.Dispatch;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -141,7 +142,8 @@ public abstract class RequestResponseStoreContractTests {
     return new MessageEnvelope<TestResponse> {
       MessageId = MessageId.New(),
       Payload = new TestResponse("test response"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }

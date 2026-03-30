@@ -13,6 +13,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 

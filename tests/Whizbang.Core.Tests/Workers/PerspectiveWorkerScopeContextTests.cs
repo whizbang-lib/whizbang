@@ -11,6 +11,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -215,7 +216,8 @@ public class PerspectiveWorkerScopeContextTests {
             TenantId = tenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

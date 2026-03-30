@@ -2,6 +2,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Registry;
@@ -79,6 +81,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Topic = "test-topic",
       StreamId = "test-stream"
     };
@@ -185,6 +188,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
     var context = new PolicyContext(message, envelope);
@@ -205,6 +209,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = new Dictionary<string, JsonElement>()
     };
     var context = new PolicyContext(message, envelope);
@@ -242,6 +247,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
     var context = new PolicyContext(message, envelope);
@@ -265,6 +271,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
     var context = new PolicyContext(message, envelope);
@@ -295,6 +302,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata  // Tags in envelope metadata, not hop metadata
     };
 
@@ -317,6 +325,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
     var context = new PolicyContext(message, envelope);
@@ -337,6 +346,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
     var context = new PolicyContext(message, envelope);
@@ -455,8 +465,10 @@ public enum WhizbangOptions {
 /// Updated to implement IMessageEnvelope<TMessage> for PolicyContext compatibility.
 /// </summary>
 public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
+  public int Version => 1;
   public MessageId MessageId { get; init; }
   public TMessage Payload { get; init; } = default!;
+  public MessageDispatchContext DispatchContext { get; init; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
   public string Topic { get; init; } = string.Empty;
   public string StreamId { get; init; } = string.Empty;
   public IReadOnlyDictionary<string, JsonElement> Metadata { get; init; } = new Dictionary<string, JsonElement>();

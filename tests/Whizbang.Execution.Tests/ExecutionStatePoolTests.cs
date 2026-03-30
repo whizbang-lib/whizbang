@@ -5,6 +5,8 @@ using Whizbang.Core.Execution;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Pooling;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Execution.Tests;
@@ -128,7 +130,8 @@ public class ExecutionStatePoolTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

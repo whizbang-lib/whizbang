@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -776,6 +777,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -844,6 +846,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1001,6 +1004,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1016,6 +1020,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1216,6 +1221,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(_expectedMessageId),
           Payload = JsonDocument.Parse("{}").RootElement,
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
           Hops = [
             new MessageHop {
               Type = HopType.Current,
@@ -1297,6 +1303,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   private sealed class TestEvent : IEvent { }
 
   private sealed class NonJsonEnvelope : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
     public MessageId MessageId { get; }
     public object Payload => "not-json-element";
     public List<MessageHop> Hops { get; } = [];

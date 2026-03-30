@@ -6,6 +6,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -610,7 +611,8 @@ public class AuditOutboxMessageBuilderTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return new OutboxMessage {

@@ -4,6 +4,8 @@ using BenchmarkDotNet.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Execution;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 
@@ -49,6 +51,7 @@ public class ZeroAllocationBenchmarks {
     _lightweightEnvelope = new MessageEnvelope<LightweightCommand> {
       MessageId = MessageId.New(),
       Payload = lightMessage,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     _lightweightEnvelope.AddHop(new MessageHop {
@@ -79,6 +82,7 @@ public class ZeroAllocationBenchmarks {
     _heavyweightEnvelope = new MessageEnvelope<HeavyweightCommand> {
       MessageId = MessageId.New(),
       Payload = heavyMessage,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     _heavyweightEnvelope.AddHop(new MessageHop {

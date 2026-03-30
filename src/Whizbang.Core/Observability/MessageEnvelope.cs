@@ -17,6 +17,23 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
 public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <summary>
+  /// Envelope schema version. Defaults to 1.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#envelope-versioning</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs</tests>
+  [JsonPropertyName("v")]
+  public int Version { get; init; } = 1;
+
+  /// <summary>
+  /// Context describing how this message was dispatched (mode + source).
+  /// Required for new envelopes. Deserialization of v1 envelopes uses <see cref="MessageDispatchContext.Default"/>.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#dispatch-context</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs</tests>
+  [JsonPropertyName("dc")]
+  public required MessageDispatchContext DispatchContext { get; init; }
+
+  /// <summary>
   /// Unique identifier for this specific message.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
@@ -55,14 +72,23 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   }
 
   /// <summary>
-  /// Constructor for JSON deserialization with all required properties.
+  /// Constructor for JSON deserialization with backward compatibility.
+  /// V1 envelopes missing version/dispatchContext get safe defaults.
   /// </summary>
   [System.Text.Json.Serialization.JsonConstructor]
   [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
-  public MessageEnvelope(MessageId messageId, TMessage payload, List<MessageHop> hops) {
+  public MessageEnvelope(
+    MessageId messageId,
+    TMessage payload,
+    List<MessageHop> hops,
+    int version = 1,
+    MessageDispatchContext? dispatchContext = null) {
     MessageId = messageId;
     Payload = payload;
     Hops = hops;
+    Version = version;
+    DispatchContext = dispatchContext ?? throw new ArgumentNullException(nameof(dispatchContext),
+      "DispatchContext is required. For v1 envelope deserialization, the caller must provide the context from stored metadata.");
   }
 
   /// <summary>

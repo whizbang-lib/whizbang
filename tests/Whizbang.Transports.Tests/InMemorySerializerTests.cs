@@ -4,6 +4,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Transports.Tests;
@@ -67,7 +69,8 @@ public class InMemorySerializerTests {
             ["key2"] = JsonSerializer.SerializeToElement(123)
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Round trip
@@ -113,7 +116,8 @@ public class InMemorySerializerTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }

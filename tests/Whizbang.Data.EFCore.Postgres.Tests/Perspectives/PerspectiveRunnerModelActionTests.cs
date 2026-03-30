@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -62,6 +63,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
     var envelope = new MessageEnvelope<TEvent> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     await eventStore.AppendAsync(streamId, envelope);

@@ -3,8 +3,10 @@ using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
@@ -180,6 +182,7 @@ public class MessageHopTests {
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test",
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [hop]
     };
     var scope = envelope.GetCurrentScope();

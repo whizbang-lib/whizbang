@@ -12,6 +12,7 @@ using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -348,7 +349,8 @@ public class PerspectiveWorkerCoverageTests {
           Envelope = new MessageEnvelope<JsonElement> {
             MessageId = MessageId.New(),
             Payload = JsonSerializer.SerializeToElement(new { test = true }),
-            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }]
+            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           },
           EnvelopeType = "TestType",
           MessageType = "TestType",
@@ -389,7 +391,8 @@ public class PerspectiveWorkerCoverageTests {
           Envelope = new MessageEnvelope<JsonElement> {
             MessageId = MessageId.New(),
             Payload = JsonSerializer.SerializeToElement(new { test = true }),
-            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }]
+            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           },
           MessageType = "TestType",
           Metadata = new Dictionary<string, JsonElement> {
@@ -1738,7 +1741,8 @@ public class PerspectiveWorkerCoverageTests {
               ? ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = "test-tenant" })
               : null
           }
-        ]
+        ],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       });
     }
 

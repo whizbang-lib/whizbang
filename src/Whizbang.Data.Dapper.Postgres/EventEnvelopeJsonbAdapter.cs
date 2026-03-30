@@ -2,7 +2,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
@@ -123,7 +125,8 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     return new MessageEnvelope<TMessage> {
       MessageId = Core.ValueObjects.MessageId.From(messageId),
       Payload = (TMessage)payload,
-      Hops = hops
+      Hops = hops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
     };
   }
 

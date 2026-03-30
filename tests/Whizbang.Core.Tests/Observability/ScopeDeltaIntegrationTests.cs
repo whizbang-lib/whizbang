@@ -9,6 +9,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -48,7 +50,8 @@ public class ScopeDeltaIntegrationTests {
         new MessageHop { ServiceInstance = serviceInstance, Scope = hop1Scope },
         new MessageHop { ServiceInstance = serviceInstance, Scope = hop2Scope },
         new MessageHop { ServiceInstance = serviceInstance, Scope = hop3Scope }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -108,7 +111,8 @@ public class ScopeDeltaIntegrationTests {
         new MessageHop { ServiceInstance = serviceInstance, Scope = initialScope },
         new MessageHop { ServiceInstance = serviceInstance, Scope = hop2Delta },
         new MessageHop { ServiceInstance = serviceInstance, Scope = hop3Delta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -143,7 +147,8 @@ public class ScopeDeltaIntegrationTests {
         new MessageHop { ServiceInstance = serviceInstance, Scope = initialScope },
         new MessageHop { ServiceInstance = serviceInstance, Scope = null }, // No scope changes
         new MessageHop { ServiceInstance = serviceInstance, Scope = null }  // No scope changes
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -180,7 +185,8 @@ public class ScopeDeltaIntegrationTests {
         new MessageHop { Type = HopType.Causation, ServiceInstance = serviceInstance, Scope = causationScope },
         // Current hop should be used
         new MessageHop { Type = HopType.Current, ServiceInstance = serviceInstance, Scope = currentScope }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -204,7 +210,8 @@ public class ScopeDeltaIntegrationTests {
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = null },
         new MessageHop { ServiceInstance = serviceInstance, Scope = null }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -233,7 +240,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test-data" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -263,7 +271,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -287,7 +296,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = null }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -317,7 +327,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -345,7 +356,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -376,7 +388,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -548,7 +561,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Serialize and deserialize (simulate outbox round-trip)
@@ -730,7 +744,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Serialize using InfrastructureJsonContext
@@ -747,7 +762,8 @@ public class ScopeDeltaIntegrationTests {
     var reconstructedEnvelope = new MessageEnvelope<TestMessage> {
       MessageId = envelope.MessageId,
       Payload = envelope.Payload,
-      Hops = deserializedHops!
+      Hops = deserializedHops!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Assert - GetCurrentScope() should work and return SYSTEM user
@@ -841,7 +857,8 @@ public class ScopeDeltaIntegrationTests {
       Payload = new TestMessage { Data = "test" },
       Hops = [
         new MessageHop { ServiceInstance = serviceInstance, Scope = scopeDelta }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Serialize hops using combined context
@@ -856,7 +873,8 @@ public class ScopeDeltaIntegrationTests {
     var reconstructedEnvelope = new MessageEnvelope<TestMessage> {
       MessageId = envelope.MessageId,
       Payload = envelope.Payload,
-      Hops = deserializedHops!
+      Hops = deserializedHops!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Assert - GetCurrentScope() should return both TenantId and UserId

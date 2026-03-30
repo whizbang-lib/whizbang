@@ -13,6 +13,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -403,7 +404,8 @@ public class ReceptorInvokerInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -432,7 +434,8 @@ public class ReceptorInvokerInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -455,7 +458,8 @@ public class ReceptorInvokerInitiatingContextTests {
           },
           Scope = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

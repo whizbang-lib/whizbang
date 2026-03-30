@@ -113,6 +113,7 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = ourMessage.MessageData.MessageId,
         Payload = ourMessage.MessageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = ourMessage.MessageData.Hops
       };
       var scope = envelope.GetCurrentScope();
@@ -150,6 +151,7 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = ourMessage!.MessageData.MessageId,
         Payload = ourMessage.MessageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = ourMessage.MessageData.Hops
       };
       var scope = envelope.GetCurrentScope();
@@ -245,6 +247,7 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = ourMessage!.MessageData.MessageId,
         Payload = ourMessage.MessageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = ourMessage.MessageData.Hops
       };
       var scope = envelope.GetCurrentScope();
@@ -299,6 +302,7 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = ourMessage!.MessageData.MessageId,
         Payload = ourMessage.MessageData.Payload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = ourMessage.MessageData.Hops
       };
       var scope = envelope.GetCurrentScope();

@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -318,7 +319,8 @@ public class DapperPostgresEventStore(
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -445,7 +447,8 @@ public class DapperPostgresEventStore(
     return new MessageEnvelope<IEvent> {
       MessageId = MessageId.From(messageId),
       Payload = eventPayload,
-      Hops = hops
+      Hops = hops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
     };
   }
 

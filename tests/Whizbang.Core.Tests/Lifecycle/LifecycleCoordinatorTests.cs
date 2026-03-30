@@ -14,6 +14,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
@@ -29,7 +30,8 @@ public class LifecycleCoordinatorTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = payload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

@@ -16,6 +16,7 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
@@ -669,9 +670,10 @@ public class TransportConsumerWorkerUncoveredPathsTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = ServiceInstanceInfo.Unknown
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -737,7 +739,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -881,9 +884,10 @@ public class TransportConsumerWorkerUncoveredPathsTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = ServiceInstanceInfo.Unknown
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -906,7 +910,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -915,7 +920,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     return new InboxWork {
       MessageId = eventId,
@@ -928,7 +934,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = new MessageId(eventId),
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1053,9 +1060,10 @@ public class TransportConsumerWorkerUncoveredPathsTests {
             new MessageHop {
               Type = HopType.Current,
               Timestamp = DateTimeOffset.UtcNow,
-              ServiceInstance = ServiceInstanceInfo.Unknown,
+              ServiceInstance = ServiceInstanceInfo.Unknown
             }
-          ]
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
         },
         MessageType = _messageType,
         StreamId = _expectedMessageId

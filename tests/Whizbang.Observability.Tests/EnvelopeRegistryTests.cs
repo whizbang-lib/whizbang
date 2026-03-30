@@ -1,5 +1,7 @@
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -14,6 +16,7 @@ public class EnvelopeRegistryTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {

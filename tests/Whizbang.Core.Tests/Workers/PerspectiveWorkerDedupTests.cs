@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -688,7 +689,8 @@ public class PerspectiveWorkerDedupTests {
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = MessageId.From(TrackedGuid.FromExternal(_eventId)),
         Payload = new _fakeEvent(_eventId),
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return Task.FromResult(new List<MessageEnvelope<IEvent>> { envelope });
     }
