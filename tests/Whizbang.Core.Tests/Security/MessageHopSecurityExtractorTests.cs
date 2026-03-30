@@ -1,12 +1,12 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Dispatch;
-using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Security;
 

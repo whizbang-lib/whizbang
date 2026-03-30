@@ -1,8 +1,8 @@
 using System.Text.Json;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 

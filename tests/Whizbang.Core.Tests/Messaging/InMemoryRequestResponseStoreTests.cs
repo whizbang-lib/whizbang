@@ -1,10 +1,10 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Contracts;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 

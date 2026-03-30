@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using LogEventId = Microsoft.Extensions.Logging.EventId;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Tests.Messaging;
 
