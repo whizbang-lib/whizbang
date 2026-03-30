@@ -87,8 +87,11 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     Payload = payload;
     Hops = hops;
     Version = version;
-    DispatchContext = dispatchContext ?? throw new ArgumentNullException(nameof(dispatchContext),
-      "DispatchContext is required. For v1 envelope deserialization, the caller must provide the context from stored metadata.");
+    // v1 envelopes (pre-DispatchContext) default to Outbox/Local — the original cascade behavior
+    DispatchContext = dispatchContext ?? new MessageDispatchContext {
+      Mode = Dispatch.DispatchModes.Outbox,
+      Source = Messaging.MessageSource.Local
+    };
   }
 
   /// <summary>
