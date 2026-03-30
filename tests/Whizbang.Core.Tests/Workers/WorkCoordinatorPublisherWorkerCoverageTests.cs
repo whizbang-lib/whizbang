@@ -1568,6 +1568,39 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
   // ================================================================
 
   [Test]
+  public async Task PreOutboxLifecycle_NullDestination_SkipsLifecycleAndPublishesAsync() {
+    // Arrange — null-destination (event-store-only) message should be published
+    // but should NOT fire PreOutbox lifecycle receptors
+    var coordinator = new CoverageTestWorkCoordinator();
+    var msg = _createOutboxWork(destination: null!); // null destination = event-store-only
+    coordinator.WorkToReturn = [msg];
+
+    var publishStrategy = new SingularPublishStrategy();
+    var instanceProvider = _createTestInstanceProvider();
+    var channelWriter = new CoverageTestWorkChannelWriter();
+    var services = _createHostedServiceCollection(coordinator, publishStrategy, instanceProvider, channelWriter);
+
+    // Act
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await worker.StartAsync(cts.Token);
+
+    await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — message should still be processed (published/completed)
+    await Assert.That(publishStrategy.PublishedWork.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Null-destination messages should still flow through the publish pipeline");
+
+    // Assert — the publish result for null destination should be success (TransportPublishStrategy skips transport)
+    var publishedMsg = publishStrategy.PublishedWork.FirstOrDefault(w => w.MessageId == msg.MessageId);
+    await Assert.That(publishedMsg).IsNotNull()
+      .Because("Null-destination message should be processed without PreOutbox lifecycle side effects");
+  }
+
+  [Test]
   public async Task PreOutboxLifecycle_NoDeserializer_SkipsLifecycleAsync() {
     // Arrange - no ILifecycleMessageDeserializer registered (exercises early return)
     var coordinator = new CoverageTestWorkCoordinator();

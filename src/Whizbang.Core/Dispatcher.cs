@@ -2689,10 +2689,6 @@ public abstract partial class Dispatcher(
   /// </summary>
   private async Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    // TEMPORARY DEBUG: trace dispatch mode for ChatActivitiesContracts.CreatedEvent
-    if (messageType.Name == "CreatedEvent" && messageType.Namespace?.Contains("ChatActivities") == true) {
-      System.Console.WriteLine($"[DISPATCH_DEBUG] CreatedEvent mode={mode} local={mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)} outbox={mode.HasFlag(Dispatch.DispatchModes.Outbox)}");
-    }
     // Owned-domain commands cascaded from receptors stay local (event store + local handlers).
     // Events ALWAYS go to transport — other services subscribe to our events.
     // Only affects the cascade path — explicit PublishAsync/SendAsync don't go through _dispatchByModeAsync.
@@ -3289,10 +3285,6 @@ public abstract partial class Dispatcher(
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
   protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    // TEMPORARY DEBUG
-    if (eventType.Name == "CreatedEvent" && eventType.Namespace?.Contains("ChatActivities") == true) {
-      System.Console.WriteLine($"[OUTBOX_DEBUG] PublishToOutboxAsync CreatedEvent eventStoreOnly={eventStoreOnly}");
-    }
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var eventTypeName = eventType.Name;
       CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called for {EventType}, MessageId={MessageId}", eventTypeName, messageId);

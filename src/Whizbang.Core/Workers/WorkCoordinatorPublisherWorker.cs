@@ -554,6 +554,13 @@ public partial class WorkCoordinatorPublisherWorker(
       return (null, null);
     }
 
+    // Skip PreOutbox lifecycle for event-store-only messages (null destination).
+    // These messages exist for event store persistence only — no transport publish occurs,
+    // so PreOutbox/PostOutbox side effects should not fire.
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return (null, null);
+    }
+
     var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
     var outboxTypedEnvelope = work.Envelope.ReconstructWithPayload(message);
     var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
@@ -585,6 +592,11 @@ public partial class WorkCoordinatorPublisherWorker(
     ActivityContext traceContext,
     bool enableLifecycleSpans,
     CancellationToken stoppingToken) {
+
+    // Skip PostOutbox lifecycle for event-store-only messages (null destination)
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return;
+    }
 
     var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
