@@ -1317,11 +1317,11 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
 
-    // Wait for enough requeue cycles
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+    // Wait for enough requeue cycles (generous timeout for CI/slower machines)
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
     while (typedWorker.ConsecutiveNotReadyChecks < 11 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
+      await Task.Delay(50);
     }
 
     await cts.CancelAsync();

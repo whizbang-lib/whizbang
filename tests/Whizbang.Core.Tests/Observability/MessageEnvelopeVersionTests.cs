@@ -18,7 +18,14 @@ namespace Whizbang.Core.Tests.Observability;
 /// <docs>fundamentals/dispatcher/routing#envelope-versioning</docs>
 public class MessageEnvelopeVersionTests {
 
-  private static readonly JsonSerializerOptions _jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+  // Use standard JSON options with MessageId converter (not full AOT context).
+  // MessageEnvelope<JsonElement> isn't in the AOT context, but we need the MessageId converter.
+  private static readonly JsonSerializerOptions _jsonOptions = _createOptions();
+  private static JsonSerializerOptions _createOptions() {
+    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+    options.Converters.Add(new Whizbang.Core.ValueObjects.MessageIdJsonConverter());
+    return options;
+  }
   private sealed record TestPayload(string Value);
 
   // ========================================
@@ -180,7 +187,7 @@ public class MessageEnvelopeVersionTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Outbox }
     };
 
-    var json = JsonSerializer.Serialize(metadata);
+    var json = JsonSerializer.Serialize(metadata, _jsonOptions);
     var deserialized = JsonSerializer.Deserialize<EnvelopeMetadata>(json, _jsonOptions);
 
     await Assert.That(deserialized).IsNotNull();
