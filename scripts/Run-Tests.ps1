@@ -1604,9 +1604,13 @@ try {
                 continue  # Continue loop without processing (no line received)
             }
 
+            # Strip ANSI escape sequences for reliable regex matching
+            # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
+            $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
             # Note: Multiple test projects run in parallel, we track the highest seen for approximate progress
-            if ($lineStr -match '\[\+(\d+)/x(\d+)/\?(\d+)\]') {
+            if ($cleanLine -match '\[\+(\d+)/x(\d+)/\?(\d+)\]') {
                 $passed = [int]$matches[1]
                 $failed = [int]$matches[2]
                 $skipped = [int]$matches[3]
@@ -1624,16 +1628,17 @@ try {
             }
             # Capture final summary lines - these are the accurate completed counts
             # Reset in-progress tracking when a project completes to avoid double-counting
-            elseif ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+            # Use $cleanLine (ANSI-stripped) because TUnit wraps these in color codes
+            elseif ($cleanLine -match "^\s*succeeded:\s+(\d+)\s*$") {
                 $completedPassed += [int]$matches[1]
                 # Reset in-progress since this project's tests moved to completed
                 $inProgressPassed = 0
             }
-            elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*failed:\s+(\d+)\s*$") {
                 $completedFailed += [int]$matches[1]
                 $inProgressFailed = 0
             }
-            elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*skipped:\s+(\d+)\s*$") {
                 $completedSkipped += [int]$matches[1]
                 $inProgressSkipped = 0
             }
@@ -1694,13 +1699,14 @@ try {
             }
 
             # Track last completed test name from passed/skipped lines for progress display
-            if ($lineStr -match "^passed\s+([^\(]+)\s+\(" -or $lineStr -match "^skipped\s+([^\(]+)\s+\(") {
+            if ($cleanLine -match "^passed\s+([^\(]+)\s+\(" -or $cleanLine -match "^skipped\s+([^\(]+)\s+\(") {
                 $lastTestName = $matches[1].Trim()
             }
 
             # Capture failed test names (lines starting with "failed " followed by test name)
             # Note: This is an independent if block, not chained to progress display
-            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+            # Use $cleanLine because TUnit wraps "failed" in ANSI red color codes
+            if ($cleanLine -match "^failed\s+([^\(]+)\s+\(") {
                 # Save previous test's stack trace if we were capturing
                 if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
                     $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
@@ -1734,20 +1740,22 @@ try {
                             if ($null -eq $extraLine) { continue }
                             $extraLines++
 
+                            $cleanExtra = $extraLine -replace '\e\[[0-9;]*m', ''
+
                             # Capture exception type
-                            if ($extraLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                            if ($cleanExtra -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
                                 $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
                                 $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
                             }
                             # Capture stack trace
-                            elseif ($extraLine -match "^\s+at\s+[\w\.]+") {
-                                $stackTraceLines += $extraLine.Trim()
+                            elseif ($cleanExtra -match "^\s+at\s+[\w\.]+") {
+                                $stackTraceLines += $cleanExtra.Trim()
                             }
-                            elseif ($extraLine -match "^\s+in\s+.*:\s*line\s+\d+") {
-                                $stackTraceLines += $extraLine.Trim()
+                            elseif ($cleanExtra -match "^\s+in\s+.*:\s*line\s+\d+") {
+                                $stackTraceLines += $cleanExtra.Trim()
                             }
                             # Stop when we hit the next test or summary
-                            elseif ($extraLine -match "^(failed|passed|skipped|Test run summary|succeeded:)") {
+                            elseif ($cleanExtra -match "^(failed|passed|skipped|Test run summary|succeeded:)") {
                                 break
                             }
                         }
@@ -1775,30 +1783,30 @@ try {
             # Capture error messages and exception details for current failed test
             elseif ($currentFailedTest) {
                 # Detect exception type lines (e.g., "System.InvalidOperationException: Message")
-                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                if ($cleanLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
                     $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
                     $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
                 }
                 # Detect assertion failure messages (TUnit specific patterns)
-                elseif ($lineStr -match "Expected:?\s*(.+)") {
+                elseif ($cleanLine -match "Expected:?\s*(.+)") {
                     $testDetails[$currentFailedTest]["ErrorMessage"] += "`nExpected: " + $matches[1].Trim()
                 }
-                elseif ($lineStr -match "Actual:?\s*(.+)") {
+                elseif ($cleanLine -match "Actual:?\s*(.+)") {
                     $testDetails[$currentFailedTest]["ErrorMessage"] += "`nActual: " + $matches[1].Trim()
                 }
-                elseif ($lineStr -match "But was:?\s*(.+)") {
+                elseif ($cleanLine -match "But was:?\s*(.+)") {
                     $testDetails[$currentFailedTest]["ErrorMessage"] += "`nBut was: " + $matches[1].Trim()
                 }
                 # Detect start of stack trace (lines with "at " followed by namespace/method)
-                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                elseif ($cleanLine -match "^\s+at\s+[\w\.]+") {
                     $capturingStackTrace = $true
-                    $stackTraceLines += $lineStr.Trim()
+                    $stackTraceLines += $cleanLine.Trim()
                 }
                 # Continue capturing stack trace lines
                 elseif ($capturingStackTrace) {
                     # Stack trace continues if line starts with whitespace and contains "at " or file path
-                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
-                        $stackTraceLines += $lineStr.Trim()
+                    if ($cleanLine -match "^\s+at\s+" -or $cleanLine -match "^\s+in\s+.*:\s*line\s+\d+") {
+                        $stackTraceLines += $cleanLine.Trim()
                     }
                     else {
                         # Stack trace ended
@@ -1810,45 +1818,46 @@ try {
                     }
                 }
                 # Generic error message capture (non-empty lines that don't match other patterns)
-                elseif ($lineStr.Trim() -ne "" -and
-                        $lineStr -notmatch "^\s*(duration|total|failed|succeeded|skipped|passed):" -and
-                        $lineStr -notmatch "^(Building|Determining|Restored)" -and
+                elseif ($cleanLine.Trim() -ne "" -and
+                        $cleanLine -notmatch "^\s*(duration|total|failed|succeeded|skipped|passed):" -and
+                        $cleanLine -notmatch "^(Building|Determining|Restored)" -and
                         $testDetails[$currentFailedTest]["ErrorMessage"] -eq "") {
-                    $testDetails[$currentFailedTest]["ErrorMessage"] = $lineStr.Trim()
+                    $testDetails[$currentFailedTest]["ErrorMessage"] = $cleanLine.Trim()
                 }
             }
             # Capture test project errors (e.g., "Whizbang.Data.Postgres.Tests.dll failed with 1 error(s)")
-            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+            # Use $cleanLine because TUnit wraps these in ANSI color codes
+            elseif ($cleanLine -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
                 $projectName = $matches[1]
                 $errorCount = $matches[2]
                 $projectErrors += "$projectName failed with $errorCount error(s)"
             }
             # Capture generic "error:" lines from test output (infrastructure errors)
-            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+            elseif ($cleanLine -match "^\s*error:\s+(\d+)") {
                 # This catches the final "error: X" summary line from MTP
                 # Infrastructure errors are setup/teardown failures separate from test failures
                 $infrastructureErrors += [int]$matches[1]
             }
             # Capture build errors
-            elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
+            elseif ($cleanLine -match "error\s+(CS\d+|MSB\d+):") {
                 $buildErrors += $lineStr.Trim()
             }
             # Capture critical warnings (skip common noise)
-            elseif ($lineStr -match "warning\s+(CS\d+|MSB\d+|EFCORE\d+):" -and
-                    $lineStr -notmatch "CS8019" -and  # Unnecessary using directive
-                    $lineStr -notmatch "CS0105" -and  # Duplicate using directive
-                    $lineStr -notmatch "CS8618" -and  # Non-nullable field
-                    $lineStr -notmatch "CS8600" -and  # Converting null literal
-                    $lineStr -notmatch "CS8601" -and  # Possible null reference assignment
-                    $lineStr -notmatch "CS8602" -and  # Dereference of null reference
-                    $lineStr -notmatch "CS8603" -and  # Possible null reference return
-                    $lineStr -notmatch "CS8604" -and  # Possible null reference argument
-                    $lineStr -notmatch "CS8619" -and  # Nullability mismatch
-                    $lineStr -notmatch "CS8714" -and  # Type parameter nullability
-                    $lineStr -notmatch "CS0414" -and  # Field assigned but never used
-                    $lineStr -notmatch "EFCORE998" -and  # No DbContext classes found
-                    $lineStr -notmatch "merge-message-registries") {
-                $buildWarnings += $lineStr.Trim()
+            elseif ($cleanLine -match "warning\s+(CS\d+|MSB\d+|EFCORE\d+):" -and
+                    $cleanLine -notmatch "CS8019" -and  # Unnecessary using directive
+                    $cleanLine -notmatch "CS0105" -and  # Duplicate using directive
+                    $cleanLine -notmatch "CS8618" -and  # Non-nullable field
+                    $cleanLine -notmatch "CS8600" -and  # Converting null literal
+                    $cleanLine -notmatch "CS8601" -and  # Possible null reference assignment
+                    $cleanLine -notmatch "CS8602" -and  # Dereference of null reference
+                    $cleanLine -notmatch "CS8603" -and  # Possible null reference return
+                    $cleanLine -notmatch "CS8604" -and  # Possible null reference argument
+                    $cleanLine -notmatch "CS8619" -and  # Nullability mismatch
+                    $cleanLine -notmatch "CS8714" -and  # Type parameter nullability
+                    $cleanLine -notmatch "CS0414" -and  # Field assigned but never used
+                    $cleanLine -notmatch "EFCORE998" -and  # No DbContext classes found
+                    $cleanLine -notmatch "merge-message-registries") {
+                $buildWarnings += $cleanLine.Trim()
             }
         }
 
@@ -2078,19 +2087,25 @@ try {
             # Stream ALL output in verbose mode (this is the key difference from AI mode)
             Write-Host $lineStr
 
+            # Strip ANSI escape sequences for reliable regex matching
+            # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
+            $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+
             # Capture test counts from TUnit summary format
-            if ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+            # Use $cleanLine because TUnit wraps these in ANSI color codes
+            if ($cleanLine -match "^\s*succeeded:\s+(\d+)\s*$") {
                 $totalPassed += [int]$matches[1]
             }
-            elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*failed:\s+(\d+)\s*$") {
                 $totalFailed += [int]$matches[1]
             }
-            elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
+            elseif ($cleanLine -match "^\s*skipped:\s+(\d+)\s*$") {
                 $totalSkipped += [int]$matches[1]
             }
 
             # Capture failed test names
-            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+            # Use $cleanLine because TUnit wraps "failed" in ANSI red color codes
+            if ($cleanLine -match "^failed\s+([^\(]+)\s+\(") {
                 if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
                     $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
                     $stackTraceLines = @()
@@ -2114,16 +2129,16 @@ try {
                 }
             }
             elseif ($currentFailedTest) {
-                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                if ($cleanLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
                     $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
                     $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
                 }
-                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                elseif ($cleanLine -match "^\s+at\s+[\w\.]+") {
                     $capturingStackTrace = $true
                     $stackTraceLines += $lineStr.Trim()
                 }
                 elseif ($capturingStackTrace) {
-                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
+                    if ($cleanLine -match "^\s+at\s+" -or $cleanLine -match "^\s+in\s+.*:\s*line\s+\d+") {
                         $stackTraceLines += $lineStr.Trim()
                     }
                     else {
@@ -2135,16 +2150,16 @@ try {
                     }
                 }
             }
-            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+            elseif ($cleanLine -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
                 $projectName = $matches[1]
                 $errorCount = $matches[2]
                 $projectErrors += "$projectName failed with $errorCount error(s)"
             }
-            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+            elseif ($cleanLine -match "^\s*error:\s+(\d+)") {
                 $infrastructureErrors += [int]$matches[1]
             }
-            elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
-                $buildErrors += $lineStr.Trim()
+            elseif ($cleanLine -match "error\s+(CS\d+|MSB\d+):") {
+                $buildErrors += $cleanLine.Trim()
             }
         }
 
@@ -2240,15 +2255,15 @@ try {
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
     if ($useAiOutput -or $useVerboseLogging) {
-        # In AI/Verbose mode, use the process exit code and check captured errors
+        # In AI/Verbose mode, check captured errors AND process exit code as safety net
         # Note: dotnet test returns 0 on success, non-zero on failure
-        # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
+        # Exit code 8 = all tests skipped (TUnit), not treated as failure
         #
         # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if:
         # - Tests also failed (indicates a real problem)
         # - No tests passed (indicates setup failure)
         # If tests pass but cleanup throws, we log a warning but don't fail the build
-        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
+        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8)
         $hasInfraErrorsOnly = $infrastructureErrors -gt 0 -and -not $hasTestFailures
 
         if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
