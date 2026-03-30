@@ -865,6 +865,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
+    // Wait for both subscriptions (one per destination) — signal-based, deterministic
+    await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
     await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
     cts.Cancel();
 

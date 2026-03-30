@@ -1016,12 +1016,12 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should register at LocalImmediateInline, PreOutboxInline, PostInboxInline
+    // Assert - Should register at LocalImmediateAsync + PostInboxAsync (default stages)
+    // PreOutbox removed from defaults — opt-in via [FireAt(PreOutboxAsync)]
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateInline");
-    await Assert.That(registry).Contains("LifecycleStage.PreOutboxInline");
-    await Assert.That(registry).Contains("LifecycleStage.PostInboxInline");
+    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateAsync");
+    await Assert.That(registry).Contains("LifecycleStage.PostInboxAsync");
   }
 
   [Test]
@@ -2298,8 +2298,8 @@ public class ExecuteReceptor : IReceptor<ExecuteCommand, ExecutedEvent> {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
 
-    // Verify cancellationToken is passed to HandleAsync
-    await Assert.That(dispatcher).Contains("await receptor.HandleAsync(typedEvt, cancellationToken)");
+    // Verify cancellationToken is passed to HandleAsync (per-receptor keyed invocation)
+    await Assert.That(dispatcher).Contains("await r.HandleAsync(typedEvt, cancellationToken)");
   }
 
   /// <summary>

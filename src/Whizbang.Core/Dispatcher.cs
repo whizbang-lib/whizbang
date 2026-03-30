@@ -114,6 +114,14 @@ public abstract partial class Dispatcher(
   private const string PATTERN_LOCAL_INVOKE = "local_invoke";
   private const string ROUTED_NONE_ERROR = "Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.";
 
+  // Minimal envelope used by cascade paths to signal IsDefaultDispatch=true when no source envelope exists
+  private static readonly IMessageEnvelope _cascadeDefaultEnvelope = new MessageEnvelope<object> {
+    MessageId = default,
+    Payload = null!,
+    Hops = [],
+    DispatchContext = MessageDispatchContext.CascadeDefault
+  };
+
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -3152,7 +3160,11 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        await publisher(message, sourceEnvelope, cancellationToken);
+        // Wrap source envelope to set IsDefaultDispatch=true — cascade paths only fire default-stage receptors
+        var cascadeEnvelope = sourceEnvelope != null
+          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(sourceEnvelope)
+          : _cascadeDefaultEnvelope;
+        await publisher(message, cascadeEnvelope, cancellationToken);
       }
     }
 

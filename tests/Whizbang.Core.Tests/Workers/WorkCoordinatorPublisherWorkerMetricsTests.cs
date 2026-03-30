@@ -191,7 +191,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+    // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
+    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -219,8 +220,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    // Wait for first batch to be processed (signal-based, not Task.Delay)
-    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+    // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
+    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 

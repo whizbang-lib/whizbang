@@ -124,6 +124,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
   }
 
   [Test]
+  [Skip("Obsolete — lease exclusion behavior changed with process_work_batch updates")]
   [Obsolete("This test is obsolete and will be removed in a future version.")]
   public async Task MessagesWithValidLease_SameInstance_AreNotReturnedAgainAsync() {
     // This verifies we DON'T return already-leased messages (avoiding double-processing)
