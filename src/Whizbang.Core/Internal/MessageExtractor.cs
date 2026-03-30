@@ -290,8 +290,10 @@ public static class MessageExtractor {
     }
 
     // Priority 5: System default (LOWEST)
-    // Default to Outbox for cross-service delivery (per routed cascade design).
-    // Use Route.Local() to restrict to local receptors only.
-    return DispatchModes.Outbox;
+    // Default to Both (Local + Outbox): fire local handlers AND write to outbox.
+    // This ensures cascaded events fire handlers once locally and also reach
+    // other services via transport. Use Route.Local() to skip outbox,
+    // or Route.Outbox() to skip local handlers.
+    return DispatchModes.Both;
   }
 }
