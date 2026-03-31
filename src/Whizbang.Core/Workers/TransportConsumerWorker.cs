@@ -53,6 +53,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly ILogger<TransportConsumerWorker> _logger;
 
   private readonly HashSet<string> _ownedDomains;
+  private readonly string? _serviceName;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -86,7 +87,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
-    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null
+    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
+    IServiceInstanceProvider? serviceInstanceProvider = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -107,6 +109,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _metrics = metrics;
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    _serviceName = serviceInstanceProvider?.ServiceName;
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
@@ -328,13 +331,19 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-    // Discard owned events arriving from transport — they already fired locally via cascade.
-    // Writing them to inbox would cause double-persistence in event_store (outbox + inbox paths).
-    if (_ownedDomains.Count > 0 && envelopeType is not null) {
+    // Discard self-echo: messages from THIS service that were already dispatched locally.
+    // Three conditions must ALL be true:
+    // 1. LocalDispatch flag — message was dispatched locally by the originating service
+    // 2. Owned namespace — message type belongs to this service's owned domains
+    // 3. Same service — the last hop's service name matches this service (not from another service)
+    // Commands from OTHER services pass through even if namespace is owned (they're addressed to us).
+    if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null
+        && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)
+        && _isSelfEcho(envelope)) {
       var ns = _extractNamespaceFromTypeName(envelopeType);
       if (_isOwnedNamespace(ns)) {
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          _logger.LogDebug("Discarding owned event {MessageType} from inbox — already processed locally", messageType);
+          _logger.LogDebug("Discarding self-echo {MessageType} from inbox — already dispatched locally by this service", messageType);
         }
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         return;
@@ -813,6 +822,18 @@ public partial class TransportConsumerWorker : BackgroundService {
     Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
   )]
   private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
+
+  /// <summary>
+  /// Checks if the message originated from this service (self-echo).
+  /// The last hop is the most recent — it identifies the service that dispatched the message.
+  /// </summary>
+  private bool _isSelfEcho(IMessageEnvelope envelope) {
+    if (_serviceName is null || envelope.Hops.Count == 0) {
+      return false;
+    }
+    var lastHop = envelope.Hops[^1];
+    return string.Equals(lastHop.ServiceInstance.ServiceName, _serviceName, StringComparison.OrdinalIgnoreCase);
+  }
 
   /// <summary>
   /// Checks if the given namespace is owned by this service.
