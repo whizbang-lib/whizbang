@@ -1537,11 +1537,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> _buildRoutingEntries(
       Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors) {
-    // Default stages: Local + PostInbox. PreOutbox is opt-in via [FireAt(PreOutboxAsync)].
-    // Local fires for locally-produced events (cascade from receptors).
-    // PostInbox fires for events arriving from other services via transport.
-    // PreOutbox was removed from defaults because the outbox worker re-processes
-    // messages on every batch cycle, causing handler amplification.
+    // Default stages: LocalImmediateAsync + PostInboxAsync.
+    // LocalImmediate fires for locally-dispatched messages (this service).
+    // PostInbox fires for messages arriving from other services via transport.
+    // Source-service filtering in ReceptorInvoker prevents double-fire:
+    //   LocalImmediate: only if source = this service
+    //   PostInbox: only if source = other service
     var defaultStages = new[] {
       "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateAsync",
       "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxAsync"
