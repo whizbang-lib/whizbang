@@ -48,6 +48,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IEventCascader? _eventCascader;
   private readonly IPerspectiveSyncAwaiter? _syncAwaiter;
   private readonly HashSet<string> _ownedDomains;
+  private readonly string? _serviceName;
   private ILogger? _logger;
 
   /// <summary>
@@ -113,6 +114,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Resolve owned domains for lifecycle stage filtering (AOT-safe, no reflection)
     var routingOptions = scopedProvider.GetService<Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>>()?.Value;
     _ownedDomains = routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+
+    // Resolve service name for source-service filtering (PostInbox: only fire for other services)
+    _serviceName = scopedProvider.GetService<Observability.IServiceInstanceProvider>()?.ServiceName;
   }
 
   /// <inheritdoc/>
@@ -163,19 +167,23 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Resolve scope for tag processing — use security context or extracted scope from hops
     var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
 
-    // Owned-domain lifecycle filtering (AOT-safe, no reflection):
-    // PreOutbox (Inline/Async): fire owned events + non-owned commands, skip owned commands + non-owned events
-    // PostInbox (Inline/Async): fire owned commands (from other services) + non-owned events, skip owned events (self-echo) + non-owned commands
+    // Source-service filtering: PostInbox only fires for messages from OTHER services.
+    // Messages from THIS service already fired at LocalImmediate — skip to prevent double-fire.
     var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxAsync;
     var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxAsync;
+    if (isPostInbox && _serviceName is not null && receptors.Count > 0) {
+      var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
+      if (string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {
+        return; // same service → already fired at LocalImmediate
+      }
+    }
+
+    // PreOutbox ownership filtering (AOT-safe, no reflection):
     if (_ownedDomains.Count > 0 && receptors.Count > 0) {
       var isOwned = _isOwnedNamespace(messageType.Namespace);
       var isEvent = message is IEvent;
       if (isPreOutbox && (isOwned ? !isEvent : isEvent)) {
         return; // skip owned commands + non-owned events at outbox stage
-      }
-      if (isPostInbox && (isOwned ? isEvent : !isEvent)) {
-        return; // skip owned events (self-echo) + non-owned commands
       }
     }
 
