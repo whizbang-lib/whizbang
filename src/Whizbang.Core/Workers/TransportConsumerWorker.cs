@@ -336,13 +336,16 @@ public partial class TransportConsumerWorker : BackgroundService {
     // 1. Owned namespace — message type belongs to this service's owned domains
     // 2. Same service — the last hop's service name matches this service
     // Messages from OTHER services always pass through (different service name in hop).
-    if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null
-        && _isSelfEcho(envelope)) {
+    if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null) {
+      var isSelfEcho = _isSelfEcho(envelope);
       var ns = _extractNamespaceFromTypeName(envelopeType);
-      if (_isOwnedNamespace(ns)) {
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          _logger.LogDebug("Discarding self-echo {MessageType} from inbox — already dispatched by this service", messageType);
-        }
+      var isOwned = _isOwnedNamespace(ns);
+      // Temporary diagnostic — remove after verifying self-echo discard
+      _logger.LogWarning("[SELF-ECHO-CHECK] Type={MessageType} Service={Service} IsSelfEcho={IsSelfEcho} IsOwned={IsOwned} Ns={Ns} HopCount={HopCount} LastHopService={LastHop}",
+        messageType, _serviceName, isSelfEcho, isOwned, ns, envelope.Hops.Count,
+        envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : "no-hops");
+      if (isSelfEcho && isOwned) {
+        _logger.LogWarning("[SELF-ECHO-DISCARD] Discarding {MessageType} — self-echo from {Service}", messageType, _serviceName);
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         return;
       }
