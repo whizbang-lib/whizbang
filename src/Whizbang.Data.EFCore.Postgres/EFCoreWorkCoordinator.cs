@@ -46,9 +46,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
 
-  private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+  private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
+
+  private static TDbContext _initDbContext(TDbContext ctx) {
+    ArgumentNullException.ThrowIfNull(ctx);
+    ctx.Database.SetCommandTimeout(TimeSpan.FromMinutes(3));
+    return ctx;
+  }
 
   /// <summary>
   /// Gets the schema from the provided value, falling back to the default if empty/null.
@@ -241,8 +247,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var sw = System.Diagnostics.Stopwatch.StartNew();
     List<WorkBatchRow> results;
-    var previousTimeout = _dbContext.Database.GetCommandTimeout();
-    _dbContext.Database.SetCommandTimeout(TimeSpan.FromMinutes(3));
     try {
       results = await _dbContext.Database
         .SqlQueryRaw<WorkBatchRow>(
@@ -278,7 +282,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
       metrics?.ProcessBatchErrors.Add(1, new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
       throw;
     } finally {
-      _dbContext.Database.SetCommandTimeout(previousTimeout);
       sw.Stop();
       metrics?.ProcessBatchDuration.Record(sw.Elapsed.TotalMilliseconds);
       metrics?.ProcessBatchCalls.Add(1);
