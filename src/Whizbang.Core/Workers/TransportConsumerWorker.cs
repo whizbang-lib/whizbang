@@ -395,8 +395,10 @@ public partial class TransportConsumerWorker : BackgroundService {
       processingSw.Stop();
       _metrics?.InboxProcessingDuration.Record(processingSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
-      // 4. PostInbox lifecycle
-      await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scope.ServiceProvider, cancellationToken);
+      // 4. PostInbox lifecycle — NOT fired here.
+      // PostInbox is exclusively the WorkCoordinatorPublisherWorker's responsibility.
+      // It fires after process_work_batch returns the inbox work in the next batch cycle.
+      // Firing PostInbox here AND in the worker causes double-fire.
 
       // 5. Report completions/failures
       var completionSw = Stopwatch.StartNew();
