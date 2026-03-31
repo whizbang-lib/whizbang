@@ -165,7 +165,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Owned-domain lifecycle filtering (AOT-safe, no reflection):
     // PreOutbox (Inline/Async): fire owned events + non-owned commands, skip owned commands + non-owned events
-    // PostInbox (Inline/Async): fire non-owned events + owned commands, skip owned events (self-echo) + non-owned commands
+    // PostInbox (Inline/Async): fire non-owned events, skip owned events (self-echo) + owned commands (already fired at LocalImmediate) + non-owned commands
     var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxAsync;
     var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxAsync;
     if (_ownedDomains.Count > 0 && receptors.Count > 0) {
@@ -174,8 +174,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       if (isPreOutbox && (isOwned ? !isEvent : isEvent)) {
         return; // skip owned commands + non-owned events at outbox stage
       }
-      if (isPostInbox && (isOwned ? isEvent : !isEvent)) {
-        return; // skip owned events (self-echo) + non-owned commands at inbox stage
+      if (isPostInbox && (isOwned || !isEvent)) {
+        return; // skip owned events (self-echo) + owned commands (already fired at LocalImmediate) + non-owned commands
       }
     }
 

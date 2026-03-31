@@ -213,8 +213,8 @@ public class ReceptorInvokerOwnedDomainTests {
   }
 
   [Test]
-  public async Task PostInboxInline_OwnedCommand_FiresAsync() {
-    // Owned command from another service → handler fires (we own the receptor)
+  public async Task PostInboxInline_OwnedCommand_SkipsAsync() {
+    // Owned command already fired at LocalImmediate → skip at PostInbox
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedCommand>("handler", LifecycleStage.PostInboxInline);
@@ -222,7 +222,7 @@ public class ReceptorInvokerOwnedDomainTests {
 
     await invoker.InvokeAsync(_wrap(new OwnedCommand("test")), LifecycleStage.PostInboxInline);
 
-    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -346,7 +346,8 @@ public class ReceptorInvokerOwnedDomainTests {
   }
 
   [Test]
-  public async Task PostInboxAsync_OwnedCommand_FiresAsync() {
+  public async Task PostInboxAsync_OwnedCommand_SkipsAsync() {
+    // Owned command already fired at LocalImmediate → skip at PostInbox
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedCommand>("handler", LifecycleStage.PostInboxAsync);
@@ -354,7 +355,7 @@ public class ReceptorInvokerOwnedDomainTests {
 
     await invoker.InvokeAsync(_wrap(new OwnedCommand("test")), LifecycleStage.PostInboxAsync);
 
-    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
 
   [Test]

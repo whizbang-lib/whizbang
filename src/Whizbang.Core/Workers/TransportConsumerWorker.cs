@@ -52,6 +52,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
+  private readonly HashSet<string> _ownedDomains;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -84,7 +85,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     OrderedStreamProcessor orderedProcessor,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
-    ILogger<TransportConsumerWorker> logger
+    ILogger<TransportConsumerWorker> logger,
+    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -104,6 +106,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _metrics = metrics;
     _logger = logger;
+    _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
@@ -324,6 +327,19 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
+
+    // Discard owned events arriving from transport — they already fired locally via cascade.
+    // Writing them to inbox would cause double-persistence in event_store (outbox + inbox paths).
+    if (_ownedDomains.Count > 0 && envelopeType is not null) {
+      var ns = _extractNamespaceFromTypeName(envelopeType);
+      if (_isOwnedNamespace(ns)) {
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug("Discarding owned event {MessageType} from inbox — already processed locally", messageType);
+        }
+        _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+        return;
+      }
+    }
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
 
@@ -797,4 +813,40 @@ public partial class TransportConsumerWorker : BackgroundService {
     Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
   )]
   private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
+
+  /// <summary>
+  /// Checks if the given namespace is owned by this service.
+  /// Supports hierarchical matching: "A.B" owns "A.B.C.D".
+  /// </summary>
+  private bool _isOwnedNamespace(string? ns) {
+    if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
+      return false;
+    }
+    if (_ownedDomains.Contains(ns)) {
+      return true;
+    }
+    foreach (var owned in _ownedDomains) {
+      var prefix = owned.EndsWith('.') ? owned : owned + ".";
+      if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Extracts namespace from an assembly-qualified type name.
+  /// E.g., "MyApp.Contracts.Chat.MyEvent, MyApp.Contracts" → "MyApp.Contracts.Chat"
+  /// </summary>
+  private static string? _extractNamespaceFromTypeName(string envelopeType) {
+    // Strip assembly part: "Namespace.Type, Assembly" → "Namespace.Type"
+    var commaIdx = envelopeType.IndexOf(',');
+    var fullTypeName = commaIdx > 0 ? envelopeType[..commaIdx].Trim() : envelopeType.Trim();
+    // Strip nested type: "Namespace.Outer+Inner" → "Namespace.Outer"
+    var plusIdx = fullTypeName.IndexOf('+');
+    var outerType = plusIdx > 0 ? fullTypeName[..plusIdx] : fullTypeName;
+    // Get namespace: "Namespace.Type" → "Namespace"
+    var lastDot = outerType.LastIndexOf('.');
+    return lastDot > 0 ? outerType[..lastDot] : null;
+  }
 }

@@ -52,8 +52,10 @@ public static class TestConstants {
   ///     (CascadeTestCommandHandler, FireCountCommandHandler, FireCountEventReceptor)
   /// - 3 receptors from DispatcherStageFireTests.cs
   ///     (StageTestCommandHandler, DefaultStageTestReceptor, ExplicitPostAllPerspectivesReceptor)
+  /// - 2 receptors from DispatcherOwnedEventSelfEchoTests.cs
+  ///     (SelfEchoCommandHandler, SelfEchoEventReceptor)
   ///
-  /// Total: 110 receptors (includes coverage test types that implement ICommand/IEvent)
+  /// Total: 112 receptors (includes coverage test types that implement ICommand/IEvent)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 110;
+  public const int EXPECTED_RECEPTOR_COUNT = 112;
 }
