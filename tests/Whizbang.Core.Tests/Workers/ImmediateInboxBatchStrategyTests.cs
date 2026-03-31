@@ -87,6 +87,66 @@ public class ImmediateInboxBatchStrategyTests {
     await sut.DisposeAsync();
     await sut.DisposeAsync(); // idempotent
   }
+
+  [Test]
+  public async Task Constructor_NullScopeFactory_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => new ImmediateInboxBatchStrategy(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task EnqueueAndWaitAsync_FlushThrows_PropagatesExceptionAsync() {
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => new ImmediateBatchThrowingStrategy());
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    await using var sut = new ImmediateInboxBatchStrategy(scopeFactory);
+
+    await Assert.That(async () => await sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None))
+      .ThrowsExactly<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task EnqueueAndWaitAsync_CancellationToken_PropagatedToFlushAsync() {
+    var cancelCheckStrategy = new ImmediateBatchCancelCheckStrategy();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => cancelCheckStrategy);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    await using var sut = new ImmediateInboxBatchStrategy(scopeFactory);
+    using var cts = new CancellationTokenSource();
+
+    await sut.EnqueueAndWaitAsync(_createInboxMessage(), cts.Token);
+
+    await Assert.That(cancelCheckStrategy.ReceivedCancellationToken).IsTrue();
+  }
+}
+
+internal sealed class ImmediateBatchThrowingStrategy : IWorkCoordinatorStrategy {
+  public void QueueInboxMessage(InboxMessage message) { }
+  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode, CancellationToken ct)
+    => throw new InvalidOperationException("Simulated flush failure");
+  public void QueueOutboxMessage(OutboxMessage message) { }
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+}
+
+internal sealed class ImmediateBatchCancelCheckStrategy : IWorkCoordinatorStrategy {
+  public bool ReceivedCancellationToken { get; private set; }
+  public void QueueInboxMessage(InboxMessage message) { }
+  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode, CancellationToken ct) {
+    ReceivedCancellationToken = ct.CanBeCanceled;
+    return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
+  }
+  public void QueueOutboxMessage(OutboxMessage message) { }
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 }
 
 /// <summary>
