@@ -33,7 +33,9 @@ public partial class ServiceBusConsumerWorker(
   OrderedStreamProcessor orderedProcessor,
   ServiceBusConsumerOptions? options = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-  IEnvelopeSerializer? envelopeSerializer = null
+  IEnvelopeSerializer? envelopeSerializer = null,
+  MessageProcessingOptions? messageProcessingOptions = null,
+  IInboxBatchStrategy? inboxBatchStrategy = null
   ) : BackgroundService {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -43,6 +45,9 @@ public partial class ServiceBusConsumerWorker(
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
+  private readonly IInboxBatchStrategy? _inboxBatchStrategy = inboxBatchStrategy;
+  private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
+    ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
@@ -134,15 +139,28 @@ public partial class ServiceBusConsumerWorker(
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
     var inboxActivity = _startInboxActivity(envelope, envelopeType);
 
-    try {
+    // Global concurrency gate — limits total concurrent handlers across all subscriptions
+    if (_concurrencySemaphore is not null) {
+      await _concurrencySemaphore.WaitAsync(ct);
+    }
+
+    try { // semaphore is released in finally block
       await using var scope = _scopeFactory.CreateAsyncScope();
       var scopedProvider = scope.ServiceProvider;
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       LogProcessingMessage(_logger, envelope.MessageId);
 
-      // 1. Serialize and deduplicate via work coordinator
-      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
+      // 1. Serialize and deduplicate — use batch strategy if available, otherwise per-message flush
+      List<InboxWork> myWork;
+      if (_inboxBatchStrategy is not null) {
+        var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
+        var workBatch = await _inboxBatchStrategy.EnqueueAndWaitAsync(newInboxMessage, ct);
+        myWork = [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
+      } else {
+        myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
+      }
+
       if (myWork.Count == 0) {
         LogMessageAlreadyProcessed(_logger, envelope.MessageId);
         return;
@@ -166,6 +184,7 @@ public partial class ServiceBusConsumerWorker(
       LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
       throw;
     } finally {
+      _concurrencySemaphore?.Release();
       inboxActivity?.Dispose();
     }
   }

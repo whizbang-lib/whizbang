@@ -197,6 +197,17 @@ public static class TransportConsumerBuilderExtensions {
       return new NullReceptorInvoker();
     });
 
+    // Register MessageProcessingOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new MessageProcessingOptions());
+
+    // Register default IInboxBatchStrategy (consumer can override by registering before this)
+    builder.Services.TryAddSingleton<IInboxBatchStrategy>(sp => {
+      var options = sp.GetRequiredService<MessageProcessingOptions>();
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      var metrics = sp.GetService<TransportMetrics>();
+      return new SlidingWindowInboxBatchStrategy(options, scopeFactory, metrics);
+    });
+
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
@@ -315,6 +326,17 @@ public static class TransportConsumerBuilderExtensions {
 
       // Fallback: return a no-op invoker if no registry is available
       return new NullReceptorInvoker();
+    });
+
+    // Register MessageProcessingOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new MessageProcessingOptions());
+
+    // Register default IInboxBatchStrategy (consumer can override by registering before this)
+    builder.Services.TryAddSingleton<IInboxBatchStrategy>(sp => {
+      var options = sp.GetRequiredService<MessageProcessingOptions>();
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      var metrics = sp.GetService<TransportMetrics>();
+      return new SlidingWindowInboxBatchStrategy(options, scopeFactory, metrics);
     });
 
     // Register TransportConsumerWorker as hosted service (always with resilience)
