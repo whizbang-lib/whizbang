@@ -140,16 +140,12 @@ internal static class WorkCoordinatorFlushHelper {
         );
       }
 
-      // Write returned work to channel for publishing
-      if (ctx.WorkChannelWriter != null && workBatch.OutboxWork.Count > 0) {
-        try {
-          foreach (var work in workBatch.OutboxWork) {
-            await ctx.WorkChannelWriter.WriteAsync(work, ct);
-          }
-        } catch (ChannelClosedException) {
-          // Work is persisted to database, will be picked up on restart
-        }
-      }
+      // NOTE: Do NOT write outbox work to channel here.
+      // Work is persisted to database and will be picked up by the coordinator
+      // loop on its next tick (~1s). Writing to the channel from cascade flushes
+      // adds entries to _inFlight that the publisher may not drain fast enough,
+      // causing messages to become permanently stuck (IsInFlight=true blocks
+      // re-queuing by the coordinator loop, but the publisher never reads them).
 
       return workBatch;
     } finally {
