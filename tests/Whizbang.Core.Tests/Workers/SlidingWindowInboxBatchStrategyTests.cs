@@ -340,6 +340,71 @@ public class SlidingWindowInboxBatchStrategyTests {
     // Assert — two separate flushes
     await Assert.That(fakeStrategy.FlushCallCount).IsEqualTo(2);
   }
+
+  // ========================================
+  // CONSTRUCTOR NULL CHECK TESTS
+  // ========================================
+
+  [Test]
+  public async Task Constructor_NullOptions_ThrowsArgumentNullExceptionAsync() {
+    var (scopeFactory, _) = _createScopeFactory();
+    await Assert.That(() => new SlidingWindowInboxBatchStrategy(null!, scopeFactory))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_NullScopeFactory_ThrowsArgumentNullExceptionAsync() {
+    var options = _createOptions();
+    await Assert.That(() => new SlidingWindowInboxBatchStrategy(options, null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  // ========================================
+  // DISPOSED STATE TESTS
+  // ========================================
+
+  [Test]
+  public async Task EnqueueAndWaitAsync_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    var (scopeFactory, _) = _createScopeFactory();
+    var sut = new SlidingWindowInboxBatchStrategy(_createOptions(), scopeFactory);
+    await sut.DisposeAsync();
+
+    await Assert.That(async () => await sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  // ========================================
+  // EDGE CASE TESTS
+  // ========================================
+
+  [Test]
+  public async Task EnqueueAndWaitAsync_BatchSizePlusOne_OverflowsToNextBatchAsync() {
+    var (scopeFactory, fakeStrategy) = _createScopeFactory();
+    var options = _createOptions(batchSize: 2, slideMs: 50, maxWaitMs: 10000);
+    await using var sut = new SlidingWindowInboxBatchStrategy(options, scopeFactory);
+
+    var task1 = sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None);
+    var task2 = sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None);
+    await Task.WhenAll(task1, task2);
+
+    var task3 = sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None);
+    await task3.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(fakeStrategy.FlushCallCount).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task EnqueueAndWaitAsync_WithNullMetrics_DoesNotCrashAsync() {
+    var (scopeFactory, fakeStrategy) = _createScopeFactory();
+    var options = _createOptions(batchSize: 2, slideMs: 5000, maxWaitMs: 10000);
+    await using var sut = new SlidingWindowInboxBatchStrategy(options, scopeFactory, metrics: null);
+
+    var task1 = sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None);
+    var task2 = sut.EnqueueAndWaitAsync(_createInboxMessage(), CancellationToken.None);
+    await Task.WhenAll(task1, task2);
+
+    await Assert.That(fakeStrategy.FlushCallCount).IsEqualTo(1);
+  }
 }
 
 // ========================================
