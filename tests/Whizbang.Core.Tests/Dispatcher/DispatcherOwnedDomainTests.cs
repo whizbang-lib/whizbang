@@ -183,6 +183,7 @@ public class DispatcherOwnedDomainTests {
     var result = await dispatcher.LocalInvokeAsync<CascadeTestEvent>(new CascadeTestCommand(Guid.NewGuid()));
 
     // Assert — owned event cascaded from receptor STILL goes to transport with real destination
+    // Other services subscribe to our events — transport delivery is required
     await Assert.That(result).IsNotNull();
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsNotNullOrEmpty();
