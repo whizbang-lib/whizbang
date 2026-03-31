@@ -1456,7 +1456,8 @@ try {
         $completedFailed = 0
         $completedSkipped = 0
 
-        # Track in-progress estimates (highest seen from progress lines)
+        # Track in-progress estimates per project (keyed by assembly DLL name)
+        $perProjectProgress = @{}
         $inProgressPassed = 0
         $inProgressFailed = 0
         $inProgressSkipped = 0
@@ -1609,29 +1610,37 @@ try {
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
 
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
-            # Note: Multiple test projects run in parallel, we track the highest seen for approximate progress
-            if ($cleanLine -match '\[\+(\d+)/x(\d+)/\?(\d+)\]') {
-                $passed = [int]$matches[1]
-                $failed = [int]$matches[2]
-                $skipped = [int]$matches[3]
+            # Format: [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
+            # Track per-project counts and sum for accurate parallel progress
+            if ($cleanLine -match '\[\+(\d+)/x(\d+)/\?(\d+)\]\s+(\S+\.dll)') {
+                $projectKey = $matches[4]
+                $perProjectProgress[$projectKey] = @{
+                    Passed = [int]$matches[1]
+                    Failed = [int]$matches[2]
+                    Skipped = [int]$matches[3]
+                }
 
-                # Track highest values seen across parallel projects (approximate in-progress total)
-                if ($passed -gt $inProgressPassed) { $inProgressPassed = $passed }
-                if ($failed -gt $inProgressFailed) { $inProgressFailed = $failed }
-                if ($skipped -gt $inProgressSkipped) { $inProgressSkipped = $skipped }
+                # Sum across all projects for in-progress totals
+                $inProgressPassed = 0; $inProgressFailed = 0; $inProgressSkipped = 0
+                foreach ($proj in $perProjectProgress.Values) {
+                    $inProgressPassed += $proj.Passed
+                    $inProgressFailed += $proj.Failed
+                    $inProgressSkipped += $proj.Skipped
+                }
 
-                # Extract currently running test name from progress line:
-                # [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
+                # Extract currently running test name
                 if ($lineStr -match ' - ([^\(]+)\s*\(') {
                     $lastTestName = $matches[1].Trim()
                 }
             }
             # Capture final summary lines - these are the accurate completed counts
-            # Reset in-progress tracking when a project completes to avoid double-counting
+            # Clear per-project tracking when a project completes to avoid double-counting
             # Use $cleanLine (ANSI-stripped) because TUnit wraps these in color codes
             elseif ($cleanLine -match "^\s*succeeded:\s+(\d+)\s*$") {
                 $completedPassed += [int]$matches[1]
-                # Reset in-progress since this project's tests moved to completed
+                # Clear all per-project tracking — we can't tell which project finished,
+                # but completed counts are authoritative and will catch up
+                $perProjectProgress.Clear()
                 $inProgressPassed = 0
             }
             elseif ($cleanLine -match "^\s*failed:\s+(\d+)\s*$") {
@@ -1645,12 +1654,8 @@ try {
 
             # Calculate display totals
             # completedPassed/Failed/Skipped are summed from authoritative "succeeded:/failed:/skipped:" summary lines
-            # inProgressPassed is an approximate live indicator (highest seen from any single project's progress lines)
-            $completedTotal = $completedPassed + $completedFailed + $completedSkipped
+            # inProgressPassed/Failed/Skipped are summed across all running projects' latest progress lines
             $inProgressTotal = $inProgressPassed + $inProgressFailed + $inProgressSkipped
-
-            # Always use completed counts + in-progress for a combined view
-            # completed = sum of finished project summaries, inProgress = current running project's latest count
             $totalPassed = $completedPassed + $inProgressPassed
             $totalFailed = $completedFailed + $inProgressFailed
             $totalSkipped = $completedSkipped + $inProgressSkipped
@@ -2263,8 +2268,11 @@ try {
         # - Tests also failed (indicates a real problem)
         # - No tests passed (indicates setup failure)
         # If tests pass but cleanup throws, we log a warning but don't fail the build
-        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8)
-        $hasInfraErrorsOnly = $infrastructureErrors -gt 0 -and -not $hasTestFailures
+        # Non-zero exit code with zero test failures and infrastructure errors = infra issue, not test failure
+        # The .NET test platform can exit non-zero due to NamedPipeServer broken pipe during cleanup
+        $exitCodeIsInfraIssue = $processExitCode -ne 0 -and $processExitCode -ne 8 -and $totalFailed -eq 0 -and $infrastructureErrors -gt 0
+        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8 -and -not $exitCodeIsInfraIssue)
+        $hasInfraErrorsOnly = ($infrastructureErrors -gt 0 -or $exitCodeIsInfraIssue) -and -not $hasTestFailures
 
         if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
             # Infrastructure errors with passing tests - warn but don't fail
