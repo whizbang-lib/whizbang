@@ -140,21 +140,12 @@ internal static class WorkCoordinatorFlushHelper {
         );
       }
 
-      // Write returned work to channel for immediate publishing.
-      // Use TryWrite (no _inFlight tracking) to avoid the stuck-message bug:
-      // WriteAsync adds to _inFlight, and if the publisher doesn't drain fast enough,
-      // the coordinator loop sees IsInFlight=true and never re-queues those messages.
-      // TryWrite puts work on the channel without _inFlight tracking — the coordinator
-      // loop will handle _inFlight tracking when it picks up work on its next tick.
-      if (ctx.WorkChannelWriter != null && workBatch.OutboxWork.Count > 0) {
-        try {
-          foreach (var work in workBatch.OutboxWork) {
-            ctx.WorkChannelWriter.TryWrite(work);
-          }
-        } catch (ChannelClosedException) {
-          // Work is persisted to database, will be picked up on restart
-        }
-      }
+      // NOTE: Do NOT write outbox work to channel here.
+      // Work is persisted to database and the coordinator loop in
+      // WorkCoordinatorPublisherWorker._processWorkBatchAsync picks it up
+      // on its next tick (~1s) with proper _inFlight tracking.
+      // Writing here causes _inFlight entries that the publisher may not
+      // drain, permanently blocking those messages from being re-queued.
 
       return workBatch;
     } finally {
