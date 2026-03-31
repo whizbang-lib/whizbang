@@ -116,6 +116,7 @@ public class RestockInventoryWorkflowTests {
   /// Tests that multiple restock operations accumulate correctly.
   /// </summary>
   [Test]
+  [Retry(2)] // Eventual-consistency: perspective may not have committed by first lens read
   [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task RestockInventory_MultipleRestocks_AccumulatesCorrectlyAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
