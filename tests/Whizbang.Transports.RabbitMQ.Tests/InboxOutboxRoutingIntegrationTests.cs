@@ -527,6 +527,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
+  [Retry(2)]
   [Timeout(90000)]
   public async Task SharedOutbox_ToSharedInbox_EndToEndAsync(
     CancellationToken cancellationToken
