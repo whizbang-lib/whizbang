@@ -1084,14 +1084,16 @@ BEGIN
     AND rp.completed_at IS NULL;
 
   -- Return perspective work (first row includes acknowledgement counts if no outbox/inbox work)
+  -- Uses per-stream+perspective ranking to prevent a single busy stream from starving others,
+  -- then applies a global LIMIT to prevent hot loops (same pattern as outbox/inbox).
   RETURN QUERY
-  WITH ordered_perspective AS (
+  WITH eligible_perspective AS (
     SELECT
       pe.*,
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
       es.event_type,  -- Get event_type from event_store for perspective worker
-      ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.event_id) as row_num
+      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank
     FROM wh_perspective_events pe
     INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
@@ -1110,6 +1112,13 @@ BEGIN
       -- Note: pe.processed_at IS NULL already prevents re-processing individual events
       -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
       -- Filtering on checkpoint status would block all subsequent events in the stream
+  ),
+  ordered_perspective AS (
+    SELECT e.*,
+      ROW_NUMBER() OVER (ORDER BY e.stream_id, e.perspective_name, e.event_id) as row_num
+    FROM eligible_perspective e
+    WHERE e.stream_rank <= v_max_work_items_per_stream
+    LIMIT v_max_work_items
   )
   SELECT
     v_rank as instance_rank,
