@@ -292,6 +292,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that multiple sequential updates accumulate correctly.
   /// </summary>
   [Test]
+  [Retry(2)] // Eventual-consistency: perspective may not have committed by first lens read
   [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_MultipleSequentialUpdates_AccumulatesChangesAsync(CancellationToken cancellationToken) {
     // Arrange

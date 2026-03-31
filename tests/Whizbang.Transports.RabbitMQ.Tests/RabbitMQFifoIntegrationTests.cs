@@ -4,6 +4,8 @@ using RabbitMQ.Client;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
@@ -251,6 +253,7 @@ public class RabbitMQFifoIntegrationTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage(content),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,

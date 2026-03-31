@@ -1,6 +1,8 @@
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Pooling;
@@ -41,6 +43,7 @@ public class AllocationProfilingBenchmarks {
     _envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     _envelope.AddHop(new MessageHop {

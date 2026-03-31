@@ -5,7 +5,9 @@ using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
@@ -216,7 +218,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "test-payload", Amount = 42 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -236,7 +239,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "context-test", Amount = 99 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -255,7 +259,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "missing", Amount = 1 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act & Assert
@@ -282,7 +287,8 @@ public class JsonMessageSerializerTests {
     var original = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "roundtrip", Amount = 7 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await serializer.SerializeAsync(original);
 
@@ -304,7 +310,8 @@ public class JsonMessageSerializerTests {
     var original = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "context-roundtrip", Amount = 3 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await serializer.SerializeAsync(original);
 
@@ -325,7 +332,8 @@ public class JsonMessageSerializerTests {
     var original = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "missing", Amount = 1 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await serializer.SerializeAsync(original);
 
@@ -390,7 +398,8 @@ public class JsonMessageSerializerTests {
           CorrelationId = correlationId,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -428,7 +437,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -451,7 +461,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "missing-context", Amount = 1 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act & Assert
@@ -474,7 +485,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<SerializerTestCommand> {
       MessageId = MessageId.New(),
       Payload = new SerializerTestCommand { Name = "missing-context", Amount = 1 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var bytes = await validSerializer.SerializeAsync(envelope);
 
@@ -545,7 +557,8 @@ public class JsonMessageSerializerTests {
           CorrelationId = correlationId,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -589,7 +602,8 @@ public class JsonMessageSerializerTests {
           CorrelationId = correlationId,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -628,7 +642,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -661,7 +676,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -69,9 +71,10 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = Activity.Current?.Id,
-          Scope = ScopeDelta.FromSecurityContext(securityContext)
+          Scope = ScopeDelta.FromSecurityContext(securityContext),
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return _inner.AppendAsync(streamId, envelope, cancellationToken);

@@ -8,6 +8,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -304,7 +306,8 @@ public class EventAuditingIntegrationTests {
     return new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }

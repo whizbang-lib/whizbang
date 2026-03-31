@@ -4,6 +4,8 @@ using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -33,7 +35,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test payload", Value = 1 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -76,7 +79,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -117,7 +121,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -240,7 +245,8 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
       Payload = new TestMessage { Content = "test payload", Value = 1 },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -273,7 +279,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = correlationId
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -394,7 +401,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - DateTime metadata values are now supported (serialized as string)
@@ -467,7 +475,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -512,7 +521,8 @@ public class JsonMessageSerializerTests {
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -572,7 +582,8 @@ public class JsonMessageSerializerTests {
             ["bool"] = JsonSerializer.SerializeToElement(true)
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

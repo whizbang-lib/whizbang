@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
@@ -176,9 +177,10 @@ public sealed class SystemEventEmitter(
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
+          TraceParent = System.Diagnostics.Activity.Current?.Id,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     // Append to the system stream

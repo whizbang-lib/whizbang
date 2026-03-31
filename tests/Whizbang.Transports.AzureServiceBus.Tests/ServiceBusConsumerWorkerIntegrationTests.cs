@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -423,6 +424,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("integration-test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -439,6 +441,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("no-aggregate-id"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -454,6 +457,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("security-context-test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
@@ -1250,7 +1252,8 @@ public class SecurityContextHelperTests {
           Timestamp = timestamp ?? DateTimeOffset.UtcNow,
           Topic = "test-topic"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1272,7 +1275,8 @@ public class SecurityContextHelperTests {
           Topic = "test-topic",
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = "test-tenant" })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1295,7 +1299,8 @@ public class SecurityContextHelperTests {
           Topic = "test-topic",
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = tenantId })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
@@ -335,7 +337,8 @@ public class MessageSecurityIntegrationTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -350,7 +353,8 @@ public class MessageSecurityIntegrationTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -365,7 +369,8 @@ public class MessageSecurityIntegrationTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

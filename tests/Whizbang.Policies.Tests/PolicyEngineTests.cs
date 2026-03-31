@@ -2,7 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Partitioning;
 using Whizbang.Core.Policies;
@@ -29,7 +31,8 @@ public class PolicyEngineTests {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     envelope.AddHop(new MessageHop {
       ServiceInstance = new ServiceInstanceInfo {

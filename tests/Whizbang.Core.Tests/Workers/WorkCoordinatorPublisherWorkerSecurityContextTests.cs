@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -65,7 +66,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - establish security context using helper
@@ -119,7 +121,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -166,7 +169,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - should not throw
@@ -220,7 +224,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

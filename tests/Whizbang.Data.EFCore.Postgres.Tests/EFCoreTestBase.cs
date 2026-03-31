@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Pgvector;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -174,6 +175,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   protected static MessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
       Payload = JsonDocument.Parse("{}").RootElement  // Empty JSON object for testing
     };

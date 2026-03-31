@@ -1,5 +1,7 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -44,7 +46,8 @@ public class TransportManagerSubscriptionTests {
     var testEnvelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, CancellationToken.None);
     await Task.Delay(50); // Allow async processing
@@ -280,7 +283,8 @@ public class TransportManagerSubscriptionTests {
     var testEnvelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test-payload",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, CancellationToken.None);
     await Task.Delay(50); // Allow async processing

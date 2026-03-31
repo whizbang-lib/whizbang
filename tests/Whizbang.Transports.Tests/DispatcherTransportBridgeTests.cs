@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -129,7 +130,8 @@ public class DispatcherTransportBridgeTests {
               CorrelationId = requestEnvelope.GetCorrelationId(),
               CausationId = requestEnvelope.MessageId
             }
-          ]
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
         };
 
         var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
@@ -190,7 +192,8 @@ public class DispatcherTransportBridgeTests {
           },
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Publish to transport (simulates remote send)
@@ -245,7 +248,8 @@ public class DispatcherTransportBridgeTests {
           },
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - Publish serialized envelope to transport
@@ -366,7 +370,8 @@ public class DispatcherTransportBridgeTests {
               CorrelationId = requestEnvelope.GetCorrelationId(),
               CausationId = requestEnvelope.MessageId
             }
-          ]
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
         };
 
         var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");

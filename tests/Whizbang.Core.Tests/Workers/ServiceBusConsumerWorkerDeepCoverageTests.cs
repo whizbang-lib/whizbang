@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -1166,7 +1167,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
             ["AggregateId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1189,7 +1191,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
             ["AggregateId"] = JsonDocument.Parse($"\"{aggregateId}\"").RootElement
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1210,7 +1213,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
           },
           Metadata = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1234,7 +1238,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
             ["AggregateId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

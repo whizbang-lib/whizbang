@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -66,7 +67,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return AppendAsync(streamId, envelope, cancellationToken);
@@ -157,7 +159,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = hops
+        Hops = hops,
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       };
 
       yield return envelope;
@@ -204,7 +207,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = hops
+        Hops = hops,
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       };
 
       yield return envelope;
@@ -274,7 +278,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = hops
+        Hops = hops,
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       };
 
       yield return envelope;
@@ -329,7 +334,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       envelopes.Add(new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
         Payload = (TMessage)eventData,
-        Hops = hops
+        Hops = hops,
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       });
     }
 
@@ -413,7 +419,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       envelopes.Add(new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = hops
+        Hops = hops,
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       });
     }
 

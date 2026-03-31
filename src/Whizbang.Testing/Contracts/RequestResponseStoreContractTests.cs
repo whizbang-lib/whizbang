@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -141,7 +142,8 @@ public abstract class RequestResponseStoreContractTests {
     return new MessageEnvelope<TestResponse> {
       MessageId = MessageId.New(),
       Payload = new TestResponse("test response"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }

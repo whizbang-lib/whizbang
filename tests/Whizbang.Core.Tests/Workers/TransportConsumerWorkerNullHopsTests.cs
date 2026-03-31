@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -80,6 +81,7 @@ public class TransportConsumerWorkerNullHopsTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [] // Empty, not null
     };
 
@@ -104,6 +106,7 @@ public class TransportConsumerWorkerNullHopsTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -189,6 +192,8 @@ public class TransportConsumerWorkerNullHopsTests {
   /// Test envelope that has null Hops to simulate deserialization edge case.
   /// </summary>
   private sealed class TestEnvelopeWithNullHops(MessageId messageId) : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
     public MessageId MessageId { get; } = messageId;
     public object Payload => new { };
 

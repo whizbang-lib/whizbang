@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -91,7 +92,8 @@ public class SystemEventEmitterTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = default!,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -131,7 +133,8 @@ public class SystemEventEmitterTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = default!,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - This will return early due to null payload
@@ -603,7 +606,8 @@ public class SystemEventEmitterTests {
           }),
           CorrelationId = new CorrelationId(testCorrelationId)
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - This will hit the scope extraction code but return early due to [AuditEvent(Exclude=true)]
@@ -762,7 +766,8 @@ public class SystemEventEmitterTests {
           }),
           CorrelationId = new CorrelationId(testCorrelationId)
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -794,7 +799,8 @@ public class SystemEventEmitterTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -829,7 +835,8 @@ public class SystemEventEmitterTests {
             TenantId = "tenant-only"
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1239,7 +1246,8 @@ public class SystemEventEmitterTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

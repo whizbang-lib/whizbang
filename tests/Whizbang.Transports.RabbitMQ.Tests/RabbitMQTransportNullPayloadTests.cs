@@ -3,6 +3,8 @@ using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -108,6 +110,7 @@ public class RabbitMQTransportNullPayloadTests {
     var originalEnvelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -179,6 +182,7 @@ public class RabbitMQTransportNullPayloadTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("valid-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -212,6 +216,8 @@ public class RabbitMQTransportNullPayloadTests {
   /// Test envelope with null Payload to simulate deserialization edge case.
   /// </summary>
   private sealed class TestEnvelopeWithNullPayload(MessageId messageId) : IMessageEnvelope {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public MessageId MessageId { get; } = messageId;
     public object Payload => null!; // Simulates null payload from bad deserialization
     public List<MessageHop> Hops { get; } = [];

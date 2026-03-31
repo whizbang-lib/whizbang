@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -305,6 +306,7 @@ public class TransportThroughputBenchmarks {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = command,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = []
     };
 

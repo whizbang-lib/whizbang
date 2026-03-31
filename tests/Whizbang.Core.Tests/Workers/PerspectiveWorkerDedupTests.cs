@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -688,7 +689,8 @@ public class PerspectiveWorkerDedupTests {
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = MessageId.From(TrackedGuid.FromExternal(_eventId)),
         Payload = new _fakeEvent(_eventId),
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return Task.FromResult(new List<MessageEnvelope<IEvent>> { envelope });
     }

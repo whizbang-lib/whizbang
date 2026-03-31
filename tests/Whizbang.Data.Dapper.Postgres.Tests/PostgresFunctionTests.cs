@@ -1526,6 +1526,98 @@ public class PostgresFunctionTests : PostgresTestBase {
       .Because("Completed inbox messages must not be returned as work");
   }
 
+  // ========================================
+  // Batch limits: Phase 7 must respect max_work_items to prevent hot loops
+  // ========================================
+
+  /// <summary>
+  /// With 200 owned outbox messages, Phase 7 should return at most p_max_work_items (default 100).
+  /// Without this limit, the coordinator loop returns ALL messages every tick,
+  /// creating a hot loop that starves the publisher.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatch_ManyOwnedMessages_ReturnsAtMostMaxWorkItemsAsync() {
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Register instance
+    await connection.ExecuteAsync(@"
+      SELECT register_instance_heartbeat(@instanceId, 'TestService', 'test-host', 12345, NULL, @now, @leaseExpiry)",
+      new { instanceId, now, leaseExpiry = now.AddMinutes(5) });
+
+    // Insert 200 outbox messages (way more than the limit)
+    for (var i = 0; i < 200; i++) {
+      var msgId = _idProvider.NewGuid();
+      var streamId = _idProvider.NewGuid();
+      await connection.ExecuteAsync(@"
+        INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, attempts, created_at, instance_id, lease_expiry, partition_number)
+        VALUES (@messageId, 'topic', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, 0, @createdAt, @instanceId, @leaseExpiry, 1)",
+        new { messageId = msgId, streamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
+    }
+
+    // Act — call with default max (100)
+    var result = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId, p_service_name := 'TestService', p_host_name := 'test-host',
+        p_process_id := 12345, p_metadata := NULL::jsonb, p_now := @now
+      )", new { instanceId, now });
+
+    var outboxWork = result.Where(r => r.source == "outbox").ToList();
+    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(100)
+      .Because("Phase 7 must limit returned work items to prevent hot loops that starve the publisher");
+  }
+
+  /// <summary>
+  /// Per-stream limit prevents a single busy stream from consuming all work item slots.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatch_SingleBusyStream_LimitedPerStreamAsync() {
+    var instanceId = _idProvider.NewGuid();
+    var busyStreamId = _idProvider.NewGuid();
+    var otherStreamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    await connection.ExecuteAsync(@"
+      SELECT register_instance_heartbeat(@instanceId, 'TestService', 'test-host', 12345, NULL, @now, @leaseExpiry)",
+      new { instanceId, now, leaseExpiry = now.AddMinutes(5) });
+
+    // Insert 80 messages on one busy stream
+    for (var i = 0; i < 80; i++) {
+      await connection.ExecuteAsync(@"
+        INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, attempts, created_at, instance_id, lease_expiry, partition_number)
+        VALUES (@messageId, 'topic', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, 0, @createdAt, @instanceId, @leaseExpiry, 1)",
+        new { messageId = _idProvider.NewGuid(), streamId = busyStreamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
+    }
+
+    // Insert 5 messages on another stream
+    for (var i = 0; i < 5; i++) {
+      await connection.ExecuteAsync(@"
+        INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, attempts, created_at, instance_id, lease_expiry, partition_number)
+        VALUES (@messageId, 'topic', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, 0, @createdAt, @instanceId, @leaseExpiry, 1)",
+        new { messageId = _idProvider.NewGuid(), streamId = otherStreamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
+    }
+
+    // Act
+    var result = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId, p_service_name := 'TestService', p_host_name := 'test-host',
+        p_process_id := 12345, p_metadata := NULL::jsonb, p_now := @now
+      )", new { instanceId, now });
+
+    var outboxWork = result.Where(r => r.source == "outbox").ToList();
+    var busyStreamCount = outboxWork.Count(w => w.work_stream_id == busyStreamId);
+    var otherStreamCount = outboxWork.Count(w => w.work_stream_id == otherStreamId);
+
+    await Assert.That(busyStreamCount).IsLessThanOrEqualTo(25)
+      .Because("Per-stream limit prevents a single stream from consuming all slots");
+    await Assert.That(otherStreamCount).IsEqualTo(5)
+      .Because("Other streams should get their fair share");
+  }
+
   [Test]
   public async Task ProcessWorkBatch_FailedOutbox_NotReturnedBeforeScheduledTimeAsync() {
     // Arrange

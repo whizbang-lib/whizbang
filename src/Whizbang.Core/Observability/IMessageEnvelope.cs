@@ -16,6 +16,26 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
 public interface IMessageEnvelope {
   /// <summary>
+  /// Envelope schema version. Enables backward-compatible evolution of the envelope format.
+  /// Version 1: original (MessageId, Payload, Hops).
+  /// Version 2: added DispatchContext.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#envelope-versioning</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs</tests>
+  [JsonPropertyName("v")]
+  int Version { get; }
+
+  /// <summary>
+  /// Context describing how this message was dispatched (mode + source).
+  /// Used by ReceptorInvoker to prevent double-firing across lifecycle stages.
+  /// Defaults to <see cref="MessageDispatchContext.Default"/> for v1 envelopes.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#dispatch-context</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs</tests>
+  [JsonPropertyName("dc")]
+  MessageDispatchContext DispatchContext { get; }
+
+  /// <summary>
   /// Unique identifier for this specific message.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>

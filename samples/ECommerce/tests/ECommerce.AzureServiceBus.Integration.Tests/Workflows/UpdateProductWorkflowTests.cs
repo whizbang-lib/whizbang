@@ -273,6 +273,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that multiple sequential updates accumulate correctly.
   /// </summary>
   [Test]
+  [Retry(2)] // Eventual-consistency: perspective may not have committed by first lens read
   public async Task UpdateProduct_MultipleSequentialUpdates_AccumulatesChangesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");

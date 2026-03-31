@@ -269,6 +269,8 @@ public class DispatcherEventCascaderTests {
       });
     }
 
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public MessageId MessageId { get; }
     public object Payload => new { };
     public List<MessageHop> Hops => _hops;

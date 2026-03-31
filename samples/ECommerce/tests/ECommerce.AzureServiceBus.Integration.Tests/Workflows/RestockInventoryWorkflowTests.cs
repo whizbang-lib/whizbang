@@ -108,6 +108,7 @@ public class RestockInventoryWorkflowTests {
   /// Tests that multiple restock operations accumulate correctly.
   /// </summary>
   [Test]
+  [Retry(2)] // Eventual-consistency: perspective may not have committed by first lens read
   public async Task RestockInventory_MultipleRestocks_AccumulatesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange

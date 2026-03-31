@@ -46,9 +46,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
 
-  private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+  private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
+
+  private static TDbContext _initDbContext(TDbContext ctx) {
+    ArgumentNullException.ThrowIfNull(ctx);
+    ctx.Database.SetCommandTimeout(TimeSpan.FromMinutes(3));
+    return ctx;
+  }
 
   /// <summary>
   /// Gets the schema from the provided value, falling back to the default if empty/null.

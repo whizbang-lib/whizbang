@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
@@ -47,7 +49,8 @@ public class SecurityCoverageTests {
     var envelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -90,7 +93,8 @@ public class SecurityCoverageTests {
     var envelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -130,7 +134,8 @@ public class SecurityCoverageTests {
     var envelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = [firstHop, secondHop]
+      Hops = [firstHop, secondHop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -199,7 +204,8 @@ public class SecurityCoverageTests {
     var envelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = [causationHop, nullScopeHop, noChangesHop, validHop]
+      Hops = [causationHop, nullScopeHop, noChangesHop, validHop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -221,7 +227,8 @@ public class SecurityCoverageTests {
     var nullHopsEnvelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = null!
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var result1 = await extractor.ExtractAsync(nullHopsEnvelope, options, CancellationToken.None);
     await Assert.That(result1).IsNull();
@@ -230,7 +237,8 @@ public class SecurityCoverageTests {
     var emptyHopsEnvelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var result2 = await extractor.ExtractAsync(emptyHopsEnvelope, options, CancellationToken.None);
     await Assert.That(result2).IsNull();
@@ -244,7 +252,8 @@ public class SecurityCoverageTests {
         ServiceInstance = _createServiceInstance(),
         Timestamp = DateTimeOffset.UtcNow,
         Scope = null
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var result3 = await extractor.ExtractAsync(nullScopeEnvelope, options, CancellationToken.None);
     await Assert.That(result3).IsNull();
@@ -258,7 +267,8 @@ public class SecurityCoverageTests {
         ServiceInstance = _createServiceInstance(),
         Timestamp = DateTimeOffset.UtcNow,
         Scope = new ScopeDelta()
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var result4 = await extractor.ExtractAsync(noChangesEnvelope, options, CancellationToken.None);
     await Assert.That(result4).IsNull();
@@ -722,7 +732,8 @@ public class SecurityCoverageTests {
     var envelope = new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     var services = new ServiceCollection();
@@ -800,7 +811,8 @@ public class SecurityCoverageTests {
         CorrelationId = null,
         CausationId = null,
         Scope = null
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     var messageAccessor = new MessageContextAccessor();
@@ -840,7 +852,8 @@ public class SecurityCoverageTests {
     return new MessageEnvelope<CoverageTestMessage> {
       MessageId = MessageId.New(),
       Payload = new CoverageTestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -853,7 +866,8 @@ public class SecurityCoverageTests {
         ServiceInstance = _createServiceInstance(),
         Timestamp = DateTimeOffset.UtcNow,
         Topic = "test-topic"
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -870,7 +884,8 @@ public class SecurityCoverageTests {
           UserId = userId,
           TenantId = tenantId
         })
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

@@ -5,6 +5,8 @@ using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -145,6 +147,7 @@ public class AzureServiceBusTransportUnitTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("unit-test-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,

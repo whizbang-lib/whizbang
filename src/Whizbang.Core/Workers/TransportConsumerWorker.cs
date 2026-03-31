@@ -52,6 +52,8 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
+  private readonly HashSet<string> _ownedDomains;
+  private readonly string? _serviceName;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -84,7 +86,9 @@ public partial class TransportConsumerWorker : BackgroundService {
     OrderedStreamProcessor orderedProcessor,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
-    ILogger<TransportConsumerWorker> logger
+    ILogger<TransportConsumerWorker> logger,
+    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
+    IServiceInstanceProvider? serviceInstanceProvider = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -104,6 +108,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _metrics = metrics;
     _logger = logger;
+    _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    _serviceName = serviceInstanceProvider?.ServiceName;
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
@@ -324,6 +330,28 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
+
+    // Discard self-echo: owned messages from THIS service arriving back via transport.
+    // Two conditions must be true:
+    // 1. Owned namespace — message type belongs to this service's owned domains
+    // 2. Same service — the last hop's service name matches this service
+    // Messages from OTHER services always pass through (different service name in hop).
+    if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null) {
+      var isSelfEcho = _isSelfEcho(envelope);
+      var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
+      var isOwned = _isOwnedNamespace(ns);
+      if (isSelfEcho && isOwned) {
+        LogSelfEchoDiscarded(_logger, messageType, _serviceName);
+        _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+        return;
+      }
+
+      // Owned commands from other services fall through to normal inbox processing.
+      // The PostInbox filter in ReceptorInvoker allows owned commands to fire:
+      //   isPostInbox && (isOwned ? isEvent : !isEvent) → skip owned EVENTS (self-echo),
+      //   but fire owned COMMANDS (cross-service delivery).
+      // This preserves full scope context (tenant, security) established by the inbox pipeline.
+    }
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
 
@@ -797,4 +825,45 @@ public partial class TransportConsumerWorker : BackgroundService {
     Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
   )]
   private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
+
+  /// <summary>Logs that a self-echo message was discarded (owned event from this service arriving back via transport).</summary>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Self-echo discarded: {MessageType} from {ServiceName}"
+  )]
+  private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
+
+  /// <summary>
+  /// Checks if the message originated from this service (self-echo).
+  /// The last hop is the most recent — it identifies the service that dispatched the message.
+  /// </summary>
+  private bool _isSelfEcho(IMessageEnvelope envelope) {
+    if (_serviceName is null || envelope.Hops.Count == 0) {
+      return false;
+    }
+    var lastHop = envelope.Hops[^1];
+    return string.Equals(lastHop.ServiceInstance.ServiceName, _serviceName, StringComparison.OrdinalIgnoreCase);
+  }
+
+  /// <summary>
+  /// Checks if the given namespace is owned by this service.
+  /// Supports hierarchical matching: "A.B" owns "A.B.C.D".
+  /// </summary>
+  private bool _isOwnedNamespace(string? ns) {
+    if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
+      return false;
+    }
+    if (_ownedDomains.Contains(ns)) {
+      return true;
+    }
+    foreach (var owned in _ownedDomains) {
+      var prefix = owned.EndsWith('.') ? owned : owned + ".";
+      if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Namespace extraction moved to TypeNameFormatter.GetPayloadNamespace (testable utility)
 }

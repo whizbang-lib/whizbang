@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
@@ -45,7 +47,8 @@ public class EventEnvelopeJsonbAdapterScopeTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = scopeDelta
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -95,7 +98,8 @@ public class EventEnvelopeJsonbAdapterScopeTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

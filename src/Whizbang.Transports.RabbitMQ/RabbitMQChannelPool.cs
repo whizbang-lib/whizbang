@@ -100,6 +100,33 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
     _availableChannels.Clear();
     _semaphore.Dispose();
   }
+
+  /// <summary>
+  /// Clears all pooled channels, disposing stale ones.
+  /// Call after connection recovery to prevent stale channels from causing CHANNEL_ERROR.
+  /// New channels will be created on the recovered connection by subsequent RentAsync calls.
+  /// </summary>
+  public void Reset() {
+    lock (_lock) {
+      foreach (var channel in _allChannels) {
+        try {
+          channel.Dispose();
+        } catch {
+          // Ignore disposal errors on stale channels
+        }
+      }
+      _allChannels.Clear();
+    }
+
+    // Drain available bag (channels already disposed above)
+    while (_availableChannels.TryTake(out _)) { }
+
+    // Reset semaphore to full capacity so new channels can be created
+    // Drain any existing permits, then release maxChannels
+    while (_semaphore.CurrentCount < maxChannels) {
+      _semaphore.Release();
+    }
+  }
 }
 
 /// <summary>

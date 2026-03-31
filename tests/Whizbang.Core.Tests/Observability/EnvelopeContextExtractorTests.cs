@@ -2,7 +2,9 @@ using System.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 
@@ -245,7 +247,8 @@ public class EnvelopeContextExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = Whizbang.Core.ValueObjects.MessageId.New(),
       Payload = new TestMessage(),
-      Hops = hops
+      Hops = hops,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

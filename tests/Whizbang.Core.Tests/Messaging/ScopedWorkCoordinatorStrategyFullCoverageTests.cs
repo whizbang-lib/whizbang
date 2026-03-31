@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
@@ -500,7 +501,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelope = new MessageEnvelope<_coverageEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _coverageEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -537,7 +539,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelope = new MessageEnvelope<_coverageEvent2> {
       MessageId = MessageId.From(messageId),
       Payload = new _coverageEvent2(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -567,7 +570,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelope = new MessageEnvelope<_coverageEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _coverageEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -593,7 +597,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelope = new MessageEnvelope<_coverageEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _coverageEvent1(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
@@ -619,7 +624,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelope = new MessageEnvelope<_coverageEvent2> {
       MessageId = MessageId.From(messageId),
       Payload = new _coverageEvent2(),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;

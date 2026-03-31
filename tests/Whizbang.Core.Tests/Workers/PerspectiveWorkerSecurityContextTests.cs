@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -1072,7 +1073,8 @@ public class PerspectiveWorkerSecurityContextTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act: Simulate what PerspectiveWorker._establishSecurityContextAsync does when extraction fails
@@ -1268,7 +1270,8 @@ public class PerspectiveWorkerSecurityContextTests {
               Type = HopType.Current,
               ServiceInstance = ServiceInstanceInfo.Unknown,
               Scope = scopeDelta
-            }]
+            }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           };
 
           result.Add(envelope);
@@ -1332,7 +1335,8 @@ public class PerspectiveWorkerSecurityContextTests {
               Type = HopType.Current,
               ServiceInstance = ServiceInstanceInfo.Unknown,
               Scope = null  // NO SCOPE - GetCurrentScope() will return null
-            }]
+            }],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
           };
 
           result.Add(envelope);

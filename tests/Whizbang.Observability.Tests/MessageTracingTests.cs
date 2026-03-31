@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
@@ -47,6 +49,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [firstHop]
     };
 
@@ -70,6 +73,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -102,6 +106,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [firstHop]
     };
 
@@ -116,6 +121,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Origin",
@@ -163,6 +169,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [hop0]
     };
 
@@ -205,6 +212,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -231,6 +239,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -284,6 +293,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -307,6 +317,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -360,6 +371,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -383,6 +395,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -436,6 +449,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -459,6 +473,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -512,6 +527,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -535,6 +551,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [new MessageHop {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Test",
@@ -601,6 +618,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -629,6 +647,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -657,6 +676,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -705,6 +725,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -760,6 +781,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -789,6 +811,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -826,6 +849,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -887,6 +911,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -940,6 +965,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1097,6 +1123,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test",
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [hop]
     };
     var scope = envelope.GetCurrentScope();
@@ -1212,6 +1239,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1258,6 +1286,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1333,6 +1362,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1404,6 +1434,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1447,6 +1478,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1490,6 +1522,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1533,6 +1566,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1579,6 +1613,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 
@@ -1625,6 +1660,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -1664,6 +1700,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -1709,6 +1746,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [
         new MessageHop {
 

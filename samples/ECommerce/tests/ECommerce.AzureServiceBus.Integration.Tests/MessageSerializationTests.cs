@@ -3,6 +3,8 @@ using System.Text.Json;
 using ECommerce.Contracts.Commands;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -127,6 +129,7 @@ public class MessageSerializationTests {
     var envelope = new MessageEnvelope<CreateProductCommand> {
       MessageId = originalMessageId,
       Payload = command,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -184,6 +187,7 @@ public class MessageSerializationTests {
     var envelope = new MessageEnvelope<CreateOrderCommand> {
       MessageId = originalMessageId,
       Payload = command,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 

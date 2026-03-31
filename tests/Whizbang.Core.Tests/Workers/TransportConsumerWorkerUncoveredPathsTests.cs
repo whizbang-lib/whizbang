@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -669,9 +670,10 @@ public class TransportConsumerWorkerUncoveredPathsTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = ServiceInstanceInfo.Unknown
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -737,7 +739,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -862,6 +865,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
+    // Wait for both subscriptions (one per destination) — signal-based, deterministic
+    await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
     await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -881,9 +886,10 @@ public class TransportConsumerWorkerUncoveredPathsTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = ServiceInstanceInfo.Unknown
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -906,7 +912,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -915,7 +922,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     return new InboxWork {
       MessageId = eventId,
@@ -928,7 +936,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = new MessageId(eventId),
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1053,9 +1062,10 @@ public class TransportConsumerWorkerUncoveredPathsTests {
             new MessageHop {
               Type = HopType.Current,
               Timestamp = DateTimeOffset.UtcNow,
-              ServiceInstance = ServiceInstanceInfo.Unknown,
+              ServiceInstance = ServiceInstanceInfo.Unknown
             }
-          ]
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
         },
         MessageType = _messageType,
         StreamId = _expectedMessageId

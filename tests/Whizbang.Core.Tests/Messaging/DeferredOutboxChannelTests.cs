@@ -1,3 +1,4 @@
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -199,7 +200,8 @@ public class DeferredOutboxChannelTests {
     return new MessageEnvelope<System.Text.Json.JsonElement> {
       MessageId = new MessageId(messageId),
       Payload = json,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 }

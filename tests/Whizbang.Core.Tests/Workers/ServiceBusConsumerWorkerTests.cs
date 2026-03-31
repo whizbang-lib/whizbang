@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -38,7 +39,8 @@ public static class ServiceBusConsumerWorkerTests {
     var envelope = new MessageEnvelope<ServiceBusWorkerTestEvent> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return envelope;

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
@@ -112,7 +113,8 @@ public class DispatcherSendAsyncSyncTests {
           Timestamp = DateTimeOffset.UtcNow,
           Type = HopType.Current
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Call InvokeAsync which should check sync attributes

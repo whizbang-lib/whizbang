@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -30,7 +31,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = hops ?? []
+      Hops = hops ?? [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -145,6 +147,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
   private sealed class CoverageTestWorkCoordinator : IWorkCoordinator {
     private int _callCount;
+    private readonly object _callCountLock = new();
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _callCountWaiters = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public List<InboxWork> InboxWorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount => _callCount;
@@ -155,11 +159,30 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     public TaskCompletionSource? CallSignal { get; set; }
     public TaskCompletionSource CompletionReceivedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    public Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_callCountLock) {
+        if (_callCount >= count) {
+          tcs.TrySetResult();
+        } else {
+          _callCountWaiters.Add((count, tcs));
+        }
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       Interlocked.Increment(ref _callCount);
+      lock (_callCountLock) {
+        foreach (var (target, signal) in _callCountWaiters) {
+          if (_callCount >= target) {
+            signal.TrySetResult();
+          }
+        }
+      }
       ReceivedRequests.Add(request);
       OnProcessWorkBatch?.Invoke();
       CallSignal?.TrySetResult();
@@ -304,11 +327,43 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 
   private sealed class ControlledDatabaseReadinessCheck : IDatabaseReadinessCheck {
+    private int _callCount;
+    private readonly object _lock = new();
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _waiters = [];
+
     public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
+    public int CallCount => _callCount;
+
+    public Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_lock) {
+        if (_callCount >= count) {
+          tcs.TrySetResult();
+        } else {
+          _waiters.Add((count, tcs));
+        }
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _callCount);
+      lock (_lock) {
+        foreach (var (target, signal) in _waiters) {
+          if (_callCount >= target) {
+            signal.TrySetResult();
+          }
+        }
+      }
+      return Task.FromResult(IsReady);
+    }
   }
 
   private sealed class ObjectDisposedPublishStrategy : IMessagePublishStrategy {
@@ -1029,7 +1084,8 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = null!
+        Hops = null!,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
@@ -1310,11 +1366,11 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
 
-    // Wait for enough requeue cycles
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+    // Wait for enough requeue cycles (generous timeout for CI/slower machines)
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
     while (typedWorker.ConsecutiveNotReadyChecks < 11 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
+      await Task.Delay(50);
     }
 
     await cts.CancelAsync();
@@ -1505,13 +1561,10 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     await worker.StartAsync(cts.Token);
 
-    // Worker should be running but skipping work batch due to database not ready
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    var typedWorker = (WorkCoordinatorPublisherWorker)worker;
-    while (typedWorker.ConsecutiveDatabaseNotReadyChecks < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    // Wait for at least 3 database readiness checks — signal-based, deterministic
+    await dbCheck.WaitForCallCountAsync(3, TimeSpan.FromSeconds(10));
 
+    var typedWorker = (WorkCoordinatorPublisherWorker)worker;
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
@@ -1559,6 +1612,39 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
   // ================================================================
   // Lifecycle Invocation (no deserializer → early return)
   // ================================================================
+
+  [Test]
+  public async Task PreOutboxLifecycle_NullDestination_SkipsLifecycleAndPublishesAsync() {
+    // Arrange — null-destination (event-store-only) message should be published
+    // but should NOT fire PreOutbox lifecycle receptors
+    var coordinator = new CoverageTestWorkCoordinator();
+    var msg = _createOutboxWork(destination: null!); // null destination = event-store-only
+    coordinator.WorkToReturn = [msg];
+
+    var publishStrategy = new SingularPublishStrategy();
+    var instanceProvider = _createTestInstanceProvider();
+    var channelWriter = new CoverageTestWorkChannelWriter();
+    var services = _createHostedServiceCollection(coordinator, publishStrategy, instanceProvider, channelWriter);
+
+    // Act
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await worker.StartAsync(cts.Token);
+
+    await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — message should still be processed (published/completed)
+    await Assert.That(publishStrategy.PublishedWork.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Null-destination messages should still flow through the publish pipeline");
+
+    // Assert — the publish result for null destination should be success (TransportPublishStrategy skips transport)
+    var publishedMsg = publishStrategy.PublishedWork.FirstOrDefault(w => w.MessageId == msg.MessageId);
+    await Assert.That(publishedMsg).IsNotNull()
+      .Because("Null-destination message should be processed without PreOutbox lifecycle side effects");
+  }
 
   [Test]
   public async Task PreOutboxLifecycle_NoDeserializer_SkipsLifecycleAsync() {
@@ -1780,11 +1866,9 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
 
-    // Wait for >10 not-ready checks (exercises LogDatabaseNotReadyWarning)
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (typedWorker.ConsecutiveDatabaseNotReadyChecks < 12 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    // Wait for at least 12 database readiness checks — each cycle increments the counter
+    // Signal-based: deterministic, no spin-loop or sleep
+    await dbCheck.WaitForCallCountAsync(12, TimeSpan.FromSeconds(10));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

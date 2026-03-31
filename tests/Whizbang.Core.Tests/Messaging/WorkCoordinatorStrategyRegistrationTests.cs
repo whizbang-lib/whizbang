@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -518,6 +519,10 @@ public class WorkCoordinatorStrategyRegistrationTests {
       return true;
     }
     public void Complete() { }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 
   private sealed class RegFakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
@@ -528,7 +533,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
       var envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return Task.FromResult(new WorkBatch {
         OutboxWork = [
@@ -566,7 +572,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     return new OutboxMessage {
       MessageId = messageId,

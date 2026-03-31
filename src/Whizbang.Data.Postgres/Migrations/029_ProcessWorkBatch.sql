@@ -90,6 +90,10 @@ DECLARE
   v_completed_events JSONB;
   v_completion RECORD;
 
+  -- Batch limits from wh_settings (read once per tick, defaults if not configured)
+  v_max_work_items INTEGER;
+  v_max_work_items_per_stream INTEGER;
+
   -- Arrays to track successfully stored events (for Phase 4.6 and 4.7 filtering)
   v_stored_outbox_events UUID[] := '{}';
   v_stored_inbox_events UUID[] := '{}';
@@ -107,6 +111,24 @@ DECLARE
   v_has_outbox_work BOOLEAN := false;
   v_has_inbox_work BOOLEAN := false;
 BEGIN
+  -- Read settings from wh_settings (fall back to defaults if not configured)
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'max_work_items_per_tick'),
+    100
+  ) INTO v_max_work_items;
+
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'max_work_items_per_stream'),
+    25
+  ) INTO v_max_work_items_per_stream;
+
+  -- Stale threshold: override from wh_settings if configured, else use function parameter
+  -- Default 30s (not 600s) — 30 missed 1-second heartbeats is more than enough to declare dead
+  p_stale_threshold_seconds := COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stale_threshold_seconds'),
+    p_stale_threshold_seconds
+  );
+
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
   v_stale_cutoff := p_now - (p_stale_threshold_seconds || ' seconds')::INTERVAL;
@@ -928,13 +950,15 @@ BEGIN
   END IF;
 
   -- Return outbox work (first row includes acknowledgement counts)
+  -- Uses per-stream ranking to prevent a single busy stream from starving others,
+  -- then applies a global LIMIT to prevent hot loops.
   RETURN QUERY
-  WITH ordered_outbox AS (
+  WITH eligible_outbox AS (
     SELECT
       o.*,
       temp_new.message_id as new_message_id,
       temp_orphaned.message_id as orphaned_message_id,
-      ROW_NUMBER() OVER (ORDER BY o.message_id) as row_num
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) as stream_rank
     FROM wh_outbox o
     LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
     LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
@@ -948,6 +972,13 @@ BEGIN
           AND blocked.processed_at IS NULL AND blocked.created_at < o.created_at
           AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
       )
+  ),
+  ordered_outbox AS (
+    SELECT e.*,
+      ROW_NUMBER() OVER (ORDER BY e.created_at) as row_num
+    FROM eligible_outbox e
+    WHERE e.stream_rank <= v_max_work_items_per_stream
+    LIMIT v_max_work_items
   )
   SELECT
     v_rank as instance_rank,
@@ -972,13 +1003,14 @@ BEGIN
   FROM ordered_outbox o;
 
   -- Return inbox work (first row includes acknowledgement counts if no outbox work)
+  -- Same per-stream ranking + global limit as outbox.
   RETURN QUERY
-  WITH ordered_inbox AS (
+  WITH eligible_inbox AS (
     SELECT
       i.*,
       temp_new.message_id as new_message_id,
       temp_orphaned.message_id as orphaned_message_id,
-      ROW_NUMBER() OVER (ORDER BY i.message_id) as row_num
+      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) as stream_rank
     FROM wh_inbox i
     LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
     LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
@@ -992,6 +1024,13 @@ BEGIN
           AND blocked.processed_at IS NULL AND blocked.received_at < i.received_at
           AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
       )
+  ),
+  ordered_inbox AS (
+    SELECT e.*,
+      ROW_NUMBER() OVER (ORDER BY e.received_at) as row_num
+    FROM eligible_inbox e
+    WHERE e.stream_rank <= v_max_work_items_per_stream
+    LIMIT v_max_work_items
   )
   SELECT
     v_rank as instance_rank,
@@ -1045,14 +1084,16 @@ BEGIN
     AND rp.completed_at IS NULL;
 
   -- Return perspective work (first row includes acknowledgement counts if no outbox/inbox work)
+  -- Uses per-stream+perspective ranking to prevent a single busy stream from starving others,
+  -- then applies a global LIMIT to prevent hot loops (same pattern as outbox/inbox).
   RETURN QUERY
-  WITH ordered_perspective AS (
+  WITH eligible_perspective AS (
     SELECT
       pe.*,
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
       es.event_type,  -- Get event_type from event_store for perspective worker
-      ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.event_id) as row_num
+      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank
     FROM wh_perspective_events pe
     INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
@@ -1071,6 +1112,13 @@ BEGIN
       -- Note: pe.processed_at IS NULL already prevents re-processing individual events
       -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
       -- Filtering on checkpoint status would block all subsequent events in the stream
+  ),
+  ordered_perspective AS (
+    SELECT e.*,
+      ROW_NUMBER() OVER (ORDER BY e.stream_id, e.perspective_name, e.event_id) as row_num
+    FROM eligible_perspective e
+    WHERE e.stream_rank <= v_max_work_items_per_stream
+    LIMIT v_max_work_items
   )
   SELECT
     v_rank as instance_rank,

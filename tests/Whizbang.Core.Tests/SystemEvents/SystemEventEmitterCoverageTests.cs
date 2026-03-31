@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -41,7 +42,8 @@ public class SystemEventEmitterCoverageTests {
             UserId = "user-only-123"
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -77,7 +79,8 @@ public class SystemEventEmitterCoverageTests {
           CorrelationId = new CorrelationId(correlationGuid)
           // No Scope set
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -104,7 +107,8 @@ public class SystemEventEmitterCoverageTests {
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "EmptyHopsPayload",
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -142,7 +146,8 @@ public class SystemEventEmitterCoverageTests {
           }),
           CorrelationId = new CorrelationId(correlationGuid)
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -626,7 +631,8 @@ public class SystemEventEmitterCoverageTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -666,7 +672,8 @@ public class SystemEventEmitterCoverageTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = delta
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
