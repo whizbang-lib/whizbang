@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Resilience;
@@ -19,17 +18,52 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Tests that owned events arriving from transport are discarded before writing to inbox.
-/// This prevents double-persistence (outbox + inbox → event_store × 2) and double handler execution.
+/// Tests that self-echo messages (owned events from THIS service) are discarded at the transport
+/// consumer before writing to inbox. Messages from OTHER services must pass through.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerWorker.cs</code-under-test>
 [NotInParallel("OwnedEventDiscard")]
 public class TransportConsumerWorkerOwnedEventDiscardTests {
 
+  private const string THIS_SERVICE = "ChatService";
+  private const string OTHER_SERVICE = "BffService";
+  private const string OWNED_NAMESPACE = "MyApp.Contracts.Chat";
+  private const string OWNED_EVENT_TYPE = "MyApp.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, MyApp.Contracts";
+
+  /// <summary>
+  /// Self-echo: owned event from THIS service with LocalDispatch → discard.
+  /// The event was already dispatched locally via cascade + persisted via outbox.
+  /// </summary>
   [Test]
-  public async Task OwnedEvent_FromTransport_IsDiscardedBeforeInboxAsync() {
-    // Arrange — transport delivers an owned event (namespace matches OwnDomains)
-    var messageId = MessageId.New();
+  public async Task SelfEcho_OwnedEvent_FromThisService_IsDiscardedAsync() {
+    var worker = _createWorker(ownedDomains: [OWNED_NAMESPACE], serviceName: THIS_SERVICE);
+    await worker.StartAsync();
+
+    // Simulate: owned event with LocalDispatch, from THIS service
+    var envelope = _createEnvelope(mode: DispatchModes.Both, sourceServiceName: THIS_SERVICE);
+
+    try {
+      await worker.SimulateMessageAsync(envelope, OWNED_EVENT_TYPE);
+    } catch {
+      // Processing may throw after discard check — we only care about inbox write
+    }
+
+    await worker.StopAsync();
+    await Assert.That(worker.QueuedInboxCount).IsEqualTo(0)
+      .Because("Self-echo (owned event from this service) should be discarded before inbox");
+  }
+
+  // Note: "Command from other service passes through" and "Event from other service passes through"
+  // tests require full IEnvelopeSerializer infrastructure to reach QueueInboxMessage.
+  // The self-echo discard check (LocalDispatch + same service name + owned namespace) ensures
+  // other-service messages pass through by definition — they fail the _isSelfEcho check.
+  // Integration coverage is in ECommerce.RabbitMQ.Integration.Tests.
+
+  // ========================================
+  // Test Infrastructure
+  // ========================================
+
+  private static TestWorkerWrapper _createWorker(string[] ownedDomains, string serviceName) {
     var transport = new StubTransport();
     var workStrategy = new StubWorkStrategy();
     var options = new TransportConsumerOptions();
@@ -38,12 +72,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    services.Configure<RoutingOptions>(opts => {
-      opts.OwnDomains("MyApp.Contracts.Chat");
-    });
+    services.Configure<RoutingOptions>(opts => { opts.OwnDomains(ownedDomains); });
     var sp = services.BuildServiceProvider();
 
-    var routingOptions = sp.GetRequiredService<IOptions<RoutingOptions>>();
+    var instanceProvider = new StubServiceInstanceProvider(serviceName);
     var worker = new TransportConsumerWorker(
       transport, options, new SubscriptionResilienceOptions(),
       sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
@@ -51,40 +83,14 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: routingOptions
+      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
+      serviceInstanceProvider: instanceProvider
     );
 
-    using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
-
-    // Act — simulate owned event arriving from transport
-    var envelope = _createTestEnvelope();
-    const string envelopeType = "MyApp.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, MyApp.Contracts";
-
-    try {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    } catch {
-      // May throw during processing — we only care about inbox write
-    }
-
-    cts.Cancel();
-
-    // Assert — owned event should NOT reach inbox (discarded before QueueInboxMessage)
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(0)
-      .Because("Owned events from transport should be discarded — they already fired locally via cascade");
+    return new TestWorkerWrapper(worker, transport, workStrategy);
   }
 
-  // Note: Non-owned event and backward-compat (no owned domains) tests require full
-  // serialization infrastructure (IEnvelopeSerializer) to verify inbox writes.
-  // The ReceptorInvoker PostInbox ownership tests cover the handler-level filtering.
-  // The ECommerce.RabbitMQ.Integration.Tests cover the full end-to-end path.
-
-  // ========================================
-  // Test Infrastructure
-  // ========================================
-
-  private static MessageEnvelope<JsonElement> _createTestEnvelope() {
+  private static MessageEnvelope<JsonElement> _createEnvelope(DispatchModes mode, string sourceServiceName) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -92,13 +98,56 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = sourceServiceName,
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 1234
+          }
         }
       ],
       DispatchContext = new MessageDispatchContext {
-        Mode = DispatchModes.Both,
+        Mode = mode,
         Source = MessageSource.Outbox
       }
+    };
+  }
+
+  private sealed class TestWorkerWrapper(
+    TransportConsumerWorker worker,
+    StubTransport transport,
+    StubWorkStrategy strategy) : IDisposable {
+    private CancellationTokenSource? _cts;
+
+    public int QueuedInboxCount => strategy.QueuedInboxCount;
+
+    public async Task StartAsync() {
+      _cts = new CancellationTokenSource();
+      _ = worker.StartAsync(_cts.Token);
+      await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
+    }
+
+    public Task SimulateMessageAsync(IMessageEnvelope envelope, string envelopeType) =>
+      transport.SimulateMessageReceivedAsync(envelope, envelopeType);
+
+    public async Task StopAsync() {
+      _cts?.Cancel();
+      await Task.Yield();
+    }
+
+    public void Dispose() => _cts?.Dispose();
+  }
+
+  private sealed class StubServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
+    public Guid InstanceId => Guid.NewGuid();
+    public string ServiceName => serviceName;
+    public string HostName => "test-host";
+    public int ProcessId => 1234;
+    public ServiceInstanceInfo ToInfo() => new() {
+      ServiceName = serviceName,
+      InstanceId = InstanceId,
+      HostName = HostName,
+      ProcessId = ProcessId
     };
   }
 
@@ -108,7 +157,6 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
-
     public void Dispose() => _subscribeSignal.Dispose();
 
     public async Task WaitForSubscriptionAsync(TimeSpan timeout) {
@@ -128,8 +176,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default) {
+      TransportDestination destination, CancellationToken cancellationToken = default) {
       _handler = handler;
       _subscribeSignal.Release();
       return Task.FromResult<ISubscription>(new StubSubscription());
