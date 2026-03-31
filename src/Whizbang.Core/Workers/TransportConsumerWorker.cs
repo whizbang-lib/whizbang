@@ -396,6 +396,8 @@ public partial class TransportConsumerWorker : BackgroundService {
       _metrics?.InboxProcessingDuration.Record(processingSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       // 4. PostInbox lifecycle
+      // The LifecycleStageTracker in ReceptorInvoker prevents double-fire if the
+      // WorkCoordinatorPublisherWorker also picks up the same message before completion flush.
       await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scope.ServiceProvider, cancellationToken);
 
       // 5. Report completions/failures
