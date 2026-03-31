@@ -228,7 +228,7 @@ public partial class ServiceBusConsumerWorker(
   }
 
   /// <summary>
-  /// Invokes PreInbox lifecycle stages (PreInboxAsync + PreInboxInline) for all work items.
+  /// Invokes PreInbox lifecycle stages (PreInboxDetached + PreInboxInline) for all work items.
   /// </summary>
   private async Task _invokePreInboxLifecycleAsync(
     List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
@@ -240,7 +240,7 @@ public partial class ServiceBusConsumerWorker(
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PreInboxAsync,
+        CurrentStage = LifecycleStage.PreInboxDetached,
         EventId = null,
         StreamId = null,
         LastProcessedEventId = null,
@@ -248,11 +248,11 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
-      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
+      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
-      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
     }
   }
 
@@ -293,7 +293,7 @@ public partial class ServiceBusConsumerWorker(
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PostInboxAsync,
+        CurrentStage = LifecycleStage.PostInboxDetached,
         EventId = null,
         StreamId = null,
         LastProcessedEventId = null,
@@ -301,12 +301,12 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
-      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
+      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
-      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
       if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
         await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, ct);
@@ -324,24 +324,24 @@ public partial class ServiceBusConsumerWorker(
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, typedEnvelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, ct);
+        eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
       coordinator.AbandonTracking(eventId);
     } else {
-      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, ct);
-      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleDetached };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext, ct);
+      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);
-      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
     }
   }
 
-  private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
-    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+  private static async Task _invokeImmediateDetachedAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
+    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
   }
 
   /// <summary>
