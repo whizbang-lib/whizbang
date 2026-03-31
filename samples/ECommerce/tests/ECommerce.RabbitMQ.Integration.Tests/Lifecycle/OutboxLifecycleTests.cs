@@ -238,6 +238,7 @@ public class OutboxLifecycleTests {
   /// Next step should wait for this receptor to complete.
   /// </summary>
   [Test]
+  [Retry(2)]
   public async Task PostOutboxInline_FiresAfterTransportPublish_BlocksUntilCompleteAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");

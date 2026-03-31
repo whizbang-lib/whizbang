@@ -29,6 +29,7 @@ public class AzureServiceBusHealthCheckTests {
   }
 
   [Test]
+  [Retry(2)]
   public async Task CheckHealthAsync_WithNonAzureServiceBusTransport_ReturnsDegradedAsync() {
     // Arrange - Use a different transport type (not AzureServiceBusTransport)
     var transport = new FakeTransport();

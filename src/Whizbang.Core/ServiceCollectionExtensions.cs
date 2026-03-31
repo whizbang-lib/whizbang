@@ -234,6 +234,9 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<PerspectiveMetrics>();
     services.TryAddSingleton<LifecycleMetrics>();
     services.TryAddSingleton<LifecycleCoordinatorMetrics>();
+
+    // Cross-worker dedup: prevents same message+stage from firing twice
+    services.TryAddSingleton<Messaging.LifecycleStageTracker>();
   }
 
   /// <summary>
