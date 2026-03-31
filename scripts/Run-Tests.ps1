@@ -1947,7 +1947,7 @@ try {
 
             if ($finalTotal -gt 0) {
                 Write-Host ""
-                Write-Host "Total Tests: $finalTotal" -ForegroundColor White
+                Write-Host "Total Tests: $finalTotal ($($perProjectProgress.Count) projects tracked)" -ForegroundColor White
                 Write-Host "Passed: $finalPassed" -ForegroundColor Green
                 Write-Host "Failed: $finalFailed" -ForegroundColor $(if ($finalFailed -gt 0) { "Red" } else { "Green" })
                 Write-Host "Skipped: $finalSkipped" -ForegroundColor Yellow
