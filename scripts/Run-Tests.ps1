@@ -1927,24 +1927,46 @@ try {
             Write-Host "Passed: ~$totalPassed" -ForegroundColor Green
             Write-Host "Failed: $actualFailedCount (stopped on first failure)" -ForegroundColor Red
             Write-Host "Skipped: ~$totalSkipped" -ForegroundColor Yellow
-        } elseif ($completedPassed + $completedFailed + $completedSkipped -gt 0) {
-            # Use completed counts only — these are the authoritative sums from project summary lines
-            $finalTotal = $completedPassed + $completedFailed + $completedSkipped
-            Write-Host ""
-            Write-Host "Total Tests: $finalTotal" -ForegroundColor White
-            Write-Host "Passed: $completedPassed" -ForegroundColor Green
-            Write-Host "Failed: $completedFailed" -ForegroundColor $(if ($completedFailed -gt 0) { "Red" } else { "Green" })
-            Write-Host "Skipped: $completedSkipped" -ForegroundColor Yellow
         } else {
-            Write-Host "No test results parsed" -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "Possible reasons:" -ForegroundColor Yellow
-            Write-Host "  1. Build failed (check BUILD ERRORS section above)" -ForegroundColor Gray
-            Write-Host "  2. Test filter matched zero tests (try broader pattern)" -ForegroundColor Gray
-            Write-Host "  3. Project filter matched zero projects (check project name)" -ForegroundColor Gray
-            Write-Host ""
-            Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
-            Write-Host "  pwsh scripts/Run-Tests.ps1 -AiMode" -ForegroundColor Gray
+            # Compute final totals from all available sources:
+            # 1. $completedPassed/Failed/Skipped from "succeeded:/failed:/skipped:" summary lines
+            # 2. $perProjectProgress from "[+N/xN/?N] Assembly.dll" progress lines (last seen per project)
+            # Note: TUnit with --max-parallel-test-modules may not emit summary lines at all,
+            # so we fall back to summing the last-seen progress per project.
+            $progressPassed = 0; $progressFailed = 0; $progressSkipped = 0
+            foreach ($proj in $perProjectProgress.Values) {
+                $progressPassed += $proj.Passed
+                $progressFailed += $proj.Failed
+                $progressSkipped += $proj.Skipped
+            }
+            # Use whichever source has higher counts (completed summaries are authoritative when available)
+            $finalPassed = [Math]::Max($completedPassed, $progressPassed)
+            $finalFailed = [Math]::Max($completedFailed, $progressFailed)
+            $finalSkipped = [Math]::Max($completedSkipped, $progressSkipped)
+            $finalTotal = $finalPassed + $finalFailed + $finalSkipped
+
+            if ($finalTotal -gt 0) {
+                Write-Host ""
+                Write-Host "Total Tests: $finalTotal" -ForegroundColor White
+                Write-Host "Passed: $finalPassed" -ForegroundColor Green
+                Write-Host "Failed: $finalFailed" -ForegroundColor $(if ($finalFailed -gt 0) { "Red" } else { "Green" })
+                Write-Host "Skipped: $finalSkipped" -ForegroundColor Yellow
+
+                # Update totals for status determination
+                $totalPassed = $finalPassed
+                $totalFailed = $finalFailed
+                $totalSkipped = $finalSkipped
+            } else {
+                Write-Host "No test results parsed" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "Possible reasons:" -ForegroundColor Yellow
+                Write-Host "  1. Build failed (check BUILD ERRORS section above)" -ForegroundColor Gray
+                Write-Host "  2. Test filter matched zero tests (try broader pattern)" -ForegroundColor Gray
+                Write-Host "  3. Project filter matched zero projects (check project name)" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
+                Write-Host "  pwsh scripts/Run-Tests.ps1 -AiMode" -ForegroundColor Gray
+            }
         }
 
         if ($projectErrors.Count -gt 0) {
