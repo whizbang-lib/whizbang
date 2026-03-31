@@ -355,8 +355,16 @@ public partial class TransportConsumerWorker : BackgroundService {
       // enabling in-memory dedup guards to catch duplicates from dual-dispatch patterns
       // (e.g., BffService sends command via transport AND OrchestratorAgent dispatches locally).
       if (isOwned && !isSelfEcho && _lifecycleMessageDeserializer is not null) {
-        var deserializedMessage = _lifecycleMessageDeserializer.DeserializeFromJsonElement(
-          ((MessageEnvelope<System.Text.Json.JsonElement>)envelope).Payload, envelopeType);
+        // Extract the payload: envelope may be strongly-typed (MessageEnvelope<TCommand>)
+        // or raw JSON (MessageEnvelope<JsonElement>) depending on transport deserialization.
+        object? deserializedMessage;
+        if (envelope is MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope) {
+          deserializedMessage = _lifecycleMessageDeserializer.DeserializeFromJsonElement(
+            jsonEnvelope.Payload, envelopeType);
+        } else {
+          // Strongly-typed envelope — extract payload directly
+          deserializedMessage = envelope.Payload;
+        }
         if (deserializedMessage is IMessage and not IEvent) {
           if (_logger.IsEnabled(LogLevel.Debug)) {
             _logger.LogDebug("Re-dispatching owned command {MessageType} locally from {SourceService}",
