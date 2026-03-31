@@ -241,6 +241,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var sw = System.Diagnostics.Stopwatch.StartNew();
     List<WorkBatchRow> results;
+    var previousTimeout = _dbContext.Database.GetCommandTimeout();
+    _dbContext.Database.SetCommandTimeout(TimeSpan.FromMinutes(3));
     try {
       results = await _dbContext.Database
         .SqlQueryRaw<WorkBatchRow>(
@@ -276,6 +278,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       metrics?.ProcessBatchErrors.Add(1, new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
       throw;
     } finally {
+      _dbContext.Database.SetCommandTimeout(previousTimeout);
       sw.Stop();
       metrics?.ProcessBatchDuration.Record(sw.Elapsed.TotalMilliseconds);
       metrics?.ProcessBatchCalls.Add(1);
