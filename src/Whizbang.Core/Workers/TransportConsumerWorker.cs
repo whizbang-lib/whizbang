@@ -331,19 +331,17 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-    // Discard self-echo: messages from THIS service that were already dispatched locally.
-    // Three conditions must ALL be true:
-    // 1. LocalDispatch flag — message was dispatched locally by the originating service
-    // 2. Owned namespace — message type belongs to this service's owned domains
-    // 3. Same service — the last hop's service name matches this service (not from another service)
-    // Commands from OTHER services pass through even if namespace is owned (they're addressed to us).
+    // Discard self-echo: owned messages from THIS service arriving back via transport.
+    // Two conditions must be true:
+    // 1. Owned namespace — message type belongs to this service's owned domains
+    // 2. Same service — the last hop's service name matches this service
+    // Messages from OTHER services always pass through (different service name in hop).
     if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null
-        && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)
         && _isSelfEcho(envelope)) {
       var ns = _extractNamespaceFromTypeName(envelopeType);
       if (_isOwnedNamespace(ns)) {
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          _logger.LogDebug("Discarding self-echo {MessageType} from inbox — already dispatched locally by this service", messageType);
+          _logger.LogDebug("Discarding self-echo {MessageType} from inbox — already dispatched by this service", messageType);
         }
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         return;
