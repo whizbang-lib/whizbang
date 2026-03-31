@@ -340,12 +340,8 @@ public partial class TransportConsumerWorker : BackgroundService {
       var isSelfEcho = _isSelfEcho(envelope);
       var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
       var isOwned = _isOwnedNamespace(ns);
-      // Temporary diagnostic — remove after verifying self-echo discard
-      _logger.LogWarning("[SELF-ECHO-CHECK] Type={MessageType} Service={Service} IsSelfEcho={IsSelfEcho} IsOwned={IsOwned} Ns={Ns} HopCount={HopCount} LastHopService={LastHop}",
-        messageType, _serviceName, isSelfEcho, isOwned, ns, envelope.Hops.Count,
-        envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : "no-hops");
       if (isSelfEcho && isOwned) {
-        _logger.LogWarning("[SELF-ECHO-DISCARD] Discarding {MessageType} — self-echo from {Service}", messageType, _serviceName);
+        LogSelfEchoDiscarded(_logger, messageType, _serviceName);
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         return;
       }
@@ -829,6 +825,13 @@ public partial class TransportConsumerWorker : BackgroundService {
     Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
   )]
   private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
+
+  /// <summary>Logs that a self-echo message was discarded (owned event from this service arriving back via transport).</summary>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Self-echo discarded: {MessageType} from {ServiceName}"
+  )]
+  private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
 
   /// <summary>
   /// Checks if the message originated from this service (self-echo).
