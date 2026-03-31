@@ -350,35 +350,11 @@ public partial class TransportConsumerWorker : BackgroundService {
         return;
       }
 
-      // Owned COMMAND from another service — re-dispatch locally instead of PostInbox lifecycle.
-      // This ensures the handler fires at LocalImmediateAsync (same as local dispatch),
-      // enabling in-memory dedup guards to catch duplicates from dual-dispatch patterns
-      // (e.g., BffService sends command via transport AND OrchestratorAgent dispatches locally).
-      if (isOwned && !isSelfEcho && _lifecycleMessageDeserializer is not null) {
-        // Extract the payload: envelope may be strongly-typed (MessageEnvelope<TCommand>)
-        // or raw JSON (MessageEnvelope<JsonElement>) depending on transport deserialization.
-        object? deserializedMessage;
-        if (envelope is MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope) {
-          deserializedMessage = _lifecycleMessageDeserializer.DeserializeFromJsonElement(
-            jsonEnvelope.Payload, envelopeType);
-        } else {
-          // Strongly-typed envelope — extract payload directly
-          deserializedMessage = envelope.Payload;
-        }
-        if (deserializedMessage is IMessage and not IEvent) {
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            _logger.LogDebug("Re-dispatching owned command {MessageType} locally from {SourceService}",
-              messageType, envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : "unknown");
-          }
-          await using var redispatchScope = _scopeFactory.CreateAsyncScope();
-          await SecurityContextHelper.EstablishFullContextAsync(envelope, redispatchScope.ServiceProvider, cancellationToken);
-          var dispatcher = redispatchScope.ServiceProvider.GetRequiredService<IDispatcher>();
-          // Use LocalInvokeAsync (void overload) — SendAsync short-circuits for owned commands
-          await dispatcher.LocalInvokeAsync(deserializedMessage);
-          _metrics?.InboxMessagesProcessed?.Add(1, messageTypeTag);
-          return;
-        }
-      }
+      // Owned commands from other services fall through to normal inbox processing.
+      // The PostInbox filter in ReceptorInvoker allows owned commands to fire:
+      //   isPostInbox && (isOwned ? isEvent : !isEvent) → skip owned EVENTS (self-echo),
+      //   but fire owned COMMANDS (cross-service delivery).
+      // This preserves full scope context (tenant, security) established by the inbox pipeline.
     }
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
