@@ -54,6 +54,8 @@ public partial class TransportConsumerWorker : BackgroundService {
 
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
+  private readonly SemaphoreSlim? _concurrencySemaphore;
+  private readonly IInboxBatchStrategy? _inboxBatchStrategy;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -88,7 +90,9 @@ public partial class TransportConsumerWorker : BackgroundService {
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
-    IServiceInstanceProvider? serviceInstanceProvider = null
+    IServiceInstanceProvider? serviceInstanceProvider = null,
+    MessageProcessingOptions? messageProcessingOptions = null,
+    IInboxBatchStrategy? inboxBatchStrategy = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -110,6 +114,10 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
+    _inboxBatchStrategy = inboxBatchStrategy;
+
+    var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
+    _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
@@ -355,6 +363,16 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
 
+    // Global concurrency gate — limits total concurrent handlers across all subscriptions
+    // to prevent connection pool exhaustion. Self-echo discards above do NOT consume a slot.
+    if (_concurrencySemaphore is not null) {
+      var semaphoreSw = Stopwatch.StartNew();
+      await _concurrencySemaphore.WaitAsync(cancellationToken);
+      semaphoreSw.Stop();
+      _metrics?.InboxConcurrencyWaitDuration.Record(semaphoreSw.Elapsed.TotalMilliseconds, messageTypeTag);
+      _metrics?.InboxConcurrentMessages.Add(1, messageTypeTag);
+    }
+
     try {
       await using var scope = _scopeFactory.CreateAsyncScope();
 
@@ -372,8 +390,16 @@ public partial class TransportConsumerWorker : BackgroundService {
 
       _populateDeliveredAtTimestamp(envelope, envelopeType);
 
-      // 1. Serialize and deduplicate
-      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
+      // 1. Serialize and deduplicate — use batch strategy if available, otherwise per-message flush
+      List<InboxWork> myWork;
+      if (_inboxBatchStrategy is not null) {
+        var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
+        var workBatch = await _inboxBatchStrategy.EnqueueAndWaitAsync(newInboxMessage, cancellationToken);
+        myWork = [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
+      } else {
+        myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
+      }
+
       if (myWork.Count == 0) {
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         if (_logger.IsEnabled(LogLevel.Information)) {
@@ -425,6 +451,10 @@ public partial class TransportConsumerWorker : BackgroundService {
       throw;
     } finally {
 #pragma warning restore S2139
+      if (_concurrencySemaphore is not null) {
+        _concurrencySemaphore.Release();
+        _metrics?.InboxConcurrentMessages.Add(-1, messageTypeTag);
+      }
       receiveSw.Stop();
       _metrics?.InboxReceiveDuration.Record(receiveSw.Elapsed.TotalMilliseconds, messageTypeTag);
       inboxActivity?.Dispose();
