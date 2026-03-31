@@ -1561,13 +1561,10 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     await worker.StartAsync(cts.Token);
 
-    // Worker should be running but skipping work batch due to database not ready
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    var typedWorker = (WorkCoordinatorPublisherWorker)worker;
-    while (typedWorker.ConsecutiveDatabaseNotReadyChecks < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    // Wait for at least 3 database readiness checks — signal-based, deterministic
+    await dbCheck.WaitForCallCountAsync(3, TimeSpan.FromSeconds(10));
 
+    var typedWorker = (WorkCoordinatorPublisherWorker)worker;
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
