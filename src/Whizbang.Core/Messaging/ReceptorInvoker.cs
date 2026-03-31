@@ -49,6 +49,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IPerspectiveSyncAwaiter? _syncAwaiter;
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
+  private readonly LifecycleStageTracker? _stageTracker;
   private ILogger? _logger;
 
   /// <summary>
@@ -117,6 +118,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Resolve service name for source-service filtering (PostInbox: only fire for other services)
     _serviceName = scopedProvider.GetService<Observability.IServiceInstanceProvider>()?.ServiceName;
+
+    // Resolve lifecycle stage tracker for cross-worker dedup (singleton)
+    _stageTracker = scopedProvider.GetService<LifecycleStageTracker>();
   }
 
   /// <inheritdoc/>
@@ -197,6 +201,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     if (receptors.Count == 0) {
       await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+      return;
+    }
+
+    // Cross-worker dedup: prevent the same message+stage from being processed twice
+    // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox)
+    if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage)) {
       return;
     }
 
