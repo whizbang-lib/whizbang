@@ -12,6 +12,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -797,7 +798,8 @@ public class PerspectiveDedupIntegrationTests {
     return new MessageEnvelope<IEvent> {
       MessageId = MessageId.From(eventId),
       Payload = new _fakeEvent(),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

@@ -186,7 +186,8 @@ public class DispatcherCoverageWave3Tests {
       var jsonEnvelope = new MessageEnvelope<JsonElement> {
         MessageId = envelope.MessageId,
         Payload = JsonSerializer.SerializeToElement(new { }),
-        Hops = envelope.Hops?.ToList() ?? []
+        Hops = envelope.Hops?.ToList() ?? [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       var messageType = typeof(TMessage).AssemblyQualifiedName ?? typeof(TMessage).FullName ?? typeof(TMessage).Name;
       var envelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core";

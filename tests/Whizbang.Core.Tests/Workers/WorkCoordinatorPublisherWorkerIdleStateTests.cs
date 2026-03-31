@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -433,7 +434,8 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
@@ -448,7 +450,8 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
         Payload = JsonDocument.Parse("{}").RootElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       StreamId = Guid.CreateVersion7(),
@@ -550,5 +553,9 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
 
     public void Complete() =>
       _channel.Writer.Complete();
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 }

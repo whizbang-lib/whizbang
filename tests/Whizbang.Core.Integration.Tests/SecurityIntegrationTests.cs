@@ -7,6 +7,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -880,7 +881,8 @@ public class SecurityIntegrationTests {
         },
         Timestamp = DateTimeOffset.UtcNow,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // DIAGNOSTIC: Verify envelope.GetCurrentScope() returns non-null
@@ -997,7 +999,8 @@ public class SecurityIntegrationTests {
         },
         Timestamp = DateTimeOffset.UtcNow,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Setup callback to capture the context
@@ -1231,7 +1234,8 @@ public class SecurityIntegrationTests {
         Timestamp = DateTimeOffset.UtcNow,
         Topic = "jdx.contracts.job",
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1277,7 +1281,8 @@ public class SecurityIntegrationTests {
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Timestamp = DateTimeOffset.UtcNow,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Verify envelope.GetCurrentScope() works

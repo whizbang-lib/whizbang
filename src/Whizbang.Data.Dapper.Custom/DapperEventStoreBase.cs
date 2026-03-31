@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Whizbang.Core;
 using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -247,17 +248,18 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Builds a MessageEnvelope from deserialized event data and the raw row metadata/scope.
   /// </summary>
   private MessageEnvelope<TMessage> _buildEnvelope<TMessage>(TMessage payload, EventRow row) {
-    var (messageId, hops) = _deserializeMetadataAndHops(row.Metadata, row.EventType);
+    var (messageId, hops, dispatchContext) = _deserializeMetadataAndHops(row.Metadata, row.EventType);
     _restoreScopeFromJson(row.Scope, hops);
 
     return new MessageEnvelope<TMessage> {
       MessageId = MessageId.From(messageId),
       Payload = payload,
-      Hops = hops
+      Hops = hops,
+      DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
     };
   }
 
-  private (Guid messageId, List<MessageHop> hops) _deserializeMetadataAndHops(string metadataJson, string eventType) {
+  private (Guid messageId, List<MessageHop> hops, MessageDispatchContext? dispatchContext) _deserializeMetadataAndHops(string metadataJson, string eventType) {
     var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataDict = JsonSerializer.Deserialize(metadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {eventType}");
@@ -274,7 +276,13 @@ public abstract class DapperEventStoreBase : IEventStore {
       hops = [];
     }
 
-    return (messageId, hops);
+    MessageDispatchContext? dispatchContext = null;
+    if (metadataDict.TryGetValue("dc", out var dcElem)) {
+      var dcTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageDispatchContext));
+      dispatchContext = JsonSerializer.Deserialize(dcElem.GetRawText(), dcTypeInfo) as MessageDispatchContext;
+    }
+
+    return (messageId, hops, dispatchContext);
   }
 
   private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {

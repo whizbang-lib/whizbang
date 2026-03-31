@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -25,6 +26,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private readonly RabbitMQChannelPool _channelPool;
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
+  private readonly ConcurrentDictionary<string, bool> _declaredExchanges = new();
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
@@ -68,7 +70,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// Handles RabbitMQ connection recovery event by invoking the recovery handler.
   /// </summary>
   private async Task _onConnectionRecoverySucceededAsync(object sender, AsyncEventArgs args) {
-    _logger?.LogInformation("RabbitMQ connection recovered, invoking recovery handler");
+    _logger?.LogInformation("RabbitMQ connection recovered — resetting channel pool and exchange cache");
+    _channelPool.Reset();
+    _declaredExchanges.Clear();
 
     if (_recoveryHandler != null) {
       try {
@@ -77,6 +81,29 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         _logger?.LogError(ex, "Error in recovery handler after connection recovery");
       }
     }
+  }
+
+  /// <summary>
+  /// Declares an exchange if it hasn't been declared yet in this transport instance.
+  /// Avoids redundant broker round-trips on every publish (~5s per call).
+  /// Cache is cleared on connection recovery.
+  /// </summary>
+  private async ValueTask _ensureExchangeDeclaredAsync(IChannel channel, string exchangeName, CancellationToken cancellationToken) {
+    if (_declaredExchanges.ContainsKey(exchangeName)) {
+      return;
+    }
+
+    await channel.ExchangeDeclareAsync(
+      exchange: exchangeName,
+      type: "topic",
+      durable: true,
+      autoDelete: false,
+      arguments: null,
+      passive: false,
+      noWait: false,
+      cancellationToken: cancellationToken
+    );
+    _declaredExchanges.TryAdd(exchangeName, true);
   }
 
   /// <inheritdoc />
@@ -152,17 +179,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
       var channel = pooledChannel.Channel;
 
-      // Declare exchange (idempotent - safe to call multiple times)
-      await channel.ExchangeDeclareAsync(
-        exchange: exchangeName,
-        type: "topic",
-        durable: true,
-        autoDelete: false,
-        arguments: null,
-        passive: false,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
+      // Declare exchange (cached — only first call per exchange hits the broker)
+      await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
 
       // Get envelope type name - prefer provided envelopeType to preserve correct generic type
       // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
@@ -269,17 +287,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
       var channel = pooledChannel.Channel;
 
-      // Declare exchange (idempotent)
-      await channel.ExchangeDeclareAsync(
-        exchange: exchangeName,
-        type: "topic",
-        durable: true,
-        autoDelete: false,
-        arguments: null,
-        passive: false,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
+      // Declare exchange (cached — only first call per exchange hits the broker)
+      await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
 
       // Publish each item in the batch using the same channel
       foreach (var item in items) {

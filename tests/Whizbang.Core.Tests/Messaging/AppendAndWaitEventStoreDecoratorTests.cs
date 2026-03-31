@@ -1,4 +1,5 @@
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
@@ -189,7 +190,8 @@ public class AppendAndWaitEventStoreDecoratorTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = messageId,
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     await decorator.AppendAsync(streamId, envelope);
@@ -233,7 +235,8 @@ public class AppendAndWaitEventStoreDecoratorTests {
     await inner.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
     var events = new List<MessageEnvelope<TestEvent>>();
@@ -255,7 +258,8 @@ public class AppendAndWaitEventStoreDecoratorTests {
     await inner.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent("test"),
-      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }]
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     });
 
     var lastSequence = await decorator.GetLastSequenceAsync(streamId);

@@ -3,6 +3,8 @@
 using System.Text.Json;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -37,7 +39,8 @@ public class MessageEnvelopeExtensionsTests {
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

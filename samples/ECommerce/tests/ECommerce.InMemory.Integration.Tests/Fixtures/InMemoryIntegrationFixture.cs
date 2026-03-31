@@ -141,6 +141,19 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Gets the InventoryWorker's service provider for resolving services in tests.
+  /// Creates a new scope to ensure fresh dependencies.
+  /// </summary>
+  public IServiceScope CreateInventoryScope() {
+    if (_inventoryHost == null) {
+      throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+    }
+    var scope = _inventoryHost.Services.CreateScope();
+    _lensScopes.Add(scope);
+    return scope;
+  }
+
+  /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
   public string ConnectionString => _connectionString

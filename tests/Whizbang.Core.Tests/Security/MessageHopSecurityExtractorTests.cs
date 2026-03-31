@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
@@ -149,7 +151,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [firstHop, secondHop]
+      Hops = [firstHop, secondHop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -184,7 +187,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [causationHop, currentHop]
+      Hops = [causationHop, currentHop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -355,7 +359,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [firstHop, secondHop]
+      Hops = [firstHop, secondHop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -396,7 +401,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -472,7 +478,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = null!
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -490,7 +497,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -520,7 +528,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -546,7 +555,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -586,7 +596,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [nullScopeHop, noChangesHop, validHop]
+      Hops = [nullScopeHop, noChangesHop, validHop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -626,7 +637,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = null!
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -645,7 +657,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -688,7 +701,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -715,7 +729,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -745,7 +760,8 @@ public class MessageHopSecurityExtractorTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -777,7 +793,8 @@ public class MessageHopSecurityExtractorTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -792,7 +809,8 @@ public class MessageHopSecurityExtractorTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -818,7 +836,8 @@ public class MessageHopSecurityExtractorTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -844,7 +863,8 @@ public class MessageHopSecurityExtractorTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test-payload"),
-      Hops = [hop]
+      Hops = [hop],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

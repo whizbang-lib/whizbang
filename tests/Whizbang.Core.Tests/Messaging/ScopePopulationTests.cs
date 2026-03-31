@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -48,7 +49,8 @@ public class ScopePopulationTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = scopeDelta
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -448,7 +450,8 @@ public class ScopePopulationTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonSerializer.SerializeToElement(new { }),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -472,7 +475,8 @@ public class ScopePopulationTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = null
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -506,7 +510,8 @@ public class ScopePopulationTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = hop2Scope
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

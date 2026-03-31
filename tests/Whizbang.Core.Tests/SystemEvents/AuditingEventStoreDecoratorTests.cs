@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -366,7 +367,8 @@ public class AuditingEventStoreDecoratorTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -406,7 +408,8 @@ public class AuditingEventStoreDecoratorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = delta
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -446,7 +449,8 @@ public class AuditingEventStoreDecoratorTests {
           Scope = delta,
           CorrelationId = new CorrelationId(correlationGuid)
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -508,7 +512,8 @@ public class AuditingEventStoreDecoratorTests {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

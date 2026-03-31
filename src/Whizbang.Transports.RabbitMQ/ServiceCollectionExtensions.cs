@@ -98,7 +98,8 @@ public static class ServiceCollectionExtensions {
     // Register transport readiness check
     services.AddSingleton<ITransportReadinessCheck>(sp => {
       var connection = sp.GetRequiredService<IConnection>();
-      return new RabbitMQReadinessCheck(connection);
+      var logger = sp.GetService<ILogger<RabbitMQReadinessCheck>>();
+      return new RabbitMQReadinessCheck(connection, logger);
     });
 
     // Register message publish strategy

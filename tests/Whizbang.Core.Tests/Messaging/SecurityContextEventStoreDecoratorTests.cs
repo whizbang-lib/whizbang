@@ -1,4 +1,5 @@
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -127,7 +128,8 @@ public sealed class SecurityContextEventStoreDecoratorTests {
           Timestamp = DateTimeOffset.UtcNow,
           Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = "original-user" })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

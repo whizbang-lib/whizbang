@@ -1,5 +1,6 @@
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
@@ -94,7 +95,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
           ServiceInstance = customServiceInstance,
           Timestamp = DateTimeOffset.UtcNow
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     registry.Register(envelope);
 
@@ -381,7 +383,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
         StreamId = aggregateId,
         Payload = payload
       },
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     envelope.AddHop(new MessageHop {

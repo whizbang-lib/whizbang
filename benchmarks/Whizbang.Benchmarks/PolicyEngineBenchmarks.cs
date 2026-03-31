@@ -1,7 +1,9 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
@@ -67,6 +69,7 @@ public class PolicyEngineBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     envelope.AddHop(new MessageHop {

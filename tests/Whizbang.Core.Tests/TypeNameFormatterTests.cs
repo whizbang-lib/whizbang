@@ -331,6 +331,51 @@ public class TypeNameFormatterTests {
     await Assert.That(TypeNameFormatter.GetNamespace("")).IsNull();
   }
 
+  // ========================================
+  // GetPayloadNamespace — extracts inner type namespace from generic envelope wrapper
+  // ========================================
+
+  [Test]
+  public async Task GetPayloadNamespace_GenericEnvelope_ExtractsInnerTypeNamespaceAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[JDX.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, JDX.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("JDX.Contracts.Chat");
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_GenericEnvelope_NestedType_ExtractsOuterNamespaceAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Contracts.Chat.Conversations+CreatedEvent, MyApp.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("MyApp.Contracts.Chat");
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_SimpleType_FallsBackToGetNamespaceAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "MyApp.Contracts.Chat.MyEvent, MyApp.Contracts");
+    await Assert.That(result).IsEqualTo("MyApp.Contracts.Chat");
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_NullInput_ReturnsNullAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace(null!);
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_EmptyInput_ReturnsNullAsync() {
+    var result = TypeNameFormatter.GetPayloadNamespace("");
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetPayloadNamespace_RealWorldEnvelopeType_ExtractsCorrectlyAsync() {
+    // This is the actual format from RabbitMQ transport in JDNext
+    var result = TypeNameFormatter.GetPayloadNamespace(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[JDX.Contracts.SystemSeeding.SystemSeedContracts+ReseedSystemSucceededEvent, JDX.Contracts]], Whizbang.Core");
+    await Assert.That(result).IsEqualTo("JDX.Contracts.SystemSeeding");
+  }
+
   // Helper nested class for testing
   private sealed class NestedTestClass { }
 }

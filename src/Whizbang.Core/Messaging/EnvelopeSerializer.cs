@@ -1,6 +1,8 @@
 using System;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -67,7 +69,8 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = envelope.MessageId,
       Payload = payloadJson,
-      Hops = envelope.Hops?.ToList() ?? []
+      Hops = envelope.Hops?.ToList() ?? [],
+      DispatchContext = envelope.DispatchContext
     };
 
     return new SerializedEnvelope(

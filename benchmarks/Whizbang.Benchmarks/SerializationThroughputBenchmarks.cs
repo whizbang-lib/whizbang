@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
@@ -203,6 +205,7 @@ public class SerializationThroughputBenchmarks {
         var envelope = new MessageEnvelope<SmallMessage> {
           MessageId = MessageId.New(),
           Payload = new SmallMessage($"msg-{i}", i, $"name-{i}"),
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = []
         };
 
@@ -299,6 +302,7 @@ public class SerializationThroughputBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -322,6 +326,7 @@ public class SerializationThroughputBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 

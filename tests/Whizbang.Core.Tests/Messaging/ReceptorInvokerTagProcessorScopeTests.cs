@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -121,7 +122,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -138,7 +140,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

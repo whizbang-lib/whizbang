@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -514,6 +515,8 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
     });
   }
 
+  public int Version => 1;
+  public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
   public MessageId MessageId { get; }
   public object Payload => new { };
   public List<MessageHop> Hops => _hops;

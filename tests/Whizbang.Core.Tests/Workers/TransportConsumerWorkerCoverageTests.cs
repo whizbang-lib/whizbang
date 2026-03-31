@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -991,9 +992,10 @@ public class TransportConsumerWorkerCoverageTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = ServiceInstanceInfo.Unknown
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -1105,9 +1107,10 @@ public class TransportConsumerWorkerCoverageTests {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = ServiceInstanceInfo.Unknown
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1123,7 +1126,8 @@ public class TransportConsumerWorkerCoverageTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           TraceParent = traceParent
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1148,7 +1152,8 @@ public class TransportConsumerWorkerCoverageTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Metadata = metadata
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1338,9 +1343,10 @@ public class TransportConsumerWorkerCoverageTests {
             new MessageHop {
               Type = HopType.Current,
               Timestamp = DateTimeOffset.UtcNow,
-              ServiceInstance = ServiceInstanceInfo.Unknown,
+              ServiceInstance = ServiceInstanceInfo.Unknown
             }
-          ]
+          ],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
         },
         MessageType = "TestApp.TestMessage, TestApp",
         StreamId = _expectedMessageId

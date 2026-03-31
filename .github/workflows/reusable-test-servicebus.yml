@@ -76,17 +76,17 @@ jobs:
           dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
             -f cobertura -o TestResults/servicebus.cobertura.xml
 
-      # TEMPORARY: continue-on-error due to all tests being skipped for v0.8.5-beta.1
-      # TUnit returns exit code 8 when all tests are skipped, which we treat as success
       - name: Run Azure Service Bus Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        continue-on-error: true
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag AzureServiceBus -NoBuild
+        env:
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
 
       - name: Run Azure Service Bus Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        continue-on-error: true
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
+        env:
+          WHIZBANG_TEST_TIMEOUT_MULTIPLIER: '3'
 
       - name: Shutdown Coverage Collection
         if: inputs.artifact-name != ''

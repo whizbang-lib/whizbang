@@ -1,6 +1,8 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Partitioning;
 using Whizbang.Core.Policies;
@@ -33,6 +35,7 @@ public class PartitionRouterBenchmarks {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     envelope.AddHop(new MessageHop {

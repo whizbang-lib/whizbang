@@ -163,10 +163,8 @@ public partial class WorkCoordinatorPublisherWorker(
   private long _totalLeaseRenewals;
   private long _totalBufferedMessages;
 
-  // In-flight tracking: prevents re-queuing messages that are already being processed.
-  // Phase 7 returns ALL owned unprocessed messages on every tick; without this guard,
-  // messages still in the publisher channel or inbox pipeline would be dispatched again.
-  private readonly ConcurrentDictionary<Guid, byte> _inFlightOutbox = new();
+  // Outbox in-flight tracking is now in IWorkChannelWriter (covers flush + polling paths).
+  // Inbox in-flight tracking remains here (inbox has no channel writer).
   private readonly ConcurrentDictionary<Guid, byte> _inFlightInbox = new();
 
   // Work processing state tracking
@@ -348,7 +346,12 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Post-outbox lifecycle per message + track results
         await _processPublishBatchResultsAsync(batchContexts, results, stoppingToken);
+      } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
+        // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
+        LogPublisherLoopInternalCancellation(_logger, batch.Count);
+        _handleBulkBatchException(batch, new InvalidOperationException("Internal OperationCanceledException during bulk publish — not a shutdown cancellation"));
       } catch (ObjectDisposedException) {
+        LogPublisherLoopDisposed(_logger, "bulk");
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _handleBulkBatchException(batch, ex);
@@ -432,6 +435,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
   private void _handleBulkBatchException(List<OutboxWork> batch, Exception ex) {
     foreach (var work in batch) {
+      _workChannelWriter.RemoveInFlight(work.MessageId);
       LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "unexpected_exception"));
       _failures.Add(new MessageFailure { MessageId = work.MessageId, CompletedStatus = work.Status, Error = ex.Message, Reason = MessageFailureReason.Unknown });
@@ -481,9 +485,21 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Collect results
         _trackPublishResult(work, result);
+      } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
+        // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
+        _workChannelWriter.RemoveInFlight(work.MessageId);
+        LogPublisherLoopInternalCancellationSingular(_logger, work.MessageId);
+        _failures.Add(new MessageFailure {
+          MessageId = work.MessageId,
+          CompletedStatus = work.Status,
+          Error = "Internal OperationCanceledException",
+          Reason = MessageFailureReason.Unknown
+        });
       } catch (ObjectDisposedException) {
+        LogPublisherLoopDisposed(_logger, "singular");
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _workChannelWriter.RemoveInFlight(work.MessageId);
         LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
         _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "unexpected_exception"));
 
@@ -538,6 +554,13 @@ public partial class WorkCoordinatorPublisherWorker(
       return (null, null);
     }
 
+    // Skip PreOutbox lifecycle for event-store-only messages (null destination).
+    // These messages exist for event store persistence only — no transport publish occurs,
+    // so PreOutbox/PostOutbox side effects should not fire.
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return (null, null);
+    }
+
     var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
     var outboxTypedEnvelope = work.Envelope.ReconstructWithPayload(message);
     var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
@@ -569,6 +592,11 @@ public partial class WorkCoordinatorPublisherWorker(
     ActivityContext traceContext,
     bool enableLifecycleSpans,
     CancellationToken stoppingToken) {
+
+    // Skip PostOutbox lifecycle for event-store-only messages (null destination)
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return;
+    }
 
     var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
@@ -664,18 +692,21 @@ public partial class WorkCoordinatorPublisherWorker(
 
   private void _trackPublishResult(OutboxWork work, MessagePublishResult result) {
     if (result.Success) {
-      _inFlightOutbox.TryRemove(work.MessageId, out _);
+      // DO NOT RemoveInFlight here — message must stay tracked until DB confirms completion.
+      // If removed now, Phase 7 returns it again before the completion is flushed to DB,
+      // causing duplicate publishing. The entry stays in _inFlight (negligible memory)
+      // and prevents re-queuing until the DB clears it via process_work_batch completions.
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
     } else if (result.Reason == MessageFailureReason.TransportException) {
-      // Keep in _inFlightOutbox — message is re-queued to channel for retry
+      // Keep in-flight — message is re-queued to channel for retry
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
       _transportMetrics?.OutboxPublishRetries.Add(1);
       _leaseRenewals.Add(work.MessageId);
       _workChannelWriter.TryWrite(work);
       LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR);
     } else {
-      _inFlightOutbox.TryRemove(work.MessageId, out _);
+      _workChannelWriter.RemoveInFlight(work.MessageId);
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, result.Reason.ToString()));
       _failures.Add(new MessageFailure {
         MessageId = work.MessageId,
@@ -787,10 +818,10 @@ public partial class WorkCoordinatorPublisherWorker(
       var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
 
       foreach (var work in orderedOutboxWork) {
-        if (_inFlightOutbox.TryAdd(work.MessageId, 0)) {
+        if (!_workChannelWriter.IsInFlight(work.MessageId)) {
           await _workChannelWriter.WriteAsync(work, cancellationToken);
-        } else {
-          // Already in-flight — renew lease to keep it alive while processing
+        } else if (_workChannelWriter.ShouldRenewLease(work.MessageId)) {
+          // Only renew when nearing lease expiry (>half the lease duration)
           _leaseRenewals.Add(work.MessageId);
         }
       }
@@ -1136,6 +1167,27 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "Unexpected error publishing outbox message {MessageId}"
   )]
   static partial void LogUnexpectedErrorPublishing(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(
+    EventId = 25,
+    Level = LogLevel.Warning,
+    Message = "Publisher loop internal OperationCanceledException (not shutdown) — {BatchSize} messages affected. This typically indicates a DB timeout or infrastructure issue during pre-publish lifecycle."
+  )]
+  static partial void LogPublisherLoopInternalCancellation(ILogger logger, int batchSize);
+
+  [LoggerMessage(
+    EventId = 26,
+    Level = LogLevel.Warning,
+    Message = "Publisher loop singular: internal OperationCanceledException for message {MessageId} — not a shutdown cancellation"
+  )]
+  static partial void LogPublisherLoopInternalCancellationSingular(ILogger logger, Guid messageId);
+
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Warning,
+    Message = "Publisher loop {Path}: ObjectDisposedException — shutting down"
+  )]
+  static partial void LogPublisherLoopDisposed(ILogger logger, string path);
 
   [LoggerMessage(
     EventId = 20,

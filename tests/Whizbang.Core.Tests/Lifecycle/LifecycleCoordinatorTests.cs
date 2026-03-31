@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -29,7 +30,8 @@ public class LifecycleCoordinatorTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = payload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

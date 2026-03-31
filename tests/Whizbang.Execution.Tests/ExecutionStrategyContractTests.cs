@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
@@ -40,7 +42,8 @@ public abstract class ExecutionStrategyContractTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage(payload),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     envelope.AddHop(new MessageHop {
       ServiceInstance = new ServiceInstanceInfo {

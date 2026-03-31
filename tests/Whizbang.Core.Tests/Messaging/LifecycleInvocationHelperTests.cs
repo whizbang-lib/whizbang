@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -505,7 +506,8 @@ public class LifecycleInvocationHelperTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Timestamp = DateTimeOffset.UtcNow
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return new OutboxMessage {
@@ -527,7 +529,8 @@ public class LifecycleInvocationHelperTests {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Timestamp = DateTimeOffset.UtcNow
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return new InboxMessage {

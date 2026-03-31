@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -24,7 +25,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

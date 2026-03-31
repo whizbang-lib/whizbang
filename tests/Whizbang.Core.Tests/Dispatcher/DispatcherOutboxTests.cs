@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
@@ -74,7 +75,8 @@ public class DispatcherOutboxTests {
       var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return new SerializedEnvelope(
         jsonEnvelope,

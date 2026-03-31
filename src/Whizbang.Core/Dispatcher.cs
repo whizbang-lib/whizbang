@@ -114,6 +114,14 @@ public abstract partial class Dispatcher(
   private const string PATTERN_LOCAL_INVOKE = "local_invoke";
   private const string ROUTED_NONE_ERROR = "Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.";
 
+  // Minimal envelope used by cascade paths to signal IsDefaultDispatch=true when no source envelope exists
+  private static readonly IMessageEnvelope _cascadeDefaultEnvelope = new MessageEnvelope<object> {
+    MessageId = default,
+    Payload = null!,
+    Hops = [],
+    DispatchContext = MessageDispatchContext.CascadeDefault
+  };
+
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -212,6 +220,36 @@ public abstract partial class Dispatcher(
   private static HashSet<string> _resolveOwnedDomains(IServiceProvider sp) {
     var routingOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>()?.Value;
     return routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+  }
+
+  /// <summary>
+  /// Checks whether a namespace belongs to this service's owned domains.
+  /// Uses the same hierarchical matching as <see cref="EventSubscriptionDiscovery"/>:
+  /// exact match or child namespace (prefix with '.' separator).
+  /// </summary>
+  /// <param name="ns">The namespace to check (typically from a message type).</param>
+  /// <returns>True if the namespace is owned by this service.</returns>
+  /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
+  private bool _isOwnedNamespace(string? ns) {
+    if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
+      return false;
+    }
+
+    // Exact match
+    if (_ownedDomains.Contains(ns)) {
+      return true;
+    }
+
+    // Child namespace match: if owned is "JDX.Contracts.Chat",
+    // then "JDX.Contracts.Chat.Common" is also owned
+    foreach (var owned in _ownedDomains) {
+      var prefix = owned.EndsWith('.') ? owned : owned + ".";
+      if (ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /// <summary>
@@ -444,13 +482,19 @@ public abstract partial class Dispatcher(
 
       // If no local receptor exists, check for work coordinator strategy
       if (invoker == null) {
+        // Owned-domain commands should NOT go to the outbox — the owning service
+        // is expected to have a local receptor. Skip outbox routing.
+        if (_isOwnedNamespace(messageType.Namespace)) {
+          return DeliveryReceipt.Accepted(MessageId.New(), messageType.Name);
+        }
+
         // Try strategy-based outbox pattern (new work coordinator pattern)
         // Route to outbox for remote delivery (AOT-compatible, no reflection)
         return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
       }
 
       // Create envelope with hop for observability
-      var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -583,7 +627,7 @@ public abstract partial class Dispatcher(
         return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
       }
 
-      var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
       _envelopeRegistry?.Register(envelope);
       try {
         if (_traceStore != null) {
@@ -667,13 +711,19 @@ public abstract partial class Dispatcher(
 
       // If no local receptor exists, check for work coordinator strategy
       if (invoker == null) {
+        // Owned-domain commands should NOT go to the outbox — the owning service
+        // is expected to have a local receptor. Skip outbox routing.
+        if (_isOwnedNamespace(messageType.Namespace)) {
+          return DeliveryReceipt.Accepted(MessageId.New(), messageType.Name);
+        }
+
         // Try strategy-based outbox pattern (new work coordinator pattern)
         // Route to outbox for remote delivery (AOT-compatible, no reflection)
         return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
       }
 
       // Create envelope with hop for observability - generic version preserves type!
-      var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -772,7 +822,7 @@ public abstract partial class Dispatcher(
         return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
       }
 
-      var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
       _envelopeRegistry?.Register(envelope);
       try {
         if (_traceStore != null) {
@@ -1318,7 +1368,7 @@ public abstract partial class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
@@ -1380,7 +1430,7 @@ public abstract partial class Dispatcher(
     int callerLineNumber
   ) {
     // Note: Sync check already done in _localInvokeWithCastFallbackAsync for non-options callers
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
@@ -1559,7 +1609,7 @@ public abstract partial class Dispatcher(
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
 
-      var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -1641,7 +1691,7 @@ public abstract partial class Dispatcher(
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
 
-      var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -1707,7 +1757,7 @@ public abstract partial class Dispatcher(
     // Invoke PostLifecycle and ImmediateAsync lifecycle receptors after business receptor completes
     // Create a minimal envelope for lifecycle invocation
     if (_hasPostLifecycleReceptors(messageType) || _hasImmediateAsyncReceptors(messageType)) {
-      var envelope = _createEnvelope(message, MessageContext.Create(_cascadeContextFactory.NewRoot()), "", "", 0);
+      var envelope = _createEnvelope(message, MessageContext.Create(_cascadeContextFactory.NewRoot()), new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, "", "", 0);
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
       await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
     }
@@ -1735,7 +1785,7 @@ public abstract partial class Dispatcher(
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
 
-      var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -1932,7 +1982,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
-    var envelope = _createEnvelope(message, context, caller.MemberName, caller.FilePath, caller.LineNumber);
+    var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {
@@ -1986,7 +2036,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
-    var envelope = _createEnvelope(message, context, caller.MemberName, caller.FilePath, caller.LineNumber);
+    var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {
@@ -2167,7 +2217,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
 
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {
@@ -2228,7 +2278,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
-    var envelope = _createEnvelope(message, context, "", "", 0);
+    var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, "", "", 0);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {
@@ -2302,6 +2352,7 @@ public abstract partial class Dispatcher(
   private MessageEnvelope<TMessage> _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context,
+    MessageDispatchContext dispatchContext,
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
@@ -2335,7 +2386,8 @@ public abstract partial class Dispatcher(
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = messageId,
       Payload = populatedMessage,
-      Hops = []
+      Hops = [],
+      DispatchContext = dispatchContext
     };
 
     envelope.AddHop(hop);
@@ -2355,6 +2407,7 @@ public abstract partial class Dispatcher(
   private MessageEnvelope<object> _createEnvelope(
     object message,
     IMessageContext context,
+    MessageDispatchContext dispatchContext,
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
@@ -2389,7 +2442,8 @@ public abstract partial class Dispatcher(
     var envelope = new MessageEnvelope<object> {
       MessageId = messageId,
       Payload = populatedMessage,
-      Hops = []
+      Hops = [],
+      DispatchContext = dispatchContext
     };
 
     envelope.AddHop(hop);
@@ -2643,6 +2697,13 @@ public abstract partial class Dispatcher(
   /// </summary>
   private async Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    // Owned-domain commands cascaded from receptors stay local (event store + local handlers).
+    // Events ALWAYS go to transport — other services subscribe to our events.
+    // Only affects the cascade path — explicit PublishAsync/SendAsync don't go through _dispatchByModeAsync.
+    if (mode == Dispatch.DispatchModes.Outbox && msg is not IEvent && _isOwnedNamespace(messageType.Namespace)) {
+      mode = Dispatch.DispatchModes.Local; // local dispatch + event store, no transport
+    }
+
     // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
     // Check for LocalDispatch flag specifically, not the composite Local mode
     if (mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
@@ -3070,6 +3131,12 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
+    // Owned-domain commands cascaded from receptors stay local (event store + local handlers).
+    // Events ALWAYS go to transport — other services subscribe to our events.
+    if (mode == Dispatch.DispatchModes.Outbox && message is not IEvent && _isOwnedNamespace(messageType.Namespace)) {
+      mode = Dispatch.DispatchModes.Local; // local dispatch + event store, no transport
+    }
+
     // Generate eventId for tracking and storage consistency
     // CRITICAL: This SAME eventId must be used for both tracking (singleton tracker)
     // AND storage (outbox/event store) so that MarkProcessed can find the tracked event
@@ -3093,7 +3160,11 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        await publisher(message, sourceEnvelope, cancellationToken);
+        // Wrap source envelope to set IsDefaultDispatch=true — cascade paths only fire default-stage receptors
+        var cascadeEnvelope = sourceEnvelope != null
+          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(sourceEnvelope)
+          : _cascadeDefaultEnvelope;
+        await publisher(message, cascadeEnvelope, cancellationToken);
       }
     }
 
@@ -3351,7 +3422,8 @@ public abstract partial class Dispatcher(
     var envelope = new MessageEnvelope<TEvent> {
       MessageId = messageId,
       Payload = eventData,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     // Extract aggregate ID and add to hop metadata (for streamId extraction)
@@ -3467,7 +3539,7 @@ public abstract partial class Dispatcher(
       _propagateStreamIdFromSource(eventData, eventType, sourceEnvelope);
 
       // Serialize and create envelope
-      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId);
+      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local });
 
       // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
@@ -3519,7 +3591,7 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
-  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId) {
+  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext) {
     var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
@@ -3531,7 +3603,8 @@ public abstract partial class Dispatcher(
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payloadJson,
-      Hops = []
+      Hops = [],
+      DispatchContext = dispatchContext
     };
   }
 
@@ -3620,7 +3693,7 @@ public abstract partial class Dispatcher(
   /// <param name="eventType">The event type to resolve topic for</param>
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
-  private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+  private string? _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
     // PRIORITY: Use outbox routing strategy if configured (routes events to namespace topics)
     // This ensures events are stored with their ACTUAL destination in the outbox,
     // providing proper durability guarantees
@@ -3736,7 +3809,7 @@ public abstract partial class Dispatcher(
       var destination = _resolveCommandDestination(messageType);
 
       // Create envelope with hop for observability - generic version preserves type!
-      var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -3821,7 +3894,7 @@ public abstract partial class Dispatcher(
       // Create envelope with hop for observability (returns IMessageEnvelope)
       // WARN: This creates MessageEnvelope<object> - type information is lost
       // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
-      var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -3890,7 +3963,8 @@ public abstract partial class Dispatcher(
         var destination = message is IEvent
             ? _resolveEventTopic(messageType)
             : _resolveCommandDestination(messageType);
-        var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+        var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+        // Null destination = owned-domain event → event-store-only (no transport)
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
         strategy.QueueOutboxMessage(newOutboxMessage);
@@ -3901,7 +3975,7 @@ public abstract partial class Dispatcher(
         // Create receipt for this message
         receipts.Add(DeliveryReceipt.Accepted(
           envelope.MessageId,
-          destination,
+          destination ?? messageType.Name,
           context.CorrelationId,
           context.CausationId,
           streamId
@@ -4561,7 +4635,8 @@ public abstract partial class Dispatcher(
     var envelope = new MessageEnvelope<TEvent> {
       MessageId = messageId,
       Payload = eventData,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
     // 3. Extract aggregate ID and add to hop metadata

@@ -4,6 +4,7 @@ using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -301,6 +302,7 @@ public class ThroughputBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 
@@ -326,6 +328,7 @@ public class ThroughputBenchmarks {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
 

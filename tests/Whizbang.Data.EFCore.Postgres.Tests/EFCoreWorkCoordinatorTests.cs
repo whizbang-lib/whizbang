@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -2755,6 +2756,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   /// Test implementation of IMessageEnvelope for testing.
   /// </summary>
   private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required JsonElement Payload { get; init; }
     public List<MessageHop> Hops { get; init; } = [];

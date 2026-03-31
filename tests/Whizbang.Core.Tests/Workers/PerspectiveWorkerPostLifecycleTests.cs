@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -180,7 +181,8 @@ public class PerspectiveWorkerPostLifecycleTests {
             TenantId = tenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -201,7 +203,8 @@ public class PerspectiveWorkerPostLifecycleTests {
             ProcessId = 1234
           }
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

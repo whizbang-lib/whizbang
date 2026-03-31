@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -25,7 +26,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     return envelope;
   }
@@ -189,7 +191,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+    // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
+    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -217,8 +220,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    // Wait for first batch to be processed (signal-based, not Task.Delay)
-    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+    // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
+    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -479,5 +482,9 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 }

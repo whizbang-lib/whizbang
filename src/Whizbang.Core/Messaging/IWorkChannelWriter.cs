@@ -61,4 +61,28 @@ public interface IWorkChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
   void Complete();
+
+  /// <summary>
+  /// Checks whether a message is currently in-flight (written to channel but not yet completed/failed).
+  /// Used by the polling path to avoid re-queuing messages already being processed.
+  /// </summary>
+  /// <param name="messageId">The message ID to check</param>
+  /// <returns>True if the message was written and not yet removed</returns>
+  bool IsInFlight(Guid messageId);
+
+  /// <summary>
+  /// Removes a message from in-flight tracking after completion or failure.
+  /// Called by the publisher when a message is successfully published or permanently failed.
+  /// </summary>
+  /// <param name="messageId">The message ID to remove from tracking</param>
+  void RemoveInFlight(Guid messageId);
+
+  /// <summary>
+  /// Checks whether an in-flight message's lease should be renewed.
+  /// Returns true when the message has been in-flight for more than half the lease duration,
+  /// preventing unnecessary lease renewals on every tick while ensuring the lease doesn't expire.
+  /// </summary>
+  /// <param name="messageId">The message ID to check</param>
+  /// <returns>True if the message needs a lease renewal</returns>
+  bool ShouldRenewLease(Guid messageId);
 }

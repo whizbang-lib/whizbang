@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -83,7 +84,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = ServiceInstanceInfo.Unknown,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.Cov2TestCommand, TestApp]], Whizbang.Core";
@@ -185,6 +187,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     var envelope = new MessageEnvelope<Cov2TestEvent> {
       MessageId = messageId,
       Payload = new Cov2TestEvent(),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -252,7 +255,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = ServiceInstanceInfo.Unknown,
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.Cov2TestCommand, TestApp]], Whizbang.Core";
@@ -303,6 +307,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [new MessageHop {
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
@@ -362,7 +367,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
         ServiceInstance = ServiceInstanceInfo.Unknown,
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.Cov2TestCommand, TestApp]], Whizbang.Core";
@@ -600,7 +606,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
         ServiceInstance = ServiceInstanceInfo.Unknown,
-      }]
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.Cov2TestCommand, TestApp]], Whizbang.Core";
@@ -787,6 +794,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -802,6 +810,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -998,6 +1007,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(expectedMessageId),
           Payload = JsonDocument.Parse("{}").RootElement,
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
           Hops = [
             new MessageHop {
               Type = HopType.Current,
@@ -1035,6 +1045,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       }];
     }
 
+    public int Version => 1;
+    public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
     public MessageId MessageId { get; }
     public object Payload { get; }
     public List<MessageHop> Hops => _hops;
@@ -1056,6 +1068,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       var jsonEnvelope = new MessageEnvelope<JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonPayload,
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Hops = envelope.Hops
       };
       return new SerializedEnvelope(

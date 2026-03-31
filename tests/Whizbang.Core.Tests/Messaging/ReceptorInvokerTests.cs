@@ -52,7 +52,8 @@ public class ReceptorInvokerTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -763,7 +764,8 @@ public class ReceptorInvokerTests {
     return new MessageEnvelope<TMessage> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = message,
-      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -1138,7 +1140,8 @@ public class ReceptorInvokerTests {
     var envelope = new MessageEnvelope<Routed<TestMessage>> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = routedPayload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - This should unwrap Routed<T> and find receptor for TestMessage
@@ -1166,7 +1169,8 @@ public class ReceptorInvokerTests {
     var envelope = new MessageEnvelope<Routed<TestMessage>> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = routedPayload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1193,7 +1197,8 @@ public class ReceptorInvokerTests {
     var envelope = new MessageEnvelope<Routed<TestMessage>> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = routedPayload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1220,7 +1225,8 @@ public class ReceptorInvokerTests {
     var envelope = new MessageEnvelope<RoutedNone> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = routedNone,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - This should return early without error
@@ -1245,7 +1251,8 @@ public class ReceptorInvokerTests {
     var envelope = new MessageEnvelope<Routed<TestMessage>> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = routedPayload,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1621,7 +1628,8 @@ public class ReceptorInvokerTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           TraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act - should not throw and should use the trace parent
@@ -1651,7 +1659,8 @@ public class ReceptorInvokerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.From(Guid.CreateVersion7()),
       Payload = new TestMessage("context-test"),
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1699,7 +1708,8 @@ public class ReceptorInvokerTests {
             TenantId = expectedTenantId
           })
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1846,7 +1856,8 @@ public class ReceptorInvokerTests {
           CallerFilePath = "/src/Orders/OrderHandler.cs",
           CallerLineNumber = 42
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act
@@ -1887,7 +1898,8 @@ public class ReceptorInvokerTests {
           ServiceInstance = ServiceInstanceInfo.Unknown
           // No CallerMemberName set
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     // Act

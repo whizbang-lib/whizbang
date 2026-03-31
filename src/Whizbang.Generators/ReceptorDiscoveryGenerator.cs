@@ -58,6 +58,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_HANDLER_COUNT = "__HANDLER_COUNT__";
   private const string PLACEHOLDER_IS_EXPLICIT = "__IS_EXPLICIT__";
   private const string PLACEHOLDER_FIRE_DURING_REPLAY = "__FIRE_DURING_REPLAY__";
+  private const string PLACEHOLDER_RECEPTOR_INVOCATIONS = "__RECEPTOR_INVOCATIONS__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
@@ -1161,12 +1162,21 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Distinct()
         .ToList();
 
+    // Group all async receptors by message type for per-receptor invocation generation in PublishAsync
+    var allReceptorsByMessageTypeForPublish = asyncReceptors
+        .GroupBy(r => r.MessageType)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
     var publishRouting = new StringBuilder();
     foreach (var messageType in allMessageTypes) {
-      // Replace placeholders with actual types
+      // Build per-receptor invocations for this message type (no stage filtering for PublishAsync)
+      var invocations = _buildPublishReceptorInvocations(messageType, allReceptorsByMessageTypeForPublish, StandardInterfaceNames.I_RECEPTOR);
+
+      // Replace placeholders with actual types and per-receptor invocations
       var generatedCode = publishSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
+          .Replace(PLACEHOLDER_RECEPTOR_INVOCATIONS, invocations);
 
       publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
@@ -1186,14 +1196,24 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // This ensures cascaded events get proper security context establishment even if no receptor handles them
     var allTypesForUntypedPublish = allMessageTypes.Union(eventTypes).Distinct().ToList();
 
+    // Group all async receptors by message type for per-receptor invocation generation
+    // This enables stage-aware filtering: explicit [FireAt] receptors are skipped when IsDefaultDispatch=true
+    var allReceptorsByMessageType = asyncReceptors
+        .GroupBy(r => r.MessageType)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
     // Generate Untyped Publish routing code using snippet template
     // This enables auto-cascade: events extracted from receptor return values are published
     var untypedPublishRouting = new StringBuilder();
     foreach (var messageType in allTypesForUntypedPublish) {
-      // Replace placeholders with actual types
+      // Build per-receptor invocations for this message type
+      var invocations = _buildReceptorInvocations(messageType, allReceptorsByMessageType, StandardInterfaceNames.I_RECEPTOR);
+
+      // Replace placeholders with actual types and per-receptor invocations
       var generatedCode = untypedPublishSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
+          .Replace(PLACEHOLDER_RECEPTOR_INVOCATIONS, invocations);
 
       untypedPublishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
@@ -1332,7 +1352,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
-  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateAsync, PreOutboxAsync, PostInboxAsync
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
   /// </summary>
   private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
@@ -1427,15 +1447,105 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Builds per-receptor keyed invocations for the GetUntypedReceptorPublisher (cascade path).
+  /// Default-stage receptors always fire. Explicit [FireAt] receptors are guarded by IsDefaultDispatch.
+  /// Uses cancellationToken in HandleAsync calls.
+  /// </summary>
+  private static string _buildReceptorInvocations(
+      string messageType,
+      Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
+      string receptorInterface) {
+    return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
+      useCancellationToken: true, useStageFiltering: true);
+  }
+
+  /// <summary>
+  /// Builds per-receptor keyed invocations for the typed GetReceptorPublisher (PublishAsync path).
+  /// All receptors fire (no IsDefaultDispatch filtering). No cancellationToken parameter.
+  /// </summary>
+  private static string _buildPublishReceptorInvocations(
+      string messageType,
+      Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
+      string receptorInterface) {
+    return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
+      useCancellationToken: false, useStageFiltering: false);
+  }
+
+  private static string _buildReceptorInvocationsCore(
+      string messageType,
+      Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
+      string receptorInterface,
+      bool useCancellationToken,
+      bool useStageFiltering) {
+    var sb = new StringBuilder();
+    var handleArgs = useCancellationToken ? "typedEvt, cancellationToken" : "typedEvt";
+
+    if (receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
+      // Separate typed (with response) and void receptors
+      var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
+      var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
+
+      // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results)
+      foreach (var receptor in typedReceptors) {
+        sb.AppendLine($"          {{");
+        sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}, object>>(\"{receptor.ClassName}\");");
+        sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
+        sb.AppendLine($"          }}");
+      }
+
+      if (useStageFiltering) {
+        // Void receptors (IReceptor<T>) — stage-aware: skip explicit [FireAt] during default dispatch
+        var defaultVoidReceptors = voidReceptors.Where(r => r.HasDefaultStage).ToList();
+        var explicitVoidReceptors = voidReceptors.Where(r => !r.HasDefaultStage).ToList();
+
+        // Default-stage void receptors — always fire
+        foreach (var receptor in defaultVoidReceptors) {
+          sb.AppendLine($"          {{");
+          sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
+          sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
+          sb.AppendLine($"          }}");
+        }
+
+        // Explicit [FireAt] void receptors — skip when IsDefaultDispatch=true
+        if (explicitVoidReceptors.Count > 0) {
+          sb.AppendLine($"          if (!isDefaultDispatch) {{");
+          foreach (var receptor in explicitVoidReceptors) {
+            sb.AppendLine($"            {{");
+            sb.AppendLine($"              var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
+            sb.AppendLine($"              if (r is not null) await r.HandleAsync({handleArgs});");
+            sb.AppendLine($"            }}");
+          }
+          sb.AppendLine($"          }}");
+        }
+      } else {
+        // No stage filtering — all void receptors fire (used by PublishAsync)
+        foreach (var receptor in voidReceptors) {
+          sb.AppendLine($"          {{");
+          sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
+          sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
+          sb.AppendLine($"          }}");
+        }
+      }
+    }
+
+    return sb.ToString().TrimEnd();
+  }
+
+  /// <summary>
   /// Builds routing entries from all receptors, expanding polymorphic types to concrete subtypes.
   /// </summary>
   private static System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> _buildRoutingEntries(
       Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors) {
+    // Default stages: LocalImmediateAsync + PostInboxAsync.
+    // LocalImmediate fires for locally-dispatched messages (this service).
+    // PostInbox fires for messages arriving from other services via transport.
+    // Source-service filtering in ReceptorInvoker prevents double-fire:
+    //   LocalImmediate: only if source = this service
+    //   PostInbox: only if source = other service
     var defaultStages = new[] {
-      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
-      "global::Whizbang.Core.Messaging.LifecycleStage.PreOutboxInline",
-      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline"
+      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateAsync",
+      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxAsync"
     };
 
     var routingEntries = new System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)>();

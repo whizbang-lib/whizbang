@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Whizbang.Core;
 using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
@@ -97,7 +98,8 @@ public class DapperSqliteEventStore(
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id
         }
-      ]
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
     return AppendAsync(streamId, envelope, cancellationToken);
@@ -297,7 +299,8 @@ public class DapperSqliteEventStore(
     return new MessageEnvelope<IEvent> {
       MessageId = messageId.Value,
       Payload = eventPayload,
-      Hops = _deserializeHops(root)
+      Hops = _deserializeHops(root),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
     };
   }
 

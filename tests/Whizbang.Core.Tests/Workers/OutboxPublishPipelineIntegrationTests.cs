@@ -11,6 +11,7 @@ using Microsoft.Extensions.Hosting;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -29,7 +30,8 @@ public class OutboxPublishPipelineIntegrationTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 
@@ -511,6 +513,10 @@ public class OutboxPublishPipelineIntegrationTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
   }
 
   private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {

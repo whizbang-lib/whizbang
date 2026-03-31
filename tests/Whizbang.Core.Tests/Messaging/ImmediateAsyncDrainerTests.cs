@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
@@ -486,7 +487,8 @@ public class ImmediateAsyncDrainerTests {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = []
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
   }
 

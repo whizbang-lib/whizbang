@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -46,7 +47,8 @@ public class NamespaceRoutingIntegrationTests {
       var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonElement,
-        Hops = []
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return new SerializedEnvelope(
         jsonEnvelope,
