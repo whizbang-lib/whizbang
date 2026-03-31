@@ -338,7 +338,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     // Messages from OTHER services always pass through (different service name in hop).
     if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null) {
       var isSelfEcho = _isSelfEcho(envelope);
-      var ns = _extractNamespaceFromTypeName(envelopeType);
+      var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
       var isOwned = _isOwnedNamespace(ns);
       // Temporary diagnostic — remove after verifying self-echo discard
       _logger.LogWarning("[SELF-ECHO-CHECK] Type={MessageType} Service={Service} IsSelfEcho={IsSelfEcho} IsOwned={IsOwned} Ns={Ns} HopCount={HopCount} LastHopService={LastHop}",
@@ -856,30 +856,5 @@ public partial class TransportConsumerWorker : BackgroundService {
     return false;
   }
 
-  /// <summary>
-  /// Extracts the PAYLOAD namespace from an envelope type string.
-  /// The envelopeType is a generic wrapper: "Whizbang...MessageEnvelope`1[[Payload.Type, Assembly]], Whizbang"
-  /// We need the namespace from inside [[...]] — the actual message type.
-  /// Falls back to the outer type if no generic parameter is found.
-  /// </summary>
-  private static string? _extractNamespaceFromTypeName(string envelopeType) {
-    // Extract inner type from generic: "...MessageEnvelope`1[[Inner.Type, Assembly]], Outer"
-    var openBracket = envelopeType.IndexOf("[[", StringComparison.Ordinal);
-    var typeToParse = envelopeType;
-    if (openBracket >= 0) {
-      var closeBracket = envelopeType.IndexOf("]]", openBracket, StringComparison.Ordinal);
-      if (closeBracket > openBracket) {
-        typeToParse = envelopeType[(openBracket + 2)..closeBracket];
-      }
-    }
-    // Strip assembly part: "Namespace.Type, Assembly" → "Namespace.Type"
-    var commaIdx = typeToParse.IndexOf(',');
-    var fullTypeName = commaIdx > 0 ? typeToParse[..commaIdx].Trim() : typeToParse.Trim();
-    // Strip nested type: "Namespace.Outer+Inner" → "Namespace.Outer"
-    var plusIdx = fullTypeName.IndexOf('+');
-    var outerType = plusIdx > 0 ? fullTypeName[..plusIdx] : fullTypeName;
-    // Get namespace: "Namespace.Type" → "Namespace"
-    var lastDot = outerType.LastIndexOf('.');
-    return lastDot > 0 ? outerType[..lastDot] : null;
-  }
+  // Namespace extraction moved to TypeNameFormatter.GetPayloadNamespace (testable utility)
 }
