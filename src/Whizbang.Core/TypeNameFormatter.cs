@@ -159,4 +159,39 @@ public static class TypeNameFormatter {
     var lastDot = fullName.LastIndexOf('.');
     return lastDot >= 0 ? fullName[..lastDot] : null;
   }
+
+  /// <summary>
+  /// Extracts the payload namespace from a generic envelope type string.
+  /// The transport delivers types like "MessageEnvelope`1[[Payload.Type, Assembly]], Whizbang.Core".
+  /// This extracts the namespace of the inner payload type, not the envelope wrapper.
+  /// Falls back to <see cref="GetNamespace"/> if no generic parameter is found.
+  /// </summary>
+  /// <example>
+  /// "Whizbang...MessageEnvelope`1[[MyApp.Chat.MyEvent, MyApp]], Whizbang" → "MyApp.Chat"
+  /// "MyApp.Chat.MyEvent, MyApp" → "MyApp.Chat" (no generic wrapper — falls back)
+  /// "MyApp.Chat.Contracts+MyEvent, MyApp" → "MyApp.Chat" (nested type)
+  /// </example>
+  public static string? GetPayloadNamespace(string envelopeType) {
+    if (string.IsNullOrEmpty(envelopeType)) {
+      return null;
+    }
+
+    // Extract inner type from generic: "...`1[[Inner.Type, Assembly]]..."
+    var openBracket = envelopeType.IndexOf("[[", StringComparison.Ordinal);
+    if (openBracket >= 0) {
+      var closeBracket = envelopeType.IndexOf("]]", openBracket, StringComparison.Ordinal);
+      if (closeBracket > openBracket) {
+        var innerType = envelopeType[(openBracket + 2)..closeBracket];
+        // GetFullName strips assembly, then we strip nested type (+) to get outer class
+        var fullName = GetFullName(innerType);
+        var plusIdx = fullName.IndexOf('+');
+        var outerType = plusIdx > 0 ? fullName[..plusIdx] : fullName;
+        var lastDot = outerType.LastIndexOf('.');
+        return lastDot > 0 ? outerType[..lastDot] : null;
+      }
+    }
+
+    // No generic wrapper — fall back to regular namespace extraction
+    return GetNamespace(envelopeType);
+  }
 }
