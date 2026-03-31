@@ -31,16 +31,17 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   private const string OWNED_EVENT_TYPE = "MyApp.Contracts.Chat.ChatOrchestrationContracts+SwitchedActivityEvent, MyApp.Contracts";
 
   /// <summary>
-  /// Self-echo: owned event from THIS service with LocalDispatch → discard.
-  /// The event was already dispatched locally via cascade + persisted via outbox.
+  /// Self-echo: owned event from THIS service → discard.
+  /// The outbox creates a new envelope with Mode=Outbox (LocalDispatch is NOT preserved).
+  /// The discard identifies self-echo via service name in last hop + owned namespace.
   /// </summary>
   [Test]
   public async Task SelfEcho_OwnedEvent_FromThisService_IsDiscardedAsync() {
     var worker = _createWorker(ownedDomains: [OWNED_NAMESPACE], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
-    // Simulate: owned event with LocalDispatch, from THIS service
-    var envelope = _createEnvelope(mode: DispatchModes.Both, sourceServiceName: THIS_SERVICE);
+    // Simulate: owned event from outbox — Mode=Outbox (NOT Both, LocalDispatch lost in outbox)
+    var envelope = _createEnvelope(mode: DispatchModes.Outbox, sourceServiceName: THIS_SERVICE);
 
     try {
       await worker.SimulateMessageAsync(envelope, OWNED_EVENT_TYPE);
