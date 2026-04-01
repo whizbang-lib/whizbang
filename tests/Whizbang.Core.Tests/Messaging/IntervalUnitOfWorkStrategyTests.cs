@@ -66,13 +66,13 @@ public class IntervalUnitOfWorkStrategyTests {
     // Act
     var unitId = await strategy.QueueMessageAsync(
       message,
-      LifecycleStage.PreDistributeAsync
+      LifecycleStage.PreDistributeDetached
     );
     var lifecycleStages = strategy.GetLifecycleStagesForUnit(unitId);
 
     // Assert
     await Assert.That(lifecycleStages).ContainsKey(message);
-    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeAsync);
+    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
   }
 
   [Test]
@@ -399,8 +399,8 @@ public class IntervalUnitOfWorkStrategyTests {
     var message1 = new TestMessage { Value = "test1" };
     var message2 = new TestMessage { Value = "test2" };
 
-    await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeAsync);
-    await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeAsync);
+    await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeDetached);
+    await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeDetached);
 
     // Wait for timer tick (signal-based)
     await flushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));

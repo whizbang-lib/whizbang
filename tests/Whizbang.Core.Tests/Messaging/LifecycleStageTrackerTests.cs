@@ -15,7 +15,7 @@ public class LifecycleStageTrackerTests {
   [Test]
   public async Task TryClaim_FirstCall_ReturnsTrueAsync() {
     var tracker = new LifecycleStageTracker();
-    var result = tracker.TryClaim(Guid.NewGuid(), LifecycleStage.PostInboxAsync);
+    var result = tracker.TryClaim(Guid.NewGuid(), LifecycleStage.PostInboxDetached);
     await Assert.That(result).IsTrue();
   }
 
@@ -23,9 +23,9 @@ public class LifecycleStageTrackerTests {
   public async Task TryClaim_SameMessageSameStage_ReturnsFalseAsync() {
     var tracker = new LifecycleStageTracker();
     var messageId = Guid.NewGuid();
-    tracker.TryClaim(messageId, LifecycleStage.PostInboxAsync);
+    tracker.TryClaim(messageId, LifecycleStage.PostInboxDetached);
 
-    var result = tracker.TryClaim(messageId, LifecycleStage.PostInboxAsync);
+    var result = tracker.TryClaim(messageId, LifecycleStage.PostInboxDetached);
     await Assert.That(result).IsFalse()
       .Because("Same message+stage should not fire twice");
   }
@@ -35,8 +35,8 @@ public class LifecycleStageTrackerTests {
     var tracker = new LifecycleStageTracker();
     var messageId = Guid.NewGuid();
 
-    var result1 = tracker.TryClaim(messageId, LifecycleStage.PostInboxAsync);
-    var result2 = tracker.TryClaim(messageId, LifecycleStage.PostAllPerspectivesAsync);
+    var result1 = tracker.TryClaim(messageId, LifecycleStage.PostInboxDetached);
+    var result2 = tracker.TryClaim(messageId, LifecycleStage.PostAllPerspectivesDetached);
 
     await Assert.That(result1).IsTrue();
     await Assert.That(result2).IsTrue()
@@ -47,8 +47,8 @@ public class LifecycleStageTrackerTests {
   public async Task TryClaim_DifferentMessages_BothSucceedAsync() {
     var tracker = new LifecycleStageTracker();
 
-    var result1 = tracker.TryClaim(Guid.NewGuid(), LifecycleStage.PostInboxAsync);
-    var result2 = tracker.TryClaim(Guid.NewGuid(), LifecycleStage.PostInboxAsync);
+    var result1 = tracker.TryClaim(Guid.NewGuid(), LifecycleStage.PostInboxDetached);
+    var result2 = tracker.TryClaim(Guid.NewGuid(), LifecycleStage.PostInboxDetached);
 
     await Assert.That(result1).IsTrue();
     await Assert.That(result2).IsTrue()
@@ -59,7 +59,7 @@ public class LifecycleStageTrackerTests {
   public async Task Release_AllowsReclaimAsync() {
     var tracker = new LifecycleStageTracker();
     var messageId = Guid.NewGuid();
-    var stage = LifecycleStage.PostInboxAsync;
+    var stage = LifecycleStage.PostInboxDetached;
 
     tracker.TryClaim(messageId, stage);
     tracker.Release(messageId, stage);
@@ -73,12 +73,12 @@ public class LifecycleStageTrackerTests {
   public async Task Purge_RemovesExpiredEntriesAsync() {
     var tracker = new LifecycleStageTracker();
     var messageId = Guid.NewGuid();
-    tracker.TryClaim(messageId, LifecycleStage.PostInboxAsync);
+    tracker.TryClaim(messageId, LifecycleStage.PostInboxDetached);
 
     // Purge with zero max age — everything expires
     tracker.Purge(TimeSpan.Zero);
 
-    var result = tracker.TryClaim(messageId, LifecycleStage.PostInboxAsync);
+    var result = tracker.TryClaim(messageId, LifecycleStage.PostInboxDetached);
     await Assert.That(result).IsTrue()
       .Because("Purged entries should be reclaimable");
   }

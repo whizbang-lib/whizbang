@@ -105,7 +105,7 @@ public class ProcessingModeTests {
   [Test]
   public async Task LifecycleExecutionContext_WithExpression_PreservesProcessingModeAsync() {
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.PrePerspectiveAsync,
+      CurrentStage = LifecycleStage.PrePerspectiveDetached,
       ProcessingMode = ProcessingMode.Replay,
       StreamId = Guid.CreateVersion7()
     };

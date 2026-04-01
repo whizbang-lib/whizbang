@@ -777,7 +777,7 @@ public class ScopeDeltaIntegrationTests {
   /// <summary>
   /// Verifies that JsonContextRegistry.CreateCombinedOptions() correctly deserializes
   /// ScopeDelta with both TenantId AND UserId from message hops.
-  /// This locks-in the JDNext scenario where PostPerspectiveAsync handlers need TenantContext.
+  /// This locks-in the JDNext scenario where PostPerspectiveDetached handlers need TenantContext.
   /// </summary>
   [Test]
   public async Task Envelope_WithTenantIdAndUserId_CombinedContextRoundTrip_ExtractsBothAsync() {
@@ -883,7 +883,7 @@ public class ScopeDeltaIntegrationTests {
     await Assert.That(currentScope).IsNotNull()
       .Because("GetCurrentScope() should return non-null after combined context round-trip");
     await Assert.That(currentScope!.Scope.TenantId).IsEqualTo("test-tenant-id")
-      .Because("TenantId should be extracted from hops - this is used by PostPerspectiveAsync handlers");
+      .Because("TenantId should be extracted from hops - this is used by PostPerspectiveDetached handlers");
     await Assert.That(currentScope.Scope.UserId).IsEqualTo("test-user-id")
       .Because("UserId should be extracted from hops");
     await Assert.That(currentScope.Roles).Contains("Admin")

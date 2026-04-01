@@ -64,13 +64,13 @@ public class ScopedUnitOfWorkStrategyTests {
     // Act
     var unitId = await strategy.QueueMessageAsync(
       message,
-      LifecycleStage.PreDistributeAsync
+      LifecycleStage.PreDistributeDetached
     );
     var lifecycleStages = strategy.GetLifecycleStagesForUnit(unitId);
 
     // Assert
     await Assert.That(lifecycleStages).ContainsKey(message);
-    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeAsync);
+    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
   }
 
   [Test]
@@ -307,8 +307,8 @@ public class ScopedUnitOfWorkStrategyTests {
     var message1 = new TestMessage { Value = "test1" };
     var message2 = new TestMessage { Value = "test2" };
 
-    await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeAsync);
-    await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeAsync);
+    await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeDetached);
+    await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeDetached);
 
     // Act
     await strategy.DisposeAsync();
@@ -317,8 +317,8 @@ public class ScopedUnitOfWorkStrategyTests {
     await Assert.That(lifecycleStagesInCallback).IsNotNull();
     await Assert.That(lifecycleStagesInCallback).ContainsKey(message1);
     await Assert.That(lifecycleStagesInCallback).ContainsKey(message2);
-    await Assert.That(lifecycleStagesInCallback[message1]).IsEqualTo(LifecycleStage.PreDistributeAsync);
-    await Assert.That(lifecycleStagesInCallback[message2]).IsEqualTo(LifecycleStage.PostDistributeAsync);
+    await Assert.That(lifecycleStagesInCallback[message1]).IsEqualTo(LifecycleStage.PreDistributeDetached);
+    await Assert.That(lifecycleStagesInCallback[message2]).IsEqualTo(LifecycleStage.PostDistributeDetached);
   }
 
   [Test]
@@ -331,8 +331,8 @@ public class ScopedUnitOfWorkStrategyTests {
     var message2 = new TestMessage { Value = "test2" };
 
     // Act
-    var unitId1 = await strategy.QueueMessageAsync(message1, LifecycleStage.ImmediateAsync);
-    var unitId2 = await strategy.QueueMessageAsync(message2, LifecycleStage.PreDistributeAsync);
+    var unitId1 = await strategy.QueueMessageAsync(message1, LifecycleStage.ImmediateDetached);
+    var unitId2 = await strategy.QueueMessageAsync(message2, LifecycleStage.PreDistributeDetached);
 
     // Assert - Different lifecycle stages still share same unit
     await Assert.That(unitId1).IsEqualTo(unitId2);

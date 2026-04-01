@@ -3,7 +3,7 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Defines the 24 lifecycle stages where receptors can execute.
 /// Controls timing of receptor execution relative to database operations and message processing.
-/// Stages fall into pairs: Async (non-blocking) and Inline (blocks per unit of work).
+/// Stages fall into pairs: Detached (fire-and-forget, runs in its own scope) and Inline (blocks per unit of work).
 /// </summary>
 /// <remarks>
 /// <para>There are two mutually exclusive message paths:</para>
@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <list type="bullet">
 /// <item><description>Each stage fires exactly once per event (no duplicate firings)</description></item>
 /// <item><description>Tags fire at ALL stages as lifecycle observers</description></item>
-/// <item><description>ImmediateAsync fires automatically after each stage transition</description></item>
+/// <item><description>ImmediateDetached fires automatically after each stage transition</description></item>
 /// <item><description>PostLifecycle fires once via WhenAll pattern for multi-path events</description></item>
 /// </list>
 /// <para>
@@ -62,14 +62,14 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed immediately from dispatcher channel (default).
-  /// Async processing, does not block message flow.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block message flow.
   /// Best for: Most receptors, fire-and-forget patterns.
   /// </summary>
-  ImmediateAsync,
+  ImmediateDetached,
 
   /// <summary>
   /// Executed during local dispatch when no transport is involved (mediator pattern).
-  /// Async processing, does not block dispatch return.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block dispatch return.
   /// NO persistence - messages are processed in-memory only.
   /// Best for: In-process commands, domain events within a bounded context.
   /// </summary>
@@ -78,7 +78,7 @@ public enum LifecycleStage {
   /// When a message is dispatched locally, it fires at LocalImmediate stages.
   /// When a message is dispatched via transport, it fires at PreOutbox (sender) and PostInbox (receiver).
   /// </remarks>
-  LocalImmediateAsync,
+  LocalImmediateDetached,
 
   /// <summary>
   /// Executed during local dispatch when no transport is involved (mediator pattern).
@@ -103,7 +103,7 @@ public enum LifecycleStage {
   /// outbox (publishing) and inbox (consuming) paths. Use <see cref="MessageSource"/>
   /// to distinguish.
   /// </remarks>
-  PreDistributeAsync,
+  PreDistributeDetached,
 
   /// <summary>
   /// <strong>Planned.</strong> Executed before process_work_batch call.
@@ -117,14 +117,14 @@ public enum LifecycleStage {
   /// Fire-and-forget pattern - does not wait for completion.
   /// Best for: Side effects that don't need to block (notifications, caching).
   /// </summary>
-  DistributeAsync,
+  DistributeDetached,
 
   /// <summary>
   /// <strong>Planned.</strong> Executed after process_work_batch returns.
-  /// Async processing, does not block message flow.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block message flow.
   /// Best for: Post-processing, analytics, notifications.
   /// </summary>
-  PostDistributeAsync,
+  PostDistributeDetached,
 
   /// <summary>
   /// <strong>Planned.</strong> Executed after process_work_batch returns.
@@ -135,10 +135,10 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed before outbox message is published to transport.
-  /// Async processing, does not block outbox worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block outbox worker.
   /// Best for: Message enrichment, header injection.
   /// </summary>
-  PreOutboxAsync,
+  PreOutboxDetached,
 
   /// <summary>
   /// Executed before outbox message is published to transport.
@@ -149,10 +149,10 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed after outbox message is published to transport.
-  /// Async processing, does not block outbox worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block outbox worker.
   /// Best for: Confirmation logging, metrics.
   /// </summary>
-  PostOutboxAsync,
+  PostOutboxDetached,
 
   /// <summary>
   /// Executed after outbox message is published to transport.
@@ -163,10 +163,10 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed before inbox message is processed by local receptor.
-  /// Async processing, does not block inbox worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block inbox worker.
   /// Best for: Message validation, deduplication checks.
   /// </summary>
-  PreInboxAsync,
+  PreInboxDetached,
 
   /// <summary>
   /// Executed before inbox message is processed by local receptor.
@@ -177,10 +177,10 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed after inbox message is processed by local receptor.
-  /// Async processing, does not block inbox worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block inbox worker.
   /// Best for: Cleanup, metrics, notifications.
   /// </summary>
-  PostInboxAsync,
+  PostInboxDetached,
 
   /// <summary>
   /// Executed after inbox message is processed by local receptor.
@@ -191,10 +191,10 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed before perspective checkpoint is updated.
-  /// Async processing, does not block perspective worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block perspective worker.
   /// Best for: Pre-checkpoint validation, metrics.
   /// </summary>
-  PrePerspectiveAsync,
+  PrePerspectiveDetached,
 
   /// <summary>
   /// Executed before perspective checkpoint is updated.
@@ -205,10 +205,10 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed after perspective checkpoint is updated.
-  /// Async processing, does not block perspective worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block perspective worker.
   /// Best for: Notifications, derived perspective updates.
   /// </summary>
-  PostPerspectiveAsync,
+  PostPerspectiveDetached,
 
   /// <summary>
   /// Executed after perspective checkpoint is updated.
@@ -219,7 +219,7 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed once per event after ALL perspectives have completed processing it.
-  /// Async processing, does not block perspective worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block perspective worker.
   /// Unlike PostPerspective (which fires per-perspective), this fires exactly once
   /// after the last perspective signals completion (WhenAll pattern).
   /// Best for: Cross-perspective aggregation, notifications that need all data committed.
@@ -229,7 +229,7 @@ public enum LifecycleStage {
   /// Fires before PostLifecycle stages.
   /// </remarks>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#post-all-perspectives</docs>
-  PostAllPerspectivesAsync,
+  PostAllPerspectivesDetached,
 
   /// <summary>
   /// Executed once per event after ALL perspectives have completed processing it.
@@ -247,7 +247,7 @@ public enum LifecycleStage {
 
   /// <summary>
   /// Executed once per event after all perspectives in the batch have processed it.
-  /// Async processing, does not block perspective worker.
+  /// Detached: fire-and-forget, runs in its own scope. Does not block perspective worker.
   /// For events without perspectives, fires immediately after PostInbox.
   /// Best for: Notifications, final event processing, cross-perspective aggregation.
   /// </summary>
@@ -256,7 +256,7 @@ public enum LifecycleStage {
   /// exactly once per event. For Route.Both() events, PostLifecycle fires only after
   /// all processing paths complete (WhenAll pattern).
   /// </remarks>
-  PostLifecycleAsync,
+  PostLifecycleDetached,
 
   /// <summary>
   /// Executed once per event after all perspectives in the batch have processed it.
@@ -270,4 +270,45 @@ public enum LifecycleStage {
   /// all processing paths complete (WhenAll pattern).
   /// </remarks>
   PostLifecycleInline
+}
+
+/// <summary>
+/// Extension methods for <see cref="LifecycleStage"/>.
+/// </summary>
+public static class LifecycleStageExtensions {
+  /// <summary>
+  /// Returns true if this is a Detached (fire-and-forget) lifecycle stage.
+  /// Detached stages run in their own scope and do not block the worker pipeline.
+  /// </summary>
+  public static bool IsDetached(this LifecycleStage stage) => stage is
+    LifecycleStage.ImmediateDetached or
+    LifecycleStage.LocalImmediateDetached or
+    LifecycleStage.PreDistributeDetached or
+    LifecycleStage.DistributeDetached or
+    LifecycleStage.PostDistributeDetached or
+    LifecycleStage.PreOutboxDetached or
+    LifecycleStage.PostOutboxDetached or
+    LifecycleStage.PreInboxDetached or
+    LifecycleStage.PostInboxDetached or
+    LifecycleStage.PrePerspectiveDetached or
+    LifecycleStage.PostPerspectiveDetached or
+    LifecycleStage.PostAllPerspectivesDetached or
+    LifecycleStage.PostLifecycleDetached;
+
+  /// <summary>
+  /// Returns true if this is an Inline (pipeline-blocking) lifecycle stage.
+  /// Inline stages block the worker until all receptors complete.
+  /// </summary>
+  public static bool IsInline(this LifecycleStage stage) => stage is
+    LifecycleStage.LocalImmediateInline or
+    LifecycleStage.PreDistributeInline or
+    LifecycleStage.PostDistributeInline or
+    LifecycleStage.PreOutboxInline or
+    LifecycleStage.PostOutboxInline or
+    LifecycleStage.PreInboxInline or
+    LifecycleStage.PostInboxInline or
+    LifecycleStage.PrePerspectiveInline or
+    LifecycleStage.PostPerspectiveInline or
+    LifecycleStage.PostAllPerspectivesInline or
+    LifecycleStage.PostLifecycleInline;
 }

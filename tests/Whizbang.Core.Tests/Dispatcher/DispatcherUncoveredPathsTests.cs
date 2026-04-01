@@ -27,8 +27,8 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// - _localInvokeVoidSyncWithSyncCheckAsync path
 /// - _flushOutboxBatchAndCollectReceiptsAsync empty batch
 /// - _invokePostLifecycleReceptorsAsync fallback path
-/// - _invokeImmediateAsyncReceptorsAsync short-circuit paths
-/// - _hasImmediateAsyncReceptors / _hasPostLifecycleReceptors
+/// - _invokeImmediateDetachedReceptorsAsync short-circuit paths
+/// - _hasImmediateDetachedReceptors / _hasPostLifecycleReceptors
 /// - SendAsync with IRouted unwrapping in options path
 /// - PublishManyAsync / LocalSendManyAsync null guard
 /// </summary>
@@ -711,14 +711,14 @@ public class DispatcherUncoveredPathsTests {
   // ========================================
 
   [Test]
-  public async Task LocalInvokeAsync_GenericVoidTyped_SyncFallbackWithImmediateAsync_GoesAsyncPathAsync() {
-    // Arrange - void sync invoker + ImmediateAsync receptors registered
+  public async Task LocalInvokeAsync_GenericVoidTyped_SyncFallbackWithImmediateDetached_GoesAsyncPathAsync() {
+    // Arrange - void sync invoker + ImmediateDetached receptors registered
     var invoked = false;
     var registry = new StubReceptorRegistry();
-    // Register an ImmediateAsync receptor to force async path
+    // Register an ImmediateDetached receptor to force async path
     registry.AddReceptor(
       typeof(TestCommand),
-      LifecycleStage.ImmediateAsync,
+      LifecycleStage.ImmediateDetached,
       new ReceptorInfo(
         MessageType: typeof(TestCommand),
         ReceptorId: "test-immediate",
@@ -760,17 +760,17 @@ public class DispatcherUncoveredPathsTests {
   }
 
   // ========================================
-  // VOID LocalInvoke SyncWithSyncCheck (sync + ImmediateAsync) TESTS
+  // VOID LocalInvoke SyncWithSyncCheck (sync + ImmediateDetached) TESTS
   // ========================================
 
   [Test]
-  public async Task LocalInvokeAsync_VoidSync_WithImmediateAsyncReceptors_GoesAsyncPathAsync() {
+  public async Task LocalInvokeAsync_VoidSync_WithImmediateDetachedReceptors_GoesAsyncPathAsync() {
     // Arrange
     var invoked = false;
     var registry = new StubReceptorRegistry();
     registry.AddReceptor(
       typeof(TestCommand),
-      LifecycleStage.ImmediateAsync,
+      LifecycleStage.ImmediateDetached,
       new ReceptorInfo(
         MessageType: typeof(TestCommand),
         ReceptorId: "test-immediate",
@@ -795,7 +795,7 @@ public class DispatcherUncoveredPathsTests {
     var registry = new StubReceptorRegistry();
     registry.AddReceptor(
       typeof(TestCommand),
-      LifecycleStage.PostLifecycleAsync,
+      LifecycleStage.PostLifecycleDetached,
       new ReceptorInfo(
         MessageType: typeof(TestCommand),
         ReceptorId: "test-post-lifecycle",
@@ -814,12 +814,12 @@ public class DispatcherUncoveredPathsTests {
   }
 
   // ========================================
-  // _invokeImmediateAsyncReceptorsAsync TESTS
+  // _invokeImmediateDetachedReceptorsAsync TESTS
   // ========================================
 
   [Test]
-  public async Task LocalInvokeAsync_Void_WithTraceStore_NoReceptorRegistry_SkipsImmediateAsyncAsync() {
-    // Arrange - no receptor registry, ImmediateAsync should be skipped
+  public async Task LocalInvokeAsync_Void_WithTraceStore_NoReceptorRegistry_SkipsImmediateDetachedAsync() {
+    // Arrange - no receptor registry, ImmediateDetached should be skipped
     var traceStore = new StubTraceStore();
     var dispatcher = _createDispatcher(
       traceStore: traceStore,
@@ -834,8 +834,8 @@ public class DispatcherUncoveredPathsTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Void_WithReceptorRegistry_NoImmediateAsyncReceptors_SkipsAsync() {
-    // Arrange - registry has no ImmediateAsync receptors
+  public async Task LocalInvokeAsync_Void_WithReceptorRegistry_NoImmediateDetachedReceptors_SkipsAsync() {
+    // Arrange - registry has no ImmediateDetached receptors
     var traceStore = new StubTraceStore();
     var registry = new StubReceptorRegistry();
     var dispatcher = _createDispatcher(
@@ -852,12 +852,12 @@ public class DispatcherUncoveredPathsTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Void_WithImmediateAsyncReceptors_InvokesScopedInvokerAsync() {
-    // Arrange - ImmediateAsync receptor registered, scoped invoker available
+  public async Task LocalInvokeAsync_Void_WithImmediateDetachedReceptors_InvokesScopedInvokerAsync() {
+    // Arrange - ImmediateDetached receptor registered, scoped invoker available
     var registry = new StubReceptorRegistry();
     registry.AddReceptor(
       typeof(TestCommand),
-      LifecycleStage.ImmediateAsync,
+      LifecycleStage.ImmediateDetached,
       new ReceptorInfo(
         MessageType: typeof(TestCommand),
         ReceptorId: "test-immediate",
@@ -1391,17 +1391,17 @@ public class DispatcherUncoveredPathsTests {
   }
 
   // ========================================
-  // _hasImmediateAsyncReceptors / _hasPostLifecycleReceptors TESTS
+  // _hasImmediateDetachedReceptors / _hasPostLifecycleReceptors TESTS
   // ========================================
 
   [Test]
-  public async Task LocalInvokeAsync_VoidAsync_WithImmediateAsyncReceptors_GoesTracingPathAsync() {
-    // Arrange - async invoker + ImmediateAsync receptors => tracing path even without traceStore
+  public async Task LocalInvokeAsync_VoidAsync_WithImmediateDetachedReceptors_GoesTracingPathAsync() {
+    // Arrange - async invoker + ImmediateDetached receptors => tracing path even without traceStore
     var invoked = false;
     var registry = new StubReceptorRegistry();
     registry.AddReceptor(
       typeof(TestCommand),
-      LifecycleStage.ImmediateAsync,
+      LifecycleStage.ImmediateDetached,
       new ReceptorInfo(
         MessageType: typeof(TestCommand),
         ReceptorId: "test-immediate",
@@ -1427,7 +1427,7 @@ public class DispatcherUncoveredPathsTests {
     var registry = new StubReceptorRegistry();
     registry.AddReceptor(
       typeof(TestCommand),
-      LifecycleStage.PostLifecycleAsync,
+      LifecycleStage.PostLifecycleDetached,
       new ReceptorInfo(
         MessageType: typeof(TestCommand),
         ReceptorId: "test-post-lifecycle",

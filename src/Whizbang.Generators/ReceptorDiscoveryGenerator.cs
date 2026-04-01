@@ -259,8 +259,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts lifecycle stages from [FireAt] attributes on a receptor class.
-  /// Returns an array of fully qualified lifecycle stage enum names (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveAsync").
-  /// Returns empty array if no [FireAt] attributes found (receptor will default to ImmediateAsync).
+  /// Returns an array of fully qualified lifecycle stage enum names (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveDetached").
+  /// Returns empty array if no [FireAt] attributes found (receptor will default to ImmediateDetached).
   /// Supports multiple [FireAt] attributes on a single receptor.
   /// </summary>
   private static string[] _extractLifecycleStages(INamedTypeSymbol classSymbol) {
@@ -273,7 +273,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // [FireAt(LifecycleStage.PostPerspectiveAsync)]
+      // [FireAt(LifecycleStage.PostPerspectiveDetached)]
       // Constructor argument is LifecycleStage enum value
       if (attribute.ConstructorArguments.Length > 0) {
         var stageArg = attribute.ConstructorArguments[0];
@@ -289,7 +289,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
                 .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
 
             if (enumMember is not null) {
-              // Store fully qualified enum value (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveAsync")
+              // Store fully qualified enum value (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveDetached")
               var fullyQualifiedStage = $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
               stages.Add(fullyQualifiedStage);
             }
@@ -1352,7 +1352,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
-  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateAsync, PreOutboxAsync, PostInboxAsync
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached, PreOutboxDetached, PostInboxDetached
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
   /// </summary>
   private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
@@ -1537,15 +1537,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> _buildRoutingEntries(
       Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors) {
-    // Default stages: LocalImmediateAsync + PostInboxAsync.
+    // Default stages: LocalImmediateDetached + PostInboxDetached.
     // LocalImmediate fires for locally-dispatched messages (this service).
     // PostInbox fires for messages arriving from other services via transport.
     // Source-service filtering in ReceptorInvoker prevents double-fire:
     //   LocalImmediate: only if source = this service
     //   PostInbox: only if source = other service
     var defaultStages = new[] {
-      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateAsync",
-      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxAsync"
+      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached",
+      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached"
     };
 
     var routingEntries = new System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)>();

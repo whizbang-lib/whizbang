@@ -121,7 +121,7 @@ public delegate System.Threading.Tasks.Task ReceptorPublisher<TEvent>(TEvent @ev
 /// <summary>
 /// Placeholder for lifecycle stage enum.
 /// </summary>
-public enum LifecycleStage { ImmediateAsync, PostPerspectiveAsync }
+public enum LifecycleStage { ImmediateDetached, PostPerspectiveDetached }
 
 /// <summary>
 /// Placeholder for cancellation token.

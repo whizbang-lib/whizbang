@@ -488,7 +488,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   [Test]
-  public async Task HandleMessage_WithReceptorInvokerAndDeserializer_InvokesPreAndPostInboxAsync() {
+  public async Task HandleMessage_WithReceptorInvokerAndDeserializer_InvokesPreAndPostInboxDetachedAsync() {
     // Arrange
     var handlerCapturingTransport = new HandlerCapturingTransport();
     var messageId = MessageId.New();
@@ -513,10 +513,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var invokedStages = new List<LifecycleStage>();
     var registry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
-      LifecycleStage.PreInboxAsync, LifecycleStage.PreInboxInline,
-      LifecycleStage.PostInboxAsync, LifecycleStage.PostInboxInline,
-      LifecycleStage.ImmediateAsync,
-      LifecycleStage.PostLifecycleAsync, LifecycleStage.PostLifecycleInline
+      LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+      LifecycleStage.ImmediateDetached,
+      LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline
     }) {
       var capturedStage = stage;
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
@@ -553,11 +553,12 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act
     await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await worker.DrainDetachedAsync();
 
     // Assert - PreInbox and PostInbox stages invoked
-    await Assert.That(invokedStages).Contains(LifecycleStage.PreInboxAsync);
+    await Assert.That(invokedStages).Contains(LifecycleStage.PreInboxDetached);
     await Assert.That(invokedStages).Contains(LifecycleStage.PreInboxInline);
-    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxAsync);
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxDetached);
     await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxInline);
 
     await worker.StopAsync(CancellationToken.None);
@@ -589,10 +590,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var invokedStages = new List<LifecycleStage>();
     var registry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
-      LifecycleStage.PreInboxAsync, LifecycleStage.PreInboxInline,
-      LifecycleStage.PostInboxAsync, LifecycleStage.PostInboxInline,
-      LifecycleStage.ImmediateAsync,
-      LifecycleStage.PostLifecycleAsync, LifecycleStage.PostLifecycleInline
+      LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+      LifecycleStage.ImmediateDetached,
+      LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline
     }) {
       var capturedStage = stage;
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
@@ -631,9 +632,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act
     await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await worker.DrainDetachedAsync();
 
     // Assert - PostLifecycle stages invoked via coordinator
-    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleDetached);
     await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleInline);
 
     await worker.StopAsync(CancellationToken.None);
@@ -665,10 +667,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var invokedStages = new List<LifecycleStage>();
     var registry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
-      LifecycleStage.PreInboxAsync, LifecycleStage.PreInboxInline,
-      LifecycleStage.PostInboxAsync, LifecycleStage.PostInboxInline,
-      LifecycleStage.ImmediateAsync,
-      LifecycleStage.PostLifecycleAsync, LifecycleStage.PostLifecycleInline
+      LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+      LifecycleStage.ImmediateDetached,
+      LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline
     }) {
       var capturedStage = stage;
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
@@ -707,16 +709,17 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act
     await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await worker.DrainDetachedAsync();
 
     // Assert - PostLifecycle stages invoked via fallback (direct invoker)
-    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleDetached);
     await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleInline);
 
     await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]
-  public async Task HandleMessage_EventWithPerspectives_SkipsPostLifecycleAsync() {
+  public async Task HandleMessage_EventWithPerspectives_SkipsPostLifecycleDetachedAsync() {
     // Arrange - perspective registry has a matching perspective
     var handlerCapturingTransport = new HandlerCapturingTransport();
     var messageId = MessageId.New();
@@ -741,10 +744,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var invokedStages = new List<LifecycleStage>();
     var receptorRegistry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
-      LifecycleStage.PreInboxAsync, LifecycleStage.PreInboxInline,
-      LifecycleStage.PostInboxAsync, LifecycleStage.PostInboxInline,
-      LifecycleStage.ImmediateAsync,
-      LifecycleStage.PostLifecycleAsync, LifecycleStage.PostLifecycleInline
+      LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+      LifecycleStage.ImmediateDetached,
+      LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline
     }) {
       var capturedStage = stage;
       receptorRegistry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
@@ -794,7 +797,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
 
     // Assert - PostLifecycle stages NOT invoked (perspective handles it)
-    await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostLifecycleDetached);
     await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostLifecycleInline);
 
     await worker.StopAsync(CancellationToken.None);

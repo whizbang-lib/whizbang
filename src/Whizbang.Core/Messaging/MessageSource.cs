@@ -39,7 +39,7 @@ namespace Whizbang.Core.Messaging;
 public enum MessageSource {
   /// <summary>
   /// Message is being dispatched locally within the same process (no transport involved).
-  /// Used for ImmediateAsync lifecycle stage and direct command/event dispatch.
+  /// Used for ImmediateDetached lifecycle stage and direct command/event dispatch.
   /// </summary>
   Local,
 

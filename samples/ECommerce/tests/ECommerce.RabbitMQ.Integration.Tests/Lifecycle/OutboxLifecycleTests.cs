@@ -20,8 +20,8 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// <para><strong>Stages Tested</strong>:</para>
 /// <list type="bullet">
 ///   <item>PreOutboxInline - Before publishing to transport (blocking)</item>
-///   <item>PreOutboxAsync - Parallel with transport publish (non-blocking)</item>
-///   <item>PostOutboxAsync - After message published (non-blocking)</item>
+///   <item>PreOutboxDetached - Parallel with transport publish (non-blocking)</item>
+///   <item>PostOutboxDetached - After message published (non-blocking)</item>
 ///   <item>PostOutboxInline - After message published (blocking)</item>
 /// </list>
 /// </remarks>
@@ -102,15 +102,15 @@ public class OutboxLifecycleTests {
   }
 
   // ========================================
-  // PreOutboxAsync Tests (Non-Blocking)
+  // PreOutboxDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PreOutboxAsync lifecycle stage fires parallel with transport publish (non-blocking).
+  /// Verifies that PreOutboxDetached lifecycle stage fires parallel with transport publish (non-blocking).
   /// Should use Task.Run and not block message publishing.
   /// </summary>
   [Test]
-  public async Task PreOutboxAsync_FiresParallelWithPublish_NonBlockingAsync() {
+  public async Task PreOutboxDetached_FiresParallelWithPublish_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -124,7 +124,7 @@ public class OutboxLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.InventoryHost.WaitForPreOutboxAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForPreOutboxDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 20000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -140,15 +140,15 @@ public class OutboxLifecycleTests {
   }
 
   // ========================================
-  // PostOutboxAsync Tests (Non-Blocking)
+  // PostOutboxDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PostOutboxAsync lifecycle stage fires after transport publish (non-blocking).
+  /// Verifies that PostOutboxDetached lifecycle stage fires after transport publish (non-blocking).
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostOutboxAsync_FiresAfterTransportPublish_NonBlockingAsync() {
+  public async Task PostOutboxDetached_FiresAfterTransportPublish_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -162,7 +162,7 @@ public class OutboxLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.InventoryHost.WaitForPostOutboxAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForPostOutboxDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 20000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -178,12 +178,12 @@ public class OutboxLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that PostOutboxAsync fires after message is successfully published.
+  /// Verifies that PostOutboxDetached fires after message is successfully published.
   /// Tests the "message successfully published to transport" guarantee.
   /// </summary>
   [Test]
   [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
-  public async Task PostOutboxAsync_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync(CancellationToken cancellationToken) {
+  public async Task PostOutboxDetached_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -199,7 +199,7 @@ public class OutboxLifecycleTests {
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxDetached);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
@@ -208,11 +208,11 @@ public class OutboxLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for PostOutboxAsync stage
+      // Wait for PostOutboxDetached stage
       // NOTE: Async stages run in Task.Run (fire-and-forget), which can be delayed by infrastructure
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
-      // Assert - At this point, PostOutboxAsync has fired
+      // Assert - At this point, PostOutboxDetached has fired
       // Message should have been successfully published to Service Bus
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
       await Assert.That(receptor.LastMessage).IsNotNull();
@@ -221,11 +221,11 @@ public class OutboxLifecycleTests {
       await Task.Delay(2000);
 
       // Verify message was actually received by BFF (indicates successful publish)
-      // This is indirect verification that PostOutboxAsync fired AFTER successful publish
+      // This is indirect verification that PostOutboxDetached fired AFTER successful publish
       await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 120000);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxDetached);
     }
   }
 
@@ -274,7 +274,7 @@ public class OutboxLifecycleTests {
 
   /// <summary>
   /// Verifies that all 4 Outbox stages fire in correct order:
-  /// PreOutboxInline → PreOutboxAsync (parallel with publish) → PostOutboxAsync → PostOutboxInline
+  /// PreOutboxInline → PreOutboxDetached (parallel with publish) → PostOutboxDetached → PostOutboxInline
   /// </summary>
   [Test]
   public async Task OutboxStages_FireInCorrectOrder_AllStagesInvokedAsync() {
@@ -304,8 +304,8 @@ public class OutboxLifecycleTests {
 
     // Register all receptors
     registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreOutboxInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxAsync);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxAsync);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxDetached);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxDetached);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostOutboxInline);
 
     try {
@@ -329,8 +329,8 @@ public class OutboxLifecycleTests {
     } finally {
       // Unregister all receptors
       registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreOutboxInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxAsync);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxAsync);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxDetached);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxDetached);
       registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostOutboxInline);
     }
   }

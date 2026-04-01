@@ -185,9 +185,9 @@ public class PerspectiveWorkerScopeContextTests {
   #region Data Sources
 
   public static IEnumerable<LifecycleStage> PerspectiveStages() {
-    yield return LifecycleStage.PrePerspectiveAsync;
+    yield return LifecycleStage.PrePerspectiveDetached;
     yield return LifecycleStage.PrePerspectiveInline;
-    yield return LifecycleStage.PostPerspectiveAsync;
+    yield return LifecycleStage.PostPerspectiveDetached;
     yield return LifecycleStage.PostPerspectiveInline;
   }
 

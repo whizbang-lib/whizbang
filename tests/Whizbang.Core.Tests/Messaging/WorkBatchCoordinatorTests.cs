@@ -71,7 +71,7 @@ public class WorkBatchCoordinatorTests {
   }
 
   [Test]
-  public async Task ProcessAndDistributeAsync_WithOutboxWork_WritesToOutboxChannelAsync() {
+  public async Task ProcessAndDistributeDetached_WithOutboxWork_WritesToOutboxChannelAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
     var messageId = Guid.CreateVersion7();
@@ -106,7 +106,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
+    await coordinator.ProcessAndDistributeDetached(new ProcessAndDistributeContext(instanceId));
 
     // Assert - outbox work should be in channel
     var canRead = outboxChannel.Reader.TryRead(out var readWork);
@@ -118,7 +118,7 @@ public class WorkBatchCoordinatorTests {
   }
 
   [Test]
-  public async Task ProcessAndDistributeAsync_WithPerspectiveWork_WritesToPerspectiveChannelAsync() {
+  public async Task ProcessAndDistributeDetached_WithPerspectiveWork_WritesToPerspectiveChannelAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
     var perspectiveWork = new PerspectiveWork {
@@ -150,7 +150,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
+    await coordinator.ProcessAndDistributeDetached(new ProcessAndDistributeContext(instanceId));
 
     // Assert - perspective work should be in channel
     var canRead = perspectiveChannel.Reader.TryRead(out var readWork);
@@ -162,7 +162,7 @@ public class WorkBatchCoordinatorTests {
   }
 
   [Test]
-  public async Task ProcessAndDistributeAsync_WithBothWorkTypes_DistributesToBothChannelsAsync() {
+  public async Task ProcessAndDistributeDetached_WithBothWorkTypes_DistributesToBothChannelsAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
     var messageId = Guid.CreateVersion7();
@@ -205,7 +205,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
+    await coordinator.ProcessAndDistributeDetached(new ProcessAndDistributeContext(instanceId));
 
     // Assert - both channels should have work
     await Assert.That(outboxChannel.Reader.TryRead(out var readOutboxWork)).IsTrue();

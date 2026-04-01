@@ -41,7 +41,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithLifecycleDeserializerAndInvoker_InvokesPreAndPostInboxAsync() {
+  public async Task HandleMessage_WithLifecycleDeserializerAndInvoker_InvokesPreAndPostInboxDetachedAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new AdditionalCoverageTransport();
@@ -706,7 +706,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     // Verify the stages invoked include PostInbox stages
     var hasPostInbox = invoker.InvokedStages.Any(s =>
-      s == LifecycleStage.PostInboxAsync || s == LifecycleStage.PostInboxInline);
+      s == LifecycleStage.PostInboxDetached || s == LifecycleStage.PostInboxInline);
     await Assert.That(hasPostInbox).IsTrue()
       .Because("PostInbox lifecycle stages should be invoked after ordered processor");
   }

@@ -18,11 +18,11 @@ namespace Whizbang.Core.Tests.Workers;
 public class PerspectiveWorkerPostLifecycleTests {
 
   [Test]
-  public async Task ReceptorInvoker_InvokesPostLifecycleAsync_WhenResolvedFromScopeAsync() {
+  public async Task ReceptorInvoker_InvokesPostLifecycleDetached_WhenResolvedFromScopeAsync() {
     // Arrange
     var invoked = false;
     var registry = new TestPostLifecycleReceptorRegistry();
-    registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+    registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
       MessageType: typeof(TestPostLifecycleEvent),
       ReceptorId: "test_post_lifecycle_async_receptor",
       InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -43,7 +43,7 @@ public class PerspectiveWorkerPostLifecycleTests {
     var envelope = _createEventEnvelope("test-user", "test-tenant");
 
     // Act
-    await receptorInvoker!.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync);
+    await receptorInvoker!.InvokeAsync(envelope, LifecycleStage.PostLifecycleDetached);
 
     // Assert
     await Assert.That(invoked).IsTrue();
@@ -82,10 +82,10 @@ public class PerspectiveWorkerPostLifecycleTests {
   }
 
   [Test]
-  public async Task PostLifecycleAsync_ContextHasNullPerspectiveType_WhenCreatedForBatchEndAsync() {
+  public async Task PostLifecycleDetached_ContextHasNullPerspectiveType_WhenCreatedForBatchEndAsync() {
     // PostLifecycle is NOT perspective-specific, so PerspectiveType should be null in the context
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.PostLifecycleAsync,
+      CurrentStage = LifecycleStage.PostLifecycleDetached,
       StreamId = Guid.CreateVersion7(),
       PerspectiveType = null,
       MessageSource = MessageSource.Local,
@@ -94,7 +94,7 @@ public class PerspectiveWorkerPostLifecycleTests {
 
     // Assert: PerspectiveType is null for PostLifecycle (not tied to any specific perspective)
     await Assert.That(context.PerspectiveType).IsNull();
-    await Assert.That(context.CurrentStage).IsEqualTo(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(context.CurrentStage).IsEqualTo(LifecycleStage.PostLifecycleDetached);
     await Assert.That(context.MessageSource).IsEqualTo(MessageSource.Local);
   }
 
