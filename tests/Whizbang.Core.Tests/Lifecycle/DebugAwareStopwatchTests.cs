@@ -101,9 +101,9 @@ public class DebugAwareStopwatchTests {
   public async Task StageRecord_Properties_AreAccessibleAsync() {
     var startedAt = DateTimeOffset.UtcNow;
     var duration = TimeSpan.FromMilliseconds(42);
-    var record = new StageRecord(LifecycleStage.PostLifecycleAsync, duration, startedAt);
+    var record = new StageRecord(LifecycleStage.PostLifecycleDetached, duration, startedAt);
 
-    await Assert.That(record.Stage).IsEqualTo(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(record.Stage).IsEqualTo(LifecycleStage.PostLifecycleDetached);
     await Assert.That(record.Duration).IsEqualTo(duration);
     await Assert.That(record.StartedAt).IsEqualTo(startedAt);
   }
@@ -112,9 +112,9 @@ public class DebugAwareStopwatchTests {
   public async Task StageRecord_Equality_WorksAsync() {
     var startedAt = DateTimeOffset.UtcNow;
     var duration = TimeSpan.FromMilliseconds(42);
-    var record1 = new StageRecord(LifecycleStage.PostLifecycleAsync, duration, startedAt);
-    var record2 = new StageRecord(LifecycleStage.PostLifecycleAsync, duration, startedAt);
-    var record3 = new StageRecord(LifecycleStage.PreOutboxAsync, duration, startedAt);
+    var record1 = new StageRecord(LifecycleStage.PostLifecycleDetached, duration, startedAt);
+    var record2 = new StageRecord(LifecycleStage.PostLifecycleDetached, duration, startedAt);
+    var record3 = new StageRecord(LifecycleStage.PreOutboxDetached, duration, startedAt);
 
     await Assert.That(record1).IsEqualTo(record2);
     await Assert.That(record1).IsNotEqualTo(record3);
@@ -130,8 +130,8 @@ public class DebugAwareStopwatchTests {
   [Test]
   public async Task StageRecord_GetHashCode_ConsistentAsync() {
     var startedAt = DateTimeOffset.UtcNow;
-    var record1 = new StageRecord(LifecycleStage.PostLifecycleAsync, TimeSpan.FromMilliseconds(42), startedAt);
-    var record2 = new StageRecord(LifecycleStage.PostLifecycleAsync, TimeSpan.FromMilliseconds(42), startedAt);
+    var record1 = new StageRecord(LifecycleStage.PostLifecycleDetached, TimeSpan.FromMilliseconds(42), startedAt);
+    var record2 = new StageRecord(LifecycleStage.PostLifecycleDetached, TimeSpan.FromMilliseconds(42), startedAt);
 
     await Assert.That(record1.GetHashCode()).IsEqualTo(record2.GetHashCode());
   }

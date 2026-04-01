@@ -14,16 +14,16 @@ namespace Whizbang.Core.Tests.Messaging;
 public class LocalImmediateLifecycleStageTests {
 
   /// <summary>
-  /// Verifies that LocalImmediateAsync stage exists in the LifecycleStage enum.
+  /// Verifies that LocalImmediateDetached stage exists in the LifecycleStage enum.
   /// This stage is for async processing during local dispatch (mediator pattern).
   /// </summary>
   [Test]
-  public async Task LocalImmediateAsync_ShouldExistInLifecycleStageEnumAsync() {
+  public async Task LocalImmediateDetached_ShouldExistInLifecycleStageEnumAsync() {
     // Arrange & Act
-    var stage = LifecycleStage.LocalImmediateAsync;
+    var stage = LifecycleStage.LocalImmediateDetached;
 
     // Assert - Stage exists and can be assigned
-    await Assert.That(stage.ToString()).IsEqualTo("LocalImmediateAsync");
+    await Assert.That(stage.ToString()).IsEqualTo("LocalImmediateDetached");
   }
 
   /// <summary>
@@ -45,9 +45,9 @@ public class LocalImmediateLifecycleStageTests {
   [Test]
   public async Task LocalImmediateStages_ShouldHaveUniqueValuesAsync() {
     // Arrange
-    var asyncStage = (int)LifecycleStage.LocalImmediateAsync;
+    var asyncStage = (int)LifecycleStage.LocalImmediateDetached;
     var inlineStage = (int)LifecycleStage.LocalImmediateInline;
-    var immediateAsync = (int)LifecycleStage.ImmediateAsync;
+    var immediateAsync = (int)LifecycleStage.ImmediateDetached;
 
     // Assert - All should be different
     await Assert.That(asyncStage).IsNotEqualTo(inlineStage);
@@ -56,15 +56,15 @@ public class LocalImmediateLifecycleStageTests {
   }
 
   /// <summary>
-  /// Verifies that [FireAt] attribute can accept LocalImmediateAsync stage.
+  /// Verifies that [FireAt] attribute can accept LocalImmediateDetached stage.
   /// </summary>
   [Test]
-  public async Task FireAtAttribute_ShouldAcceptLocalImmediateAsyncAsync() {
+  public async Task FireAtAttribute_ShouldAcceptLocalImmediateDetachedAsync() {
     // Arrange & Act
-    var attribute = new FireAtAttribute(LifecycleStage.LocalImmediateAsync);
+    var attribute = new FireAtAttribute(LifecycleStage.LocalImmediateDetached);
 
     // Assert - FireAtAttribute uses Stage (singular) property
-    await Assert.That(attribute.Stage).IsEqualTo(LifecycleStage.LocalImmediateAsync);
+    await Assert.That(attribute.Stage).IsEqualTo(LifecycleStage.LocalImmediateDetached);
   }
 
   /// <summary>
@@ -84,7 +84,7 @@ public class LocalImmediateLifecycleStageTests {
   /// FireAtAttribute uses AllowMultiple=true pattern - apply multiple attributes for multiple stages.
   /// </summary>
   [Test]
-  public async Task FireAtAttribute_MultipleAttributes_ShouldIncludeLocalImmediateAsync() {
+  public async Task FireAtAttribute_MultipleAttributes_ShouldIncludeLocalImmediateDetachedAsync() {
     // Arrange - Create attributes as they would appear on a class
     var attributes = new[] {
       new FireAtAttribute(LifecycleStage.LocalImmediateInline),

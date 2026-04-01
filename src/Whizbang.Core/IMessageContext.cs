@@ -58,7 +58,7 @@ public interface IMessageContext {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// In lifecycle receptors (especially deferred stages like <c>PostPerspectiveAsync</c>),
+  /// In lifecycle receptors (especially deferred stages like <c>PostPerspectiveDetached</c>),
   /// use this property instead of HTTP-based tenant resolution since the original HTTP
   /// context is unavailable.
   /// </para>

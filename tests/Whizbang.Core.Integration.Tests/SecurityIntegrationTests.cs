@@ -544,12 +544,12 @@ public class SecurityIntegrationTests {
     }
   }
 
-  // === PostPerspectiveAsync Security Context Propagation ===
+  // === PostPerspectiveDetached Security Context Propagation ===
 
   /// <summary>
   /// Integration test verifying that when PerspectiveWorker processes events with scope in hops
   /// but extraction fails (no extractor succeeds), the scope is still available to lifecycle handlers.
-  /// This validates the fix for TenantContext being null in [FireAt(LifecycleStage.PostPerspectiveAsync)] handlers.
+  /// This validates the fix for TenantContext being null in [FireAt(LifecycleStage.PostPerspectiveDetached)] handlers.
   /// </summary>
   /// <remarks>
   /// Root cause: When extraction fails, envelope.GetCurrentScope() returns a ScopeContext that is NOT
@@ -1120,7 +1120,7 @@ public class SecurityIntegrationTests {
     await Task.Delay(1).ConfigureAwait(false);
   }
 
-  // Test helper types for PostPerspectiveAsync tests
+  // Test helper types for PostPerspectiveDetached tests
   public record TestPerspectiveEvent(Guid StreamId);
 
   private sealed class TestSecurityContextCallback(Action<IScopeContext> onContextEstablished) : ISecurityContextCallback {
@@ -1254,7 +1254,7 @@ public class SecurityIntegrationTests {
 
   [Test]
   [Category("JDNextScenario")]
-  public async Task PostPerspectiveAsync_WithScopeInEnvelopeHops_SetsMessageContextScopeContextAsync() {
+  public async Task PostPerspectiveDetached_WithScopeInEnvelopeHops_SetsMessageContextScopeContextAsync() {
     // This test replicates the FULL JDNext scenario:
     // 1. Event is read from database with scope in hops
     // 2. Generated runner establishes security context

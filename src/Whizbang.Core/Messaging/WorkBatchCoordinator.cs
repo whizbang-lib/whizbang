@@ -31,7 +31,7 @@ public class WorkBatchCoordinator(
   private readonly IPerspectiveChannelWriter _perspectiveChannel = perspectiveChannel ?? throw new ArgumentNullException(nameof(perspectiveChannel));
 
   /// <inheritdoc />
-  public async Task ProcessAndDistributeAsync(
+  public async Task ProcessAndDistributeDetached(
     ProcessAndDistributeContext context,
     CancellationToken ct = default
   ) {

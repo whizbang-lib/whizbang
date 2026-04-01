@@ -17,9 +17,9 @@ namespace Whizbang.Core.Tests.Tags;
 /// <summary>
 /// RED/GREEN tests reproducing the JDNext tag notification failure.
 ///
-/// JDNext registers tag hooks at PostAllPerspectivesAsync:
+/// JDNext registers tag hooks at PostAllPerspectivesDetached:
 ///   options.Tags.UseHook&lt;NotificationTagAttribute, JdxNotificationTagHook&gt;(
-///     fireAt: LifecycleStage.PostAllPerspectivesAsync);
+///     fireAt: LifecycleStage.PostAllPerspectivesDetached);
 ///
 /// The hooks read scope from IScopeContextAccessor.ScopeContext (AsyncLocal), NOT from TagContext.Scope.
 /// If the hook fires at the wrong stage or scope is null, notifications silently fail.
@@ -48,21 +48,21 @@ public class TagHookStageFilteringAndScopeTests {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Test 1: ProcessTagsAsync stage filtering — hook registered at PostAllPerspectivesAsync
+  // Test 1: ProcessTagsAsync stage filtering — hook registered at PostAllPerspectivesDetached
   //         should NOT fire when invoked at AfterReceptorCompletion
   // ─────────────────────────────────────────────────────────────────────
 
   [Test]
   [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_HookRegisteredAtPostAllPerspectives_DoesNotFireAtAfterReceptorCompletionAsync() {
-    // Arrange — simulate JDNext pattern: hook registered at PostAllPerspectivesAsync
+    // Arrange — simulate JDNext pattern: hook registered at PostAllPerspectivesDetached
     var registry = new TestTagRegistry();
     registry.AddTag<TaggedTestEvent>(typeof(SignalTagAttribute), "notifications");
     MessageTagRegistry.Register(registry, priority: 50);
 
     var hook = new CapturingHook();
     var options = new TagOptions();
-    options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+    options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     var processor = new MessageTagProcessor(options, type => type == typeof(CapturingHook) ? hook : null);
     var message = new TaggedTestEvent("evt-1", Guid.NewGuid());
@@ -72,17 +72,17 @@ public class TagHookStageFilteringAndScopeTests {
 
     // Assert — hook should NOT fire because stage doesn't match
     await Assert.That(hook.InvocationCount).IsEqualTo(0)
-      .Because("Hook registered at PostAllPerspectivesAsync must NOT fire at AfterReceptorCompletion");
+      .Because("Hook registered at PostAllPerspectivesDetached must NOT fire at AfterReceptorCompletion");
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Test 2: ProcessTagsAsync stage filtering — hook registered at PostAllPerspectivesAsync
-  //         SHOULD fire when invoked at PostAllPerspectivesAsync
+  // Test 2: ProcessTagsAsync stage filtering — hook registered at PostAllPerspectivesDetached
+  //         SHOULD fire when invoked at PostAllPerspectivesDetached
   // ─────────────────────────────────────────────────────────────────────
 
   [Test]
   [NotInParallel("TagRegistry")]
-  public async Task ProcessTagsAsync_HookRegisteredAtPostAllPerspectives_FiresAtPostAllPerspectivesAsync() {
+  public async Task ProcessTagsAsync_HookRegisteredAtPostAllPerspectives_FiresAtPostAllPerspectivesDetachedAsync() {
     // Arrange
     var registry = new TestTagRegistry();
     registry.AddTag<TaggedTestEvent>(typeof(SignalTagAttribute), "notifications");
@@ -90,17 +90,17 @@ public class TagHookStageFilteringAndScopeTests {
 
     var hook = new CapturingHook();
     var options = new TagOptions();
-    options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+    options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     var processor = new MessageTagProcessor(options, type => type == typeof(CapturingHook) ? hook : null);
     var message = new TaggedTestEvent("evt-1", Guid.NewGuid());
 
     // Act — invoke at the registered stage
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesAsync);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesDetached);
 
     // Assert — hook SHOULD fire
     await Assert.That(hook.InvocationCount).IsEqualTo(1)
-      .Because("Hook registered at PostAllPerspectivesAsync must fire when stage matches");
+      .Because("Hook registered at PostAllPerspectivesDetached must fire when stage matches");
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ public class TagHookStageFilteringAndScopeTests {
     var hookA = new CapturingHook();
     var hookB = new CapturingHook();
     var options = new TagOptions();
-    options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+    options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
     options.UseHook<SignalTagAttribute, CapturingHook>(fireAt: LifecycleStage.AfterReceptorCompletion);
 
     var hookIndex = 0;
@@ -126,14 +126,14 @@ public class TagHookStageFilteringAndScopeTests {
     var processor = new MessageTagProcessor(options, _ => hooks[hookIndex++]);
     var message = new TaggedTestEvent("evt-1", Guid.NewGuid());
 
-    // Act — invoke at PostAllPerspectivesAsync
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesAsync);
+    // Act — invoke at PostAllPerspectivesDetached
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesDetached);
 
-    // Assert — only hookA (PostAllPerspectivesAsync) should fire
+    // Assert — only hookA (PostAllPerspectivesDetached) should fire
     await Assert.That(hookA.InvocationCount).IsEqualTo(1)
-      .Because("Hook A is registered at PostAllPerspectivesAsync");
+      .Because("Hook A is registered at PostAllPerspectivesDetached");
     await Assert.That(hookB.InvocationCount).IsEqualTo(0)
-      .Because("Hook B is registered at AfterReceptorCompletion, should not fire at PostAllPerspectivesAsync");
+      .Because("Hook B is registered at AfterReceptorCompletion, should not fire at PostAllPerspectivesDetached");
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -155,12 +155,12 @@ public class TagHookStageFilteringAndScopeTests {
     var processor = new MessageTagProcessor(options, type => type == typeof(CapturingHook) ? hook : null);
     var message = new TaggedTestEvent("evt-1", Guid.NewGuid());
 
-    // Act — invoke at PostAllPerspectivesAsync
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesAsync);
+    // Act — invoke at PostAllPerspectivesDetached
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesDetached);
 
     // Assert — hook with null fireAt should fire at any stage
     await Assert.That(hook.InvocationCount).IsEqualTo(1)
-      .Because("Hook with null fireAt (all stages) should fire at PostAllPerspectivesAsync");
+      .Because("Hook with null fireAt (all stages) should fire at PostAllPerspectivesDetached");
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -187,14 +187,14 @@ public class TagHookStageFilteringAndScopeTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var options = new TagOptions();
-    options.UseHook<SignalTagAttribute, ScopeCapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+    options.UseHook<SignalTagAttribute, ScopeCapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     // Use scope factory constructor (production path)
     var processor = new MessageTagProcessor(options, scopeFactory);
     var message = new TaggedTestEvent("evt-1", Guid.NewGuid());
 
-    // Act — invoke at PostAllPerspectivesAsync (the registered stage)
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesAsync, scope);
+    // Act — invoke at PostAllPerspectivesDetached (the registered stage)
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesDetached, scope);
 
     // Assert — the hook should have read scope from IScopeContextAccessor.ScopeContext
     var capturedScope = ScopeCapturingHook.LastCapturedScope;
@@ -226,14 +226,14 @@ public class TagHookStageFilteringAndScopeTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var options = new TagOptions();
-    options.UseHook<SignalTagAttribute, ScopeCapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+    options.UseHook<SignalTagAttribute, ScopeCapturingHook>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     var processor = new MessageTagProcessor(options, scopeFactory);
     var message = new TaggedTestEvent("evt-1", Guid.NewGuid());
 
     // Act — invoke without setting scope (the broken scenario)
     ScopeCapturingHook.Reset();
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesAsync);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent), LifecycleStage.PostAllPerspectivesDetached);
 
     // Assert — scope should be null (proves the silent failure mode)
     await Assert.That(ScopeCapturingHook.LastCapturedScope).IsNull()
@@ -261,7 +261,7 @@ public class TagHookStageFilteringAndScopeTests {
     var hook = new CustomAttributeCapturingHook();
     var options = new TagOptions();
     options.UseHook<TestNotificationTagAttribute, CustomAttributeCapturingHook>(
-      fireAt: LifecycleStage.PostAllPerspectivesAsync);
+      fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     var processor = new MessageTagProcessor(options,
       type => type == typeof(CustomAttributeCapturingHook) ? hook : null);
@@ -270,11 +270,11 @@ public class TagHookStageFilteringAndScopeTests {
 
     // Act — invoke at the registered stage
     await processor.ProcessTagsAsync(message, typeof(TaggedTestEvent),
-      LifecycleStage.PostAllPerspectivesAsync, scope);
+      LifecycleStage.PostAllPerspectivesDetached, scope);
 
     // Assert — hook must fire via the dispatcher registry path
     await Assert.That(hook.InvocationCount).IsEqualTo(1)
-      .Because("Custom attribute hook must fire at PostAllPerspectivesAsync via dispatcher registry");
+      .Because("Custom attribute hook must fire at PostAllPerspectivesDetached via dispatcher registry");
     await Assert.That(hook.LastScope).IsNotNull()
       .Because("Scope must be propagated to custom attribute hook context");
     await Assert.That(hook.LastScope!.Scope?.TenantId).IsEqualTo("tenant-abc");
@@ -294,7 +294,7 @@ public class TagHookStageFilteringAndScopeTests {
     var hook = new CustomAttributeCapturingHook();
     var options = new TagOptions();
     options.UseHook<TestNotificationTagAttribute, CustomAttributeCapturingHook>(
-      fireAt: LifecycleStage.PostAllPerspectivesAsync);
+      fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     var processor = new MessageTagProcessor(options,
       type => type == typeof(CustomAttributeCapturingHook) ? hook : null);
@@ -306,7 +306,7 @@ public class TagHookStageFilteringAndScopeTests {
 
     // Assert — hook must NOT fire
     await Assert.That(hook.InvocationCount).IsEqualTo(0)
-      .Because("Custom attribute hook at PostAllPerspectivesAsync must not fire at AfterReceptorCompletion");
+      .Because("Custom attribute hook at PostAllPerspectivesDetached must not fire at AfterReceptorCompletion");
   }
 
   // ═════════════════════════════════════════════════════════════════════

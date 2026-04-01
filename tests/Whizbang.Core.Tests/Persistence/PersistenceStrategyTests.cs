@@ -40,7 +40,7 @@ public class PersistenceStrategyTests {
   }
 
   [Test]
-  public async Task PersistenceMode_DefaultIsImmediateAsync() {
+  public async Task PersistenceMode_DefaultIsImmediateDetachedAsync() {
     // Arrange
     var defaultValue = default(PersistenceMode);
 

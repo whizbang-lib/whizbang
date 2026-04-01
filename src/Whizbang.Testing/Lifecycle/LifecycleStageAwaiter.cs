@@ -154,9 +154,9 @@ internal sealed class LifecycleCompletionReceptor<TMessage>(
     // This prevents counting the same event twice: once when published, again when received.
     if (_skipInboxForDistributeStages && LastLifecycleContext is not null) {
       var isDistributeStage = LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeInline ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeAsync ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeAsync ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeAsync ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeDetached ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeDetached ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeDetached ||
                               LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeInline;
 
       if (isDistributeStage && LastLifecycleContext.MessageSource == MessageSource.Inbox) {
@@ -212,11 +212,11 @@ public static class LifecycleAwaiter {
   }
 
   /// <summary>
-  /// Creates an awaiter for ImmediateAsync (fires right after command handler returns).
+  /// Creates an awaiter for ImmediateDetached (fires right after command handler returns).
   /// </summary>
-  public static LifecycleStageAwaiter<TCommand> ForImmediateAsync<TCommand>(IHost host)
+  public static LifecycleStageAwaiter<TCommand> ForImmediateDetached<TCommand>(IHost host)
     where TCommand : ICommand {
-    return new LifecycleStageAwaiter<TCommand>(host, LifecycleStage.ImmediateAsync);
+    return new LifecycleStageAwaiter<TCommand>(host, LifecycleStage.ImmediateDetached);
   }
 
   /// <summary>

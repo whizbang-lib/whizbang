@@ -41,8 +41,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_ImmediateAsync_IsDefinedAsync() {
-    var value = LifecycleStage.ImmediateAsync;
+  public async Task LifecycleStage_ImmediateDetached_IsDefinedAsync() {
+    var value = LifecycleStage.ImmediateDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -51,8 +51,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_LocalImmediateAsync_IsDefinedAsync() {
-    var value = LifecycleStage.LocalImmediateAsync;
+  public async Task LifecycleStage_LocalImmediateDetached_IsDefinedAsync() {
+    var value = LifecycleStage.LocalImmediateDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -67,8 +67,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_PreDistributeAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PreDistributeAsync;
+  public async Task LifecycleStage_PreDistributeDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PreDistributeDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -79,14 +79,14 @@ public class LifecycleStageTests {
   }
 
   [Test]
-  public async Task LifecycleStage_DistributeAsync_IsDefinedAsync() {
-    var value = LifecycleStage.DistributeAsync;
+  public async Task LifecycleStage_DistributeDetached_IsDefinedAsync() {
+    var value = LifecycleStage.DistributeDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
   [Test]
-  public async Task LifecycleStage_PostDistributeAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PostDistributeAsync;
+  public async Task LifecycleStage_PostDistributeDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PostDistributeDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -101,8 +101,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_PreOutboxAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PreOutboxAsync;
+  public async Task LifecycleStage_PreOutboxDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PreOutboxDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -113,8 +113,8 @@ public class LifecycleStageTests {
   }
 
   [Test]
-  public async Task LifecycleStage_PostOutboxAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PostOutboxAsync;
+  public async Task LifecycleStage_PostOutboxDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PostOutboxDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -129,8 +129,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_PreInboxAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PreInboxAsync;
+  public async Task LifecycleStage_PreInboxDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PreInboxDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -141,8 +141,8 @@ public class LifecycleStageTests {
   }
 
   [Test]
-  public async Task LifecycleStage_PostInboxAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PostInboxAsync;
+  public async Task LifecycleStage_PostInboxDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PostInboxDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -157,8 +157,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_PrePerspectiveAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PrePerspectiveAsync;
+  public async Task LifecycleStage_PrePerspectiveDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PrePerspectiveDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -169,8 +169,8 @@ public class LifecycleStageTests {
   }
 
   [Test]
-  public async Task LifecycleStage_PostPerspectiveAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PostPerspectiveAsync;
+  public async Task LifecycleStage_PostPerspectiveDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PostPerspectiveDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -185,8 +185,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_PostAllPerspectivesAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PostAllPerspectivesAsync;
+  public async Task LifecycleStage_PostAllPerspectivesDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PostAllPerspectivesDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -201,8 +201,8 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_PostLifecycleAsync_IsDefinedAsync() {
-    var value = LifecycleStage.PostLifecycleAsync;
+  public async Task LifecycleStage_PostLifecycleDetached_IsDefinedAsync() {
+    var value = LifecycleStage.PostLifecycleDetached;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 
@@ -217,14 +217,14 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_ImmediateAsync_IsFirstValueAsync() {
-    var value = (int)LifecycleStage.ImmediateAsync;
+  public async Task LifecycleStage_ImmediateDetached_IsFirstValueAsync() {
+    var value = (int)LifecycleStage.ImmediateDetached;
     await Assert.That(value).IsEqualTo(0);
   }
 
   [Test]
-  public async Task LifecycleStage_ImmediateAsync_IsDefaultAsync() {
+  public async Task LifecycleStage_ImmediateDetached_IsDefaultAsync() {
     var value = default(LifecycleStage);
-    await Assert.That(value).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(value).IsEqualTo(LifecycleStage.ImmediateDetached);
   }
 }

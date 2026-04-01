@@ -47,7 +47,7 @@ public interface ILifecycleContext {
 
   /// <summary>
   /// Gets the event ID that triggered this lifecycle invocation, if applicable.
-  /// Null for lifecycle stages that don't process specific events (e.g., ImmediateAsync).
+  /// Null for lifecycle stages that don't process specific events (e.g., ImmediateDetached).
   /// </summary>
   Guid? EventId { get; }
 

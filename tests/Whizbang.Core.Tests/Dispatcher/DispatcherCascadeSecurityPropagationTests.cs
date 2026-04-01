@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </summary>
 /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
 /// <remarks>
-/// This is critical for lifecycle receptors (PostPerspectiveAsync) that need
+/// This is critical for lifecycle receptors (PostPerspectiveDetached) that need
 /// access to TenantId from the original dispatch context.
 /// </remarks>
 [Category("Security")]
@@ -101,7 +101,7 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// <summary>
   /// When a command is dispatched with WithTenant() and the handler returns events,
   /// the cascaded events should have SecurityContext.TenantId in their envelope hops.
-  /// This is critical for PostPerspectiveAsync handlers that need TenantId.
+  /// This is critical for PostPerspectiveDetached handlers that need TenantId.
   /// </summary>
   [Test]
   public async Task WithTenant_CascadedEvents_HaveTenantIdInSecurityContextAsync() {

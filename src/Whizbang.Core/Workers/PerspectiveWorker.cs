@@ -46,6 +46,7 @@ public partial class PerspectiveWorker(
   LifecycleCoordinatorMetrics? coordinatorMetrics = null
 ) : BackgroundService {
 #pragma warning restore S107
+  private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
@@ -83,7 +84,7 @@ public partial class PerspectiveWorker(
 
   // Registry-based map: event type (CLR format) → all perspective CLR names that handle it.
   // Built once at startup from IPerspectiveRunnerRegistry. Used to register complete WhenAll
-  // expectations per event so PostAllPerspectivesAsync fires once after ALL perspectives complete,
+  // expectations per event so PostAllPerspectivesDetached fires once after ALL perspectives complete,
   // not once per batch cycle.
   private Dictionary<string, IReadOnlyList<string>>? _perspectivesPerEventType;
 
@@ -404,7 +405,7 @@ public partial class PerspectiveWorker(
     }
 
     // Phase 5: Fire PostLifecycle once per unique event — ONLY after ALL perspectives complete (WhenAll)
-    await _firePostLifecycleAsync(
+    await _firePostLifecycleDetached(
       batchProcessedEvents, lifecycleCoordinator, receptorInvoker, groupedWork,
       scope.ServiceProvider, cancellationToken);
 
@@ -744,28 +745,28 @@ public partial class PerspectiveWorker(
             if (lifecycleCoordinator is not null) {
               // Coordinator path: BeginTracking + AdvanceToAsync (stage guard = exactly-once)
               var tracking = lifecycleCoordinator.BeginTracking(
-                envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveAsync,
+                envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
                 MessageSource.Local, streamCtx.StreamId);
 
               // Stage guard ensures these fire once per event, not once per perspective group
-              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveAsync, streamCtx.ScopedProvider, cancellationToken);
+              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, streamCtx.ScopedProvider, cancellationToken);
               await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, streamCtx.ScopedProvider, cancellationToken);
             } else if (receptorInvoker is not null) {
               // Fallback: direct invocation when coordinator not registered
               var context = new LifecycleExecutionContext {
-                CurrentStage = LifecycleStage.PrePerspectiveAsync,
+                CurrentStage = LifecycleStage.PrePerspectiveDetached,
                 StreamId = streamCtx.StreamId,
                 LastProcessedEventId = streamCtx.LastProcessedEventId,
                 MessageSource = MessageSource.Local,
                 AttemptNumber = 1
               };
-              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveAsync, context, cancellationToken);
-              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-                context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+              // Detached: fire-and-forget with own DI scope
+              _fireDetachedStageAsync(envelope, LifecycleStage.PrePerspectiveDetached, context, cancellationToken);
+              // Inline: blocks pipeline
               await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveInline,
                 context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
-              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-                context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+                context with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
             }
           }
         } catch (Exception ex) {
@@ -985,7 +986,7 @@ public partial class PerspectiveWorker(
       string perspectiveName,
       CancellationToken cancellationToken) {
 
-    // NOTE: PostPerspectiveAsync is fired from the generated perspective runner, not here.
+    // NOTE: PostPerspectiveDetached is fired from the generated perspective runner, not here.
     // The runner fires it after flushing data but before returning the completion.
     // This ensures it fires before checkpoint commits, as designed.
 
@@ -1044,7 +1045,7 @@ public partial class PerspectiveWorker(
           LifecycleStage.PostPerspectiveInline, cancellationToken, processingMode);
         await _invokeLifecycleReceptorsForEventsAsync(
           processedEvents, streamCtx, result.PerspectiveType, result.LastEventId,
-          LifecycleStage.ImmediateAsync, cancellationToken, processingMode);
+          LifecycleStage.ImmediateDetached, cancellationToken, processingMode);
         LogPostPerspectiveInlineCompleted(_logger);
 
         // Process tags at PostPerspectiveInline (per-perspective, with scope context)
@@ -1110,7 +1111,7 @@ public partial class PerspectiveWorker(
   /// The coordinator guarantees exactly-once PostLifecycle via stage guards + perspective WhenAll.
   /// Falls back to direct invocation when coordinator is not registered.
   /// </summary>
-  private async Task _firePostLifecycleAsync(
+  private async Task _firePostLifecycleDetached(
       Dictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       ILifecycleCoordinator? lifecycleCoordinator,
       IReceptorInvoker? receptorInvoker,
@@ -1174,7 +1175,7 @@ public partial class PerspectiveWorker(
       if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
         // Not all perspectives have completed yet — keep tracking alive for next batch.
         // Don't abandon: the tracking instance preserves the stage guard so
-        // PostAllPerspectivesAsync fires exactly once across all batch cycles.
+        // PostAllPerspectivesDetached fires exactly once across all batch cycles.
         continue;
       }
 
@@ -1184,18 +1185,18 @@ public partial class PerspectiveWorker(
       var tracking = lifecycleCoordinator.GetTracking(eventId);
       if (tracking is not null) {
         // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
-        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesAsync, scopedProvider, cancellationToken);
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
         await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
         coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
 
         // PostLifecycle: fires once per event as the final lifecycle stage
-        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, cancellationToken);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
         await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
         coordinatorMetrics?.PostLifecycleFired.Add(1);
       }
 
       // DON'T abandon tracking after stages fire — the tracking instance's stage guard
-      // prevents PostAllPerspectivesAsync from firing again in subsequent batch cycles.
+      // prevents PostAllPerspectivesDetached from firing again in subsequent batch cycles.
       // The tracking is marked _isComplete after PostLifecycleInline (see LifecycleTrackingState),
       // so all future AdvanceToAsync calls return immediately.
       // Memory cleanup happens naturally as events age out of batchProcessedEvents.
@@ -1213,7 +1214,7 @@ public partial class PerspectiveWorker(
 
     foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
       var context = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PostLifecycleAsync,
+        CurrentStage = LifecycleStage.PostLifecycleDetached,
         StreamId = streamId,
         PerspectiveType = null,
         MessageSource = MessageSource.Local,
@@ -1221,15 +1222,79 @@ public partial class PerspectiveWorker(
       };
 
       await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
-      await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, cancellationToken);
-      await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-        context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+      // Detached: fire-and-forget with own DI scope
+      var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
+      _ = _fireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
+      // Inline: blocks pipeline
       await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
         context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);
-      await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-        context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+      await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+        context with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
     }
   }
+
+  /// <summary>
+  /// Fires a Detached lifecycle stage as fire-and-forget with its own DI scope.
+  /// </summary>
+  private void _fireDetachedStageAsync(
+      MessageEnvelope<IEvent> envelope, LifecycleStage stage,
+      LifecycleExecutionContext context, CancellationToken ct) {
+    var task = Task.Run(async () => {
+      try {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        await _establishSecurityContextAsync(envelope, scope.ServiceProvider, ct);
+        var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (invoker is null) {
+          return;
+        }
+        var ctx = context with { CurrentStage = stage };
+        await invoker.InvokeAsync(envelope, stage, ctx, ct);
+        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+        // Graceful shutdown
+      } catch (Exception ex) {
+        LogDetachedStageError(_logger, ex, stage, envelope.MessageId);
+      }
+    }, ct);
+    _detachedTasks.Add(task);
+  }
+
+  /// <summary>
+  /// Waits for all in-flight detached tasks to complete.
+  /// Used for graceful shutdown and testing.
+  /// </summary>
+  internal async ValueTask DrainDetachedAsync() {
+    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+  }
+
+  private static Task _fireDetachedStageStaticAsync(
+      IServiceScopeFactory scopeFactory, MessageEnvelope<IEvent> envelope,
+      LifecycleStage stage, LifecycleExecutionContext context) {
+    return Task.Run(async () => {
+      try {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        await _establishSecurityContextAsync(envelope, scope.ServiceProvider, default);
+        var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (invoker is null) {
+          return;
+        }
+        var ctx = context with { CurrentStage = stage };
+        await invoker.InvokeAsync(envelope, stage, ctx, default);
+        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
+      } catch (OperationCanceledException) {
+        // Graceful shutdown
+#pragma warning disable RCS1075 // No logger in static context
+      } catch (Exception) {
+#pragma warning restore RCS1075
+        // Errors surface via receptor telemetry
+      }
+    });
+  }
+
+  [LoggerMessage(Level = LogLevel.Error, Message = "Detached lifecycle stage {Stage} failed for message {MessageId}")]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
 
   /// <summary>
   /// Logs a summary of perspective processing activity for the batch.
@@ -1295,7 +1360,7 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Loads events that were just processed by the perspective run.
-  /// Loads once and reuses for both PostPerspectiveAsync and PostPerspectiveInline stages.
+  /// Loads once and reuses for both PostPerspectiveDetached and PostPerspectiveInline stages.
   /// </summary>
   private async Task<List<MessageEnvelope<IEvent>>> _loadProcessedEventsAsync(
       IEventStore eventStore,
@@ -1349,7 +1414,7 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Invokes lifecycle receptors for the given events at the specified stage.
-  /// Used for both PostPerspectiveAsync (before checkpoint save) and PostPerspectiveInline (after checkpoint save).
+  /// Used for both PostPerspectiveDetached (before checkpoint save) and PostPerspectiveInline (after checkpoint save).
   /// </summary>
   private async Task _invokeLifecycleReceptorsForEventsAsync(
       List<MessageEnvelope<IEvent>> processedEvents,

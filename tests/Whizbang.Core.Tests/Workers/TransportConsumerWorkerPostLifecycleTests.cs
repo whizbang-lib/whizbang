@@ -190,11 +190,11 @@ public class TransportConsumerWorkerPostLifecycleTests {
 
   /// <summary>
   /// BUG: _invokePostLifecycleForEventAsync coordinator path called BeginTracking with
-  /// PostLifecycleAsync entry stage instead of PostAllPerspectivesAsync.
-  /// Tag hooks registered at PostAllPerspectivesAsync never fired for events without perspectives.
+  /// PostLifecycleDetached entry stage instead of PostAllPerspectivesDetached.
+  /// Tag hooks registered at PostAllPerspectivesDetached never fired for events without perspectives.
   /// </summary>
   [Test]
-  public async Task InvokePostLifecycleForEvent_CoordinatorPath_BeginTracking_StartsAtPostAllPerspectivesAsyncAsync() {
+  public async Task InvokePostLifecycleForEvent_CoordinatorPath_BeginTracking_StartsAtPostAllPerspectivesDetachedAsync() {
     // Arrange
     var spy = new SpyLifecycleCoordinator();
     var eventId = Guid.CreateVersion7();
@@ -211,12 +211,12 @@ public class TransportConsumerWorkerPostLifecycleTests {
     services.AddSingleton<IReceptorInvoker>(new NoOpReceptorInvoker());
     var scopedProvider = services.BuildServiceProvider();
 
-    // Act: invoke the internal method — currently FAILS because it uses PostLifecycleAsync
+    // Act: invoke the internal method — currently FAILS because it uses PostLifecycleDetached
     await TransportConsumerWorker.InvokePostLifecycleForEventAsync(
       work, typedEnvelope, new NoOpReceptorInvoker(), lifecycleContext, scopedProvider, CancellationToken.None);
 
-    // Assert: BeginTracking entry stage must be PostAllPerspectivesAsync (not PostLifecycleAsync)
-    await Assert.That(spy.CapturedEntryStage).IsEqualTo(LifecycleStage.PostAllPerspectivesAsync);
+    // Assert: BeginTracking entry stage must be PostAllPerspectivesDetached (not PostLifecycleDetached)
+    await Assert.That(spy.CapturedEntryStage).IsEqualTo(LifecycleStage.PostAllPerspectivesDetached);
   }
 
   [Test]
@@ -242,14 +242,14 @@ public class TransportConsumerWorkerPostLifecycleTests {
       work, typedEnvelope, new NoOpReceptorInvoker(), lifecycleContext, scopedProvider, CancellationToken.None);
 
     // Assert: All 4 terminal stages advanced
-    await Assert.That(spy.AdvancedStages).Contains(LifecycleStage.PostAllPerspectivesAsync);
+    await Assert.That(spy.AdvancedStages).Contains(LifecycleStage.PostAllPerspectivesDetached);
     await Assert.That(spy.AdvancedStages).Contains(LifecycleStage.PostAllPerspectivesInline);
-    await Assert.That(spy.AdvancedStages).Contains(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(spy.AdvancedStages).Contains(LifecycleStage.PostLifecycleDetached);
     await Assert.That(spy.AdvancedStages).Contains(LifecycleStage.PostLifecycleInline);
   }
 
   [Test]
-  public async Task InvokePostLifecycleForEvent_FallbackPath_FiresPostAllPerspectivesBeforePostLifecycleAsync() {
+  public async Task InvokePostLifecycleForEvent_FallbackPath_FiresPostAllPerspectivesBeforePostLifecycleDetachedAsync() {
     // Arrange: no coordinator → fallback path
     var spyInvoker = new SpyReceptorInvoker();
     var eventId = Guid.CreateVersion7();
@@ -262,16 +262,19 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection(); // No ILifecycleCoordinator → fallback
+    services.AddSingleton<IReceptorInvoker>(spyInvoker);
     var scopedProvider = services.BuildServiceProvider();
 
     // Act
+    var detachedTasks = new List<Task>();
     await TransportConsumerWorker.InvokePostLifecycleForEventAsync(
-      work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None);
+      work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None, detachedTasks.Add);
+    await Task.WhenAll(detachedTasks);
 
-    // Assert: PostAllPerspectivesAsync fires BEFORE PostLifecycleAsync
+    // Assert: PostAllPerspectivesDetached fires BEFORE PostLifecycleDetached
     var stages = spyInvoker.InvokedStages;
-    var postAllPerspIdx = stages.IndexOf(LifecycleStage.PostAllPerspectivesAsync);
-    var postLifecycleIdx = stages.IndexOf(LifecycleStage.PostLifecycleAsync);
+    var postAllPerspIdx = stages.IndexOf(LifecycleStage.PostAllPerspectivesDetached);
+    var postLifecycleIdx = stages.IndexOf(LifecycleStage.PostLifecycleDetached);
     await Assert.That(postAllPerspIdx).IsGreaterThanOrEqualTo(0);
     await Assert.That(postLifecycleIdx).IsGreaterThanOrEqualTo(0);
     await Assert.That(postAllPerspIdx).IsLessThan(postLifecycleIdx);
@@ -291,17 +294,20 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.AddSingleton<IReceptorInvoker>(spyInvoker);
     var scopedProvider = services.BuildServiceProvider();
 
     // Act
+    var detachedTasks = new List<Task>();
     await TransportConsumerWorker.InvokePostLifecycleForEventAsync(
-      work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None);
+      work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None, detachedTasks.Add);
+    await Task.WhenAll(detachedTasks);
 
     // Assert: All 4 terminal stages fired
     var stages = spyInvoker.InvokedStages;
-    await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesAsync);
+    await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesDetached);
     await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesInline);
-    await Assert.That(stages).Contains(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(stages).Contains(LifecycleStage.PostLifecycleDetached);
     await Assert.That(stages).Contains(LifecycleStage.PostLifecycleInline);
   }
 
@@ -384,6 +390,8 @@ public class TransportConsumerWorkerPostLifecycleTests {
       }
       return ValueTask.CompletedTask;
     }
+
+    public ValueTask DrainDetachedAsync() => ValueTask.CompletedTask;
   }
 
   /// <summary>

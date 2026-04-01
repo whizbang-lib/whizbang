@@ -32,7 +32,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// - StreamIdGuard firing for events with Guid.Empty StreamId
 /// - Health monitor exception catch (non-OperationCanceledException)
 /// - _isEventWithoutPerspectives integrated from PostInbox lifecycle with registry
-/// - ImmediateAsync lifecycle stage invocations
+/// - ImmediateDetached lifecycle stage invocations
 /// - InvokePostLifecycleForEventAsync coordinator AbandonTracking
 /// - _populateDeliveredAtTimestamp with concrete MessageEnvelope JsonElement
 /// </summary>
@@ -406,19 +406,20 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       // Deserialization may fail but lifecycle paths are exercised
     }
 
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
-    // Assert - should invoke PreInbox, PostInbox, PostAllPerspectives, PostLifecycle + ImmediateAsync stages
-    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PreInboxAsync)
-      .Because("PreInboxAsync stage should be invoked");
+    // Assert - should invoke PreInbox, PostInbox, PostAllPerspectives, PostLifecycle + ImmediateDetached stages
+    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PreInboxDetached)
+      .Because("PreInboxDetached stage should be invoked");
     await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PreInboxInline)
       .Because("PreInboxInline stage should be invoked");
-    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.ImmediateAsync)
-      .Because("ImmediateAsync stage should be invoked after each lifecycle stage");
+    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.ImmediateDetached)
+      .Because("ImmediateDetached stage should be invoked after each lifecycle stage");
   }
 
   [Test]
-  public async Task HandleMessage_EventWithPerspectives_DoesNotInvokePostLifecycleAsync() {
+  public async Task HandleMessage_EventWithPerspectives_DoesNotInvokePostLifecycleDetachedAsync() {
     // Arrange - event message WITH matching perspective, should NOT fire PostLifecycle
     var messageId = MessageId.New();
     var streamId = Guid.NewGuid();
@@ -475,8 +476,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     cts.Cancel();
 
-    // Assert - PostAllPerspectivesAsync should NOT be invoked (perspectives exist, PerspectiveWorker handles it)
-    var hasPostAllPerspectives = invoker.InvokedStages.Any(s => s == LifecycleStage.PostAllPerspectivesAsync);
+    // Assert - PostAllPerspectivesDetached should NOT be invoked (perspectives exist, PerspectiveWorker handles it)
+    var hasPostAllPerspectives = invoker.InvokedStages.Any(s => s == LifecycleStage.PostAllPerspectivesDetached);
     await Assert.That(hasPostAllPerspectives).IsFalse()
       .Because("Events WITH perspectives should NOT get PostLifecycle from TransportConsumerWorker");
   }
@@ -512,11 +513,11 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   }
 
   // ========================================
-  // InvokePostLifecycleForEventAsync - fallback path ImmediateAsync invocations
+  // InvokePostLifecycleForEventAsync - fallback path ImmediateDetached invocations
   // ========================================
 
   [Test]
-  public async Task InvokePostLifecycleForEvent_FallbackPath_InvokesImmediateAsyncForEachStageAsync() {
+  public async Task InvokePostLifecycleForEvent_FallbackPath_InvokesImmediateDetachedForEachStageAsync() {
     // Arrange - no coordinator => fallback path
     var spyInvoker = new UncoveredReceptorInvoker();
     var eventId = Guid.CreateVersion7();
@@ -529,16 +530,19 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     };
 
     var services = new ServiceCollection(); // No ILifecycleCoordinator
+    services.AddSingleton<IReceptorInvoker>(spyInvoker);
     var scopedProvider = services.BuildServiceProvider();
 
     // Act
+    var detachedTasks = new List<Task>();
     await TransportConsumerWorker.InvokePostLifecycleForEventAsync(
-      work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None);
+      work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None, detachedTasks.Add);
+    await Task.WhenAll(detachedTasks);
 
-    // Assert - ImmediateAsync should be invoked for each of the 4 terminal stages
-    var immediateAsyncCount = spyInvoker.InvokedStages.Count(s => s == LifecycleStage.ImmediateAsync);
+    // Assert - ImmediateDetached should be invoked for each of the 4 terminal stages
+    var immediateAsyncCount = spyInvoker.InvokedStages.Count(s => s == LifecycleStage.ImmediateDetached);
     await Assert.That(immediateAsyncCount).IsEqualTo(4)
-      .Because("ImmediateAsync should be invoked once for each of the 4 terminal stages");
+      .Because("ImmediateDetached should be invoked once for each of the 4 terminal stages");
   }
 
   // ========================================
@@ -1210,5 +1214,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       }
       return ValueTask.CompletedTask;
     }
+
+    public ValueTask DrainDetachedAsync() => ValueTask.CompletedTask;
   }
 }

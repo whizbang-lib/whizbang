@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Groups the parameters for <see cref="IWorkBatchCoordinator.ProcessAndDistributeAsync"/>.
+/// Groups the parameters for <see cref="IWorkBatchCoordinator.ProcessAndDistributeDetached"/>.
 /// </summary>
 /// <param name="InstanceId">The service instance ID claiming work</param>
 /// <param name="OutboxCompletions">Completed outbox messages from previous batch</param>
@@ -41,13 +41,13 @@ public interface IWorkBatchCoordinator {
   /// <param name="context">The context containing instance ID and completion/failure reports</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>Task that completes when work is distributed to channels</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeAsync_WithOutboxWork_WritesToOutboxChannelAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeAsync_WithPerspectiveWork_WritesToPerspectiveChannelAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeAsync_WithBothWorkTypes_DistributesToBothChannelsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeAsync_WithCompletions_PassesToWorkCoordinatorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeAsync_WithMultipleOutboxWork_WritesAllToChannelAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeAsync_WithMultiplePerspectiveWork_WritesAllToChannelAsync</tests>
-  Task ProcessAndDistributeAsync(
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeDetached_WithOutboxWork_WritesToOutboxChannelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeDetached_WithPerspectiveWork_WritesToPerspectiveChannelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeDetached_WithBothWorkTypes_DistributesToBothChannelsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeDetached_WithCompletions_PassesToWorkCoordinatorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeDetached_WithMultipleOutboxWork_WritesAllToChannelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkBatchCoordinatorTests.cs:ProcessAndDistributeDetached_WithMultiplePerspectiveWork_WritesAllToChannelAsync</tests>
+  Task ProcessAndDistributeDetached(
     ProcessAndDistributeContext context,
     CancellationToken ct = default
   );

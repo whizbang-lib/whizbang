@@ -1260,7 +1260,7 @@ public class MessageTagProcessorTests {
 
   [Test]
   [NotInParallel("TagRegistry")]
-  public async Task ProcessTagsAsync_HookCanFilterByStage_OnlyActsOnPostPerspectiveAsync() {
+  public async Task ProcessTagsAsync_HookCanFilterByStage_OnlyActsOnPostPerspectiveDetachedAsync() {
     // Arrange - simulates JDNext's pattern of filtering for PostPerspective only
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
@@ -1348,7 +1348,7 @@ public class MessageTagProcessorTests {
       LifecycleStage.AfterReceptorCompletion,
       LifecycleStage.LocalImmediateInline,
       LifecycleStage.PreDistributeInline,
-      LifecycleStage.PostOutboxAsync,
+      LifecycleStage.PostOutboxDetached,
       LifecycleStage.PostPerspectiveInline
     };
     foreach (var stage in stages) {
@@ -1556,7 +1556,7 @@ public class MessageTagProcessorTests {
     var hookB = new FireAtHookB();
     var options = new TagOptions();
     options.UseHook<SignalTagAttribute, FireAtHookA>(fireAt: LifecycleStage.PostPerspectiveInline);
-    options.UseHook<SignalTagAttribute, FireAtHookB>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+    options.UseHook<SignalTagAttribute, FireAtHookB>(fireAt: LifecycleStage.PostAllPerspectivesDetached);
 
     var processor = new MessageTagProcessor(options, type => {
       if (type == typeof(FireAtHookA)) {
@@ -1576,8 +1576,8 @@ public class MessageTagProcessorTests {
     await Assert.That(hookA.InvokedCount).IsEqualTo(1);
     await Assert.That(hookB.InvokedCount).IsEqualTo(0);
 
-    // Act — fire at PostAllPerspectivesAsync: only hookB should fire
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostAllPerspectivesAsync);
+    // Act — fire at PostAllPerspectivesDetached: only hookB should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostAllPerspectivesDetached);
 
     // Assert — hookA still 1, hookB now 1
     await Assert.That(hookA.InvokedCount).IsEqualTo(1);

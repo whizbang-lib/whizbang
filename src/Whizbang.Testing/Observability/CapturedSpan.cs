@@ -17,7 +17,7 @@ namespace Whizbang.Testing.Observability;
 /// </remarks>
 public sealed record CapturedSpan {
   /// <summary>
-  /// The span/activity name (e.g., "Lifecycle PostDistributeAsync", "Handler OrderReceptor").
+  /// The span/activity name (e.g., "Lifecycle PostDistributeDetached", "Handler OrderReceptor").
   /// </summary>
   public required string Name { get; init; }
 
