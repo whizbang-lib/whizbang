@@ -1254,7 +1254,7 @@ public partial class PerspectiveWorker(
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         // Graceful shutdown
       } catch (Exception ex) {
-        LogDetachedStageError(_logger, ex, stage, envelope.MessageId);
+        LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
       }
     }, ct);
     _detachedTasks.Add(task);
