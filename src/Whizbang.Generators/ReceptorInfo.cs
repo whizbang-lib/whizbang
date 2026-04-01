@@ -10,7 +10,7 @@ namespace Whizbang.Generators;
 /// <param name="ClassName">Fully qualified class name (e.g., "MyApp.Receptors.OrderReceptor")</param>
 /// <param name="MessageType">Fully qualified message type (e.g., "MyApp.Commands.CreateOrder")</param>
 /// <param name="ResponseType">Fully qualified response type (e.g., "MyApp.Events.OrderCreated"), or null for void receptors</param>
-/// <param name="LifecycleStages">Lifecycle stages at which this receptor should fire (from [FireAt] attributes). Empty if no [FireAt] attributes (defaults to ImmediateAsync).</param>
+/// <param name="LifecycleStages">Lifecycle stages at which this receptor should fire (from [FireAt] attributes). Empty if no [FireAt] attributes (defaults to ImmediateDetached).</param>
 /// <param name="IsSync">True if this is a sync receptor (ISyncReceptor), false for async receptor (IReceptor).</param>
 /// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
 /// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
@@ -38,7 +38,7 @@ public sealed record ReceptorInfo(
   public bool IsVoid => ResponseType is null;
 
   /// <summary>
-  /// True if receptor has no [FireAt] attributes (should default to ImmediateAsync).
+  /// True if receptor has no [FireAt] attributes (should default to ImmediateDetached).
   /// </summary>
   public bool HasDefaultStage => LifecycleStages.Length == 0;
 

@@ -759,4 +759,25 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Whizbang's source generators extract attribute values using constructor parameter names. Parameters must match property names (case-insensitive) for values to be extracted correctly."
   );
+
+  // ==========================================================================
+  // WHIZ200: Perspective sync in receptor safety
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ200: Error — WaitForStreamAsync/WaitAsync called inside an Inline-stage receptor.
+  /// This will deadlock the work coordinator because the single-threaded coordinator cannot
+  /// process perspective commits while blocked by the synchronous wait.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz200</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveSyncInReceptorAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PerspectiveSyncInInlineReceptor = new(
+      id: "WHIZ900",
+      title: "Perspective Sync in Inline Receptor",
+      messageFormat: "Receptor '{0}' calls {1} but fires at Inline stage '{2}'. This will deadlock. Use [FireAt(LifecycleStage.{3})] or event enrichment.",
+      category: "Whizbang.ReceptorSafety",
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Calling WaitForStreamAsync or WaitAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead."
+  );
 }

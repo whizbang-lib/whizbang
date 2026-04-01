@@ -31,7 +31,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, null, deserializer, null));
 
@@ -48,7 +48,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), null, null));
 
@@ -64,7 +64,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, null, null, null));
 
@@ -86,7 +86,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -106,7 +106,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -126,7 +126,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -145,7 +145,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -163,7 +163,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -184,7 +184,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -205,7 +205,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -213,7 +213,7 @@ public class LifecycleInvocationHelperTests {
     await Task.Delay(100);
 
     // Assert - async stage should be invoked in background
-    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeAsync).ToList();
+    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
     await Assert.That(asyncInvocations.Count).IsEqualTo(1);
   }
 
@@ -230,7 +230,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, null, deserializer, null));
 
     await Task.Delay(50);
@@ -248,7 +248,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), null, null));
 
     await Task.Delay(50);
@@ -265,7 +265,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, null, null, null));
 
     // Assert - outboxMessages list is still the same object (early return worked)
@@ -286,14 +286,14 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Wait for background task
     await Task.Delay(100);
 
     // Assert - async stage should be invoked
-    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeAsync).ToList();
+    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeDetached).ToList();
     await Assert.That(invocations.Count).IsEqualTo(1);
     await Assert.That(invocations[0].Context!.MessageSource).IsEqualTo(MessageSource.Outbox);
   }
@@ -308,14 +308,14 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Wait for background task
     await Task.Delay(100);
 
     // Assert - async stage should be invoked
-    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeAsync).ToList();
+    var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeDetached).ToList();
     await Assert.That(invocations.Count).IsEqualTo(1);
     await Assert.That(invocations[0].Context!.MessageSource).IsEqualTo(MessageSource.Inbox);
   }
@@ -330,7 +330,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Wait for background task
@@ -350,7 +350,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Wait for any potential background task
@@ -375,7 +375,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - inline stage succeeds but async stage errors
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, logger));
 
@@ -397,7 +397,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, logger));
 
     // Wait for background task to complete (and fail) - using reliable synchronization
@@ -417,7 +417,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act - should not throw even with null logger
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
     // Wait for background task
@@ -445,7 +445,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -454,7 +454,7 @@ public class LifecycleInvocationHelperTests {
 
     // Assert - inline should have 3, async should have 3
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
-    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeAsync).ToList();
+    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
     await Assert.That(inlineInvocations.Count).IsEqualTo(3);
     await Assert.That(asyncInvocations.Count).IsEqualTo(3);
   }
@@ -472,7 +472,7 @@ public class LifecycleInvocationHelperTests {
 
     // Act
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
@@ -481,7 +481,7 @@ public class LifecycleInvocationHelperTests {
 
     // Assert - inline should have 2, async should have 2
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
-    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeAsync).ToList();
+    var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
     await Assert.That(inlineInvocations.Count).IsEqualTo(2);
     await Assert.That(asyncInvocations.Count).IsEqualTo(2);
   }

@@ -244,27 +244,27 @@ public class LifecycleStageScopePropagationTests {
   #region Data Sources
 
   public static IEnumerable<LifecycleStage> AllLifecycleStages() {
-    yield return LifecycleStage.ImmediateAsync;
-    yield return LifecycleStage.LocalImmediateAsync;
+    yield return LifecycleStage.ImmediateDetached;
+    yield return LifecycleStage.LocalImmediateDetached;
     yield return LifecycleStage.LocalImmediateInline;
-    yield return LifecycleStage.PreDistributeAsync;
+    yield return LifecycleStage.PreDistributeDetached;
     yield return LifecycleStage.PreDistributeInline;
-    yield return LifecycleStage.DistributeAsync;
-    yield return LifecycleStage.PostDistributeAsync;
+    yield return LifecycleStage.DistributeDetached;
+    yield return LifecycleStage.PostDistributeDetached;
     yield return LifecycleStage.PostDistributeInline;
-    yield return LifecycleStage.PreOutboxAsync;
+    yield return LifecycleStage.PreOutboxDetached;
     yield return LifecycleStage.PreOutboxInline;
-    yield return LifecycleStage.PostOutboxAsync;
+    yield return LifecycleStage.PostOutboxDetached;
     yield return LifecycleStage.PostOutboxInline;
-    yield return LifecycleStage.PreInboxAsync;
+    yield return LifecycleStage.PreInboxDetached;
     yield return LifecycleStage.PreInboxInline;
-    yield return LifecycleStage.PostInboxAsync;
+    yield return LifecycleStage.PostInboxDetached;
     yield return LifecycleStage.PostInboxInline;
-    yield return LifecycleStage.PrePerspectiveAsync;
+    yield return LifecycleStage.PrePerspectiveDetached;
     yield return LifecycleStage.PrePerspectiveInline;
-    yield return LifecycleStage.PostPerspectiveAsync;
+    yield return LifecycleStage.PostPerspectiveDetached;
     yield return LifecycleStage.PostPerspectiveInline;
-    yield return LifecycleStage.PostLifecycleAsync;
+    yield return LifecycleStage.PostLifecycleDetached;
     yield return LifecycleStage.PostLifecycleInline;
   }
 

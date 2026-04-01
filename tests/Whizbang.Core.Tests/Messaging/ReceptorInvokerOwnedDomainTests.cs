@@ -294,80 +294,80 @@ public class ReceptorInvokerOwnedDomainTests {
   // ========================================
 
   [Test]
-  public async Task PreOutboxAsync_OwnedEvent_FiresAsync() {
+  public async Task PreOutboxDetached_OwnedEvent_FiresAsync() {
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxAsync);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxDetached);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
     await invoker.InvokeAsync(
       _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Outbox),
-      LifecycleStage.PreOutboxAsync);
+      LifecycleStage.PreOutboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
   }
 
   [Test]
-  public async Task PreOutboxAsync_OwnedCommand_SkipsAsync() {
+  public async Task PreOutboxDetached_OwnedCommand_SkipsAsync() {
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedCommand>("handler", LifecycleStage.PreOutboxAsync);
+    registry.Register<OwnedCommand>("handler", LifecycleStage.PreOutboxDetached);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
     await invoker.InvokeAsync(
       _wrap(new OwnedCommand("test"), mode: DispatchModes.Outbox),
-      LifecycleStage.PreOutboxAsync);
+      LifecycleStage.PreOutboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
 
   [Test]
-  public async Task PostInboxAsync_OwnedEvent_SkipsAsync() {
+  public async Task PostInboxDetached_OwnedEvent_SkipsAsync() {
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxAsync);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxDetached);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
-    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxAsync);
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
 
   [Test]
-  public async Task PostInboxAsync_NonOwnedEvent_FiresAsync() {
+  public async Task PostInboxDetached_NonOwnedEvent_FiresAsync() {
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxAsync);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxDetached);
     var invoker = _createInvoker(registry, ["SomeOther.Namespace"]);
 
-    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxAsync);
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
   }
 
   [Test]
-  public async Task PostInboxAsync_OwnedCommand_FiresAsync() {
+  public async Task PostInboxDetached_OwnedCommand_FiresAsync() {
     // Owned command from another service → handler fires (we own the receptor)
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedCommand>("handler", LifecycleStage.PostInboxAsync);
+    registry.Register<OwnedCommand>("handler", LifecycleStage.PostInboxDetached);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
-    await invoker.InvokeAsync(_wrap(new OwnedCommand("test")), LifecycleStage.PostInboxAsync);
+    await invoker.InvokeAsync(_wrap(new OwnedCommand("test")), LifecycleStage.PostInboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
   }
 
   [Test]
-  public async Task PreOutboxAsync_WhenDispatchContextHasLocalDispatch_SkipsAsync() {
+  public async Task PreOutboxDetached_WhenDispatchContextHasLocalDispatch_SkipsAsync() {
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxAsync);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxDetached);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
     await invoker.InvokeAsync(
       _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Local),
-      LifecycleStage.PreOutboxAsync);
+      LifecycleStage.PreOutboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }

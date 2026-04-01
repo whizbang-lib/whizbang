@@ -117,7 +117,7 @@ public class DispatcherPostLifecycleCoverageTests {
     var registry = new TestReceptorRegistry();
 
     if (registerAsyncReceptor) {
-      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+      registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleCommand),
         ReceptorId: "test_post_lifecycle_async",
         InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -125,7 +125,7 @@ public class DispatcherPostLifecycleCoverageTests {
           return ValueTask.FromResult<object?>(null);
         }
       ));
-      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+      registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleSyncCommand),
         ReceptorId: "test_post_lifecycle_async_sync",
         InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -133,7 +133,7 @@ public class DispatcherPostLifecycleCoverageTests {
           return ValueTask.FromResult<object?>(null);
         }
       ));
-      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+      registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleWithResultCommand),
         ReceptorId: "test_post_lifecycle_async_result",
         InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -187,7 +187,7 @@ public class DispatcherPostLifecycleCoverageTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_Void_FiresPostLifecycleAsync_WhenReceptorsRegisteredAsync() {
+  public async Task LocalInvokeAsync_Void_FiresPostLifecycleDetached_WhenReceptorsRegisteredAsync() {
     _reset();
     var provider = _buildProviderWithPostLifecycleReceptors();
     var dispatcher = new PostLifecycleDispatcher(provider);
@@ -353,7 +353,7 @@ public class DispatcherPostLifecycleCoverageTests {
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     var registry = new TestReceptorRegistry();
-    registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+    registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
       MessageType: typeof(PostLifecycleCommand),
       ReceptorId: "test_unreachable",
       InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -388,14 +388,14 @@ public class DispatcherPostLifecycleCoverageTests {
     var registry = new TestReceptorRegistry();
 
     if (registerAsyncReceptor) {
-      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+      registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleCommand),
         ReceptorId: "coord_post_lifecycle_async",
         InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _track("coord-post-lifecycle-async");
           return ValueTask.FromResult<object?>(null);
         }));
-      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+      registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleSyncCommand),
         ReceptorId: "coord_post_lifecycle_async_sync",
         InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -429,17 +429,19 @@ public class DispatcherPostLifecycleCoverageTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_WithCoordinator_FiresPostLifecycleAsync_ViaCoordinatorAsync() {
+  public async Task LocalInvokeAsync_WithCoordinator_FiresPostLifecycleDetached_ViaCoordinatorAsync() {
     _reset();
     var provider = _buildProviderWithCoordinator();
     var dispatcher = new PostLifecycleDispatcher(provider);
 
     await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test"));
+    var coordinator = provider.GetRequiredService<ILifecycleCoordinator>();
+    await ((LifecycleCoordinator)coordinator).DrainAllDetachedAsync();
 
     var invocations = _snapshot();
     await Assert.That(invocations).Contains("async-void");
     await Assert.That(invocations).Contains("coord-post-lifecycle-async")
-      .Because("Coordinator path should fire PostLifecycleAsync receptors");
+      .Because("Coordinator path should fire PostLifecycleDetached receptors");
   }
 
   [Test]
@@ -450,6 +452,8 @@ public class DispatcherPostLifecycleCoverageTests {
     var dispatcher = new PostLifecycleDispatcher(provider);
 
     await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test"));
+    var coordinator = provider.GetRequiredService<ILifecycleCoordinator>();
+    await ((LifecycleCoordinator)coordinator).DrainAllDetachedAsync();
 
     var invocations = _snapshot();
     await Assert.That(invocations).Contains("coord-post-lifecycle-async");
@@ -458,12 +462,14 @@ public class DispatcherPostLifecycleCoverageTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_SyncVoid_WithCoordinator_FiresPostLifecycleAsync_ViaCoordinatorAsync() {
+  public async Task LocalInvokeAsync_SyncVoid_WithCoordinator_FiresPostLifecycleDetached_ViaCoordinatorAsync() {
     _reset();
     var provider = _buildProviderWithCoordinator();
     var dispatcher = new PostLifecycleDispatcher(provider);
 
     await dispatcher.LocalInvokeAsync(new PostLifecycleSyncCommand("test"));
+    var coordinator = provider.GetRequiredService<ILifecycleCoordinator>();
+    await ((LifecycleCoordinator)coordinator).DrainAllDetachedAsync();
 
     var invocations = _snapshot();
     await Assert.That(invocations).Contains("sync-void");
@@ -478,6 +484,8 @@ public class DispatcherPostLifecycleCoverageTests {
     var dispatcher = new PostLifecycleDispatcher(provider);
 
     await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test"));
+    var coordinator = provider.GetRequiredService<ILifecycleCoordinator>();
+    await ((LifecycleCoordinator)coordinator).DrainAllDetachedAsync();
 
     var invocations = _snapshot();
     await Assert.That(invocations).Contains("coord-post-lifecycle-async");

@@ -22,7 +22,7 @@ namespace Whizbang.Testing.Observability;
 ///
 /// // Assert on captured spans
 /// var tree = collector.BuildTree();
-/// tree.AssertHasChild("Lifecycle PreDistributeAsync");
+/// tree.AssertHasChild("Lifecycle PreDistributeDetached");
 /// </code>
 /// </para>
 /// </remarks>

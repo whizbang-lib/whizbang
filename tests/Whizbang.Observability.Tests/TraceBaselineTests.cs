@@ -135,10 +135,10 @@ public class TraceBaselineTests {
   /// Simulates lifecycle stages trace hierarchy:
   /// - Dispatch ReseedSystemCommand
   ///   - Lifecycle PreDistributeInline
-  ///   - Lifecycle PreDistributeAsync
-  ///   - Lifecycle DistributeAsync
+  ///   - Lifecycle PreDistributeDetached
+  ///   - Lifecycle DistributeDetached
   ///   - Lifecycle PostDistributeInline
-  ///   - Lifecycle PostDistributeAsync
+  ///   - Lifecycle PostDistributeDetached
   /// </summary>
   private static void _simulateLifecycleStages(InMemorySpanCollector collector) {
     using var dispatch = WhizbangActivitySource.Tracing.StartActivity("Dispatch ReseedSystemCommand");
@@ -148,20 +148,20 @@ public class TraceBaselineTests {
       stage1?.SetTag("whizbang.lifecycle.stage", "PreDistributeInline");
     }
 
-    using (var stage2 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreDistributeAsync")) {
-      stage2?.SetTag("whizbang.lifecycle.stage", "PreDistributeAsync");
+    using (var stage2 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreDistributeDetached")) {
+      stage2?.SetTag("whizbang.lifecycle.stage", "PreDistributeDetached");
     }
 
-    using (var stage3 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle DistributeAsync")) {
-      stage3?.SetTag("whizbang.lifecycle.stage", "DistributeAsync");
+    using (var stage3 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle DistributeDetached")) {
+      stage3?.SetTag("whizbang.lifecycle.stage", "DistributeDetached");
     }
 
     using (var stage4 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostDistributeInline")) {
       stage4?.SetTag("whizbang.lifecycle.stage", "PostDistributeInline");
     }
 
-    using var stage5 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostDistributeAsync");
-    stage5?.SetTag("whizbang.lifecycle.stage", "PostDistributeAsync");
+    using var stage5 = WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostDistributeDetached");
+    stage5?.SetTag("whizbang.lifecycle.stage", "PostDistributeDetached");
   }
 
   /// <summary>

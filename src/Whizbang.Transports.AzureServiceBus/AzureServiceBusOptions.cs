@@ -94,13 +94,13 @@ public class AzureServiceBusOptions {
   public bool EnableSessions { get; set; } = true;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo64Async</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo16Async</tests>
   /// How many sessions (streams) can be processed at the same time by a single consumer instance.
   /// Each session maintains strict FIFO ordering internally — messages within one session are
   /// always processed one at a time, in order. This setting controls how many <em>different</em>
   /// sessions are handled in parallel. Only applies when <see cref="EnableSessions"/> is true.
   /// <para>
-  /// <b>Example:</b> With <c>MaxConcurrentSessions = 64</c> and 200 active streams, 64 sessions
+  /// <b>Example:</b> With <c>MaxConcurrentSessions = 16</c> and 200 active streams, 16 sessions
   /// are processed in parallel. Each session processes its messages one at a time in order.
   /// The remaining 136 sessions wait until a slot opens.
   /// </para>
@@ -111,10 +111,10 @@ public class AzureServiceBusOptions {
   ///   <item><see cref="MaxDeliveryAttempts"/> — how many times a <em>single failing message</em> is retried (per-message, not per-session)</item>
   /// </list>
   /// </para>
-  /// Default: 64
+  /// Default: 16
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
-  public int MaxConcurrentSessions { get; set; } = 64;
+  public int MaxConcurrentSessions { get; set; } = 16;
 
   #endregion
 

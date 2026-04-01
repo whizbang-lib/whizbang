@@ -9,7 +9,7 @@ using Whizbang.Testing.Lifecycle;
 namespace ECommerce.Integration.Tests.Lifecycle;
 
 /// <summary>
-/// Integration tests for ImmediateAsync lifecycle stage.
+/// Integration tests for ImmediateDetached lifecycle stage.
 /// Validates that lifecycle receptors fire immediately after command handler returns,
 /// before any database operations occur.
 /// </summary>
@@ -28,7 +28,7 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 [Category("Lifecycle")]
 [NotInParallel("ServiceBus")]
 [Timeout(120_000)]
-public class ImmediateAsyncLifecycleTests {
+public class ImmediateDetachedLifecycleTests {
   private ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
@@ -46,10 +46,10 @@ public class ImmediateAsyncLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that ImmediateAsync lifecycle stage fires after command handler completes.
+  /// Verifies that ImmediateDetached lifecycle stage fires after command handler completes.
   /// </summary>
   [Test]
-  public async Task ImmediateAsync_FiresAfterCommandHandler_CompletesAsync() {
+  public async Task ImmediateDetached_FiresAfterCommandHandler_CompletesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -63,7 +63,7 @@ public class ImmediateAsyncLifecycleTests {
     };
 
     // Act - Register receptor and dispatch command
-    var receptorTask = fixture.InventoryHost.WaitForImmediateAsyncAsync<CreateProductCommand>(
+    var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
       timeoutMilliseconds: 5000);
 
     await fixture.Dispatcher.SendAsync(command);
@@ -76,11 +76,11 @@ public class ImmediateAsyncLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that ImmediateAsync fires before database operations complete.
+  /// Verifies that ImmediateDetached fires before database operations complete.
   /// This tests the "no database writes have occurred yet" guarantee.
   /// </summary>
   [Test]
-  public async Task ImmediateAsync_FiresBeforeDatabaseWrites_CompletesAsync() {
+  public async Task ImmediateDetached_FiresBeforeDatabaseWrites_CompletesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -94,27 +94,27 @@ public class ImmediateAsyncLifecycleTests {
     };
 
     // Use LifecycleAwaiter harness (auto-registers/unregisters, uses RunContinuationsAsynchronously)
-    using var awaiter = LifecycleAwaiter.ForImmediateAsync<CreateProductCommand>(fixture.InventoryHost);
+    using var awaiter = LifecycleAwaiter.ForImmediateDetached<CreateProductCommand>(fixture.InventoryHost);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
 
-    // Wait for ImmediateAsync stage
+    // Wait for ImmediateDetached stage
     await awaiter.WaitAsync(5000);
 
-    // Assert - At this point, ImmediateAsync has fired
+    // Assert - At this point, ImmediateDetached has fired
     // But the event should NOT be in event store yet (database write hasn't committed)
-    // Note: This is a timing assertion - we're checking that ImmediateAsync fires
+    // Note: This is a timing assertion - we're checking that ImmediateDetached fires
     // before the transaction commits. In practice, we can't easily verify the
     // "no database writes" guarantee without mocking, but we can verify timing.
     await Assert.That(awaiter.InvocationCount).IsEqualTo(1);
   }
 
   /// <summary>
-  /// Verifies that ImmediateAsync fires for multiple commands in sequence.
+  /// Verifies that ImmediateDetached fires for multiple commands in sequence.
   /// </summary>
   [Test]
-  public async Task ImmediateAsync_MultipleCommands_FiresForEachAsync() {
+  public async Task ImmediateDetached_MultipleCommands_FiresForEachAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -146,7 +146,7 @@ public class ImmediateAsyncLifecycleTests {
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
+    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
 
     try {
       // Act - Dispatch all commands
@@ -154,22 +154,22 @@ public class ImmediateAsyncLifecycleTests {
         await fixture.Dispatcher.SendAsync(command);
       }
 
-      // Wait for last command to complete ImmediateAsync stage
+      // Wait for last command to complete ImmediateDetached stage
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
       // Assert - Receptor should have been invoked 3 times
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(3);
 
     } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
+      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
     }
   }
 
   /// <summary>
-  /// Verifies that ImmediateAsync fires with correct lifecycle context metadata.
+  /// Verifies that ImmediateDetached fires with correct lifecycle context metadata.
   /// </summary>
   [Test]
-  public async Task ImmediateAsync_ProvidesCorrectLifecycleContext_CompletesAsync() {
+  public async Task ImmediateDetached_ProvidesCorrectLifecycleContext_CompletesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -182,7 +182,7 @@ public class ImmediateAsyncLifecycleTests {
     };
 
     // Act - Register receptor and dispatch command
-    var receptorTask = fixture.InventoryHost.WaitForImmediateAsyncAsync<CreateProductCommand>(
+    var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
       timeoutMilliseconds: 5000);
 
     await fixture.Dispatcher.SendAsync(command);
@@ -195,14 +195,14 @@ public class ImmediateAsyncLifecycleTests {
     // Note: ILifecycleContext injection is not yet implemented in the current codebase
     // When implemented, we would also verify:
     // await Assert.That(receptor.LastLifecycleContext).IsNotNull();
-    // await Assert.That(receptor.LastLifecycleContext!.CurrentStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+    // await Assert.That(receptor.LastLifecycleContext!.CurrentStage).IsEqualTo(LifecycleStage.ImmediateDetached);
   }
 
   /// <summary>
-  /// Verifies that ImmediateAsync completes within expected time bounds (low latency).
+  /// Verifies that ImmediateDetached completes within expected time bounds (low latency).
   /// </summary>
   [Test]
-  public async Task ImmediateAsync_CompletesWithLowLatency_UnderOneSecondAsync() {
+  public async Task ImmediateDetached_CompletesWithLowLatency_UnderOneSecondAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -218,10 +218,10 @@ public class ImmediateAsyncLifecycleTests {
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
+    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
 
     try {
-      // Act - Measure time from dispatch to ImmediateAsync completion
+      // Act - Measure time from dispatch to ImmediateDetached completion
       var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
       await fixture.Dispatcher.SendAsync(command);
@@ -229,12 +229,12 @@ public class ImmediateAsyncLifecycleTests {
 
       stopwatch.Stop();
 
-      // Assert - ImmediateAsync should complete very quickly (< 1 second)
+      // Assert - ImmediateDetached should complete very quickly (< 1 second)
       await Assert.That(stopwatch.ElapsedMilliseconds).IsLessThan(1000);
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
     } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
+      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
     }
   }
 }

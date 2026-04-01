@@ -68,6 +68,23 @@ public sealed class TransportMetrics {
   /// <summary>Retry attempts.</summary>
   public Counter<long> OutboxPublishRetries { get; }
 
+  // Concurrency and batching
+
+  /// <summary>Time waiting for concurrency semaphore slot (ms).</summary>
+  public Histogram<double> InboxConcurrencyWaitDuration { get; }
+
+  /// <summary>Current number of messages being processed concurrently.</summary>
+  public UpDownCounter<int> InboxConcurrentMessages { get; }
+
+  /// <summary>Number of messages per inbox batch flush.</summary>
+  public Histogram<double> InboxBatchSize { get; }
+
+  /// <summary>Time first message in batch waited before flush (ms).</summary>
+  public Histogram<double> InboxBatchWaitDuration { get; }
+
+  /// <summary>Total inbox batch flushes.</summary>
+  public Counter<long> InboxBatchFlushes { get; }
+
   // Gauges
 
   /// <summary>Currently active transport subscriptions.</summary>
@@ -110,6 +127,12 @@ public sealed class TransportMetrics {
     OutboxMessagesPublished = meter.CreateCounter<long>("whizbang.transport.outbox.messages_published", description: "Messages published to transport");
     OutboxMessagesFailed = meter.CreateCounter<long>("whizbang.transport.outbox.messages_failed", description: "Publish failures by reason");
     OutboxPublishRetries = meter.CreateCounter<long>("whizbang.transport.outbox.publish_retries", description: "Retry attempts");
+
+    InboxConcurrencyWaitDuration = meter.CreateHistogram<double>("whizbang.transport.inbox.concurrency_wait.duration", "ms", "Time waiting for concurrency semaphore slot");
+    InboxConcurrentMessages = meter.CreateUpDownCounter<int>("whizbang.transport.inbox.concurrent_messages", description: "Current concurrent message handlers");
+    InboxBatchSize = meter.CreateHistogram<double>("whizbang.transport.inbox.batch.size", "{messages}", "Messages per inbox batch flush");
+    InboxBatchWaitDuration = meter.CreateHistogram<double>("whizbang.transport.inbox.batch.wait.duration", "ms", "Time first message in batch waited before flush");
+    InboxBatchFlushes = meter.CreateCounter<long>("whizbang.transport.inbox.batch.flushes", description: "Total inbox batch flushes");
 
     ActiveSubscriptions = meter.CreateUpDownCounter<int>("whizbang.transport.active_subscriptions", description: "Currently active transport subscriptions");
 

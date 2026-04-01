@@ -8,9 +8,9 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Drains ImmediateAsync lifecycle events after a lifecycle stage completes.
-/// Uses a <see cref="ConcurrentQueue{T}"/> to support chaining: ImmediateAsync receptors
-/// may dispatch further events that themselves have ImmediateAsync receptors.
+/// Drains ImmediateDetached lifecycle events after a lifecycle stage completes.
+/// Uses a <see cref="ConcurrentQueue{T}"/> to support chaining: ImmediateDetached receptors
+/// may dispatch further events that themselves have ImmediateDetached receptors.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,13 +23,13 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateAsyncDrainerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateDetachedDrainerTests.cs</tests>
 /// <remarks>
-/// Creates a new ImmediateAsyncDrainer.
+/// Creates a new ImmediateDetachedDrainer.
 /// </remarks>
 /// <param name="warningThreshold">Chain depth warning threshold. Logs when depth reaches a multiple of this value.</param>
 /// <param name="logger">Optional logger for chain depth warnings.</param>
-public sealed partial class ImmediateAsyncDrainer(int warningThreshold = 10, ILogger? logger = null) {
+public sealed partial class ImmediateDetachedDrainer(int warningThreshold = 10, ILogger? logger = null) {
   private readonly ConcurrentQueue<(IMessageEnvelope Envelope, ILifecycleContext? Context)> _queue = new();
   private readonly int _warningThreshold = warningThreshold > 0 ? warningThreshold : 10;
   private readonly ILogger? _logger = logger;
@@ -40,7 +40,7 @@ public sealed partial class ImmediateAsyncDrainer(int warningThreshold = 10, ILo
   public int PendingCount => _queue.Count;
 
   /// <summary>
-  /// Enqueues an envelope for ImmediateAsync processing.
+  /// Enqueues an envelope for ImmediateDetached processing.
   /// </summary>
   /// <param name="envelope">The message envelope to process.</param>
   /// <param name="context">Optional lifecycle context.</param>
@@ -50,8 +50,8 @@ public sealed partial class ImmediateAsyncDrainer(int warningThreshold = 10, ILo
   }
 
   /// <summary>
-  /// Drains the queue, invoking ImmediateAsync receptors for each pending envelope.
-  /// Items enqueued during drain (by ImmediateAsync receptors that cascade events)
+  /// Drains the queue, invoking ImmediateDetached receptors for each pending envelope.
+  /// Items enqueued during drain (by ImmediateDetached receptors that cascade events)
   /// are processed in the same drain cycle.
   /// </summary>
   /// <param name="receptorInvoker">The receptor invoker to use for invocation.</param>
@@ -77,7 +77,7 @@ public sealed partial class ImmediateAsyncDrainer(int warningThreshold = 10, ILo
 
       await receptorInvoker.InvokeAsync(
           pending.Envelope,
-          LifecycleStage.ImmediateAsync,
+          LifecycleStage.ImmediateDetached,
           pending.Context,
           cancellationToken).ConfigureAwait(false);
     }
@@ -89,7 +89,7 @@ public sealed partial class ImmediateAsyncDrainer(int warningThreshold = 10, ILo
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Warning,
-      Message = "ImmediateAsync chain depth {Depth} exceeds threshold {Threshold}")]
+      Message = "ImmediateDetached chain depth {Depth} exceeds threshold {Threshold}")]
     public static partial void ChainDepthExceedsThreshold(ILogger logger, int depth, int threshold);
   }
 }

@@ -11,7 +11,7 @@ using Whizbang.Core.Workers;
 namespace ECommerce.Lifecycle.Integration.Tests;
 
 /// <summary>
-/// Integration tests verifying PostAllPerspectivesAsync fires exactly once per event
+/// Integration tests verifying PostAllPerspectivesDetached fires exactly once per event
 /// when perspectives are processed across multiple batch cycles.
 /// Isolated in its own assembly to avoid ServiceRegistrationCallbacks static contamination.
 /// </summary>
@@ -46,16 +46,16 @@ public class PostAllPerspectivesTests {
   }
 
   /// <summary>
-  /// Verifies that PostAllPerspectivesAsync fires exactly once per event
+  /// Verifies that PostAllPerspectivesDetached fires exactly once per event
   /// when perspectives are processed across multiple batch cycles.
   /// 5 mock perspectives handle MockBatchTestEvent + 50 noise events flood the stream.
   /// With PerspectiveBatchSize=1, each perspective is claimed in a separate batch cycle.
   /// Bug: perspectivesPerStream only includes perspectives from current batch,
-  /// so PostAllPerspectivesAsync fires once per batch cycle instead of once total.
+  /// so PostAllPerspectivesDetached fires once per batch cycle instead of once total.
   /// </summary>
   [Test]
   [Timeout(120_000)]
-  public async Task PostAllPerspectivesAsync_WithManyPerspectivesAndEvents_FiresExactlyOncePerEventAsync(
+  public async Task PostAllPerspectivesDetached_WithManyPerspectivesAndEvents_FiresExactlyOncePerEventAsync(
     CancellationToken cancellationToken) {
 
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -69,12 +69,12 @@ public class PostAllPerspectivesTests {
       NoiseEventCount = 50
     };
 
-    // Register PostAllPerspectivesAsync receptor to count invocations
+    // Register PostAllPerspectivesDetached receptor to count invocations
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<MockBatchTestEvent>(completionSource);
 
     var registry = fixture.Host.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<MockBatchTestEvent>(receptor, LifecycleStage.PostAllPerspectivesAsync);
+    registry.Register<MockBatchTestEvent>(receptor, LifecycleStage.PostAllPerspectivesDetached);
 
     try {
       // Wait for all 5 mock perspectives to complete
@@ -86,10 +86,10 @@ public class PostAllPerspectivesTests {
       // Give time for any additional PostAllPerspectives firings from subsequent batches
       await Task.Delay(5000, cancellationToken);
 
-      // Assert: PostAllPerspectivesAsync should fire ONCE, not 5 times (one per perspective)
+      // Assert: PostAllPerspectivesDetached should fire ONCE, not 5 times (one per perspective)
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     } finally {
-      registry.Unregister<MockBatchTestEvent>(receptor, LifecycleStage.PostAllPerspectivesAsync);
+      registry.Unregister<MockBatchTestEvent>(receptor, LifecycleStage.PostAllPerspectivesDetached);
       workerOptions.CurrentValue.PerspectiveBatchSize = 100;
     }
   }

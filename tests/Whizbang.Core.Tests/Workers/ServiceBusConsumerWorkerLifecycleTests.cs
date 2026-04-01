@@ -99,7 +99,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ILifecycleContext? capturedContext = null;
 
     var registry = new TestLifecycleReceptorRegistry();
-    registry.AddReceptor(LifecycleStage.PreInboxAsync, new ReceptorInfo(
+    registry.AddReceptor(LifecycleStage.PreInboxDetached, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: "test_context_receptor",
       InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
@@ -121,7 +121,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     var envelope = _createTypedEnvelopeWithScope("user-ctx", "tenant-ctx");
 
     var lifecycleContext = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.PreInboxAsync,
+      CurrentStage = LifecycleStage.PreInboxDetached,
       EventId = null,
       StreamId = null,
       LastProcessedEventId = null,
@@ -130,18 +130,18 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     };
 
     // Act
-    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PreInboxAsync, lifecycleContext, CancellationToken.None);
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PreInboxDetached, lifecycleContext, CancellationToken.None);
 
     // Assert
     await Assert.That(capturedContext).IsNotNull();
-    await Assert.That(capturedContext!.CurrentStage).IsEqualTo(LifecycleStage.PreInboxAsync);
+    await Assert.That(capturedContext!.CurrentStage).IsEqualTo(LifecycleStage.PreInboxDetached);
     await Assert.That(capturedContext!.MessageSource).IsEqualTo(MessageSource.Inbox);
   }
 
   [Test]
   public async Task ReceptorInvoker_PreInboxThenPostInbox_InvokesBothStagesAsync() {
     // Arrange: Verify both PreInbox and PostInbox stages are invoked sequentially
-    // as the worker does: PreInboxAsync, PreInboxInline, then later PostInboxAsync, PostInboxInline
+    // as the worker does: PreInboxDetached, PreInboxInline, then later PostInboxDetached, PostInboxInline
     var invokedStages = new List<LifecycleStage>();
 
     var registry = new TestLifecycleReceptorRegistry();
@@ -173,9 +173,9 @@ public class ServiceBusConsumerWorkerLifecycleTests {
 
     // Assert: all four stages should have been invoked
     await Assert.That(invokedStages.Count).IsEqualTo(4);
-    await Assert.That(invokedStages[0]).IsEqualTo(LifecycleStage.PreInboxAsync);
+    await Assert.That(invokedStages[0]).IsEqualTo(LifecycleStage.PreInboxDetached);
     await Assert.That(invokedStages[1]).IsEqualTo(LifecycleStage.PreInboxInline);
-    await Assert.That(invokedStages[2]).IsEqualTo(LifecycleStage.PostInboxAsync);
+    await Assert.That(invokedStages[2]).IsEqualTo(LifecycleStage.PostInboxDetached);
     await Assert.That(invokedStages[3]).IsEqualTo(LifecycleStage.PostInboxInline);
   }
 
@@ -282,18 +282,18 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     // Act: simulate the ServiceBusConsumerWorker lifecycle flow (PostInbox + PostLifecycle)
     // It invokes PreInbox → PostInbox stages, then STOPS. No PostLifecycle.
     var lifecycleContext = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.PostInboxAsync,
+      CurrentStage = LifecycleStage.PostInboxDetached,
       MessageSource = MessageSource.Inbox
     };
 
-    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostInboxAsync, lifecycleContext, CancellationToken.None);
-    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, CancellationToken.None);
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostInboxDetached, lifecycleContext, CancellationToken.None);
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, CancellationToken.None);
 
     lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
     await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline, lifecycleContext, CancellationToken.None);
-    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, CancellationToken.None);
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, CancellationToken.None);
 
     // PostLifecycle stages for events without perspectives
     // This mirrors the code added to ServiceBusConsumerWorker
@@ -301,19 +301,20 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     if (coordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      await tracking.DrainDetachedAsync();
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert: PostInbox stages fired
-    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxAsync);
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxDetached);
     await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxInline);
 
     // Assert: PostLifecycle MUST fire for events without perspectives
-    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleAsync)
-      .Because("ServiceBusConsumerWorker must fire PostLifecycleAsync for events without perspectives");
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleDetached)
+      .Because("ServiceBusConsumerWorker must fire PostLifecycleDetached for events without perspectives");
     await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleInline)
       .Because("ServiceBusConsumerWorker must fire PostLifecycleInline for events without perspectives");
   }
@@ -321,18 +322,18 @@ public class ServiceBusConsumerWorkerLifecycleTests {
   #region Data Sources
 
   public static IEnumerable<LifecycleStage> InboxStages() {
-    yield return LifecycleStage.PreInboxAsync;
+    yield return LifecycleStage.PreInboxDetached;
     yield return LifecycleStage.PreInboxInline;
-    yield return LifecycleStage.PostInboxAsync;
+    yield return LifecycleStage.PostInboxDetached;
     yield return LifecycleStage.PostInboxInline;
   }
 
   public static IEnumerable<LifecycleStage> AllInboxAndPostLifecycleStages() {
-    yield return LifecycleStage.PreInboxAsync;
+    yield return LifecycleStage.PreInboxDetached;
     yield return LifecycleStage.PreInboxInline;
-    yield return LifecycleStage.PostInboxAsync;
+    yield return LifecycleStage.PostInboxDetached;
     yield return LifecycleStage.PostInboxInline;
-    yield return LifecycleStage.PostLifecycleAsync;
+    yield return LifecycleStage.PostLifecycleDetached;
     yield return LifecycleStage.PostLifecycleInline;
   }
 

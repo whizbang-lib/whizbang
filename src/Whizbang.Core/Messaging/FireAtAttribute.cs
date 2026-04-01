@@ -6,7 +6,7 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Specifies the lifecycle stage(s) at which a receptor should be invoked.
 /// Can be applied multiple times to fire a receptor at different lifecycle stages.
-/// If not applied, receptor defaults to <see cref="LifecycleStage.ImmediateAsync"/>.
+/// If not applied, receptor defaults to <see cref="LifecycleStage.ImmediateDetached"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -35,8 +35,8 @@ namespace Whizbang.Core.Messaging;
 /// <strong>Multiple Stages:</strong> Fire receptor at multiple lifecycle stages:
 /// </para>
 /// <code>
-/// [FireAt(LifecycleStage.ImmediateAsync)]
-/// [FireAt(LifecycleStage.PostPerspectiveAsync)]
+/// [FireAt(LifecycleStage.ImmediateDetached)]
+/// [FireAt(LifecycleStage.PostPerspectiveDetached)]
 /// public class AuditReceptor : IReceptor&lt;OrderCreatedEvent&gt; {
 ///   public async ValueTask HandleAsync(OrderCreatedEvent evt, CancellationToken ct) {
 ///     // Fires both immediately AND after perspective processing

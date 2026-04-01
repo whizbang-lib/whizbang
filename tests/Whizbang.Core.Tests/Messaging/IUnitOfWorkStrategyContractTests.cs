@@ -61,13 +61,13 @@ public abstract class IUnitOfWorkStrategyContractTests {
     // Act
     var unitId = await strategy.QueueMessageAsync(
       message,
-      LifecycleStage.PreDistributeAsync
+      LifecycleStage.PreDistributeDetached
     );
     var lifecycleStages = strategy.GetLifecycleStagesForUnit(unitId);
 
     // Assert
     await Assert.That(lifecycleStages).ContainsKey(message);
-    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeAsync);
+    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
   }
 
   [Test]

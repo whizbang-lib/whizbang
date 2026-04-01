@@ -53,11 +53,11 @@ public class LifecycleMetricsTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.StageDuration.Record(10.0,
-      new KeyValuePair<string, object?>("stage", "PreDistributeAsync"),
+      new KeyValuePair<string, object?>("stage", "PreDistributeDetached"),
       new KeyValuePair<string, object?>("message_type", "CreateOrder"));
 
     var measurements = helper.GetByName("whizbang.lifecycle.stage.duration");
-    await Assert.That(measurements[0].Tags["stage"]).IsEqualTo("PreDistributeAsync");
+    await Assert.That(measurements[0].Tags["stage"]).IsEqualTo("PreDistributeDetached");
     await Assert.That(measurements[0].Tags["message_type"]).IsEqualTo("CreateOrder");
   }
 
@@ -149,11 +149,11 @@ public class LifecycleMetricsTests {
 
     metrics.TagHookDuration.Record(2.0,
       new KeyValuePair<string, object?>("hook_type", "AuditTag"),
-      new KeyValuePair<string, object?>("fire_at_stage", "PreOutboxAsync"));
+      new KeyValuePair<string, object?>("fire_at_stage", "PreOutboxDetached"));
 
     var measurements = helper.GetByName("whizbang.lifecycle.tag_hook.duration");
     await Assert.That(measurements[0].Tags["hook_type"]).IsEqualTo("AuditTag");
-    await Assert.That(measurements[0].Tags["fire_at_stage"]).IsEqualTo("PreOutboxAsync");
+    await Assert.That(measurements[0].Tags["fire_at_stage"]).IsEqualTo("PreOutboxDetached");
   }
 
   [Test]
@@ -204,16 +204,16 @@ public class LifecycleMetricsTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     var stages = new[] {
-      "LocalImmediateAsync", "LocalImmediateInline",
-      "PreDistributeAsync", "PreDistributeInline",
-      "DistributeAsync",
-      "PostDistributeAsync", "PostDistributeInline",
-      "PreOutboxAsync", "PreOutboxInline",
-      "PostOutboxAsync", "PostOutboxInline",
-      "PreInboxAsync", "PreInboxInline",
-      "PostInboxAsync", "PostInboxInline",
-      "PrePerspectiveAsync", "PrePerspectiveInline",
-      "PostPerspectiveAsync", "PostPerspectiveInline",
+      "LocalImmediateDetached", "LocalImmediateInline",
+      "PreDistributeDetached", "PreDistributeInline",
+      "DistributeDetached",
+      "PostDistributeDetached", "PostDistributeInline",
+      "PreOutboxDetached", "PreOutboxInline",
+      "PostOutboxDetached", "PostOutboxInline",
+      "PreInboxDetached", "PreInboxInline",
+      "PostInboxDetached", "PostInboxInline",
+      "PrePerspectiveDetached", "PrePerspectiveInline",
+      "PostPerspectiveDetached", "PostPerspectiveInline",
       "AfterReceptorCompletion"
     };
 

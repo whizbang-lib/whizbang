@@ -8,13 +8,13 @@ namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
 /// Handle for advancing a tracked event through lifecycle stages.
-/// Encapsulates receptor invocation, tag processing, and ImmediateAsync chaining.
+/// Encapsulates receptor invocation, tag processing, and ImmediateDetached chaining.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Each call to <see cref="AdvanceToAsync"/> invokes receptors and processes tags at the target stage,
-/// then fires ImmediateAsync hooks. For Inline stages, all hooks are awaited before returning.
-/// For Async stages, hooks are fire-and-forget with captured scope/context.
+/// then fires ImmediateDetached hooks. For Inline stages, all hooks are awaited before returning.
+/// For Detached stages, hooks are fire-and-forget with captured scope/context.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#tracking</docs>
@@ -36,9 +36,9 @@ public interface ILifecycleTracking {
 
   /// <summary>
   /// Advances to the next stage. Invokes receptors and processes tags.
-  /// For Async stages: receptors fire but don't block the calling worker.
+  /// For Detached stages: receptors fire-and-forget in their own scope.
   /// For Inline stages: awaits all receptors before returning.
-  /// ImmediateAsync fires automatically after each stage.
+  /// ImmediateDetached fires automatically after each stage.
   /// </summary>
   /// <param name="stage">The stage to advance to.</param>
   /// <param name="scopedProvider">Scoped service provider for receptor resolution.</param>
@@ -47,6 +47,12 @@ public interface ILifecycleTracking {
     LifecycleStage stage,
     IServiceProvider scopedProvider,
     CancellationToken ct);
+
+  /// <summary>
+  /// Waits for all in-flight detached tasks to complete.
+  /// Used for graceful shutdown and testing — production callers should not normally need this.
+  /// </summary>
+  ValueTask DrainDetachedAsync();
 
   /// <summary>
   /// Advances to the next stage for multiple events (batch operation).

@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// var deserializedMessage = await deserializer.DeserializeFromEnvelopeAsync(outboxMessage.Envelope);
 ///
 /// // Invoke lifecycle receptors with deserialized message
-/// await lifecycleInvoker.InvokeAsync(deserializedMessage, LifecycleStage.PreOutboxAsync, context, ct);
+/// await lifecycleInvoker.InvokeAsync(deserializedMessage, LifecycleStage.PreOutboxDetached, context, ct);
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>

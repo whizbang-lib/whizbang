@@ -525,8 +525,8 @@ public abstract partial class Dispatcher(
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       } finally {
         // Unregister envelope after receptor completes (or throws)
@@ -651,8 +651,8 @@ public abstract partial class Dispatcher(
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
       } finally {
         _envelopeRegistry?.Unregister(envelope);
       }
@@ -757,8 +757,8 @@ public abstract partial class Dispatcher(
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       } finally {
         // Unregister envelope after receptor completes (or throws)
@@ -847,8 +847,8 @@ public abstract partial class Dispatcher(
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       } finally {
         _envelopeRegistry?.Unregister(envelope);
@@ -1091,19 +1091,19 @@ public abstract partial class Dispatcher(
     var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
       .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
 
-    // Check if there are ImmediateAsync or PostLifecycle receptors — if so, must go through async path
-    var hasImmediateAsync = _hasImmediateAsyncReceptors(messageType);
+    // Check if there are ImmediateDetached or PostLifecycle receptors — if so, must go through async path
+    var hasImmediateDetached = _hasImmediateDetachedReceptors(messageType);
     var hasPostLifecycle = _hasPostLifecycleReceptors(messageType);
 
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
     if (asyncInvoker != null) {
-      // If sync attributes, tracing, ImmediateAsync, or PostLifecycle exist, go through async path
-      if (_traceStore != null || hasSyncAttributes || hasImmediateAsync || hasPostLifecycle) {
+      // If sync attributes, tracing, ImmediateDetached, or PostLifecycle exist, go through async path
+      if (_traceStore != null || hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
         return _localInvokeVoidWithSyncAndTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
-      // FAST PATH: Zero allocation when no tracing, sync attributes, ImmediateAsync, or PostLifecycle
+      // FAST PATH: Zero allocation when no tracing, sync attributes, ImmediateDetached, or PostLifecycle
       // Invoke using delegate - zero reflection, strongly typed
       // Avoid async/await state machine allocation by returning task directly
       return asyncInvoker(message);
@@ -1112,8 +1112,8 @@ public abstract partial class Dispatcher(
     // Fallback to void sync receptor
     var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
-      // If sync attributes, ImmediateAsync, or PostLifecycle exist, must go through async path
-      if (hasSyncAttributes || hasImmediateAsync || hasPostLifecycle) {
+      // If sync attributes, ImmediateDetached, or PostLifecycle exist, must go through async path
+      if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
         return _localInvokeVoidSyncWithSyncCheckAsync(syncInvoker, message, messageType);
       }
       // Invoke synchronously - returns pre-completed ValueTask
@@ -1407,8 +1407,8 @@ public abstract partial class Dispatcher(
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-      // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 #pragma warning restore CA1848
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -1459,8 +1459,8 @@ public abstract partial class Dispatcher(
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-      // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       // Unwrap Routed<T> from result if receptor returned a wrapped value
       // This enables receptors to return Route.Local(event) for cascade control
@@ -1560,15 +1560,15 @@ public abstract partial class Dispatcher(
       return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // Check if there are ImmediateAsync or PostLifecycle receptors — if so, must go through async path
-    var hasImmediateAsync = _hasImmediateAsyncReceptors(messageType);
+    // Check if there are ImmediateDetached or PostLifecycle receptors — if so, must go through async path
+    var hasImmediateDetached = _hasImmediateDetachedReceptors(messageType);
     var hasPostLifecycle = _hasPostLifecycleReceptors(messageType);
 
     // Fallback to void sync receptor
     var syncInvoker = GetVoidSyncReceptorInvoker(actualMessage, messageType);
     if (syncInvoker != null) {
-      // If sync attributes, ImmediateAsync, or PostLifecycle exist, must go through async path
-      if (hasSyncAttributes || hasImmediateAsync || hasPostLifecycle) {
+      // If sync attributes, ImmediateDetached, or PostLifecycle exist, must go through async path
+      if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
         return _localInvokeVoidSyncWithSyncCheckAsync(syncInvoker, actualMessage, messageType);
       }
       // Invoke synchronously - returns pre-completed ValueTask
@@ -1643,8 +1643,8 @@ public abstract partial class Dispatcher(
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
         _dispatcherMetrics?.MessagesDispatched.Add(1,
           new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
@@ -1713,8 +1713,8 @@ public abstract partial class Dispatcher(
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
       } finally {
         // Unregister envelope after receptor completes (or throws)
         _envelopeRegistry?.Unregister(envelope);
@@ -1735,8 +1735,8 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Async path for void sync LocalInvoke with sync check or ImmediateAsync.
-  /// Called when sync receptor has [AwaitPerspectiveSync] attributes or ImmediateAsync receptors.
+  /// Async path for void sync LocalInvoke with sync check or ImmediateDetached.
+  /// Called when sync receptor has [AwaitPerspectiveSync] attributes or ImmediateDetached receptors.
   /// </summary>
   private async ValueTask _localInvokeVoidSyncWithSyncCheckAsync(
     VoidSyncReceptorInvoker invoker,
@@ -1754,12 +1754,12 @@ public abstract partial class Dispatcher(
     // Invoke synchronously
     invoker(message);
 
-    // Invoke PostLifecycle and ImmediateAsync lifecycle receptors after business receptor completes
+    // Invoke PostLifecycle and ImmediateDetached lifecycle receptors after business receptor completes
     // Create a minimal envelope for lifecycle invocation
-    if (_hasPostLifecycleReceptors(messageType) || _hasImmediateAsyncReceptors(messageType)) {
+    if (_hasPostLifecycleReceptors(messageType) || _hasImmediateDetachedReceptors(messageType)) {
       var envelope = _createEnvelope(message, MessageContext.Create(_cascadeContextFactory.NewRoot()), new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, "", "", 0);
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
     }
   }
 
@@ -1807,8 +1807,8 @@ public abstract partial class Dispatcher(
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
 
-        // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-        await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
       } finally {
         // Unregister envelope after receptor completes (or throws)
         _envelopeRegistry?.Unregister(envelope);
@@ -2006,8 +2006,8 @@ public abstract partial class Dispatcher(
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-      // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       // Unwrap Routed<T> from result if receptor returned a wrapped value
       // This enables receptors to return Route.Local(event) for cascade control
@@ -2056,8 +2056,8 @@ public abstract partial class Dispatcher(
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-      // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
@@ -2237,8 +2237,8 @@ public abstract partial class Dispatcher(
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-      // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       // Unwrap Routed<T> from result if receptor returned a wrapped value
       TResult unwrapped;
@@ -2299,8 +2299,8 @@ public abstract partial class Dispatcher(
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
 
-      // Invoke ImmediateAsync lifecycle receptors after business receptor completes
-      await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
+      // Invoke ImmediateDetached lifecycle receptors after business receptor completes
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       // Unwrap Routed<T> from result
       TResult unwrapped;
@@ -2793,12 +2793,12 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Invokes ImmediateAsync lifecycle receptors for the dispatched message.
+  /// Invokes ImmediateDetached lifecycle receptors for the dispatched message.
   /// Called after the business receptor completes, cascade, and tag processing.
   /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
   /// </summary>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
-  private async ValueTask _invokeImmediateAsyncReceptorsAsync(
+  private async ValueTask _invokeImmediateDetachedReceptorsAsync(
       IMessageEnvelope envelope,
       Type messageType,
       CancellationToken ct = default) {
@@ -2807,8 +2807,8 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    // Check if there are any ImmediateAsync receptors registered for this message type
-    var receptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.ImmediateAsync);
+    // Check if there are any ImmediateDetached receptors registered for this message type
+    var receptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached);
     if (receptors.Count == 0) {
       return;
     }
@@ -2821,13 +2821,13 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    // Invoke ImmediateAsync receptors for the dispatched message
+    // Invoke ImmediateDetached receptors for the dispatched message
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.ImmediateAsync,
+      CurrentStage = LifecycleStage.ImmediateDetached,
       MessageSource = MessageSource.Local
     };
 
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, context, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached, context, ct).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -2854,12 +2854,12 @@ public abstract partial class Dispatcher(
     // must still fire even when no compile-time receptors exist.
     await using var scope = _scopeFactory.CreateAsyncScope();
 
-    // Prefer coordinator path — handles receptors + tags + ImmediateAsync
+    // Prefer coordinator path — handles receptors + tags + ImmediateDetached
     if (_lifecycleCoordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = _lifecycleCoordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, ct).ConfigureAwait(false);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct).ConfigureAwait(false);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct).ConfigureAwait(false);
       _lifecycleCoordinator.AbandonTracking(eventId);
       return;
@@ -2872,20 +2872,20 @@ public abstract partial class Dispatcher(
     }
 
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.PostLifecycleAsync,
+      CurrentStage = LifecycleStage.PostLifecycleDetached,
       MessageSource = MessageSource.Local
     };
 
     // Always invoke both PostLifecycle stages — ReceptorInvoker handles
     // the no-receptor case (still processes tags as lifecycle observers)
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, ct).ConfigureAwait(false);
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleDetached, context, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+      context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
 
     await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
       context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+      context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
 
     if (_messageTagProcessor is not null) {
       var scopeContext = ScopeContextAccessor.CurrentContext;
@@ -2898,11 +2898,11 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Checks if there are any ImmediateAsync receptors registered for the given message type.
-  /// Used to bypass fast paths when ImmediateAsync processing is needed.
+  /// Checks if there are any ImmediateDetached receptors registered for the given message type.
+  /// Used to bypass fast paths when ImmediateDetached processing is needed.
   /// </summary>
-  private bool _hasImmediateAsyncReceptors(Type messageType) {
-    return _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.ImmediateAsync).Count > 0;
+  private bool _hasImmediateDetachedReceptors(Type messageType) {
+    return _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached).Count > 0;
   }
 
   /// <summary>
@@ -2914,7 +2914,7 @@ public abstract partial class Dispatcher(
       return false;
     }
 
-    return _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleAsync).Count > 0
+    return _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleDetached).Count > 0
       || _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleInline).Count > 0;
   }
 
