@@ -45,7 +45,8 @@ public sealed partial class PerspectiveSyncAwaiter(
     IDebuggerAwareClock clock,
     ILogger<PerspectiveSyncAwaiter> logger,
     ISyncEventTracker syncEventTracker,
-    IScopedEventTracker? tracker = null) : IPerspectiveSyncAwaiter {
+    IScopedEventTracker? tracker = null,
+    ILifecycleContextAccessor? lifecycleContextAccessor = null) : IPerspectiveSyncAwaiter {
   private const string TAG_SYNC_OUTCOME = "whizbang.sync.outcome";
   private const string TAG_SYNC_EVENT_COUNT = "whizbang.sync.event_count";
 
@@ -57,6 +58,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IDebuggerAwareClock _clock = clock ?? throw new ArgumentNullException(nameof(clock));
   private readonly ILogger<PerspectiveSyncAwaiter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILifecycleContextAccessor? _lifecycleContextAccessor = lifecycleContextAccessor;
 
 
   /// <inheritdoc />
@@ -119,6 +121,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(perspectiveType);
     ArgumentNullException.ThrowIfNull(options);
+    _throwIfInsideInlineStage();
 
     if (_tracker is null) {
       throw new InvalidOperationException(
@@ -202,6 +205,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       Guid? eventIdToAwait = null,
       CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(perspectiveType);
+    _throwIfInsideInlineStage();
     return _waitForStreamCoreAsync(perspectiveType, streamId, eventTypes, timeout, eventIdToAwait, ct);
   }
 
@@ -431,4 +435,19 @@ public sealed partial class PerspectiveSyncAwaiter(
     Message = "[SYNC_DEBUG] WaitForStreamAsync: No events tracked for stream={StreamId}. Returning NoPendingEvents."
   )]
   private static partial void LogSyncDebugNoEventsFound(ILogger logger, Guid streamId);
+
+  /// <summary>
+  /// Throws if called from inside an Inline lifecycle stage.
+  /// Calling WaitForStreamAsync/WaitAsync from an Inline stage deadlocks the work coordinator
+  /// because the single-threaded coordinator cannot process perspective commits while blocked.
+  /// Detached stages are safe because they run in their own scope on the thread pool.
+  /// </summary>
+  private void _throwIfInsideInlineStage() {
+    if (_lifecycleContextAccessor?.Current is { } ctx && !ctx.CurrentStage.IsDetached()) {
+      throw new InvalidOperationException(
+        $"WaitForStreamAsync/WaitAsync cannot be called inside an Inline lifecycle " +
+        $"receptor (current stage: {ctx.CurrentStage}). This would deadlock the work " +
+        $"coordinator. Use a Detached stage or event enrichment instead.");
+    }
+  }
 }

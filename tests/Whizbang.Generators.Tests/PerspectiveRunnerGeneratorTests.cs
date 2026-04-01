@@ -1674,8 +1674,8 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveRunnerGenerator_PostPerspectiveAsync_EstablishesSecurityContextAsync() {
-    // Arrange - This test verifies that PostPerspectiveAsync lifecycle handlers
+  public async Task PerspectiveRunnerGenerator_PostPerspectiveDetached_EstablishesSecurityContextAsync() {
+    // Arrange - This test verifies that PostPerspectiveDetached lifecycle handlers
     // have access to TenantId from the message envelope's security context.
     // Security context is now established by ReceptorInvoker.InvokeAsync() internally,
     // not by the generated template. The template uses scoped IReceptorInvoker which
@@ -1725,8 +1725,8 @@ namespace TestNamespace {
     // Should resolve IReceptorInvoker from scoped service provider
     await Assert.That(runnerSource).Contains("GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>()");
 
-    // Should invoke lifecycle via ReceptorInvoker with PostPerspectiveAsync stage
-    await Assert.That(runnerSource).Contains("receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveAsync");
+    // Should invoke lifecycle via ReceptorInvoker with PostPerspectiveDetached stage
+    await Assert.That(runnerSource).Contains("receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveDetached");
 
     // Should create a scope for lifecycle invocation
     await Assert.That(runnerSource).Contains("_scopeFactory.CreateAsyncScope()");

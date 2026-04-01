@@ -20,9 +20,9 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// <para><strong>Stages Tested</strong>:</para>
 /// <list type="bullet">
 ///   <item>PreDistributeInline - Before ProcessWorkBatchAsync() (blocking)</item>
-///   <item>PreDistributeAsync - Before ProcessWorkBatchAsync() (non-blocking, backgrounded)</item>
-///   <item>DistributeAsync - In parallel with ProcessWorkBatchAsync() (non-blocking, backgrounded)</item>
-///   <item>PostDistributeAsync - After ProcessWorkBatchAsync() (non-blocking, backgrounded)</item>
+///   <item>PreDistributeDetached - Before ProcessWorkBatchAsync() (non-blocking, backgrounded)</item>
+///   <item>DistributeDetached - In parallel with ProcessWorkBatchAsync() (non-blocking, backgrounded)</item>
+///   <item>PostDistributeDetached - After ProcessWorkBatchAsync() (non-blocking, backgrounded)</item>
 ///   <item>PostDistributeInline - After ProcessWorkBatchAsync() (blocking)</item>
 /// </list>
 /// </remarks>
@@ -103,15 +103,15 @@ public class DistributeLifecycleTests {
   }
 
   // ========================================
-  // PreDistributeAsync Tests (Non-Blocking)
+  // PreDistributeDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PreDistributeAsync lifecycle stage fires before work distribution (non-blocking).
+  /// Verifies that PreDistributeDetached lifecycle stage fires before work distribution (non-blocking).
   /// Should use Task.Run and not block ProcessWorkBatchAsync.
   /// </summary>
   [Test]
-  public async Task PreDistributeAsync_FiresBeforeDistribution_NonBlockingAsync() {
+  public async Task PreDistributeDetached_FiresBeforeDistribution_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -127,7 +127,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
-    var receptorTask = fixture.InventoryHost.WaitForPreDistributeAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -143,15 +143,15 @@ public class DistributeLifecycleTests {
   }
 
   // ========================================
-  // DistributeAsync Tests (Parallel, Non-Blocking)
+  // DistributeDetached Tests (Parallel, Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that DistributeAsync lifecycle stage fires in parallel with ProcessWorkBatchAsync.
+  /// Verifies that DistributeDetached lifecycle stage fires in parallel with ProcessWorkBatchAsync.
   /// Should use Task.Run and execute concurrently with work distribution.
   /// </summary>
   [Test]
-  public async Task DistributeAsync_FiresInParallelWithDistribution_NonBlockingAsync() {
+  public async Task DistributeDetached_FiresInParallelWithDistribution_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -167,7 +167,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
-    var receptorTask = fixture.InventoryHost.WaitForDistributeAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -183,11 +183,11 @@ public class DistributeLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that DistributeAsync completes even if distribution takes time.
+  /// Verifies that DistributeDetached completes even if distribution takes time.
   /// Tests the "may complete after distribution finishes" guarantee.
   /// </summary>
   [Test]
-  public async Task DistributeAsync_CompletesIndependentlyOfDistribution_NonBlockingAsync() {
+  public async Task DistributeDetached_CompletesIndependentlyOfDistribution_NonBlockingAsync() {
     // Arrange - Create multiple commands to simulate longer distribution
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -213,7 +213,7 @@ public class DistributeLifecycleTests {
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.DistributeAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.DistributeDetached);
 
     try {
       // Act - Dispatch multiple commands
@@ -221,27 +221,27 @@ public class DistributeLifecycleTests {
         await fixture.Dispatcher.SendAsync(command);
       }
 
-      // Wait for DistributeAsync completion
+      // Wait for DistributeDetached completion
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - Receptor should have been invoked for at least one message
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.DistributeAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.DistributeDetached);
     }
   }
 
   // ========================================
-  // PostDistributeAsync Tests (Non-Blocking)
+  // PostDistributeDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PostDistributeAsync lifecycle stage fires after work distribution (non-blocking).
+  /// Verifies that PostDistributeDetached lifecycle stage fires after work distribution (non-blocking).
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostDistributeAsync_FiresAfterDistribution_NonBlockingAsync() {
+  public async Task PostDistributeDetached_FiresAfterDistribution_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -257,7 +257,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
-    var receptorTask = fixture.InventoryHost.WaitForPostDistributeAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -317,7 +317,7 @@ public class DistributeLifecycleTests {
 
   /// <summary>
   /// Verifies that all 5 Distribute stages fire in correct order:
-  /// PreDistributeInline → PreDistributeAsync → DistributeAsync (parallel) → PostDistributeAsync → PostDistributeInline
+  /// PreDistributeInline → PreDistributeDetached → DistributeDetached (parallel) → PostDistributeDetached → PostDistributeInline
   /// </summary>
   [Test]
   public async Task DistributeStages_FireInCorrectOrder_AllStagesInvokedAsync() {
@@ -350,9 +350,9 @@ public class DistributeLifecycleTests {
 
     // Register all receptors
     registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreDistributeInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeAsync);
-    registry.Register<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeAsync);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeAsync);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeDetached);
+    registry.Register<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeDetached);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeDetached);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostDistributeInline);
 
     try {
@@ -379,9 +379,9 @@ public class DistributeLifecycleTests {
     } finally {
       // Unregister all receptors
       registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreDistributeInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeAsync);
-      registry.Unregister<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeAsync);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeAsync);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeDetached);
+      registry.Unregister<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeDetached);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeDetached);
       registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostDistributeInline);
     }
   }

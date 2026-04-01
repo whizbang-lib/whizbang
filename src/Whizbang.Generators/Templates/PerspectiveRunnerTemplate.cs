@@ -131,7 +131,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
 
         var context = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.PrePerspectiveAsync,
+          CurrentStage = LifecycleStage.PrePerspectiveDetached,
           StreamId = streamId,
           PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           EventId = null,  // No specific event ID yet (haven't processed)
@@ -146,7 +146,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
           if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveAsync, context with { CurrentStage = LifecycleStage.PrePerspectiveAsync }, cancellationToken);
+            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
           }
         }, cancellationToken);
         backgroundTasks.Add(preAsyncTask);
@@ -316,13 +316,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           }
         }
 
-        // Fire PostPerspectiveAsync lifecycle hooks AFTER perspective data is flushed
-        // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
+        // Fire PostPerspectiveDetached lifecycle hooks AFTER perspective data is flushed
+        // PostPerspectiveDetached is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
         // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally
         foreach (var envelope in processedEvents) {
           var context = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostPerspectiveAsync,
+            CurrentStage = LifecycleStage.PostPerspectiveDetached,
             StreamId = streamId,
             PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
             EventId = envelope.MessageId.Value,
@@ -338,7 +338,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
             var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
             if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveAsync, context with { CurrentStage = LifecycleStage.PostPerspectiveAsync }, cancellationToken);
+              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveDetached, context with { CurrentStage = LifecycleStage.PostPerspectiveDetached }, cancellationToken);
             }
           }, cancellationToken);
           backgroundTasks.Add(postAsyncTask);
@@ -346,7 +346,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       // CRITICAL: Wait for all background async lifecycle tasks to complete before returning
-      // This ensures async stages (PrePerspectiveAsync, PostPerspectiveAsync) actually execute
+      // This ensures async stages (PrePerspectiveDetached, PostPerspectiveDetached) actually execute
       // even under thread pool exhaustion. Without this, Task.Run might not execute due to
       // thread pool saturation, causing lifecycle receptors to never fire.
       if (backgroundTasks.Count > 0) {

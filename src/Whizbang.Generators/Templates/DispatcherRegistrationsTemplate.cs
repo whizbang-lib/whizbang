@@ -146,7 +146,7 @@ namespace Whizbang.Core.Generated {
     /// Registers the generated zero-reflection receptor registry and invoker.
     /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
     /// - Receptors WITH [FireAt(X)] are registered at stage X only
-    /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateAsync, PreOutboxAsync, PostInboxAsync
+    /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached, PreOutboxDetached, PostInboxDetached
     /// </summary>
     /// <remarks>
     /// <para>

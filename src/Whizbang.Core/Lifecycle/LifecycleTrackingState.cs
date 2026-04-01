@@ -5,12 +5,13 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
 /// Per-event tracking state that drives lifecycle stage transitions.
-/// Encapsulates receptor invocation and ImmediateAsync chaining.
+/// Encapsulates receptor invocation and ImmediateDetached chaining.
 /// </summary>
 /// <remarks>
 /// Thread-safe via <see cref="Lock"/> for stage transitions.
@@ -27,6 +28,7 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
   private readonly DebugAwareStopwatch _totalStopwatch;
   private readonly List<StageRecord> _stageHistory = [];
   private readonly HashSet<LifecycleStage> _firedStages = [];
+  private readonly List<Task> _detachedTasks = [];
   private readonly Lock _lock = new();
   private LifecycleStage _currentStage;
   private bool _isComplete;
@@ -102,6 +104,28 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
     }
   }
 
+  /// <summary>
+  /// Waits for all in-flight detached tasks to complete.
+  /// Used for graceful shutdown and testing — production callers should not need this.
+  /// </summary>
+  public async ValueTask DrainDetachedAsync() {
+    Task[] tasks;
+    lock (_lock) {
+      tasks = [.. _detachedTasks];
+    }
+    await Task.WhenAll(tasks).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Returns a snapshot of in-flight detached tasks.
+  /// Used by the coordinator to collect tasks from abandoned trackings.
+  /// </summary>
+  internal Task[] GetDetachedTasks() {
+    lock (_lock) {
+      return [.. _detachedTasks];
+    }
+  }
+
   /// <inheritdoc/>
   public async ValueTask AdvanceToAsync(
     LifecycleStage stage,
@@ -135,14 +159,43 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
       AttemptNumber = 1
     };
 
-    // Invoke receptors and tags at this stage
-    await invoker.InvokeAsync(_envelope, stage, context, ct).ConfigureAwait(false);
+    if (stage.IsDetached()) {
+      // Detached stages: fire-and-forget with own DI scope.
+      // The receptor runs independently — if it calls WaitForStreamAsync, it blocks its own task, not the pipeline.
+      _recordStage(stage, stageStopwatch, startedAt);
+      var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
+      var detachedTask = Task.Run(async () => {
+        try {
+          await using var detachedScope = scopeFactory.CreateAsyncScope();
+          await SecurityContextHelper.EstablishFullContextAsync(_envelope, detachedScope.ServiceProvider, ct);
+          var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+          if (detachedInvoker is null) {
+            return;
+          }
+          await detachedInvoker.InvokeAsync(_envelope, stage, context, ct).ConfigureAwait(false);
+          await detachedInvoker.InvokeAsync(_envelope, LifecycleStage.ImmediateDetached,
+            context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+          // Graceful shutdown
+#pragma warning disable RCS1075 // No logger available in tracking state; errors surface via receptor telemetry
+        } catch (Exception) {
+#pragma warning restore RCS1075
+          // Errors surface via receptor telemetry — no logger available in tracking state
+        }
+      }, ct);
+      lock (_lock) {
+        _detachedTasks.Add(detachedTask);
+      }
+    } else {
+      // Inline stages: await directly — blocks the pipeline until all receptors complete
+      await invoker.InvokeAsync(_envelope, stage, context, ct).ConfigureAwait(false);
 
-    // ImmediateAsync fires after each stage
-    await invoker.InvokeAsync(_envelope, LifecycleStage.ImmediateAsync,
-      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
+      // ImmediateDetached fires after each Inline stage (awaited, part of the blocking pipeline)
+      await invoker.InvokeAsync(_envelope, LifecycleStage.ImmediateDetached,
+        context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
 
-    _recordStage(stage, stageStopwatch, startedAt);
+      _recordStage(stage, stageStopwatch, startedAt);
+    }
 
     // Mark complete after PostLifecycleInline
     if (stage == LifecycleStage.PostLifecycleInline) {

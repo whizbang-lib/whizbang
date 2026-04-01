@@ -874,7 +874,7 @@ public class PerspectiveWorkerCoverageTests {
   #region PostLifecycle Integration Tests
 
   [Test]
-  public async Task Worker_FiresPostLifecycleAsync_AtBatchEnd_ViaCoordinatorAsync() {
+  public async Task Worker_FiresPostLifecycleDetached_AtBatchEnd_ViaCoordinatorAsync() {
     // Arrange — real PerspectiveWorker with stage-tracking invoker
     var trackingInvoker = new StageTrackingReceptorInvoker();
     var coordinator = new FakeWorkCoordinator();
@@ -926,16 +926,17 @@ public class PerspectiveWorkerCoverageTests {
 
     // Wait a bit for PostLifecycle to fire (it runs after completion reporting)
     try {
-      await trackingInvoker.WaitForPostLifecycleAsync(TimeSpan.FromSeconds(5));
+      await trackingInvoker.WaitForPostLifecycleDetached(TimeSpan.FromSeconds(5));
     } catch (TimeoutException) {
       // Expected to timeout if PostLifecycle doesn't fire — that's the bug we're looking for
     }
 
+    await worker.DrainDetachedAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert — PostLifecycle stages MUST fire through the real worker code path
-    await Assert.That(trackingInvoker.HasFired(LifecycleStage.PostLifecycleAsync)).IsTrue()
-      .Because("PerspectiveWorker must fire PostLifecycleAsync at batch end");
+    await Assert.That(trackingInvoker.HasFired(LifecycleStage.PostLifecycleDetached)).IsTrue()
+      .Because("PerspectiveWorker must fire PostLifecycleDetached at batch end");
     await Assert.That(trackingInvoker.HasFired(LifecycleStage.PostLifecycleInline)).IsTrue()
       .Because("PerspectiveWorker must fire PostLifecycleInline at batch end");
   }
@@ -1837,7 +1838,7 @@ public class PerspectiveWorkerCoverageTests {
       lock (_lock) { return _firedStages.Contains(stage); }
     }
 
-    public Task WaitForPostLifecycleAsync(TimeSpan timeout) {
+    public Task WaitForPostLifecycleDetached(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);
       return _postLifecycleFired.Task.WaitAsync(cts.Token);
     }

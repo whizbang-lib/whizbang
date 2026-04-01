@@ -63,8 +63,8 @@ public class DispatcherStageFireTests {
     }
   }
 
-  /// <summary>Explicit [FireAt(PostAllPerspectivesAsync)] handler — should NOT fire during cascade.</summary>
-  [FireAt(LifecycleStage.PostAllPerspectivesAsync)]
+  /// <summary>Explicit [FireAt(PostAllPerspectivesDetached)] handler — should NOT fire during cascade.</summary>
+  [FireAt(LifecycleStage.PostAllPerspectivesDetached)]
   public class ExplicitPostAllPerspectivesReceptor : IReceptor<StageTestEvent> {
     public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _explicitHandlerCount);
@@ -148,7 +148,7 @@ public class DispatcherStageFireTests {
 
     // Assert — explicit [FireAt(PostAllPerspectives)] handler should NOT fire during cascade
     await Assert.That(_explicitHandlerCount).IsEqualTo(0)
-      .Because("Explicit [FireAt(PostAllPerspectivesAsync)] should not fire during default cascade dispatch");
+      .Because("Explicit [FireAt(PostAllPerspectivesDetached)] should not fire during default cascade dispatch");
   }
 
   [Test]

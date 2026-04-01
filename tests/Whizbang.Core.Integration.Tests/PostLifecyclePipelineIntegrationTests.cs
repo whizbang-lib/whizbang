@@ -51,7 +51,7 @@ public class PostLifecyclePipelineIntegrationTests {
   // ════════════════════════════════════════════════════════════════════════
 
   [Test]
-  public async Task Dispatcher_LocalInvoke_FiresPostLifecycleAsync() {
+  public async Task Dispatcher_LocalInvoke_FiresPostLifecycleDetachedAsync() {
     // Arrange — real dispatcher with runtime-registered PostLifecycle receptor
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
@@ -65,7 +65,7 @@ public class PostLifecyclePipelineIntegrationTests {
 
     // Register a PostLifecycle receptor at runtime
     var tracker = new PostLifecycleTracker();
-    registry.Register<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleAsync);
+    registry.Register<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleDetached);
 
     try {
       // Act — dispatch a command through the REAL dispatcher
@@ -77,9 +77,9 @@ public class PostLifecyclePipelineIntegrationTests {
 
       // Assert — PostLifecycle fired through the real Dispatcher code path
       await Assert.That(tracker.FireCount).IsEqualTo(1)
-        .Because("Dispatcher must fire PostLifecycleAsync after local dispatch completes");
+        .Because("Dispatcher must fire PostLifecycleDetached after local dispatch completes");
     } finally {
-      registry.Unregister<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleAsync);
+      registry.Unregister<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleDetached);
     }
   }
 
@@ -97,7 +97,7 @@ public class PostLifecyclePipelineIntegrationTests {
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
     var tracker = new PostLifecycleTracker();
-    registry.Register<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleAsync);
+    registry.Register<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleDetached);
 
     try {
       // Act — dispatch 5 commands
@@ -109,7 +109,7 @@ public class PostLifecyclePipelineIntegrationTests {
       await Assert.That(tracker.FireCount).IsEqualTo(5)
         .Because("PostLifecycle must fire once per dispatched command");
     } finally {
-      registry.Unregister<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleAsync);
+      registry.Unregister<PostLifecycleTestCommand>(tracker, LifecycleStage.PostLifecycleDetached);
     }
   }
 }

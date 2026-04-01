@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -41,6 +42,7 @@ public partial class ServiceBusConsumerWorker(
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
+  private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
@@ -248,8 +250,7 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      _fireDetachedStageAsync(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
@@ -301,9 +302,7 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
-
+      _fireDetachedStageAsync(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
@@ -329,9 +328,8 @@ public partial class ServiceBusConsumerWorker(
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
       coordinator.AbandonTracking(eventId);
     } else {
-      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleDetached };
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext, ct);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+      var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
+      _ = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);
@@ -342,6 +340,63 @@ public partial class ServiceBusConsumerWorker(
   private static async Task _invokeImmediateDetachedAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
     await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+  }
+
+  private void _fireDetachedStageAsync(
+      IMessageEnvelope envelope, LifecycleStage stage,
+      LifecycleExecutionContext context, CancellationToken ct) {
+    var task = Task.Run(async () => {
+      try {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, ct);
+        var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (invoker is null) {
+          return;
+        }
+        var ctx = context with { CurrentStage = stage };
+        await invoker.InvokeAsync(envelope, stage, ctx, ct);
+        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+        // Graceful shutdown
+      } catch (Exception ex) {
+        LogDetachedStageError(_logger, ex, stage, envelope.MessageId);
+      }
+    }, ct);
+    _detachedTasks.Add(task);
+  }
+
+  /// <summary>
+  /// Waits for all in-flight detached tasks to complete.
+  /// Used for graceful shutdown and testing.
+  /// </summary>
+  internal async ValueTask DrainDetachedAsync() {
+    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+  }
+
+  private static Task _fireDetachedStageStaticAsync(
+      IServiceScopeFactory scopeFactory, IMessageEnvelope envelope,
+      LifecycleStage stage, LifecycleExecutionContext context) {
+    return Task.Run(async () => {
+      try {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, default);
+        var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (invoker is null) {
+          return;
+        }
+        var ctx = context with { CurrentStage = stage };
+        await invoker.InvokeAsync(envelope, stage, ctx, default);
+        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
+      } catch (OperationCanceledException) {
+        // Graceful shutdown
+#pragma warning disable RCS1075 // No logger in static context
+      } catch (Exception) {
+#pragma warning restore RCS1075
+        // Errors surface via receptor telemetry
+      }
+    });
   }
 
   /// <summary>
@@ -738,6 +793,13 @@ public partial class ServiceBusConsumerWorker(
     Message = "[ServiceBus DIAGNOSTIC] Created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
   )]
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
+
+  [LoggerMessage(
+    EventId = 24,
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
 }
 
 /// <summary>

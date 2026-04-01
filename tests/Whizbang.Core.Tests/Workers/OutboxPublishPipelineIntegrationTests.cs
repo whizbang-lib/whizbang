@@ -330,8 +330,8 @@ public class OutboxPublishPipelineIntegrationTests {
 
       // Assert — publish happened AND PostLifecycle fired
       await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(1);
-      await Assert.That(stagesFired.Contains(LifecycleStage.PostLifecycleAsync)).IsTrue()
-        .Because("OutboxWorker must fire PostLifecycleAsync when event leaves the service");
+      await Assert.That(stagesFired.Contains(LifecycleStage.PostLifecycleDetached)).IsTrue()
+        .Because("OutboxWorker must fire PostLifecycleDetached when event leaves the service");
       await Assert.That(stagesFired.Contains(LifecycleStage.PostLifecycleInline)).IsTrue()
         .Because("OutboxWorker must fire PostLifecycleInline when event leaves the service");
     } finally {

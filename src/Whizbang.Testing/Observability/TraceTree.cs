@@ -19,7 +19,7 @@ namespace Whizbang.Testing.Observability;
 /// tree.AssertName("POST /graphql/{**slug}")
 ///     .AssertHasChild("Dispatch ReseedSystemCommand")
 ///     .Child("Dispatch ReseedSystemCommand")
-///       .AssertHasChild("Lifecycle PreDistributeAsync")
+///       .AssertHasChild("Lifecycle PreDistributeDetached")
 ///       .AssertChildCount(5);
 /// </code>
 /// </para>

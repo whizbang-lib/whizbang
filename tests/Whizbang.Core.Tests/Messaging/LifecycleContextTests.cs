@@ -16,7 +16,7 @@ public class LifecycleContextTests {
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
     var lastProcessedEventId = Guid.NewGuid();
-    var stage = LifecycleStage.PostPerspectiveAsync;
+    var stage = LifecycleStage.PostPerspectiveDetached;
 
     // Act
     var context = new LifecycleExecutionContext {
@@ -40,7 +40,7 @@ public class LifecycleContextTests {
   public async Task LifecycleExecutionContext_OptionalProperties_CanBeNullAsync() {
     // Arrange & Act
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.ImmediateAsync,
+      CurrentStage = LifecycleStage.ImmediateDetached,
       EventId = null,
       StreamId = null,
       LastProcessedEventId = null
@@ -86,11 +86,11 @@ public class LifecycleContextTests {
   public async Task LifecycleExecutionContext_ImmediateScenario_MinimalPropertiesAsync() {
     // Arrange & Act
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.ImmediateAsync
+      CurrentStage = LifecycleStage.ImmediateDetached
     };
 
     // Assert - Immediate dispatch doesn't need perspective/stream info
-    await Assert.That(context.CurrentStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(context.CurrentStage).IsEqualTo(LifecycleStage.ImmediateDetached);
     await Assert.That(context.StreamId).IsNull();
     await Assert.That(context.PerspectiveType).IsNull();
   }
@@ -103,7 +103,7 @@ public class LifecycleContextTests {
     // Arrange
     var perspectiveType = typeof(TestPerspective);
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.PostPerspectiveAsync,
+      CurrentStage = LifecycleStage.PostPerspectiveDetached,
       PerspectiveType = perspectiveType
     };
 
@@ -113,7 +113,7 @@ public class LifecycleContextTests {
     await receptor.HandleAsync(new TestMessage(), CancellationToken.None);
 
     // Assert - Receptor accessed context during handling
-    await Assert.That(receptor.ReceivedStage).IsEqualTo(LifecycleStage.PostPerspectiveAsync);
+    await Assert.That(receptor.ReceivedStage).IsEqualTo(LifecycleStage.PostPerspectiveDetached);
     await Assert.That(receptor.ReceivedPerspectiveType).IsEqualTo(perspectiveType);
   }
 

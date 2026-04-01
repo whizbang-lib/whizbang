@@ -155,7 +155,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Extract both trace context and scope from envelope hops.
     // MUST happen before the early-return for receptors.Count == 0 so that tag hooks
-    // at terminal stages (PostAllPerspectivesAsync, PostLifecycleAsync, etc.) — which have
+    // at terminal stages (PostAllPerspectivesDetached, PostLifecycleDetached, etc.) — which have
     // no registered receptors — still receive ambient scope via AsyncLocal.
     var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
     var parentContext = extracted.TraceContext;
@@ -173,8 +173,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Source-service filtering: PostInbox only fires for messages from OTHER services.
     // Messages from THIS service already fired at LocalImmediate — skip to prevent double-fire.
-    var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxAsync;
-    var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxAsync;
+    var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxDetached;
+    var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxDetached;
     if (isPostInbox && _serviceName is not null && receptors.Count > 0) {
       var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
       if (string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {

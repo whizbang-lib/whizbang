@@ -24,7 +24,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
   /// <inheritdoc />
   public Task<Guid> QueueMessageAsync(
     object message,
-    LifecycleStage lifecycleStage = LifecycleStage.ImmediateAsync,
+    LifecycleStage lifecycleStage = LifecycleStage.ImmediateDetached,
     CancellationToken ct = default
   ) {
     ObjectDisposedException.ThrowIf(_disposed, this);

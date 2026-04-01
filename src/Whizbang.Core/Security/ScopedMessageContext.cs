@@ -49,7 +49,7 @@ internal sealed class ScopedMessageContext(
   /// 1. InitiatingContext (SOURCE OF TRUTH - the IMessageContext that started this scope)
   /// 2. IScopeContext.Scope (populated from envelope hop SecurityContext)
   /// 3. IMessageContextAccessor.Current (fallback)
-  /// This ensures tenant context is available even in deferred lifecycle stages like PostPerspectiveAsync.
+  /// This ensures tenant context is available even in deferred lifecycle stages like PostPerspectiveDetached.
   /// </remarks>
   /// <docs>fundamentals/messages/cascade-context#scoped-message-context</docs>
   public string? TenantId =>

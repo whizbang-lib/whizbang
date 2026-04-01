@@ -295,7 +295,7 @@ public class DistributedTracingCorrelationTests {
         parentContext: perspectiveParentContext)) {
 
         // Create child lifecycle activities
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal)) { }
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveDetached", ActivityKind.Internal)) { }
         using (WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal)) { }
 
         // Assert - Perspective should be linked to BFF request (while activities are still open)

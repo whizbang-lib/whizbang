@@ -22,12 +22,12 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// var completionSource = new TaskCompletionSource&lt;bool&gt;();
 /// var receptor = new GenericLifecycleCompletionReceptor&lt;CreateProductCommand&gt;(
 ///   completionSource,
-///   expectedStage: LifecycleStage.ImmediateAsync
+///   expectedStage: LifecycleStage.ImmediateDetached
 /// );
 ///
 /// // Register with runtime registry
 /// var registry = host.Services.GetRequiredService&lt;IReceptorRegistry&gt;();
-/// registry.Register&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateAsync);
+/// registry.Register&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateDetached);
 ///
 /// try {
 ///   // Dispatch command
@@ -39,7 +39,7 @@ namespace ECommerce.Integration.Tests.Fixtures;
 ///   // Verify stage was invoked
 ///   Assert.That(receptor.InvocationCount).IsEqualTo(1);
 /// } finally {
-///   registry.Unregister&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateAsync);
+///   registry.Unregister&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateDetached);
 /// }
 /// </code>
 /// </remarks>
@@ -125,9 +125,9 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage>(
       // Skip Inbox invocations (receiving from transport) to avoid duplicate counts
       // This prevents counting the same event twice: once when published, again when received
       var isDistributeStage = LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeInline ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeAsync ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeAsync ||
-                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeAsync ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeDetached ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeDetached ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeDetached ||
                               LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeInline;
 
       if (isDistributeStage && LastLifecycleContext.MessageSource == MessageSource.Inbox) {

@@ -176,7 +176,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Act
     await dispatcher.LocalInvokeAsync<SelfEchoEvent>(new SelfEchoCommand(Guid.NewGuid()));
 
-    // Assert — handler fires exactly once (at LocalImmediateAsync during cascade)
+    // Assert — handler fires exactly once (at LocalImmediateDetached during cascade)
     await Assert.That(_handlerCount).IsEqualTo(1)
       .Because("Owned event handler should fire exactly once during cascade, not again via inbox");
   }
