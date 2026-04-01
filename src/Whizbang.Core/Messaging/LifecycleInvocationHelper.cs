@@ -61,7 +61,7 @@ public static class LifecycleInvocationHelper {
   /// Invokes lifecycle receptors for outbox and inbox messages at async and inline stages.
   /// Snapshots collections before Task.Run to prevent "Collection was modified" exceptions.
   /// </summary>
-  /// <param name="asyncStage">The async lifecycle stage (e.g., PostDistributeAsync)</param>
+  /// <param name="asyncStage">The async lifecycle stage (e.g., PostDistributeDetached)</param>
   /// <param name="inlineStage">The inline lifecycle stage (e.g., PostDistributeInline)</param>
   /// <param name="context">The lifecycle context containing messages, scope factory, deserializer, and options</param>
   /// <param name="ct">Cancellation token</param>
@@ -101,7 +101,7 @@ public static class LifecycleInvocationHelper {
   /// Invokes lifecycle receptors for outbox and inbox messages at an async-only stage (no inline counterpart).
   /// Snapshots collections before Task.Run to prevent "Collection was modified" exceptions.
   /// </summary>
-  /// <param name="asyncStage">The async lifecycle stage (e.g., DistributeAsync)</param>
+  /// <param name="asyncStage">The async lifecycle stage (e.g., DistributeDetached)</param>
   /// <param name="context">The lifecycle context containing messages, scope factory, deserializer, and options</param>
   /// <param name="ct">Cancellation token</param>
   public static void InvokeAsyncOnlyLifecycleStage(
@@ -114,7 +114,7 @@ public static class LifecycleInvocationHelper {
     var inboxSnapshot = context.InboxMessages.ToArray();
     var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
-    // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
+    // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeDetached
     _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
   }
 

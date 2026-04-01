@@ -64,13 +64,13 @@ public class ImmediateUnitOfWorkStrategyTests {
     // Act
     var unitId = await strategy.QueueMessageAsync(
       message,
-      LifecycleStage.PreDistributeAsync
+      LifecycleStage.PreDistributeDetached
     );
     var lifecycleStages = strategy.GetLifecycleStagesForUnit(unitId);
 
     // Assert
     await Assert.That(lifecycleStages).ContainsKey(message);
-    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeAsync);
+    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
   }
 
   [Test]
@@ -311,12 +311,12 @@ public class ImmediateUnitOfWorkStrategyTests {
     var message = new TestMessage { Value = "test" };
 
     // Act
-    await strategy.QueueMessageAsync(message, LifecycleStage.PreDistributeAsync);
+    await strategy.QueueMessageAsync(message, LifecycleStage.PreDistributeDetached);
 
     // Assert
     await Assert.That(lifecycleStagesInCallback).IsNotNull();
     await Assert.That(lifecycleStagesInCallback).ContainsKey(message);
-    await Assert.That(lifecycleStagesInCallback[message]).IsEqualTo(LifecycleStage.PreDistributeAsync);
+    await Assert.That(lifecycleStagesInCallback[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
   }
 
   [Test]

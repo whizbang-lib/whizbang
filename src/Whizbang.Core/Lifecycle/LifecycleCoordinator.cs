@@ -28,6 +28,7 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
+  private readonly ConcurrentBag<Task> _abandonedDetachedTasks = [];
   private readonly LifecycleCoordinatorMetrics? _metrics;
 
   /// <summary>
@@ -85,15 +86,29 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
 
     // Fire PostLifecycle stages
     if (_tracked.TryGetValue(eventId, out var tracking)) {
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, ct).ConfigureAwait(false);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct).ConfigureAwait(false);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct).ConfigureAwait(false);
       _metrics?.PostLifecycleFired.Add(1);
     }
   }
 
+  /// <summary>
+  /// Waits for all in-flight detached tasks across all tracked events to complete.
+  /// Used for graceful shutdown and testing.
+  /// </summary>
+  internal async ValueTask DrainAllDetachedAsync() {
+    var activeTasks = _tracked.Values.SelectMany(t => t.GetDetachedTasks());
+    var allTasks = activeTasks.Concat(_abandonedDetachedTasks);
+    await Task.WhenAll(allTasks).ConfigureAwait(false);
+  }
+
   /// <inheritdoc/>
   public void AbandonTracking(Guid eventId) {
-    if (_tracked.TryRemove(eventId, out _)) {
+    if (_tracked.TryRemove(eventId, out var abandoned)) {
+      // Collect detached tasks from the abandoned tracking so DrainAllDetachedAsync can await them
+      foreach (var task in abandoned.GetDetachedTasks()) {
+        _abandonedDetachedTasks.Add(task);
+      }
       _metrics?.ActiveTrackedEvents.Add(-1);
     }
     if (_whenAllStates.TryRemove(eventId, out _)) {

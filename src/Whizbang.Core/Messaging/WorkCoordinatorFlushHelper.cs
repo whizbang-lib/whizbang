@@ -76,15 +76,15 @@ internal static class WorkCoordinatorFlushHelper {
 
         // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-          LifecycleStage.PreDistributeAsync,
+          LifecycleStage.PreDistributeDetached,
           LifecycleStage.PreDistributeInline,
           lifecycleContext,
           ct: ct
         );
 
-        // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
+        // DistributeDetached lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
         LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-          LifecycleStage.DistributeAsync,
+          LifecycleStage.DistributeDetached,
           lifecycleContext,
           ct: ct
         );
@@ -133,7 +133,7 @@ internal static class WorkCoordinatorFlushHelper {
           ctx.OutboxMessages, ctx.InboxMessages, ctx.ScopeFactory, ctx.LifecycleMessageDeserializer,
           ctx.Logger, enableLifecycleTracingPost, ctx.LifecycleMetrics);
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-          LifecycleStage.PostDistributeAsync,
+          LifecycleStage.PostDistributeDetached,
           LifecycleStage.PostDistributeInline,
           postLifecycleContext,
           ct: ct

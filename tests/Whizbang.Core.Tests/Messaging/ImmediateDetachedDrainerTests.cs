@@ -15,11 +15,11 @@ using LogEventId = Microsoft.Extensions.Logging.EventId;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Tests for <see cref="ImmediateAsyncDrainer"/> - the helper that drains ImmediateAsync
+/// Tests for <see cref="ImmediateDetachedDrainer"/> - the helper that drains ImmediateDetached
 /// lifecycle events after a lifecycle stage completes.
 /// </summary>
 /// <docs>core-concepts/lifecycle-stages#immediate-async</docs>
-public class ImmediateAsyncDrainerTests {
+public class ImmediateDetachedDrainerTests {
 
   private sealed record TestMessage(string Value) : IMessage;
   private sealed record TestEvent(Guid Id) : IEvent;
@@ -32,7 +32,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Constructor_DefaultThreshold_IsTenAsync() {
     // Arrange & Act
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
 
     // Assert - just verify it creates without error and queue is empty
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -41,7 +41,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Constructor_CustomThreshold_AcceptsValueAsync() {
     // Arrange & Act
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: 5);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: 5);
 
     // Assert
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -50,7 +50,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Constructor_ZeroThreshold_DefaultsToTenAsync() {
     // Arrange & Act - zero threshold should default to 10
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: 0);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: 0);
 
     // Assert - no exception
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -59,7 +59,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Constructor_NegativeThreshold_DefaultsToTenAsync() {
     // Arrange & Act - negative threshold should default to 10
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: -5);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: -5);
 
     // Assert - no exception
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -72,7 +72,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Enqueue_SingleEnvelope_IncrementsPendingCountAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var envelope = _createEnvelope(new TestMessage("test"));
 
     // Act
@@ -85,7 +85,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Enqueue_MultipleEnvelopes_IncrementsPendingCountAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
 
     // Act
     drainer.Enqueue(_createEnvelope(new TestMessage("a")));
@@ -99,7 +99,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Enqueue_NullEnvelope_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(
@@ -109,9 +109,9 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task Enqueue_WithContext_AcceptsContextAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var envelope = _createEnvelope(new TestMessage("test"));
-    var context = new LifecycleExecutionContext { CurrentStage = LifecycleStage.ImmediateAsync };
+    var context = new LifecycleExecutionContext { CurrentStage = LifecycleStage.ImmediateDetached };
 
     // Act
     drainer.Enqueue(envelope, context);
@@ -127,7 +127,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_EmptyQueue_ReturnsZeroAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
 
     // Act
@@ -141,7 +141,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_SingleItem_InvokesReceptorAndReturnsOneAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
     var envelope = _createEnvelope(new TestMessage("test"));
     drainer.Enqueue(envelope);
@@ -152,13 +152,13 @@ public class ImmediateAsyncDrainerTests {
     // Assert
     await Assert.That(drained).IsEqualTo(1);
     await Assert.That(invoker.Invocations).Count().IsEqualTo(1);
-    await Assert.That(invoker.Invocations[0].Stage).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(invoker.Invocations[0].Stage).IsEqualTo(LifecycleStage.ImmediateDetached);
   }
 
   [Test]
   public async Task DrainAsync_MultipleItems_InvokesAllInFIFOOrderAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
 
     var envelope1 = _createEnvelope(new TestMessage("first"));
@@ -185,11 +185,11 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_PassesContextToInvokerAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
     var envelope = _createEnvelope(new TestMessage("test"));
     var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.ImmediateAsync,
+      CurrentStage = LifecycleStage.ImmediateDetached,
       StreamId = Guid.CreateVersion7()
     };
     drainer.Enqueue(envelope, context);
@@ -204,7 +204,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_ClearsQueueAfterDrainingAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
     drainer.Enqueue(_createEnvelope(new TestMessage("test")));
 
@@ -218,7 +218,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_NullInvoker_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(
@@ -232,7 +232,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_ChainingEnqueuesDuringDrain_ProcessesNewItemsAsync() {
     // Arrange - Create a drainer and an invoker that enqueues new items during drain
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var chainEnvelope = _createEnvelope(new TestEvent(Guid.CreateVersion7()));
 
     // The invoker will enqueue a new item when processing the first item
@@ -257,7 +257,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_DeepChaining_ProcessesAllLevelsAsync() {
     // Arrange - Create a chain of depth 5
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: 100);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: 100);
     var chainDepth = 0;
     const int maxDepth = 5;
 
@@ -286,7 +286,7 @@ public class ImmediateAsyncDrainerTests {
     // Arrange
     var logMessages = new ConcurrentBag<string>();
     var logger = new TestLogger(logMessages);
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: 3, logger: logger);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: 3, logger: logger);
     var invoker = new TrackingReceptorInvoker();
 
     // Enqueue 6 items (exceeds threshold of 3 twice: at 3 and 6)
@@ -306,7 +306,7 @@ public class ImmediateAsyncDrainerTests {
     // Arrange
     var logMessages = new ConcurrentBag<string>();
     var logger = new TestLogger(logMessages);
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: 10, logger: logger);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: 10, logger: logger);
     var invoker = new TrackingReceptorInvoker();
 
     // Enqueue 5 items (below threshold of 10)
@@ -326,7 +326,7 @@ public class ImmediateAsyncDrainerTests {
     // Arrange
     var logMessages = new ConcurrentBag<string>();
     var logger = new TestLogger(logMessages);
-    var drainer = new ImmediateAsyncDrainer(warningThreshold: 5, logger: logger);
+    var drainer = new ImmediateDetachedDrainer(warningThreshold: 5, logger: logger);
     var invoker = new TrackingReceptorInvoker();
 
     // Enqueue exactly 5 items (threshold is 5, warning at depth 5)
@@ -348,7 +348,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
     drainer.Enqueue(_createEnvelope(new TestMessage("test")));
 
@@ -363,7 +363,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_CancelledDuringDrain_StopsProcessingAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     using var cts = new CancellationTokenSource();
 
     // Cancel after first invocation
@@ -389,7 +389,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_ConcurrentEnqueueDuringDrain_ProcessesNewItemsAsync() {
     // Arrange - Simulate concurrent enqueue from another thread during drain
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var processedCount = 0;
 
     var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
@@ -418,7 +418,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_CalledTwice_SecondCallProcessesNewItemsOnlyAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
 
     drainer.Enqueue(_createEnvelope(new TestMessage("batch1")));
@@ -445,7 +445,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
       throw new InvalidOperationException("Receptor failed");
     });
@@ -460,7 +460,7 @@ public class ImmediateAsyncDrainerTests {
   [Test]
   public async Task DrainAsync_InvokerThrowsOnSecondItem_FirstItemProcessedAsync() {
     // Arrange
-    var drainer = new ImmediateAsyncDrainer();
+    var drainer = new ImmediateDetachedDrainer();
     var invocationCount = 0;
     var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
       if (++invocationCount == 2) {

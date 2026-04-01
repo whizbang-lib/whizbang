@@ -205,7 +205,7 @@ public class ReceptorInvokerTagScopePropagationTests {
 
   /// <summary>
   /// Verifies that scope propagates from envelope hops to tag hooks at terminal lifecycle
-  /// stages (PostAllPerspectivesAsync, PostLifecycleAsync, etc.) even when NO receptors are
+  /// stages (PostAllPerspectivesDetached, PostLifecycleDetached, etc.) even when NO receptors are
   /// registered at that stage (causing the early-return path in InvokeAsync).
   ///
   /// BUG: EnvelopeContextExtractor.ExtractFromHops and ScopeContextAccessor.CurrentContext assignment
@@ -216,7 +216,7 @@ public class ReceptorInvokerTagScopePropagationTests {
   [MethodDataSource(nameof(TerminalLifecycleStages))]
   public async Task InvokeAsync_NoReceptors_WithScopeInHops_PropagatesScopeToTagHookAtTerminalStageAsync(LifecycleStage stage) {
     // Arrange: No receptors at the stage — forces the no-receptor early-return path.
-    // This is the real scenario for PostAllPerspectivesAsync hooks (no business receptors there).
+    // This is the real scenario for PostAllPerspectivesDetached hooks (no business receptors there).
     var tagRegistry = new TestMessageTagRegistry();
     tagRegistry.AddRegistration(typeof(TestTaggedEvent), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(tagRegistry, priority: 100);
@@ -301,32 +301,32 @@ public class ReceptorInvokerTagScopePropagationTests {
   #region Data Sources
 
   public static IEnumerable<LifecycleStage> AllLifecycleStages() {
-    yield return LifecycleStage.ImmediateAsync;
-    yield return LifecycleStage.LocalImmediateAsync;
+    yield return LifecycleStage.ImmediateDetached;
+    yield return LifecycleStage.LocalImmediateDetached;
     yield return LifecycleStage.LocalImmediateInline;
-    yield return LifecycleStage.PreDistributeAsync;
+    yield return LifecycleStage.PreDistributeDetached;
     yield return LifecycleStage.PreDistributeInline;
-    yield return LifecycleStage.DistributeAsync;
-    yield return LifecycleStage.PostDistributeAsync;
+    yield return LifecycleStage.DistributeDetached;
+    yield return LifecycleStage.PostDistributeDetached;
     yield return LifecycleStage.PostDistributeInline;
-    yield return LifecycleStage.PreOutboxAsync;
+    yield return LifecycleStage.PreOutboxDetached;
     yield return LifecycleStage.PreOutboxInline;
-    yield return LifecycleStage.PostOutboxAsync;
+    yield return LifecycleStage.PostOutboxDetached;
     yield return LifecycleStage.PostOutboxInline;
-    yield return LifecycleStage.PreInboxAsync;
+    yield return LifecycleStage.PreInboxDetached;
     yield return LifecycleStage.PreInboxInline;
-    yield return LifecycleStage.PostInboxAsync;
+    yield return LifecycleStage.PostInboxDetached;
     yield return LifecycleStage.PostInboxInline;
-    yield return LifecycleStage.PrePerspectiveAsync;
+    yield return LifecycleStage.PrePerspectiveDetached;
     yield return LifecycleStage.PrePerspectiveInline;
-    yield return LifecycleStage.PostPerspectiveAsync;
+    yield return LifecycleStage.PostPerspectiveDetached;
     yield return LifecycleStage.PostPerspectiveInline;
   }
 
   public static IEnumerable<LifecycleStage> TerminalLifecycleStages() {
-    yield return LifecycleStage.PostAllPerspectivesAsync;
+    yield return LifecycleStage.PostAllPerspectivesDetached;
     yield return LifecycleStage.PostAllPerspectivesInline;
-    yield return LifecycleStage.PostLifecycleAsync;
+    yield return LifecycleStage.PostLifecycleDetached;
     yield return LifecycleStage.PostLifecycleInline;
   }
 

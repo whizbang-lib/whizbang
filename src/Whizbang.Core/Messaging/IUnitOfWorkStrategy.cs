@@ -17,7 +17,7 @@ namespace Whizbang.Core.Messaging;
 public interface IUnitOfWorkStrategy : IAsyncDisposable {
   /// <summary>
   /// Called by strategy when it autonomously decides to flush a unit.
-  /// Dispatcher/Worker wires this to IWorkBatchCoordinator.ProcessAndDistributeAsync.
+  /// Dispatcher/Worker wires this to IWorkBatchCoordinator.ProcessAndDistributeDetached.
   ///
   /// Handler signature: async (Guid unitId, CancellationToken ct) => { ... }
   ///
@@ -27,7 +27,7 @@ public interface IUnitOfWorkStrategy : IAsyncDisposable {
   ///
   /// The callback should:
   /// 1. Call GetMessagesForUnit(unitId)
-  /// 2. Call IWorkBatchCoordinator.ProcessAndDistributeAsync with messages
+  /// 2. Call IWorkBatchCoordinator.ProcessAndDistributeDetached with messages
   /// 3. Process returned work (distribute to channels)
   /// 4. Report completions/failures back
   /// </summary>
@@ -43,12 +43,12 @@ public interface IUnitOfWorkStrategy : IAsyncDisposable {
   /// - Interval: Adds to current unit, returns immediately (flush on timer)
   /// </summary>
   /// <param name="message">Message to queue (Command or Event)</param>
-  /// <param name="lifecycleStage">Lifecycle stage for this message (default: ImmediateAsync)</param>
+  /// <param name="lifecycleStage">Lifecycle stage for this message (default: ImmediateDetached)</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>Unit ID (Uuid7-based GUID)</returns>
   Task<Guid> QueueMessageAsync(
     object message,
-    LifecycleStage lifecycleStage = LifecycleStage.ImmediateAsync,
+    LifecycleStage lifecycleStage = LifecycleStage.ImmediateDetached,
     CancellationToken ct = default
   );
 

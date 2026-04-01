@@ -25,7 +25,7 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
   /// <inheritdoc />
   public async Task<Guid> QueueMessageAsync(
     object message,
-    LifecycleStage lifecycleStage = LifecycleStage.ImmediateAsync,
+    LifecycleStage lifecycleStage = LifecycleStage.ImmediateDetached,
     CancellationToken ct = default
   ) {
     if (OnFlushRequested == null) {

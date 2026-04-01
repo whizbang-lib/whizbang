@@ -1145,4 +1145,72 @@ public class PerspectiveSyncAwaiterTests {
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
     await Assert.That(result.EventsAwaited).IsEqualTo(0);
   }
+
+  // ==========================================================================
+  // Inline stage guard tests
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForStreamAsync_InsideInlineStage_ThrowsInvalidOperationExceptionAsync() {
+    var contextAccessor = new TestLifecycleContextAccessor {
+      Current = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PostInboxInline }
+    };
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
+      new SyncEventTracker(), tracker: null, lifecycleContextAccessor: contextAccessor);
+
+    await Assert.That(
+      () => awaiter.WaitForStreamAsync(typeof(TestPerspective), Guid.NewGuid(), null, TimeSpan.FromSeconds(5))
+    ).ThrowsExactly<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task WaitAsync_InsideInlineStage_ThrowsInvalidOperationExceptionAsync() {
+    var tracker = new ScopedEventTracker();
+    tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(string), Guid.NewGuid());
+    var contextAccessor = new TestLifecycleContextAccessor {
+      Current = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PostAllPerspectivesInline }
+    };
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
+      new SyncEventTracker(), tracker, lifecycleContextAccessor: contextAccessor);
+
+    var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
+
+    await Assert.That(
+      () => awaiter.WaitAsync(typeof(TestPerspective), options)
+    ).ThrowsExactly<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_InsideDetachedStage_DoesNotThrowAsync() {
+    var contextAccessor = new TestLifecycleContextAccessor {
+      Current = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PostInboxDetached }
+    };
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
+      new SyncEventTracker(), tracker: null, lifecycleContextAccessor: contextAccessor);
+
+    // Should not throw — Detached stages are safe
+    var result = await awaiter.WaitForStreamAsync(typeof(TestPerspective), Guid.NewGuid(), null, TimeSpan.FromMilliseconds(50));
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_NoContextAccessor_DoesNotThrowAsync() {
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+
+    // Should not throw — no context accessor means we can't detect stage
+    var result = await awaiter.WaitForStreamAsync(typeof(TestPerspective), Guid.NewGuid(), null, TimeSpan.FromMilliseconds(50));
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+  }
+
+  private sealed class TestLifecycleContextAccessor : ILifecycleContextAccessor {
+    public ILifecycleContext? Current { get; set; }
+  }
 }

@@ -29,7 +29,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// the IScopeContextAccessor.Current is set before lifecycle receptors are invoked.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_WithSecurityProvider_EstablishesSecurityContextAsync() {
+  public async Task PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync() {
     // Arrange
     const string expectedUserId = "user-123";
     var streamId = Guid.CreateVersion7();
@@ -50,7 +50,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Capture the accessor directly to avoid static field pollution
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           // Capture the IMessageContext.UserId at the moment of invocation
           capturedUserId = messageContextAccessor.Current?.UserId;
           securityContextEstablishedBeforeInvoke = capturedUserId is not null;
@@ -107,6 +107,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -127,7 +128,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// (graceful no-op for security context establishment).
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_WithoutSecurityProvider_StillInvokesLifecycleReceptorsAsync() {
+  public async Task PrePerspectiveDetached_WithoutSecurityProvider_StillInvokesLifecycleReceptorsAsync() {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -135,7 +136,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
       });
@@ -187,6 +188,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -205,7 +207,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// but lifecycle receptors are still invoked.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_SecurityProviderReturnsNull_DoesNotSetAccessorAsync() {
+  public async Task PrePerspectiveDetached_SecurityProviderReturnsNull_DoesNotSetAccessorAsync() {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -391,7 +393,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedUserIds.Add(messageContextAccessor.Current?.UserId);
         }
       });
@@ -467,7 +469,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// (graceful no-op).
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_WithoutMessageContextAccessor_StillInvokesLifecycleReceptorsAsync() {
+  public async Task PrePerspectiveDetached_WithoutMessageContextAccessor_StillInvokesLifecycleReceptorsAsync() {
     // Arrange
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -475,7 +477,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
       });
@@ -531,6 +533,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -554,7 +557,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// the MessageContext should use the extractor's result, NOT the envelope's null scope.
   /// </summary>
   /// <remarks>
-  /// This is the root cause of TenantContext being null in PostPerspectiveAsync handlers.
+  /// This is the root cause of TenantContext being null in PostPerspectiveDetached handlers.
   /// The PerspectiveWorker._establishSecurityContextAsync was reading from envelope.GetCurrentScope()
   /// instead of using the securityContext returned by EstablishContextAsync.
   /// </remarks>
@@ -576,7 +579,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Create lifecycle invoker that captures the IMessageContext state
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
           capturedScopeContext = messageContextAccessor.Current?.ScopeContext;
@@ -675,7 +678,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
         }
@@ -770,7 +773,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Lifecycle invoker captures the InitiatingContext state during invocation
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveAsync) {
+        if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedInitiatingContext = scopeContextAccessor.InitiatingContext;
           capturedScopeContextFromAccessor = scopeContextAccessor.Current;
         }
@@ -855,7 +858,7 @@ public class PerspectiveWorkerSecurityContextTests {
   /// <summary>
   /// CRITICAL BUG FIX TEST: Verifies that ISecurityContextCallbacks are invoked when
   /// the security provider returns null (extraction fails) BUT the envelope has scope in hops.
-  /// This is required for UserContextManagerCallback to set TenantContext in PostPerspectiveAsync handlers.
+  /// This is required for UserContextManagerCallback to set TenantContext in PostPerspectiveDetached handlers.
   /// </summary>
   /// <remarks>
   /// Root cause: DefaultMessageSecurityContextProvider only invokes callbacks when extraction succeeds.

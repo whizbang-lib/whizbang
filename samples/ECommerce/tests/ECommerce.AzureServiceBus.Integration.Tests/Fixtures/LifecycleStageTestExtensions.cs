@@ -13,17 +13,17 @@ namespace ECommerce.Integration.Tests.Fixtures;
 public static class LifecycleStageTestExtensions {
 
   /// <summary>
-  /// Waits for ImmediateAsync lifecycle stage to complete.
+  /// Waits for ImmediateDetached lifecycle stage to complete.
   /// Fires immediately after receptor HandleAsync() returns, before database operations.
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForImmediateAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForImmediateDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 5000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.ImmediateAsync,
+      LifecycleStage.ImmediateDetached,
       timeoutMilliseconds);
   }
 
@@ -43,32 +43,32 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PreDistributeAsync lifecycle stage to complete.
+  /// Waits for PreDistributeDetached lifecycle stage to complete.
   /// Fires before ProcessWorkBatchAsync() call (non-blocking, backgrounded).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.PreDistributeAsync,
+      LifecycleStage.PreDistributeDetached,
       timeoutMilliseconds);
   }
 
   /// <summary>
-  /// Waits for DistributeAsync lifecycle stage to complete.
+  /// Waits for DistributeDetached lifecycle stage to complete.
   /// Fires in parallel with ProcessWorkBatchAsync() (non-blocking, backgrounded).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForDistributeAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForDistributeDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.DistributeAsync,
+      LifecycleStage.DistributeDetached,
       timeoutMilliseconds);
   }
 
@@ -88,17 +88,17 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PostDistributeAsync lifecycle stage to complete.
+  /// Waits for PostDistributeDetached lifecycle stage to complete.
   /// Fires after ProcessWorkBatchAsync() completes (non-blocking, backgrounded).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeDetached,
       timeoutMilliseconds);
   }
 
@@ -118,17 +118,17 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PreOutboxAsync lifecycle stage to complete.
+  /// Waits for PreOutboxDetached lifecycle stage to complete.
   /// Fires parallel with transport publish (non-blocking).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.PreOutboxAsync,
+      LifecycleStage.PreOutboxDetached,
       timeoutMilliseconds);
   }
 
@@ -148,17 +148,17 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PostOutboxAsync lifecycle stage to complete.
+  /// Waits for PostOutboxDetached lifecycle stage to complete.
   /// Fires after message published to transport (non-blocking).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.PostOutboxAsync,
+      LifecycleStage.PostOutboxDetached,
       timeoutMilliseconds);
   }
 
@@ -178,17 +178,17 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PreInboxAsync lifecycle stage to complete.
+  /// Waits for PreInboxDetached lifecycle stage to complete.
   /// Fires parallel with receptor invocation (non-blocking).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.PreInboxAsync,
+      LifecycleStage.PreInboxDetached,
       timeoutMilliseconds);
   }
 
@@ -208,17 +208,17 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PostInboxAsync lifecycle stage to complete.
+  /// Waits for PostInboxDetached lifecycle stage to complete.
   /// Fires after receptor completes (non-blocking).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxAsyncAsync<TMessage>(
+  public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxDetachedAsync<TMessage>(
     this IHost host,
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
-      LifecycleStage.PostInboxAsync,
+      LifecycleStage.PostInboxDetached,
       timeoutMilliseconds);
   }
 
@@ -240,10 +240,10 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
-  /// Waits for PrePerspectiveAsync lifecycle stage to complete.
+  /// Waits for PrePerspectiveDetached lifecycle stage to complete.
   /// Fires parallel with perspective RunAsync() (non-blocking).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPrePerspectiveAsyncAsync<TEvent>(
+  public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPrePerspectiveDetachedAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
     int timeoutMilliseconds = 15000)
@@ -251,16 +251,16 @@ public static class LifecycleStageTestExtensions {
 
     return await _waitForLifecycleStageAsync<TEvent>(
       host,
-      LifecycleStage.PrePerspectiveAsync,
+      LifecycleStage.PrePerspectiveDetached,
       timeoutMilliseconds,
       perspectiveName);
   }
 
   /// <summary>
-  /// Waits for PostPerspectiveAsync lifecycle stage to complete.
+  /// Waits for PostPerspectiveDetached lifecycle stage to complete.
   /// Fires after perspective completes, before checkpoint reported (non-blocking).
   /// </summary>
-  public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPostPerspectiveAsyncAsync<TEvent>(
+  public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPostPerspectiveDetachedAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
     int timeoutMilliseconds = 15000)
@@ -268,7 +268,7 @@ public static class LifecycleStageTestExtensions {
 
     return await _waitForLifecycleStageAsync<TEvent>(
       host,
-      LifecycleStage.PostPerspectiveAsync,
+      LifecycleStage.PostPerspectiveDetached,
       timeoutMilliseconds,
       perspectiveName);
   }

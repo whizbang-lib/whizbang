@@ -39,14 +39,14 @@ public class LifecycleCoordinatorSituationTests {
 
   /// <summary>
   /// Simulates PerspectiveWorker Phase 5: PostLifecycle fires exactly once per unique event,
-  /// not per perspective. 3 events → 3 PostLifecycleAsync fires + 3 PostLifecycleInline fires.
+  /// not per perspective. 3 events → 3 PostLifecycleDetached fires + 3 PostLifecycleInline fires.
   /// </summary>
   [Test]
   public async Task PerspectiveWorker_3Events_PostLifecycleFiresOncePerEventAsync() {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleAsyncReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleDetachedReceptor", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -64,14 +64,14 @@ public class LifecycleCoordinatorSituationTests {
     using var scope = provider.CreateScope();
     foreach (var (eventId, envelope) in events) {
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
-    // Assert — PostLifecycleAsync fires 3 times, PostLifecycleInline fires 3 times
-    var asyncFirings = tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync);
+    // Assert — PostLifecycleDetached fires 3 times, PostLifecycleInline fires 3 times
+    var asyncFirings = tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached);
     var inlineFirings = tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline);
     await Assert.That(asyncFirings).IsEqualTo(3);
     await Assert.That(inlineFirings).IsEqualTo(3);
@@ -82,11 +82,11 @@ public class LifecycleCoordinatorSituationTests {
   #region Test 2: Transport consumer — 3 events, no perspectives
 
   [Test]
-  public async Task TransportConsumer_3Events_NoPerspectives_FiresPostLifecycleAsync() {
+  public async Task TransportConsumer_3Events_NoPerspectives_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -102,14 +102,14 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, $"inbox-event-{i}"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(3);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(3);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(3);
   }
 
@@ -139,20 +139,20 @@ public class LifecycleCoordinatorSituationTests {
     // Act — advance through multiple stages
     using var scope = provider.CreateScope();
     var tracking = coordinator.BeginTracking(
-      eventId, envelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
-    await tracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
+      eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — tags fire at each stage + ImmediateAsync after each
-    // 4 stages + 4 ImmediateAsync = 8 tag processor calls
+    // Assert — tags fire at each stage + ImmediateDetached after each
+    // 4 stages + 4 ImmediateDetached = 8 tag processor calls
     await Assert.That(stagesFired.Count).IsEqualTo(8);
-    // Verify the non-ImmediateAsync stages are present
-    await Assert.That(stagesFired.Contains(LifecycleStage.PreOutboxAsync)).IsTrue();
+    // Verify the non-ImmediateDetached stages are present
+    await Assert.That(stagesFired.Contains(LifecycleStage.PreOutboxDetached)).IsTrue();
     await Assert.That(stagesFired.Contains(LifecycleStage.PreOutboxInline)).IsTrue();
-    await Assert.That(stagesFired.Contains(LifecycleStage.PostOutboxAsync)).IsTrue();
+    await Assert.That(stagesFired.Contains(LifecycleStage.PostOutboxDetached)).IsTrue();
     await Assert.That(stagesFired.Contains(LifecycleStage.PostOutboxInline)).IsTrue();
   }
 
@@ -181,7 +181,7 @@ public class LifecycleCoordinatorSituationTests {
     using var scope = provider.CreateScope();
     var tracking = coordinator.BeginTracking(
       eventId, envelope, LifecycleStage.PostPerspectiveInline, MessageSource.Local);
-    await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
     // Assert — tag processor fires even though no receptors at this stage
@@ -191,14 +191,14 @@ public class LifecycleCoordinatorSituationTests {
 
   #endregion
 
-  #region Test 5: ImmediateAsync fires after each stage
+  #region Test 5: ImmediateDetached fires after each stage
 
   [Test]
-  public async Task ImmediateAsync_FiresAfterEachStage_AutomaticallyAsync() {
+  public async Task ImmediateDetached_FiresAfterEachStage_AutomaticallyAsync() {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("ImmediateReceptor", LifecycleStage.ImmediateAsync);
+    registry.RegisterReceptor<TestEvent>("ImmediateReceptor", LifecycleStage.ImmediateDetached);
 
     var services = new ServiceCollection();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -212,13 +212,13 @@ public class LifecycleCoordinatorSituationTests {
     // Act — advance through 3 stages
     using var scope = provider.CreateScope();
     var tracking = coordinator.BeginTracking(
-      eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — ImmediateAsync fires after each stage = 2 times
-    var immediateFirings = tracker.GetFiringsForStage(LifecycleStage.ImmediateAsync);
+    // Assert — ImmediateDetached fires after each stage = 2 times
+    var immediateFirings = tracker.GetFiringsForStage(LifecycleStage.ImmediateDetached);
     await Assert.That(immediateFirings).IsEqualTo(2);
   }
 
@@ -231,7 +231,7 @@ public class LifecycleCoordinatorSituationTests {
     // Arrange — 5 concurrent events with Route.Both()
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -245,7 +245,7 @@ public class LifecycleCoordinatorSituationTests {
     using var scope = provider.CreateScope();
     foreach (var eventId in eventIds) {
       var envelope = _createEnvelope(new TestEvent(eventId, "whenall-test"));
-      coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+      coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
       coordinator.ExpectCompletionsFrom(eventId,
         PostLifecycleCompletionSource.Local,
         PostLifecycleCompletionSource.Distributed);
@@ -256,7 +256,7 @@ public class LifecycleCoordinatorSituationTests {
       await coordinator.SignalSegmentCompleteAsync(
         eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
     }
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(0)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(0)
       .Because("Local alone should not fire PostLifecycle when WhenAll is active");
 
     // Signal Distributed completion for all — should fire PostLifecycle
@@ -264,7 +264,8 @@ public class LifecycleCoordinatorSituationTests {
       await coordinator.SignalSegmentCompleteAsync(
         eventId, PostLifecycleCompletionSource.Distributed, scope.ServiceProvider, CancellationToken.None);
     }
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(5)
+    await coordinator.DrainAllDetachedAsync();
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(5)
       .Because("PostLifecycle should fire exactly once per event after all paths complete");
   }
 
@@ -280,7 +281,7 @@ public class LifecycleCoordinatorSituationTests {
 
     foreach (var eventId in eventIds) {
       var envelope = _createEnvelope(new TestEvent(eventId, "cleanup-test"));
-      coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+      coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
     }
 
     // Act
@@ -312,14 +313,14 @@ public class LifecycleCoordinatorSituationTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "complete-test"));
     var tracking = coordinator.BeginTracking(
-      eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
+      eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
 
     // Act
     using var scope = provider.CreateScope();
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
     await Assert.That(tracking.IsComplete).IsFalse();
 
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
     await Assert.That(tracking.IsComplete).IsTrue();
   }
 
@@ -332,7 +333,7 @@ public class LifecycleCoordinatorSituationTests {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleAsyncReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleDetachedReceptor", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -348,18 +349,18 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, $"local-{i}"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(3);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(3);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(3);
-    // ImmediateAsync fires after each stage = 6 times (2 stages × 3 events)
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.ImmediateAsync)).IsEqualTo(0)
-      .Because("No ImmediateAsync receptor registered, so count stays at 0");
+    // ImmediateDetached fires after each stage = 6 times (2 stages × 3 events)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.ImmediateDetached)).IsEqualTo(0)
+      .Because("No ImmediateDetached receptor registered, so count stays at 0");
   }
 
   #endregion
@@ -368,11 +369,11 @@ public class LifecycleCoordinatorSituationTests {
 
   [Test]
   public async Task HighNoise_10Events_3ReceptorsPerStage_AllFireCorrectlyAsync() {
-    // Arrange — 3 receptors at each of PostLifecycleAsync and PostLifecycleInline
+    // Arrange — 3 receptors at each of PostLifecycleDetached and PostLifecycleInline
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
     for (int r = 0; r < 3; r++) {
-      registry.RegisterReceptor<TestEvent>($"AsyncReceptor{r}", LifecycleStage.PostLifecycleAsync);
+      registry.RegisterReceptor<TestEvent>($"AsyncReceptor{r}", LifecycleStage.PostLifecycleDetached);
       registry.RegisterReceptor<TestEvent>($"InlineReceptor{r}", LifecycleStage.PostLifecycleInline);
     }
 
@@ -389,14 +390,14 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, $"noise-{i}"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert — 10 events × 3 receptors = 30 firings per stage
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(30);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(30);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(30);
   }
 
@@ -409,7 +410,7 @@ public class LifecycleCoordinatorSituationTests {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -423,7 +424,7 @@ public class LifecycleCoordinatorSituationTests {
     for (int i = 0; i < 3; i++) {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, $"immediate-{i}"));
-      coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+      coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
       await coordinator.SignalSegmentCompleteAsync(
         eventId, PostLifecycleCompletionSource.Local, scope.ServiceProvider, CancellationToken.None);
     }
@@ -434,7 +435,7 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       whenAllIds.Add(eventId);
       var envelope = _createEnvelope(new TestEvent(eventId, $"whenall-{i}"));
-      coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+      coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
       coordinator.ExpectCompletionsFrom(eventId,
         PostLifecycleCompletionSource.Local,
         PostLifecycleCompletionSource.Distributed);
@@ -444,7 +445,8 @@ public class LifecycleCoordinatorSituationTests {
     }
 
     // Assert — only 3 immediate events fired
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(3);
+    await coordinator.DrainAllDetachedAsync();
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(3);
 
     // Complete the WhenAll events
     foreach (var id in whenAllIds) {
@@ -453,7 +455,8 @@ public class LifecycleCoordinatorSituationTests {
     }
 
     // Assert — now all 5 have fired
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(5);
+    await coordinator.DrainAllDetachedAsync();
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(5);
   }
 
   #endregion
@@ -478,26 +481,26 @@ public class LifecycleCoordinatorSituationTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "outbox-full"));
     var tracking = coordinator.BeginTracking(
-      eventId, envelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
+      eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
 
     // Act — full outbox pipeline
-    await tracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — stages fired in order (each stage + ImmediateAsync after = 8 total)
+    // Assert — stages fired in order (each stage + ImmediateDetached after = 8 total)
     await Assert.That(stagesTraversed.Count).IsEqualTo(8);
-    // Verify stage order (non-ImmediateAsync stages at indices 0, 2, 4, 6)
-    await Assert.That(stagesTraversed[0]).IsEqualTo(LifecycleStage.PreOutboxAsync);
-    await Assert.That(stagesTraversed[1]).IsEqualTo(LifecycleStage.ImmediateAsync);
+    // Verify stage order (non-ImmediateDetached stages at indices 0, 2, 4, 6)
+    await Assert.That(stagesTraversed[0]).IsEqualTo(LifecycleStage.PreOutboxDetached);
+    await Assert.That(stagesTraversed[1]).IsEqualTo(LifecycleStage.ImmediateDetached);
     await Assert.That(stagesTraversed[2]).IsEqualTo(LifecycleStage.PreOutboxInline);
-    await Assert.That(stagesTraversed[3]).IsEqualTo(LifecycleStage.ImmediateAsync);
-    await Assert.That(stagesTraversed[4]).IsEqualTo(LifecycleStage.PostOutboxAsync);
-    await Assert.That(stagesTraversed[5]).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(stagesTraversed[3]).IsEqualTo(LifecycleStage.ImmediateDetached);
+    await Assert.That(stagesTraversed[4]).IsEqualTo(LifecycleStage.PostOutboxDetached);
+    await Assert.That(stagesTraversed[5]).IsEqualTo(LifecycleStage.ImmediateDetached);
     await Assert.That(stagesTraversed[6]).IsEqualTo(LifecycleStage.PostOutboxInline);
-    await Assert.That(stagesTraversed[7]).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(stagesTraversed[7]).IsEqualTo(LifecycleStage.ImmediateDetached);
   }
 
   #endregion
@@ -522,19 +525,19 @@ public class LifecycleCoordinatorSituationTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "inbox-full"));
     var tracking = coordinator.BeginTracking(
-      eventId, envelope, LifecycleStage.PostInboxAsync, MessageSource.Inbox);
+      eventId, envelope, LifecycleStage.PostInboxDetached, MessageSource.Inbox);
 
     // Act — inbox → PostLifecycle (event without perspectives)
-    await tracking.AdvanceToAsync(LifecycleStage.PostInboxAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostInboxInline, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostInboxDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostInboxInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — 4 stages + 4 ImmediateAsync = 8 total
+    // Assert — 4 stages + 4 ImmediateDetached = 8 total
     await Assert.That(stagesTraversed.Count).IsEqualTo(8);
-    await Assert.That(stagesTraversed[0]).IsEqualTo(LifecycleStage.PostInboxAsync);
-    await Assert.That(stagesTraversed[4]).IsEqualTo(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(stagesTraversed[0]).IsEqualTo(LifecycleStage.PostInboxDetached);
+    await Assert.That(stagesTraversed[4]).IsEqualTo(LifecycleStage.PostLifecycleDetached);
     await Assert.That(stagesTraversed[6]).IsEqualTo(LifecycleStage.PostLifecycleInline);
 
     // IsComplete should be true after PostLifecycleInline
@@ -550,7 +553,7 @@ public class LifecycleCoordinatorSituationTests {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -566,15 +569,15 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, $"concurrent-{i}"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     });
     await Task.WhenAll(tasks);
 
-    // Assert — exactly 20 PostLifecycleAsync firings
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(20);
+    // Assert — exactly 20 PostLifecycleDetached firings
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(20);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(20);
   }
 
@@ -583,7 +586,7 @@ public class LifecycleCoordinatorSituationTests {
   #region Test 15: Tags fire count equals stages traversed
 
   [Test]
-  public async Task Tags_FireCount_EqualsStagesTraversed_IncludingImmediateAsyncAsync() {
+  public async Task Tags_FireCount_EqualsStagesTraversed_IncludingImmediateDetachedAsync() {
     // Arrange
     var tagFireCount = 0;
     var tagProcessor = new StageCapturingTagProcessor(_ => Interlocked.Increment(ref tagFireCount));
@@ -600,17 +603,17 @@ public class LifecycleCoordinatorSituationTests {
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "tag-count"));
     var tracking = coordinator.BeginTracking(
-      eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+      eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
 
     // Act — 6 stages
-    await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PrePerspectiveDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PrePerspectiveInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostPerspectiveDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
 
-    // Assert — 6 stages + 6 ImmediateAsync = 12 tag fires
+    // Assert — 6 stages + 6 ImmediateDetached = 12 tag fires
     await Assert.That(tagFireCount).IsEqualTo(12);
   }
 
@@ -625,13 +628,13 @@ public class LifecycleCoordinatorSituationTests {
   /// for events that have no perspectives — because it is the LAST worker to act on them.
   /// </summary>
   [Test]
-  public async Task ServiceBusConsumer_EventsWithoutPerspectives_FiresPostLifecycleAsync() {
+  public async Task ServiceBusConsumer_EventsWithoutPerspectives_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostInboxAsyncReceptor", LifecycleStage.PostInboxAsync);
+    registry.RegisterReceptor<TestEvent>("PostInboxDetachedReceptor", LifecycleStage.PostInboxDetached);
     registry.RegisterReceptor<TestEvent>("PostInboxInlineReceptor", LifecycleStage.PostInboxInline);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleAsyncReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleDetachedReceptor", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -651,27 +654,27 @@ public class LifecycleCoordinatorSituationTests {
       // PostInbox stages (ServiceBusConsumerWorker already does this)
       var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
       var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PostInboxAsync,
+        CurrentStage = LifecycleStage.PostInboxDetached,
         MessageSource = MessageSource.Inbox
       };
-      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxAsync, lifecycleContext, CancellationToken.None);
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxDetached, lifecycleContext, CancellationToken.None);
       await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline,
         lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline }, CancellationToken.None);
 
       // PostLifecycle via coordinator — ServiceBusConsumerWorker is MISSING this
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert — PostInbox fires 3 times each
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostInboxAsync)).IsEqualTo(3);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostInboxDetached)).IsEqualTo(3);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostInboxInline)).IsEqualTo(3);
 
     // Assert — PostLifecycle fires 3 times each (once per event at end of pipeline)
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(3)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(3)
       .Because("ServiceBusConsumer is the last worker for events without perspectives — PostLifecycle must fire");
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(3)
       .Because("ServiceBusConsumer is the last worker for events without perspectives — PostLifecycle must fire");
@@ -691,7 +694,7 @@ public class LifecycleCoordinatorSituationTests {
     // Arrange — shared tracker across all pipeline paths
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleAsync", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleDetached", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -706,9 +709,9 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, "local-dispatch"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
@@ -717,9 +720,9 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, "inbox-no-perspectives"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
@@ -728,9 +731,9 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, "perspective-batch"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Local);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
@@ -739,14 +742,14 @@ public class LifecycleCoordinatorSituationTests {
       var eventId = Guid.NewGuid();
       var envelope = _createEnvelope(new TestEvent(eventId, "servicebus-no-perspectives"));
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert — 4 events total, PostLifecycle fires exactly 4 times (once per pipeline endpoint)
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(4)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(4)
       .Because("4 pipeline endpoints (Dispatcher, TransportConsumer, PerspectiveWorker, ServiceBusConsumer) each fire PostLifecycle once");
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(4)
       .Because("4 pipeline endpoints each fire PostLifecycleInline once");
@@ -761,13 +764,13 @@ public class LifecycleCoordinatorSituationTests {
   /// processing within this service (event leaves via transport to another service).
   /// </summary>
   [Test]
-  public async Task OutboxWorker_EventLeavesService_FiresPostLifecycleAsync() {
+  public async Task OutboxWorker_EventLeavesService_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
-    registry.RegisterReceptor<TestEvent>("PreOutboxReceptor", LifecycleStage.PreOutboxAsync);
+    registry.RegisterReceptor<TestEvent>("PreOutboxReceptor", LifecycleStage.PreOutboxDetached);
     registry.RegisterReceptor<TestEvent>("PostOutboxReceptor", LifecycleStage.PostOutboxInline);
-    registry.RegisterReceptor<TestEvent>("PostLifecycleAsync", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleDetached", LifecycleStage.PostLifecycleDetached);
     registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
@@ -785,22 +788,22 @@ public class LifecycleCoordinatorSituationTests {
 
       // Outbox stages
       var tracking = coordinator.BeginTracking(
-        eventId, envelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
+        eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
 
       // Event leaves service — OutboxWorker is the last worker, fire PostLifecycle
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
       coordinator.AbandonTracking(eventId);
     }
 
     // Assert — Outbox stages fire
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PreOutboxAsync)).IsEqualTo(2);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PreOutboxDetached)).IsEqualTo(2);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostOutboxInline)).IsEqualTo(2);
 
     // Assert — PostLifecycle fires because outbox is the last worker for these events
-    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(2)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(2)
       .Because("OutboxWorker is the last worker when event leaves service — PostLifecycle must fire");
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(2)
       .Because("OutboxWorker is the last worker when event leaves service — PostLifecycle must fire");

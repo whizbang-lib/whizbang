@@ -95,7 +95,7 @@ public class ReceptorInvokerTests {
   /// Verifies that a receptor registered at PostInboxInline is NOT invoked at PreOutboxInline.
   /// </summary>
   [Test]
-  public async Task InvokeAsync_ReceptorAtPostInboxInline_ShouldNotInvokeAtPreOutboxAsync() {
+  public async Task InvokeAsync_ReceptorAtPostInboxInline_ShouldNotInvokeAtPreOutboxDetachedAsync() {
     // Arrange
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);

@@ -504,7 +504,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_EventNotInPerspectiveRegistry_InvokesPostLifecycleAsync() {
+  public async Task HandleMessage_EventNotInPerspectiveRegistry_InvokesPostLifecycleDetachedAsync() {
     // Arrange - registry has perspectives but none match our event type
     var messageId = MessageId.New();
     var streamId = Guid.NewGuid();
@@ -558,10 +558,12 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       // Deserialization may fail
     }
 
+    // Drain fire-and-forget detached tasks before cancelling
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
-    // Assert - PostAllPerspectivesAsync should be invoked because event type is NOT in any perspective
-    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PostAllPerspectivesAsync)
+    // Assert - PostAllPerspectivesDetached should be invoked because event type is NOT in any perspective
+    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PostAllPerspectivesDetached)
       .Because("Event not in any perspective should trigger PostLifecycle stages");
   }
 

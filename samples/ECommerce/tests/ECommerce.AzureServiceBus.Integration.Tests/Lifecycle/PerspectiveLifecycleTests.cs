@@ -16,8 +16,8 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 /// <para><strong>Stages Tested</strong>:</para>
 /// <list type="bullet">
 ///   <item>PrePerspectiveInline - Before perspective RunAsync() (blocking)</item>
-///   <item>PrePerspectiveAsync - Parallel with perspective RunAsync() (non-blocking)</item>
-///   <item>PostPerspectiveAsync - After perspective completes (non-blocking)</item>
+///   <item>PrePerspectiveDetached - Parallel with perspective RunAsync() (non-blocking)</item>
+///   <item>PostPerspectiveDetached - After perspective completes (non-blocking)</item>
 ///   <item>PostPerspectiveInline - After perspective completes (blocking) - NOW EXPLICITLY TESTED</item>
 /// </list>
 /// </remarks>
@@ -121,15 +121,15 @@ public class PerspectiveLifecycleTests {
   }
 
   // ========================================
-  // PrePerspectiveAsync Tests (Non-Blocking)
+  // PrePerspectiveDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PrePerspectiveAsync lifecycle stage fires parallel with perspective RunAsync (non-blocking).
+  /// Verifies that PrePerspectiveDetached lifecycle stage fires parallel with perspective RunAsync (non-blocking).
   /// Should use Task.Run and not block perspective processing.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_FiresParallelWithProcessing_NonBlockingAsync() {
+  public async Task PrePerspectiveDetached_FiresParallelWithProcessing_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -142,7 +142,7 @@ public class PerspectiveLifecycleTests {
     };
 
     // Act - Register receptor for ProductCreatedEvent in BFF
-    var receptorTask = fixture.BffHost.WaitForPrePerspectiveAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
       perspectiveName: "ProductCatalogPerspective",
       timeoutMilliseconds: 20000);
 
@@ -156,11 +156,11 @@ public class PerspectiveLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that PrePerspectiveAsync may complete after perspective finishes.
+  /// Verifies that PrePerspectiveDetached may complete after perspective finishes.
   /// Tests the "perspective may complete before this stage finishes" guarantee.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveAsync_MayCompleteAfterPerspective_NonBlockingGuaranteeAsync() {
+  public async Task PrePerspectiveDetached_MayCompleteAfterPerspective_NonBlockingGuaranteeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -178,7 +178,7 @@ public class PerspectiveLifecycleTests {
       perspectiveName: "ProductCatalogPerspective");
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveDetached);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
@@ -187,11 +187,11 @@ public class PerspectiveLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for PrePerspectiveAsync stage (non-blocking, may complete late)
+      // Wait for PrePerspectiveDetached stage (non-blocking, may complete late)
       // NOTE: Async stages run in Task.Run (fire-and-forget), which can be delayed by infrastructure
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
-      // Assert - PrePerspectiveAsync should have completed eventually
+      // Assert - PrePerspectiveDetached should have completed eventually
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that perspective processing completed (data should be saved)
@@ -199,20 +199,20 @@ public class PerspectiveLifecycleTests {
       await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 60000);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveDetached);
     }
   }
 
   // ========================================
-  // PostPerspectiveAsync Tests (Non-Blocking)
+  // PostPerspectiveDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PostPerspectiveAsync lifecycle stage fires after perspective completes (non-blocking).
+  /// Verifies that PostPerspectiveDetached lifecycle stage fires after perspective completes (non-blocking).
   /// Should use Task.Run and not block checkpoint reporting.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveAsync_FiresAfterPerspectiveCompletes_NonBlockingAsync() {
+  public async Task PostPerspectiveDetached_FiresAfterPerspectiveCompletes_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -225,7 +225,7 @@ public class PerspectiveLifecycleTests {
     };
 
     // Act - Register receptor for ProductCreatedEvent in BFF
-    var receptorTask = fixture.BffHost.WaitForPostPerspectiveAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
       perspectiveName: "ProductCatalogPerspective",
       timeoutMilliseconds: 20000);
 
@@ -239,11 +239,11 @@ public class PerspectiveLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that PostPerspectiveAsync fires after perspective has processed all events.
+  /// Verifies that PostPerspectiveDetached fires after perspective has processed all events.
   /// Tests the "perspective has processed all events" guarantee.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveAsync_FiresAfterEventsProcessed_GuaranteesCompletionAsync() {
+  public async Task PostPerspectiveDetached_FiresAfterEventsProcessed_GuaranteesCompletionAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -261,7 +261,7 @@ public class PerspectiveLifecycleTests {
       perspectiveName: "ProductCatalogPerspective");
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
@@ -270,10 +270,10 @@ public class PerspectiveLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for PostPerspectiveAsync stage
+      // Wait for PostPerspectiveDetached stage
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-      // Assert - At this point, PostPerspectiveAsync has fired
+      // Assert - At this point, PostPerspectiveDetached has fired
       // Perspective should have processed all events
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
@@ -281,16 +281,16 @@ public class PerspectiveLifecycleTests {
       await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
     }
   }
 
   /// <summary>
-  /// Verifies that PostPerspectiveAsync fires before checkpoint is reported.
+  /// Verifies that PostPerspectiveDetached fires before checkpoint is reported.
   /// Tests the "checkpoint not yet reported to coordinator" guarantee.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveAsync_FiresBeforeCheckpointReported_TimingGuaranteeAsync() {
+  public async Task PostPerspectiveDetached_FiresBeforeCheckpointReported_TimingGuaranteeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -313,7 +313,7 @@ public class PerspectiveLifecycleTests {
       perspectiveName: "ProductCatalogPerspective");
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostPerspectiveInline);
 
     try {
@@ -334,7 +334,7 @@ public class PerspectiveLifecycleTests {
       // checkpoint reporting happens AFTER both stages
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
       registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostPerspectiveInline);
     }
   }
@@ -478,7 +478,7 @@ public class PerspectiveLifecycleTests {
 
   /// <summary>
   /// Verifies that all 4 Perspective stages fire in correct order:
-  /// PrePerspectiveInline → PrePerspectiveAsync (parallel) → PostPerspectiveAsync → PostPerspectiveInline
+  /// PrePerspectiveInline → PrePerspectiveDetached (parallel) → PostPerspectiveDetached → PostPerspectiveInline
   /// </summary>
   [Test]
   public async Task PerspectiveStages_FireInCorrectOrder_AllStagesInvokedAsync() {
@@ -512,8 +512,8 @@ public class PerspectiveLifecycleTests {
 
     // Register all receptors
     registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PrePerspectiveInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveAsync);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveDetached);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostPerspectiveInline);
 
     try {
@@ -537,8 +537,8 @@ public class PerspectiveLifecycleTests {
     } finally {
       // Unregister all receptors
       registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PrePerspectiveInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveAsync);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveDetached);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
       registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostPerspectiveInline);
     }
   }
@@ -549,15 +549,15 @@ public class PerspectiveLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// CRITICAL: Verifies that a receptor registered at PostPerspectiveAsync
+  /// CRITICAL: Verifies that a receptor registered at PostPerspectiveDetached
   /// does NOT fire during PrePerspective stages (temporal ordering verification).
   /// This is the core test for the reported bug - receptors firing before perspective processes.
   /// </summary>
   /// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
   [Test]
   [Category("StageIsolation")]
-  [Category("PostPerspectiveAsync")]
-  public async Task PostPerspectiveAsyncReceptor_FiresAfterPrePerspective_TemporalOrderingAsync() {
+  [Category("PostPerspectiveDetached")]
+  public async Task PostPerspectiveDetachedReceptor_FiresAfterPrePerspective_TemporalOrderingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -591,7 +591,7 @@ public class PerspectiveLifecycleTests {
       preAsyncCompletion,
       perspectiveName: "ProductCatalogPerspective",
       messageFilter: _ => {
-        invocationOrder.TryAdd("PrePerspectiveAsync", DateTimeOffset.UtcNow);
+        invocationOrder.TryAdd("PrePerspectiveDetached", DateTimeOffset.UtcNow);
         return true;
       });
 
@@ -599,14 +599,14 @@ public class PerspectiveLifecycleTests {
       postAsyncCompletion,
       perspectiveName: "ProductCatalogPerspective",
       messageFilter: _ => {
-        invocationOrder.TryAdd("PostPerspectiveAsync", DateTimeOffset.UtcNow);
+        invocationOrder.TryAdd("PostPerspectiveDetached", DateTimeOffset.UtcNow);
         return true;
       });
 
     // Register all receptors at their respective stages
     registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PrePerspectiveInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveAsync);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveDetached);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
 
     try {
       // Act - Dispatch command
@@ -623,35 +623,35 @@ public class PerspectiveLifecycleTests {
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1)
         .Because("PrePerspectiveInline receptor should fire exactly once");
       await Assert.That(preAsyncReceptor.InvocationCount).IsEqualTo(1)
-        .Because("PrePerspectiveAsync receptor should fire exactly once");
+        .Because("PrePerspectiveDetached receptor should fire exactly once");
       await Assert.That(postAsyncReceptor.InvocationCount).IsEqualTo(1)
-        .Because("PostPerspectiveAsync receptor should fire exactly once");
+        .Because("PostPerspectiveDetached receptor should fire exactly once");
 
-      // CRITICAL ASSERTION: PostPerspectiveAsync MUST fire AFTER PrePerspective stages
+      // CRITICAL ASSERTION: PostPerspectiveDetached MUST fire AFTER PrePerspective stages
       var preInlineTime = invocationOrder.GetValueOrDefault("PrePerspectiveInline");
-      var postAsyncTime = invocationOrder.GetValueOrDefault("PostPerspectiveAsync");
+      var postAsyncTime = invocationOrder.GetValueOrDefault("PostPerspectiveDetached");
 
       await Assert.That(postAsyncTime).IsGreaterThan(preInlineTime)
-        .Because("PostPerspectiveAsync MUST fire AFTER PrePerspectiveInline (not before perspective processing)");
+        .Because("PostPerspectiveDetached MUST fire AFTER PrePerspectiveInline (not before perspective processing)");
 
     } finally {
       // Unregister all receptors
       registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PrePerspectiveInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveAsync);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PrePerspectiveDetached);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
     }
   }
 
   /// <summary>
-  /// CRITICAL: Verifies that PostPerspectiveAsync receptor can query the perspective model
+  /// CRITICAL: Verifies that PostPerspectiveDetached receptor can query the perspective model
   /// AFTER perspective processing is complete - data should NOT be stale/null.
   /// This is the exact scenario from the reported bug - querying stale data.
   /// </summary>
   /// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
   [Test]
   [Category("StageIsolation")]
-  [Category("PostPerspectiveAsync")]
-  public async Task PostPerspectiveAsyncReceptor_CanQueryModel_DataNotStaleAsync() {
+  [Category("PostPerspectiveDetached")]
+  public async Task PostPerspectiveDetachedReceptor_CanQueryModel_DataNotStaleAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -666,14 +666,14 @@ public class PerspectiveLifecycleTests {
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     var queryCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    // Receptor that completes at PostPerspectiveAsync
+    // Receptor that completes at PostPerspectiveDetached
     // This simulates what the user's EmbeddingHandler does
     var queryReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
       queryCompletion,
       perspectiveName: "ProductCatalogPerspective",
       messageFilter: _ => true);
 
-    registry.Register<ProductCreatedEvent>(queryReceptor, LifecycleStage.PostPerspectiveAsync);
+    registry.Register<ProductCreatedEvent>(queryReceptor, LifecycleStage.PostPerspectiveDetached);
 
     try {
       // Act - Dispatch command
@@ -682,20 +682,20 @@ public class PerspectiveLifecycleTests {
       // Wait for the receptor to complete
       await queryCompletion.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-      // Now query the model - at this point PostPerspectiveAsync has fired,
+      // Now query the model - at this point PostPerspectiveDetached has fired,
       // so the data should be committed and fresh
       var queriedProduct = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
 
       // Assert - The queried product should NOT be null (data should be fresh)
       await Assert.That(queriedProduct).IsNotNull()
-        .Because("PostPerspectiveAsync receptor fires after FlushAsync, so data should be queryable");
+        .Because("PostPerspectiveDetached receptor fires after FlushAsync, so data should be queryable");
       await Assert.That(queriedProduct!.Name).IsEqualTo(command.Name)
         .Because("The queried model should have the correct name");
       await Assert.That(queriedProduct.Price).IsEqualTo(command.Price)
         .Because("The queried model should have the correct price");
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(queryReceptor, LifecycleStage.PostPerspectiveAsync);
+      registry.Unregister<ProductCreatedEvent>(queryReceptor, LifecycleStage.PostPerspectiveDetached);
     }
   }
 

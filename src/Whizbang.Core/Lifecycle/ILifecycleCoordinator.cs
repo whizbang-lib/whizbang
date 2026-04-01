@@ -8,7 +8,7 @@ namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
 /// Centralized coordinator for event lifecycle stage transitions.
-/// Owns receptor invocation, tag processing, and ImmediateAsync chaining.
+/// Owns receptor invocation, tag processing, and ImmediateDetached chaining.
 /// Tracks live events and fires hooks exactly once per stage.
 /// </summary>
 /// <remarks>

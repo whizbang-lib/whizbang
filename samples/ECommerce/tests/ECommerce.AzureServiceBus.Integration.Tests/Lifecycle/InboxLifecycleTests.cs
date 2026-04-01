@@ -16,8 +16,8 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 /// <para><strong>Stages Tested</strong>:</para>
 /// <list type="bullet">
 ///   <item>PreInboxInline - Before invoking local receptor (blocking)</item>
-///   <item>PreInboxAsync - Parallel with receptor invocation (non-blocking)</item>
-///   <item>PostInboxAsync - After receptor completes (non-blocking)</item>
+///   <item>PreInboxDetached - Parallel with receptor invocation (non-blocking)</item>
+///   <item>PostInboxDetached - After receptor completes (non-blocking)</item>
 ///   <item>PostInboxInline - After receptor completes (blocking)</item>
 /// </list>
 /// </remarks>
@@ -83,15 +83,15 @@ public class InboxLifecycleTests {
   }
 
   // ========================================
-  // PreInboxAsync Tests (Non-Blocking)
+  // PreInboxDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PreInboxAsync lifecycle stage fires parallel with receptor invocation (non-blocking).
+  /// Verifies that PreInboxDetached lifecycle stage fires parallel with receptor invocation (non-blocking).
   /// Should use Task.Run and not block receptor invocation.
   /// </summary>
   [Test]
-  public async Task PreInboxAsync_FiresParallelWithReceptor_NonBlockingAsync() {
+  public async Task PreInboxDetached_FiresParallelWithReceptor_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -105,7 +105,7 @@ public class InboxLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.BffHost.WaitForPreInboxAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 20000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -121,11 +121,11 @@ public class InboxLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that PreInboxAsync may still be running when receptor completes.
+  /// Verifies that PreInboxDetached may still be running when receptor completes.
   /// Tests the "receptor may complete before this stage finishes" guarantee.
   /// </summary>
   [Test]
-  public async Task PreInboxAsync_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync() {
+  public async Task PreInboxDetached_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -141,7 +141,7 @@ public class InboxLifecycleTests {
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxDetached);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
@@ -150,30 +150,30 @@ public class InboxLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for PreInboxAsync stage (non-blocking, may complete late)
+      // Wait for PreInboxDetached stage (non-blocking, may complete late)
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-      // Assert - PreInboxAsync should have completed eventually
+      // Assert - PreInboxDetached should have completed eventually
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing happened (perspective materialized)
       await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxDetached);
     }
   }
 
   // ========================================
-  // PostInboxAsync Tests (Non-Blocking)
+  // PostInboxDetached Tests (Non-Blocking)
   // ========================================
 
   /// <summary>
-  /// Verifies that PostInboxAsync lifecycle stage fires after receptor completes (non-blocking).
+  /// Verifies that PostInboxDetached lifecycle stage fires after receptor completes (non-blocking).
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostInboxAsync_FiresAfterReceptorCompletes_NonBlockingAsync() {
+  public async Task PostInboxDetached_FiresAfterReceptorCompletes_NonBlockingAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -187,7 +187,7 @@ public class InboxLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.BffHost.WaitForPostInboxAsyncAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 20000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -203,11 +203,11 @@ public class InboxLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that PostInboxAsync fires after receptor has completed successfully.
+  /// Verifies that PostInboxDetached fires after receptor has completed successfully.
   /// Tests the "receptor has completed successfully" guarantee.
   /// </summary>
   [Test]
-  public async Task PostInboxAsync_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync() {
+  public async Task PostInboxDetached_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -223,7 +223,7 @@ public class InboxLifecycleTests {
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxDetached);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
@@ -232,10 +232,10 @@ public class InboxLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for PostInboxAsync stage
+      // Wait for PostInboxDetached stage
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-      // Assert - At this point, PostInboxAsync has fired
+      // Assert - At this point, PostInboxDetached has fired
       // Receptor should have completed successfully
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
@@ -243,7 +243,7 @@ public class InboxLifecycleTests {
       await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxDetached);
     }
   }
 
@@ -291,7 +291,7 @@ public class InboxLifecycleTests {
 
   /// <summary>
   /// Verifies that all 4 Inbox stages fire in correct order:
-  /// PreInboxInline → PreInboxAsync (parallel with receptor) → PostInboxAsync → PostInboxInline
+  /// PreInboxInline → PreInboxDetached (parallel with receptor) → PostInboxDetached → PostInboxInline
   /// </summary>
   [Test]
   public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync() {
@@ -321,8 +321,8 @@ public class InboxLifecycleTests {
 
     // Register all receptors
     registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxAsync);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxAsync);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
 
     try {
@@ -346,8 +346,8 @@ public class InboxLifecycleTests {
     } finally {
       // Unregister all receptors
       registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxAsync);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxAsync);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
       registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
     }
   }

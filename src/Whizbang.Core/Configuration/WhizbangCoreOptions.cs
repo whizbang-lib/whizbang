@@ -112,17 +112,17 @@ public sealed class WhizbangCoreOptions {
   public QueryScope DefaultQueryScope { get; set; } = QueryScope.Tenant;
 
   /// <summary>
-  /// Warning threshold for ImmediateAsync chain depth. Logs a warning when exceeded.
+  /// Warning threshold for ImmediateDetached chain depth. Logs a warning when exceeded.
   /// No hard limit — chains run until the queue is empty.
   /// Default: 10.
   /// </summary>
   /// <remarks>
-  /// ImmediateAsync receptors may dispatch further events that themselves have ImmediateAsync
+  /// ImmediateDetached receptors may dispatch further events that themselves have ImmediateDetached
   /// receptors, creating chains. This threshold triggers a warning log when chain depth
   /// reaches a multiple of this value, helping identify potentially unbounded chains.
   /// </remarks>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
-  public int ImmediateAsyncChainWarningThreshold { get; set; } = 10;
+  public int ImmediateDetachedChainWarningThreshold { get; set; } = 10;
 }
 
 /// <summary>
@@ -132,7 +132,7 @@ public sealed class WhizbangCoreOptions {
 public enum TagProcessingMode {
   /// <summary>
   /// Process tags immediately after receptor completes (default).
-  /// Tags fire before lifecycle stages like LocalImmediateAsync.
+  /// Tags fire before lifecycle stages like LocalImmediateDetached.
   /// </summary>
   /// <remarks>
   /// Use this mode when tag hooks need to execute as early as possible

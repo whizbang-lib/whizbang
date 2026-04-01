@@ -148,11 +148,11 @@ public class LifecycleCoordinatorMetricsTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.StageTransitions.Add(1,
-      new KeyValuePair<string, object?>("stage", "PostAllPerspectivesAsync"));
+      new KeyValuePair<string, object?>("stage", "PostAllPerspectivesDetached"));
 
     var measurements = helper.GetByName("whizbang.lifecycle_coordinator.stage_transitions");
     await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["stage"]).IsEqualTo("PostAllPerspectivesAsync");
+    await Assert.That(measurements[0].Tags["stage"]).IsEqualTo("PostAllPerspectivesDetached");
   }
 
   [Test]

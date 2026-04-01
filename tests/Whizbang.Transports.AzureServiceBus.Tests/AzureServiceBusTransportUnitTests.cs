@@ -174,13 +174,13 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
-  public async Task MaxConcurrentSessions_DefaultsTo64Async() {
+  public async Task MaxConcurrentSessions_DefaultsTo16Async() {
     // Arrange & Act
     var options = new AzureServiceBusOptions();
 
     // Assert
-    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(64)
-      .Because("Default should be reasonably high for a single process handling many streams");
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(16)
+      .Because("Default should balance throughput with connection pool pressure (16 sessions × N subscriptions)");
   }
 
   [Test]

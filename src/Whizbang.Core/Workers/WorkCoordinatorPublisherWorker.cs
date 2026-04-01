@@ -99,9 +99,9 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private readonly TransportMetrics? _transportMetrics = transportMetrics;
-  private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxAsync";
+  private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
   private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
-  private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxAsync";
+  private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
   private const string LIFECYCLE_POST_OUTBOX_INLINE = "Lifecycle PostOutboxInline";
   private const string METRIC_FAILURE_REASON = "failure_reason";
   private const string UNKNOWN_ERROR = "Unknown error";
@@ -567,10 +567,10 @@ public partial class WorkCoordinatorPublisherWorker(
 
     if (coordinator is not null) {
       var outboxTracking = coordinator.BeginTracking(
-        work.MessageId, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
+        work.MessageId, outboxTypedEnvelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
 
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-        await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, stoppingToken);
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, stoppingToken);
       }
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
         await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, stoppingToken);
@@ -579,7 +579,7 @@ public partial class WorkCoordinatorPublisherWorker(
     }
 
     // Fallback: direct invocation when coordinator not registered
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_ASYNC, traceContext, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_ASYNC, traceContext, stoppingToken);
     await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_INLINE, traceContext, stoppingToken);
     return (null, outboxTypedEnvelope);
   }
@@ -602,13 +602,13 @@ public partial class WorkCoordinatorPublisherWorker(
 
     if (outboxTracking is not null && coordinator is not null) {
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-        await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, scope.ServiceProvider, stoppingToken);
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxDetached, scope.ServiceProvider, stoppingToken);
       }
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
         await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, stoppingToken);
       }
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-        await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, stoppingToken);
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleDetached", ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, stoppingToken);
       }
       using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
         await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
@@ -626,7 +626,7 @@ public partial class WorkCoordinatorPublisherWorker(
       return;
     }
 
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxAsync, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_ASYNC, traceContext, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxDetached, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_ASYNC, traceContext, stoppingToken);
     await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_INLINE, traceContext, stoppingToken);
   }
 
@@ -647,8 +647,8 @@ public partial class WorkCoordinatorPublisherWorker(
         AttemptNumber = attempts
       };
       await receptorInvoker.InvokeAsync(typedEnvelope, stage, lifecycleContext, stoppingToken);
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-        lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+        lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, stoppingToken);
     }
   }
 
@@ -960,7 +960,7 @@ public partial class WorkCoordinatorPublisherWorker(
       cancellationToken);
 
     await _invokeInboxLifecycleStagesAsync(workToProcess, receptorInvoker,
-      LifecycleStage.PreInboxAsync, LifecycleStage.PreInboxInline, "PreInbox", cancellationToken);
+      LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline, "PreInbox", cancellationToken);
 
     var orderedProcessor = new OrderedStreamProcessor();
     await orderedProcessor.ProcessInboxWorkAsync(
@@ -983,7 +983,7 @@ public partial class WorkCoordinatorPublisherWorker(
     );
 
     await _invokeInboxLifecycleStagesAsync(workToProcess, receptorInvoker,
-      LifecycleStage.PostInboxAsync, LifecycleStage.PostInboxInline, "PostInbox", cancellationToken);
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline, "PostInbox", cancellationToken);
   }
 
   /// <summary>
@@ -1011,13 +1011,13 @@ public partial class WorkCoordinatorPublisherWorker(
         };
 
         await receptorInvoker.InvokeAsync(typedEnvelope, asyncStage, lifecycleContext, cancellationToken);
-        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
 
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
-        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
       } catch (Exception ex) {
         LogInboxLifecycleError(_logger, work.MessageId, stageName, ex);
       }

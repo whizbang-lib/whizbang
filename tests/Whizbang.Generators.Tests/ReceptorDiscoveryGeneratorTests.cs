@@ -1016,12 +1016,12 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should register at LocalImmediateAsync + PostInboxAsync (default stages)
-    // PreOutbox removed from defaults — opt-in via [FireAt(PreOutboxAsync)]
+    // Assert - Should register at LocalImmediateDetached + PostInboxDetached (default stages)
+    // PreOutbox removed from defaults — opt-in via [FireAt(PreOutboxDetached)]
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateAsync");
-    await Assert.That(registry).Contains("LifecycleStage.PostInboxAsync");
+    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).Contains("LifecycleStage.PostInboxDetached");
   }
 
   [Test]
@@ -2750,7 +2750,7 @@ public record MyBaseEvent : IEvent;
 public record DerivedEventA : MyBaseEvent;
 public record DerivedEventB : MyBaseEvent;
 
-[FireAt(LifecycleStage.PostPerspectiveAsync)]
+[FireAt(LifecycleStage.PostPerspectiveDetached)]
 public class BaseReceptor : IReceptor<MyBaseEvent> {
   public ValueTask HandleAsync(MyBaseEvent message, CancellationToken ct = default)
     => ValueTask.CompletedTask;

@@ -5,7 +5,7 @@ namespace ECommerce.Lifecycle.Integration.Tests.Domain;
 
 // ============================================================
 // Mock events, commands, and models for batch overflow testing.
-// These exist to reproduce a bug where PostAllPerspectivesAsync
+// These exist to reproduce a bug where PostAllPerspectivesDetached
 // fires N times per event (once per perspective/batch cycle)
 // instead of once after ALL perspectives complete.
 // ============================================================
@@ -18,7 +18,7 @@ public record MockBatchTestCommand : ICommand {
   public int NoiseEventCount { get; init; } = 50;
 }
 
-/// <summary>The main event we track for PostAllPerspectivesAsync firing count.</summary>
+/// <summary>The main event we track for PostAllPerspectivesDetached firing count.</summary>
 [SignalTag(Tag = "mock-batch-test")]
 public record MockBatchTestEvent : IEvent {
   [StreamId]
