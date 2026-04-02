@@ -3,9 +3,12 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -962,6 +965,161 @@ public class EFCoreWorkCoordinator<TDbContext>(
         severity, message);
     }
   }
+
+  /// <inheritdoc/>
+  public async Task RecordLifecycleCompletionAsync(
+    Guid eventId,
+    CancellationToken cancellationToken = default) {
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
+
+    // Idempotent: ON CONFLICT DO NOTHING handles duplicate event IDs
+#pragma warning disable S2077
+    var sql = $"INSERT INTO {tableName} (event_id, instance_id) VALUES ({{0}}, {{1}}) ON CONFLICT DO NOTHING";
+#pragma warning restore S2077
+
+    await _dbContext.Database.ExecuteSqlRawAsync(
+      sql,
+      [eventId, _instanceId()],
+      cancellationToken);
+  }
+
+  /// <inheritdoc/>
+  public async Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
+    Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
+    TimeSpan lookbackWindow,
+    CancellationToken cancellationToken = default) {
+
+    if (perspectivesPerEventType.Count == 0) {
+      return [];
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
+    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var completionsTable = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
+
+    var cutoff = DateTimeOffset.UtcNow - lookbackWindow;
+    var orphaned = new List<OrphanedLifecycleEvent>();
+
+    // For each event type that has registered perspectives, find events where:
+    // 1. The event was created within the lookback window
+    // 2. All expected perspectives have cursor.last_event_id >= event.event_id (UUIDv7 ordering)
+    // 3. No lifecycle completion marker exists
+    foreach (var (eventTypeKey, expectedPerspectives) in perspectivesPerEventType) {
+      if (expectedPerspectives.Count == 0) {
+        continue;
+      }
+
+#pragma warning disable S2077
+      var sql = $@"
+        SELECT e.event_id, e.stream_id, e.event_data, e.metadata, e.event_type, e.scope
+        FROM {eventStoreTable} e
+        WHERE e.event_type = {{0}}
+          AND e.created_at >= {{1}}
+          AND NOT EXISTS (
+            SELECT 1 FROM {completionsTable} lc WHERE lc.event_id = e.event_id
+          )
+          AND (
+            SELECT COUNT(DISTINCT pc.perspective_name)
+            FROM {cursorsTable} pc
+            WHERE pc.stream_id = e.stream_id
+              AND pc.perspective_name = ANY({{2}})
+              AND pc.last_event_id >= e.event_id
+          ) = {{3}}
+        ORDER BY e.created_at
+        LIMIT 100";
+#pragma warning restore S2077
+
+      var perspectiveNamesArray = expectedPerspectives.ToArray();
+
+      try {
+        var rows = await _dbContext.Database
+          .SqlQueryRaw<OrphanedEventRow>(sql, eventTypeKey, cutoff, perspectiveNamesArray, expectedPerspectives.Count)
+          .ToListAsync(cancellationToken);
+
+        foreach (var row in rows) {
+          try {
+            var envelope = _deserializeEventEnvelope(row);
+            orphaned.Add(new OrphanedLifecycleEvent(row.EventId, row.StreamId, envelope));
+          } catch (Exception ex) {
+            if (_logger?.IsEnabled(LogLevel.Warning) == true) {
+              var eventId = row.EventId;
+              _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} for reconciliation", eventId);
+            }
+          }
+        }
+      } catch (Exception ex) {
+        if (_logger?.IsEnabled(LogLevel.Warning) == true) {
+          _logger.LogWarning(ex, "Failed to query orphaned lifecycle events for type {EventType}", eventTypeKey);
+        }
+      }
+    }
+
+    return orphaned;
+  }
+
+  /// <inheritdoc/>
+  public async Task<int> CleanupLifecycleCompletionsAsync(
+    TimeSpan retentionPeriod,
+    CancellationToken cancellationToken = default) {
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
+    var cutoff = DateTimeOffset.UtcNow - retentionPeriod;
+
+#pragma warning disable S2077
+    var sql = $"DELETE FROM {tableName} WHERE completed_at < {{0}}";
+#pragma warning restore S2077
+
+    return await _dbContext.Database.ExecuteSqlRawAsync(
+      sql,
+      [cutoff],
+      cancellationToken);
+  }
+
+  private MessageEnvelope<IEvent> _deserializeEventEnvelope(OrphanedEventRow row) {
+    // Deserialize from event_store columns into a MessageEnvelope
+    var eventData = row.EventData;
+    var metadata = row.Metadata;
+
+    // The event_type column contains the CLR type key: "FullName, AssemblyName"
+    var eventTypeInfo = _jsonOptions.GetTypeInfo(typeof(IEvent));
+    var payload = eventTypeInfo is not null
+      ? (IEvent?)System.Text.Json.JsonSerializer.Deserialize(eventData, eventTypeInfo)
+      : null;
+
+    if (payload is null) {
+      throw new InvalidOperationException(
+        $"Failed to deserialize event {row.EventId} of type {row.EventType}");
+    }
+
+    return new MessageEnvelope<IEvent> {
+      MessageId = new MessageId(row.EventId),
+      Payload = payload,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext {
+        Mode = DispatchModes.Local,
+        Source = MessageSource.Local
+      }
+    };
+  }
+
+  private static Guid _instanceId() {
+    // Fallback to a new GUID — the actual instance ID is set by the PerspectiveWorker
+    // which resolves IServiceInstanceProvider from DI
+    return Guid.NewGuid();
+  }
 }
 
 /// <summary>
@@ -1064,4 +1222,28 @@ internal class CursorQueryResult {
 
   [Column("rewind_trigger_event_id")]
   public Guid? RewindTriggerEventId { get; set; }
+}
+
+/// <summary>
+/// DTO for querying orphaned lifecycle events.
+/// Used by GetOrphanedLifecycleEventsAsync.
+/// </summary>
+internal class OrphanedEventRow {
+  [Column("event_id")]
+  public Guid EventId { get; set; }
+
+  [Column("stream_id")]
+  public Guid StreamId { get; set; }
+
+  [Column("event_data")]
+  public string EventData { get; set; } = string.Empty;
+
+  [Column("metadata")]
+  public string? Metadata { get; set; }
+
+  [Column("event_type")]
+  public string EventType { get; set; } = string.Empty;
+
+  [Column("scope")]
+  public string? Scope { get; set; }
 }
