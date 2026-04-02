@@ -10,6 +10,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Testing.Containers;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -92,7 +93,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     var optionsBuilder = new DbContextOptionsBuilder<SplitModeTestDbContext>();
     optionsBuilder.UseNpgsql(_dataSource)
         .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
-        .AddInterceptors(new PhysicalFieldQueryInterceptor());
+        .AddInterceptors(new PhysicalFieldQueryInterceptor(), new PhysicalFieldMaterializationInterceptor());
     _context = new SplitModeTestDbContext(optionsBuilder.Options);
 
     await _initializeSchemaAsync();
@@ -100,6 +101,20 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     // Register physical field mappings so PhysicalFieldExpressionVisitor rewrites queries
     PhysicalFieldRegistry.Register<SplitTestModel>("Name", "name");
     PhysicalFieldRegistry.Register<SplitTestModel>("Price", "price");
+
+    // Register hydrator so PhysicalFieldMaterializationInterceptor populates Data after query
+    // This simulates what generated code does at startup (AOT-safe, no reflection)
+    PhysicalFieldHydratorRegistry.Register<SplitTestModel>((data, entity) => {
+      var row = (PerspectiveRow<SplitTestModel>)entity;
+      var name = data.GetPropertyValue<string?>("name");
+      if (name is not null) {
+        row.Data.Name = name;
+      }
+      var price = data.GetPropertyValue<decimal>("price");
+      if (price != default) {
+        row.Data.Price = price;
+      }
+    });
   }
 
   [After(Test)]
