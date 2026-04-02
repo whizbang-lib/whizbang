@@ -405,12 +405,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
         if (perspective.IsModelRecord) {
           // Records: use 'with {}' expression for immutable copy
-          var withProps = string.Join(", ", perspective.PhysicalFields.Select(f => $"{f.PropertyName} = default"));
+          // Use default! to suppress nullable warnings — values are intentionally stripped
+          var withProps = string.Join(", ", perspective.PhysicalFields.Select(f => $"{f.PropertyName} = default!"));
           sb.AppendLine($"    model = model with {{ {withProps} }};");
         } else {
-          // Classes: null out each property directly
+          // Classes: set each property to default
+          // Use default! to suppress nullable warnings — values are intentionally stripped
           foreach (var field in perspective.PhysicalFields) {
-            sb.AppendLine($"    model.{field.PropertyName} = default;");
+            sb.AppendLine($"    model.{field.PropertyName} = default!;");
           }
         }
         sb.AppendLine();
