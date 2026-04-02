@@ -113,7 +113,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiringAdvisoryLock(logger, lockId, "__SCHEMA__");
         }
 
-        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        // Use raw ADO.NET transaction instead of dbContext.Database.BeginTransactionAsync().
+        // EF Core's NpgsqlRetryingExecutionStrategy blocks user-initiated transactions via
+        // BeginTransactionAsync (it can't retry them). Since we have our own outer retry loop,
+        // we bypass the strategy by starting the transaction on the raw connection and telling
+        // EF Core to use it via UseTransactionAsync.
+        System.Data.Common.DbTransaction? dbTransaction = null;
         {
           var lockAttempt = 0;
           var baseDelayMs = 100;
@@ -121,9 +126,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           while (true) {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Begin a transaction to pin the PgBouncer backend connection
+            // Begin a raw ADO.NET transaction to pin the PgBouncer backend connection
             // and scope the advisory lock to this transaction
-            transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            dbTransaction = await connection.BeginTransactionAsync(cancellationToken);
+            await dbContext.Database.UseTransactionAsync(dbTransaction, cancellationToken);
 
             // pg_try_advisory_xact_lock returns boolean: true if lock acquired, false if held
             // Transaction-level: auto-releases on commit/rollback (no manual unlock needed)
@@ -136,9 +142,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
             // Lock not acquired — rollback transaction to release PgBouncer backend connection
             // during the backoff delay, freeing it for other clients
-            await transaction.RollbackAsync(CancellationToken.None);
-            await transaction.DisposeAsync();
-            transaction = null;
+            await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
+            await dbTransaction.RollbackAsync(CancellationToken.None);
+            await dbTransaction.DisposeAsync();
+            dbTransaction = null;
 
             lockAttempt++;
             // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 20s, plus random jitter
@@ -165,13 +172,20 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           // the failed SELECT would mark the PostgreSQL transaction as aborted. Rolling back to
           // the savepoint restores the transaction to a usable state.
           try {
-            await transaction!.CreateSavepointAsync("hash_recheck", cancellationToken);
+            await using (var spCmd = connection.CreateCommand()) {
+              spCmd.CommandText = "SAVEPOINT hash_recheck";
+              await spCmd.ExecuteNonQueryAsync(cancellationToken);
+            }
             var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
-            await transaction!.ReleaseSavepointAsync("hash_recheck", cancellationToken);
+            await using (var spCmd = connection.CreateCommand()) {
+              spCmd.CommandText = "RELEASE SAVEPOINT hash_recheck";
+              await spCmd.ExecuteNonQueryAsync(cancellationToken);
+            }
             (infraChanged, perspChanged) = _compareHashes(existingHashes);
 
             if (!infraChanged && !perspChanged) {
-              await transaction!.CommitAsync(cancellationToken);
+              await dbTransaction!.CommitAsync(cancellationToken);
+              await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
               if (logger is not null) {
                 Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
                 Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.TransactionCommitted(logger, lockId, "__SCHEMA__");
@@ -181,7 +195,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           } catch {
             // Tracking tables don't exist yet — rollback to savepoint to restore transaction state,
             // then run everything
-            try { await transaction!.RollbackToSavepointAsync("hash_recheck", CancellationToken.None); } catch { /* best effort */ }
+            try {
+              await using var spCmd = connection.CreateCommand();
+              spCmd.CommandText = "ROLLBACK TO SAVEPOINT hash_recheck";
+              await spCmd.ExecuteNonQueryAsync(CancellationToken.None);
+            } catch { /* best effort */ }
             infraChanged = true;
             perspChanged = true;
           }
@@ -251,7 +269,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           }
 
           // Commit transaction — this automatically releases the advisory lock
-          await transaction!.CommitAsync(cancellationToken);
+          await dbTransaction!.CommitAsync(cancellationToken);
+          await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
 
           if (logger is not null) {
             Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.TransactionCommitted(logger, lockId, "__SCHEMA__");
@@ -275,9 +294,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         } catch {
           // Rollback on failure — this automatically releases the advisory lock
           try {
-            if (transaction is not null) {
-              await transaction.RollbackAsync(CancellationToken.None);
-              await transaction.DisposeAsync();
+            await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
+            if (dbTransaction is not null) {
+              await dbTransaction.RollbackAsync(CancellationToken.None);
+              await dbTransaction.DisposeAsync();
             }
           } catch { /* best effort rollback */ }
 
