@@ -1065,6 +1065,265 @@ public class LifecycleCoordinatorTests {
     await Assert.That(measurements[0].Value).IsEqualTo(1L);
   }
 
+  [Test]
+  public async Task CleanupStaleTracking_PreservesEntry_WhenPartialPerspectiveCompletionsExistAsync() {
+    // Arrange — simulate multi-batch scenario: A signals, cleanup fires, B+C signal later
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "partial-race"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B", "C"]);
+
+    // Batch N: perspective A completes
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+
+    // Cleanup fires — entry must NOT be cleaned (A's signal would be lost)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
+
+    await Assert.That(cleaned).IsEqualTo(0);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
+
+    // Batch M: perspectives B and C complete — lifecycle must resolve
+    coordinator.SignalPerspectiveComplete(eventId, "B");
+    coordinator.SignalPerspectiveComplete(eventId, "C");
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_RemovesEntry_WhenZeroPerspectiveCompletionsAsync() {
+    // Arrange — expectations registered but no signals sent (genuinely stale)
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "zero-completions"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
+
+    // Act — cleanup with negative threshold (everything stale)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
+
+    // Assert — zero completions = safe to clean
+    await Assert.That(cleaned).IsEqualTo(1);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_RemovesEntry_WhenNoPerspectiveExpectationsRegisteredAsync() {
+    // Arrange — no ExpectPerspectiveCompletions called (no _perspectiveStates entry)
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "no-expectations"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    // Act
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
+
+    // Assert — no perspective state to protect, cleaned normally
+    await Assert.That(cleaned).IsEqualTo(1);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_PreservesEntry_EvenWithZeroThresholdAsync() {
+    // Arrange — partial completions survive even the most aggressive threshold
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "zero-threshold"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+
+    // Act — zero threshold: cutoff is exactly now
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
+
+    // Assert — partial completions guard overrides staleness
+    await Assert.That(cleaned).IsEqualTo(0);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_RemovesEntry_WhenAllPerspectivesAlreadyCompleteAsync() {
+    // Arrange — fully complete entries are preserved by IsComplete guard, not partial guard
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "all-complete"));
+    var provider = _createScopedProvider();
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A"]);
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+
+    // Mark lifecycle complete
+    await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
+
+    // Act — cleanup with negative threshold (everything looks stale by time)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
+
+    // Assert — complete entries preserved (by existing IsComplete guard)
+    await Assert.That(cleaned).IsEqualTo(0);
+  }
+
+  [Test]
+  [NotInParallel("Metrics")]
+  public async Task CleanupStaleTracking_PreservedPartialPerspectives_IncrementsMetricAsync() {
+    // Arrange
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
+    var coordinatorMetrics = new LifecycleCoordinatorMetrics(whizbangMetrics);
+    var coordinator = new LifecycleCoordinator(coordinatorMetrics);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "metric-partial"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+
+    // Act — cleanup with negative threshold
+    coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
+
+    // Assert — preserved metric should be incremented
+    var measurements = helper.GetByName("whizbang.lifecycle_coordinator.stale_tracking_preserved_partial_perspectives");
+    await Assert.That(measurements).Count().IsEqualTo(1);
+    await Assert.That(measurements[0].Value).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_ConcurrentSignalAndCleanup_DoesNotDeadlockAsync() {
+    // Arrange — concurrent operations on the same eventId must not deadlock
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "concurrent"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B", "C", "D", "E"]);
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+
+    // Act — run cleanup and signals concurrently
+    var cleanupTask = Task.Run(() => {
+      for (var i = 0; i < 100; i++) {
+        coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
+      }
+    });
+    var signalTask = Task.Run(() => {
+      coordinator.SignalPerspectiveComplete(eventId, "B");
+      coordinator.SignalPerspectiveComplete(eventId, "C");
+      coordinator.SignalPerspectiveComplete(eventId, "D");
+      coordinator.SignalPerspectiveComplete(eventId, "E");
+    });
+
+    // Assert — completes without deadlock (timeout is implicit via test runner)
+    await Task.WhenAll(cleanupTask, signalTask);
+    // If we reach here, no deadlock occurred — verify entry still exists or was cleaned
+    var tracking = coordinator.GetTracking(eventId);
+    var allComplete = coordinator.AreAllPerspectivesComplete(eventId);
+    // Either tracking is preserved (partial guard) or all signals completed
+    await Assert.That(tracking is not null || allComplete).IsTrue();
+  }
+
+  #endregion
+
+  #region PostLifecycle Error Isolation
+
+  [Test]
+  public async Task AdvanceToAsync_InlineStageThrows_ExceptionPropagatesAsync() {
+    // Arrange — inline stages propagate exceptions (the PerspectiveWorker wraps in try/catch)
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "throws"));
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    var throwingRegistry = new ThrowingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(throwingRegistry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(throwingRegistry, sp));
+    var provider = services.BuildServiceProvider();
+
+    // Act & Assert — inline stage exception propagates
+    await Assert.That(async () =>
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, provider, CancellationToken.None)
+    ).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task PostLifecycle_MultipleEvents_OneThrows_OthersStillFireAsync() {
+    // Arrange — simulates the error isolation pattern used in PerspectiveWorker
+    var coordinator = new LifecycleCoordinator();
+
+    // Event A: will throw during PostAllPerspectivesInline
+    var eventIdA = Guid.NewGuid();
+    var envelopeA = _createEnvelope(new TestEvent(eventIdA, "thrower"));
+    var trackingA = coordinator.BeginTracking(eventIdA, envelopeA, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    // Event B: should succeed (uses no-op provider)
+    var eventIdB = Guid.NewGuid();
+    var envelopeB = _createEnvelope(new TestEvent(eventIdB, "succeeder"));
+    var trackingB = coordinator.BeginTracking(eventIdB, envelopeB, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    var throwingRegistry = new ThrowingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
+    var throwingServices = new ServiceCollection();
+    throwingServices.AddSingleton<IReceptorRegistry>(throwingRegistry);
+    throwingServices.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(throwingRegistry, sp));
+    var throwingProvider = throwingServices.BuildServiceProvider();
+
+    var successProvider = _createScopedProvider();
+
+    var errorCount = 0;
+    var successCount = 0;
+
+    // Act — simulate the error-isolated loop from PerspectiveWorker
+    // Event A with throwing provider
+    try {
+      await trackingA.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, throwingProvider, CancellationToken.None);
+      await trackingA.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, throwingProvider, CancellationToken.None);
+      await trackingA.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, throwingProvider, CancellationToken.None);
+      await trackingA.AdvanceToAsync(LifecycleStage.PostLifecycleInline, throwingProvider, CancellationToken.None);
+      successCount++;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      errorCount++;
+    }
+    // Event B with non-throwing provider — proves loop continues after A's error
+    try {
+      await trackingB.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, successProvider, CancellationToken.None);
+      await trackingB.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, successProvider, CancellationToken.None);
+      await trackingB.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, successProvider, CancellationToken.None);
+      await trackingB.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, successProvider, CancellationToken.None);
+      successCount++;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      errorCount++;
+    }
+
+    // Assert — event A threw (errorCount=1), event B succeeded
+    await Assert.That(errorCount).IsEqualTo(1);
+    await Assert.That(successCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PostLifecycle_OperationCanceled_NotCaughtByIsolationAsync() {
+    // Arrange — OperationCanceledException must propagate (shutdown signal)
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "canceled"));
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    var cancelingRegistry = new CancelingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(cancelingRegistry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(cancelingRegistry, sp));
+    var provider = services.BuildServiceProvider();
+
+    // Act & Assert — OperationCanceledException is NOT caught by `when (ex is not OperationCanceledException)`
+    var caught = false;
+    try {
+      try {
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, provider, CancellationToken.None);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        caught = true; // This should NOT be reached for OCE
+      }
+    } catch (OperationCanceledException) {
+      // Expected — OCE should escape the inner catch
+    }
+    await Assert.That(caught).IsFalse();
+  }
+
   #endregion
 
   #region Test Helpers
@@ -1147,6 +1406,48 @@ public class LifecycleCoordinatorTests {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       var key = (messageType, stage);
       return _receptors.TryGetValue(key, out var list) ? list : [];
+    }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  /// <summary>
+  /// Registry that throws InvalidOperationException at the specified lifecycle stage.
+  /// </summary>
+  private sealed class ThrowingReceptorRegistry(LifecycleStage throwAtStage) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      if (stage == throwAtStage) {
+        return [new ReceptorInfo(
+          MessageType: messageType,
+          ReceptorId: "ThrowingReceptor",
+          InvokeAsync: (sp, msg, envelope, callerInfo, ct) =>
+            throw new InvalidOperationException("Simulated receptor failure"))];
+      }
+      return [];
+    }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  /// <summary>
+  /// Registry that throws OperationCanceledException at the specified lifecycle stage.
+  /// </summary>
+  private sealed class CancelingReceptorRegistry(LifecycleStage cancelAtStage) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      if (stage == cancelAtStage) {
+        return [new ReceptorInfo(
+          MessageType: messageType,
+          ReceptorId: "CancelingReceptor",
+          InvokeAsync: (sp, msg, envelope, callerInfo, ct) =>
+            throw new OperationCanceledException("Simulated cancellation"))];
+      }
+      return [];
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }

@@ -277,7 +277,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     using var scope = _host!.Services.CreateScope();
     var context = scope.ServiceProvider.GetRequiredService<LifecycleTestDbContext>();
     var logger = scope.ServiceProvider.GetService<ILogger<LifecycleTestDbContext>>();
-    await context.EnsureWhizbangDatabaseInitializedAsync(logger, ct);
+    await context.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: ct);
     Console.WriteLine("[LifecycleFixture] Database schema created");
   }
 

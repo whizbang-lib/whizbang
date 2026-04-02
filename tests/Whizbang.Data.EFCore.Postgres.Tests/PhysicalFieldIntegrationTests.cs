@@ -492,7 +492,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
     };
 
     // Act
-    await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, cancellationToken);
+    await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, scope: null, cancellationToken);
 
     // Assert - query back via store
     var retrieved = await store.GetByStreamIdAsync(testId, cancellationToken);
@@ -532,7 +532,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
         { "category", model.Category },
         { "is_active", model.IsActive }
       };
-      await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, cancellationToken);
+      await store.UpsertWithPhysicalFieldsAsync(testId, model, physicalFieldValues, scope: null, cancellationToken);
     }
 
     // Assert - final version should be persisted

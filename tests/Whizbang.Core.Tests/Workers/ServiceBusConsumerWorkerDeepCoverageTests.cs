@@ -587,12 +587,13 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       }
     );
 
-    var invokedStages = new List<LifecycleStage>();
+    var invokedStages = new System.Collections.Concurrent.ConcurrentBag<LifecycleStage>();
     var registry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
       LifecycleStage.ImmediateDetached,
+      LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
       LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline
     }) {
       var capturedStage = stage;

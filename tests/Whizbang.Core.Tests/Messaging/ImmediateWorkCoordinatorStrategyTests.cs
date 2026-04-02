@@ -679,10 +679,12 @@ public class ImmediateWorkCoordinatorStrategyTests {
     // Act
     await sut.FlushAsync(WorkBatchOptions.None);
 
-    // Assert
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
-    await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
-    await Assert.That(channelWriter.WrittenWork[1].MessageId).IsEqualTo(messageId2);
+    // Assert — channel writes no longer happen during flush (work is persisted to DB,
+    // coordinator loop picks it up on next tick)
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+    // Work was still persisted via ProcessWorkBatchAsync
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
   }
 
   [Test]

@@ -758,7 +758,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   [Test]
-  public async Task Generator_SchemaExtensions_UsesTryAdvisoryLockWithBackoffAsync() {
+  public async Task Generator_SchemaExtensions_UsesXactLockWithTransactionAndRetryAsync() {
     // Arrange
     var source = $$"""
       using Microsoft.EntityFrameworkCore;
@@ -783,18 +783,73 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should use non-blocking pg_try_advisory_lock, NOT blocking pg_advisory_lock
-    await Assert.That(sourceText).Contains("pg_try_advisory_lock");
-    await Assert.That(sourceText).DoesNotContain("SELECT pg_advisory_lock(");
+    // Should use transaction-level advisory lock (PgBouncer-safe), NOT session-level
+    await Assert.That(sourceText).Contains("pg_try_advisory_xact_lock");
+    // Should NOT use session-level lock or manual unlock
+    await Assert.That(sourceText).DoesNotContain("SELECT pg_try_advisory_lock(");
+    await Assert.That(sourceText).DoesNotContain("pg_advisory_unlock");
 
-    // Should use CancellationToken.None for unlock (prevents crash on cancellation)
-    await Assert.That(sourceText).Contains("CancellationToken.None");
+    // Should use BeginTransactionAsync for PgBouncer compatibility
+    await Assert.That(sourceText).Contains("BeginTransactionAsync");
+
+    // Should have fast path with bulk hash comparison
+    await Assert.That(sourceText).Contains("_bulkGetHashesAsync");
+    await Assert.That(sourceText).Contains("_compareHashes");
+
+    // Should have outer retry loop with _isRetryableError
+    await Assert.That(sourceText).Contains("_isRetryableError");
+
+    // Should set 600s command timeout for DDL
+    await Assert.That(sourceText).Contains("600");
+
+    // Should have owner column for migration categorization
+    await Assert.That(sourceText).Contains("owner");
 
     // Should reference SchemaInitializationLog for structured logging
     await Assert.That(sourceText).Contains("SchemaInitializationLog");
 
-    // Should use NpgsqlDataSource for VACUUM connection (not raw connection string)
-    await Assert.That(sourceText).Contains("NpgsqlDataSource");
+    // Should accept initConnectionString parameter
+    await Assert.That(sourceText).Contains("initConnectionString");
+  }
+
+  [Test]
+  public async Task Generator_InitCallback_ResolvesInitConnectionStringAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var registration = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registration).IsNotNull();
+
+    var sourceText = registration!.SourceText.ToString();
+
+    // Should try {Name}-init connection string first (convention-based PgBouncer bypass)
+    await Assert.That(sourceText).Contains("-init");
+    await Assert.That(sourceText).Contains("GetConnectionString");
+
+    // Should resolve IConfiguration from the service provider
+    await Assert.That(sourceText).Contains("IConfiguration");
+
+    // Should handle null config gracefully (GetService, not GetRequiredService)
+    await Assert.That(sourceText).Contains("GetService<Microsoft.Extensions.Configuration.IConfiguration>");
+
+    // Should pass initConnStr to EnsureWhizbangDatabaseInitializedAsync
+    await Assert.That(sourceText).Contains("EnsureWhizbangDatabaseInitializedAsync");
   }
 
   #endregion

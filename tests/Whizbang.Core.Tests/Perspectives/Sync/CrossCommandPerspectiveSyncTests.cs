@@ -141,16 +141,19 @@ public class CrossCommandPerspectiveSyncTests {
     singletonTracker.TrackEvent(typeof(TestEventB), eventBId, streamId, perspectiveCName);
     executionOrder.Add("A's receptor returned Event B");
 
-    // Simulate perspective processing after a delay
+    // Use completion signals for deterministic ordering instead of Task.Delay
+    var eReceptorFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Simulate perspective processing — waits for E to fire first, then completes
     var perspectiveTask = Task.Run(async () => {
-      await Task.Delay(100);
+      await eReceptorFired.Task;
       executionOrder.Add("C.Apply(B) completed");
       singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
-    // WITHOUT sync - E's receptor fires immediately
-    await Task.Delay(10); // Small delay
+    // WITHOUT sync - E's receptor fires immediately (before perspective completes)
     executionOrder.Add("E's receptor fired (NO SYNC)");
+    eReceptorFired.TrySetResult();
 
     await perspectiveTask;
 

@@ -124,9 +124,10 @@ public class WorkCoordinatorStrategyRegistrationTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
     await strategy.FlushAsync(WorkBatchOptions.None);
 
-    // Assert - The TestWorkChannelWriter should have received the work
-    await Assert.That(testWriter.WrittenWork).Count().IsGreaterThanOrEqualTo(1)
-      .Because("Interval singleton must pass workChannelWriter so outbox work reaches the channel");
+    // Assert — channel writes no longer happen during flush (work is persisted to DB,
+    // coordinator loop picks it up on next tick)
+    await Assert.That(testWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
 
     // Cleanup
     await strategy.DisposeAsync();
@@ -156,9 +157,10 @@ public class WorkCoordinatorStrategyRegistrationTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
     await strategy.FlushAsync(WorkBatchOptions.None);
 
-    // Assert
-    await Assert.That(testWriter.WrittenWork).Count().IsGreaterThanOrEqualTo(1)
-      .Because("Batch singleton must pass workChannelWriter so outbox work reaches the channel");
+    // Assert — channel writes no longer happen during flush (work is persisted to DB,
+    // coordinator loop picks it up on next tick)
+    await Assert.That(testWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
 
     // Cleanup
     await strategy.DisposeAsync();

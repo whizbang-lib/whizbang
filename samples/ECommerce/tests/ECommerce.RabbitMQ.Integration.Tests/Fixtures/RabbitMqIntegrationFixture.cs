@@ -571,7 +571,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       Console.WriteLine("[RabbitMqFixture] Got InventoryDbContext");
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
       Console.WriteLine("[RabbitMqFixture] Calling EnsureWhizbangDatabaseInitializedAsync for Inventory...");
-      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);
+      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: ct);
       Console.WriteLine("[RabbitMqFixture] Inventory database schema initialized");
     }
 
@@ -584,7 +584,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       Console.WriteLine("[RabbitMqFixture] Got BffDbContext");
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
       Console.WriteLine("[RabbitMqFixture] Calling EnsureWhizbangDatabaseInitializedAsync for BFF...");
-      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);
+      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: ct);
       Console.WriteLine("[RabbitMqFixture] BFF database schema initialized");
     }
 

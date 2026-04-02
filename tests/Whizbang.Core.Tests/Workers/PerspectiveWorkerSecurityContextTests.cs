@@ -393,7 +393,10 @@ public class PerspectiveWorkerSecurityContextTests {
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveDetached) {
+        // Use PrePerspectiveInline (not Detached) for capturing — Detached stages run via Task.Run
+        // on separate threads, and the shared TestMessageContextAccessor (non-AsyncLocal) would race.
+        // Inline stages execute sequentially on the worker thread with deterministic security context.
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedUserIds.Add(messageContextAccessor.Current?.UserId);
         }
       });
@@ -449,6 +452,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -832,6 +836,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {

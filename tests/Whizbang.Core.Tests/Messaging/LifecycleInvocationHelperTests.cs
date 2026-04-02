@@ -420,8 +420,8 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Wait for background task to attempt the detached stage (and throw) using completion signal
+    await invoker.WaitForDetachedStageAttemptAsync(TimeSpan.FromSeconds(5));
 
     // Assert - outboxMessages is still empty (no exception thrown)
     await Assert.That(outboxMessages.Count).IsEqualTo(1);
@@ -549,6 +549,7 @@ public class LifecycleInvocationHelperTests {
   private sealed class FakeLifecycleInvoker : IReceptorInvoker {
     private readonly List<LifecycleInvocation> _invocations = [];
     private readonly Lock _lock = new();
+    private readonly TaskCompletionSource _detachedStageAttempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool ThrowOnAsyncStage { get; set; }
 
@@ -560,8 +561,21 @@ public class LifecycleInvocationHelperTests {
       }
     }
 
+    /// <summary>
+    /// Waits until the invoker has been called for a detached stage (even if it throws).
+    /// </summary>
+    public async Task WaitForDetachedStageAttemptAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _detachedStageAttempted.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        // Timeout — stage wasn't attempted in time
+      }
+    }
+
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
-      if (ThrowOnAsyncStage && stage.ToString().EndsWith("Async", StringComparison.Ordinal)) {
+      if (ThrowOnAsyncStage && stage.ToString().EndsWith("Detached", StringComparison.Ordinal)) {
+        _detachedStageAttempted.TrySetResult();
         throw new InvalidOperationException("Test exception in async stage");
       }
 

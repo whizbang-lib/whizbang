@@ -308,7 +308,7 @@ public partial class ServiceBusConsumerWorker(
       await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
       if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
-        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, ct);
+        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, ct, _detachedTasks.Add);
       }
     }
   }
@@ -318,7 +318,8 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   private static async Task _invokePostLifecycleForEventAsync(
     InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
-    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, CancellationToken ct) {
+    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, CancellationToken ct,
+    Action<Task>? trackDetachedTask = null) {
     var coordinator = scopedProvider.GetService<ILifecycleCoordinator>();
     if (coordinator is not null) {
       var eventId = work.Envelope.MessageId.Value;
@@ -329,7 +330,8 @@ public partial class ServiceBusConsumerWorker(
       coordinator.AbandonTracking(eventId);
     } else {
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
-      _ = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
+      var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
+      trackDetachedTask?.Invoke(detachedTask);
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);
