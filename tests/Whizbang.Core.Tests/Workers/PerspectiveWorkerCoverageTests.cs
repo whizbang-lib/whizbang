@@ -932,6 +932,9 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     await worker.DrainDetachedAsync();
+    // Also drain detached tasks inside LifecycleTrackingState (PostLifecycleDetached fires via Task.Run there)
+    var lifecycleCoordinator = (Whizbang.Core.Lifecycle.LifecycleCoordinator)serviceProvider.GetRequiredService<Whizbang.Core.Lifecycle.ILifecycleCoordinator>();
+    await lifecycleCoordinator.DrainAllDetachedAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert — PostLifecycle stages MUST fire through the real worker code path

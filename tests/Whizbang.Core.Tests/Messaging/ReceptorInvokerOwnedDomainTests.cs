@@ -13,7 +13,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Tests that ReceptorInvoker respects owned-domain rules at each lifecycle stage.
+/// Tests that ReceptorInvoker respects owned-domain and source-service rules at each lifecycle stage.
 /// A handler registered at all 3 default stages should only fire at the stage
 /// appropriate for the message's ownership status:
 ///
@@ -22,17 +22,40 @@ namespace Whizbang.Core.Tests.Messaging;
 /// --------------------|:-----------:|:---------------:|:---------:|:------------:
 /// LocalImmediateInline| Fire        | Fire            | Fire      | Fire
 /// PreOutboxInline     | Fire        | Skip            | Skip      | Fire
-/// PostInboxInline     | Skip        | Fire            | Fire      | Skip
+/// PostInboxInline     | Skip*       | Fire            | Fire      | Fire
 /// </code>
+///
+/// * PostInbox uses source-service filtering (not ownership): messages from the SAME service
+///   are skipped because they already fired at LocalImmediate. Owned events arriving via inbox
+///   are self-echo (same service in hops) and get filtered. Non-owned commands are no longer
+///   filtered at PostInbox — the source-service check handles dedup instead.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/ReceptorInvoker.cs</code-under-test>
 /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
 public class ReceptorInvokerOwnedDomainTests {
 
+  private const string TEST_SERVICE_NAME = "TestService";
+
   // Test messages — in this test namespace (Whizbang.Core.Tests.Messaging)
   // When OwnDomains includes this namespace, they are "owned"
   private sealed record OwnedEvent(Guid Id) : IEvent;       // IEvent = event
   private sealed record OwnedCommand(string Data) : IMessage; // IMessage (not IEvent) = command
+
+  /// <summary>
+  /// Stub IServiceInstanceProvider for source-service filtering tests.
+  /// </summary>
+  private sealed class StubServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
+    public string ServiceName => serviceName;
+    public Guid InstanceId { get; } = Guid.NewGuid();
+    public string HostName => "test-host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() {
+      ServiceName = serviceName,
+      InstanceId = InstanceId,
+      HostName = HostName,
+      ProcessId = ProcessId
+    };
+  }
 
   private sealed class InvocationTracker {
     private readonly List<(string ReceptorId, LifecycleStage Stage)> _invocations = [];
@@ -71,20 +94,23 @@ public class ReceptorInvokerOwnedDomainTests {
     bool IReceptorRegistry.Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) => false;
   }
 
-  private static MessageEnvelope<T> _wrap<T>(T message, DispatchModes mode = DispatchModes.Local, MessageSource source = MessageSource.Local) where T : notnull {
+  private static MessageEnvelope<T> _wrap<T>(T message, DispatchModes mode = DispatchModes.Local, MessageSource source = MessageSource.Local, List<MessageHop>? hops = null) where T : notnull {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
       Payload = message,
-      Hops = [],
+      Hops = hops ?? [],
       DispatchContext = new MessageDispatchContext { Mode = mode, Source = source }
     };
   }
 
-  private static ReceptorInvoker _createInvoker(IReceptorRegistry registry, string[] ownedDomains) {
+  private static ReceptorInvoker _createInvoker(IReceptorRegistry registry, string[] ownedDomains, StubServiceInstanceProvider? serviceInstanceProvider = null) {
     var services = new ServiceCollection();
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains(ownedDomains);
     services.AddSingleton<IOptions<RoutingOptions>>(Options.Create(routingOptions));
+    if (serviceInstanceProvider is not null) {
+      services.AddSingleton<IServiceInstanceProvider>(serviceInstanceProvider);
+    }
     var sp = services.BuildServiceProvider();
     return new ReceptorInvoker(registry, sp);
   }
@@ -188,13 +214,18 @@ public class ReceptorInvokerOwnedDomainTests {
 
   [Test]
   public async Task PostInboxInline_OwnedEvent_SkipsAsync() {
-    // Owned event arriving via inbox = self-echo → skip
+    // Owned event arriving via inbox from SAME service = self-echo → skip (source-service filter)
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxInline);
-    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+    var provider = new StubServiceInstanceProvider(TEST_SERVICE_NAME);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"], provider);
 
-    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxInline);
+    // Envelope has a hop from the same service → source-service filter skips it
+    var hops = new List<MessageHop> {
+      new() { ServiceInstance = provider.ToInfo(), Timestamp = DateTimeOffset.UtcNow }
+    };
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid()), hops: hops), LifecycleStage.PostInboxInline);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
@@ -226,8 +257,9 @@ public class ReceptorInvokerOwnedDomainTests {
   }
 
   [Test]
-  public async Task PostInboxInline_NonOwnedCommand_SkipsAsync() {
-    // Non-owned command arriving at this service = routing error → skip
+  public async Task PostInboxInline_NonOwnedCommand_FiresAsync() {
+    // Non-owned command arriving at this service → fires (source-service filtering
+    // handles dedup, not ownership; no same-service hop means different service sent it)
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedCommand>("handler", LifecycleStage.PostInboxInline);
@@ -235,7 +267,7 @@ public class ReceptorInvokerOwnedDomainTests {
 
     await invoker.InvokeAsync(_wrap(new OwnedCommand("test")), LifecycleStage.PostInboxInline);
 
-    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
   }
 
   // ========================================
@@ -323,12 +355,17 @@ public class ReceptorInvokerOwnedDomainTests {
 
   [Test]
   public async Task PostInboxDetached_OwnedEvent_SkipsAsync() {
+    // Owned event arriving via inbox from SAME service = self-echo → skip (source-service filter)
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PostInboxDetached);
-    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+    var provider = new StubServiceInstanceProvider(TEST_SERVICE_NAME);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"], provider);
 
-    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid())), LifecycleStage.PostInboxDetached);
+    var hops = new List<MessageHop> {
+      new() { ServiceInstance = provider.ToInfo(), Timestamp = DateTimeOffset.UtcNow }
+    };
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid()), hops: hops), LifecycleStage.PostInboxDetached);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }

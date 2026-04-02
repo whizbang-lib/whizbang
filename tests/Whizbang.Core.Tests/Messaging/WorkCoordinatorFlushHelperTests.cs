@@ -68,7 +68,7 @@ public class WorkCoordinatorFlushHelperTests {
     var channelWriter = new TestWorkChannelWriter();
 
     // Act
-    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+    var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       new FlushContext(
         coordinator, ScopeFactory: null, instanceProvider, options, "test",
         OutboxMessages: [_buildTestOutboxMessage()], InboxMessages: [],
@@ -80,9 +80,13 @@ public class WorkCoordinatorFlushHelperTests {
       ct: default
     );
 
-    // Assert — work was written to channel
-    await Assert.That(channelWriter.WrittenWork).Count().IsGreaterThan(0)
-      .Because("Channel write should happen even when lifecycle is skipped");
+    // Assert — channel writes no longer happen during flush (work is persisted to DB,
+    // coordinator loop picks it up on next tick)
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+    // Work was still persisted and returned in batch result
+    await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
+      .Because("ProcessWorkBatchAsync should still run even when lifecycle is skipped");
   }
 
   /// <summary>
@@ -209,13 +213,14 @@ public class WorkCoordinatorFlushHelperTests {
       ct: default
     );
 
-    // Assert — every outbox work item returned must be tracked as in-flight
+    // Assert — work is persisted but NOT written to channel (coordinator loop picks it up)
     await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
       .Because("FakeWorkCoordinator should return outbox work");
 
+    // Channel writes no longer happen during flush, so items are NOT tracked as in-flight
     foreach (var work in workBatch.OutboxWork) {
-      await Assert.That(realChannelWriter.IsInFlight(work.MessageId)).IsTrue()
-        .Because("Flush path must track outbox messages as in-flight to prevent duplicate publishing");
+      await Assert.That(realChannelWriter.IsInFlight(work.MessageId)).IsFalse()
+        .Because("Flush path no longer writes to channel; coordinator loop handles pickup");
     }
   }
 
