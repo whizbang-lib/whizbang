@@ -628,6 +628,81 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
   }
 
   // ==========================================================================
+  // Split Mode: GroupBy
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_GroupBy_PhysicalField_GroupsCorrectlyAsync(CancellationToken cancellationToken) {
+    // Arrange — multiple items per name
+    await _insertSplitRowAsync("Widget", 10.00m, "w1");
+    await _insertSplitRowAsync("Widget", 20.00m, "w2");
+    await _insertSplitRowAsync("Gadget", 30.00m, "g1");
+
+    // Act — group by physical field
+    var groups = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .GroupBy(r => r.Data.Name)
+        .Select(g => new { Name = g.Key, Count = g.Count(), TotalPrice = g.Sum(r => r.Data.Price) })
+        .OrderBy(g => g.Name)
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(groups).Count().IsEqualTo(2);
+    await Assert.That(groups[0].Name).IsEqualTo("Gadget");
+    await Assert.That(groups[0].Count).IsEqualTo(1);
+    await Assert.That(groups[1].Name).IsEqualTo("Widget");
+    await Assert.That(groups[1].Count).IsEqualTo(2);
+    await Assert.That(groups[1].TotalPrice).IsEqualTo(30.00m);
+  }
+
+  // ==========================================================================
+  // Extracted Mode: Regression
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ExtractedMode_ReadBack_PhysicalFieldsStillWorkAsync(CancellationToken cancellationToken) {
+    // Arrange — in Extracted mode, physical fields are in BOTH JSONB and columns.
+    // The interceptor should still work (overlay doesn't break existing values).
+    var strategy = new PostgresUpsertStrategy();
+    var testId = _idProvider.NewGuid();
+
+    // In Extracted mode, the model is NOT stripped — physical fields stay in JSONB
+    var fullModel = new SplitTestModel {
+      Name = "ExtractedWidget",
+      Price = 77.77m,
+      Description = "extracted desc"
+    };
+    var physicalFieldValues = new Dictionary<string, object?> {
+      ["name"] = fullModel.Name,
+      ["price"] = fullModel.Price
+    };
+    var metadata = new PerspectiveMetadata {
+      EventType = "TestEvent",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+
+    // Act — write with full model (Extracted mode: JSONB has all fields)
+    await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context!, "wh_per_split_test", testId, fullModel, metadata, new PerspectiveScope(),
+        physicalFieldValues, default);
+    await _context!.SaveChangesAsync(cancellationToken);
+
+    // Read back
+    var row = await _context.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == (Guid)testId, cancellationToken);
+
+    // Assert — physical fields should be populated (from JSONB + overlay from columns)
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Name).IsEqualTo("ExtractedWidget");
+    await Assert.That(row.Data.Price).IsEqualTo(77.77m);
+    await Assert.That(row.Data.Description).IsEqualTo("extracted desc");
+  }
+
+  // ==========================================================================
   // Helpers
   // ==========================================================================
 
