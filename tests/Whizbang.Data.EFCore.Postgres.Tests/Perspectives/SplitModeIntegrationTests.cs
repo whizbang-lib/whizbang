@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
@@ -90,10 +91,15 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
 
     var optionsBuilder = new DbContextOptionsBuilder<SplitModeTestDbContext>();
     optionsBuilder.UseNpgsql(_dataSource)
-        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+        .AddInterceptors(new PhysicalFieldQueryInterceptor());
     _context = new SplitModeTestDbContext(optionsBuilder.Options);
 
     await _initializeSchemaAsync();
+
+    // Register physical field mappings so PhysicalFieldExpressionVisitor rewrites queries
+    PhysicalFieldRegistry.Register<SplitTestModel>("Name", "name");
+    PhysicalFieldRegistry.Register<SplitTestModel>("Price", "price");
   }
 
   [After(Test)]
@@ -292,5 +298,208 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     var count = await connection.ExecuteScalarAsync<int>(
       "SELECT COUNT(*) FROM wh_per_split_test WHERE id = @id", new { id = (Guid)testId });
     await Assert.That(count).IsEqualTo(1);
+  }
+
+  // ==========================================================================
+  // Split Mode: Read-Back — Physical Fields Hydrated After Materialization
+  // ==========================================================================
+
+  /// <summary>
+  /// Core bug repro: write a Split model, read it back via EF Core query,
+  /// verify that physical fields (stripped from JSONB) are populated from physical columns.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_ReadBack_PhysicalFields_PopulatedFromColumnsAsync(CancellationToken cancellationToken) {
+    // Arrange — write with physical fields stripped from JSONB
+    await _insertSplitRowAsync("ReadBackTest", 99.99m, "read-back description");
+
+    // Act — read via EF Core (AsNoTracking, same as ILensQuery)
+    var row = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(cancellationToken);
+
+    // Assert — physical fields must be populated from columns, not from JSONB (where they're null)
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Name).IsEqualTo("ReadBackTest")
+      .Because("Physical field Name must be hydrated from column after materialization");
+    await Assert.That(row.Data.Price).IsEqualTo(99.99m)
+      .Because("Physical field Price must be hydrated from column after materialization");
+    // Non-physical field should come from JSONB normally
+    await Assert.That(row.Data.Description).IsEqualTo("read-back description");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_ReadBack_MultipleRows_AllPopulatedAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Item A", 10.00m, "desc A");
+    await _insertSplitRowAsync("Item B", 20.00m, "desc B");
+    await _insertSplitRowAsync("Item C", 30.00m, "desc C");
+
+    // Act
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .OrderBy(r => EF.Property<decimal>(r, "price"))
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(rows).Count().IsEqualTo(3);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Item A");
+    await Assert.That(rows[0].Data.Price).IsEqualTo(10.00m);
+    await Assert.That(rows[1].Data.Name).IsEqualTo("Item B");
+    await Assert.That(rows[1].Data.Price).IsEqualTo(20.00m);
+    await Assert.That(rows[2].Data.Name).IsEqualTo("Item C");
+    await Assert.That(rows[2].Data.Price).IsEqualTo(30.00m);
+  }
+
+  // ==========================================================================
+  // Split Mode: WHERE Clause — Physical Column Used, Results Populated
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Where_EqualityOnPhysicalField_FiltersAndPopulatesAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Widget", 50.00m, "widget desc");
+    await _insertSplitRowAsync("Gadget", 75.00m, "gadget desc");
+
+    // Act — WHERE on physical field
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .Where(r => r.Data.Name == "Widget")
+        .ToListAsync(cancellationToken);
+
+    // Assert — filtered correctly AND physical fields populated
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Widget");
+    await Assert.That(rows[0].Data.Price).IsEqualTo(50.00m);
+    await Assert.That(rows[0].Data.Description).IsEqualTo("widget desc");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Where_ComparisonOnPhysicalField_FiltersAndPopulatesAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Cheap", 10.00m, "cheap");
+    await _insertSplitRowAsync("Medium", 50.00m, "medium");
+    await _insertSplitRowAsync("Expensive", 100.00m, "expensive");
+
+    // Act — range filter on physical field
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .Where(r => r.Data.Price >= 50.00m)
+        .OrderBy(r => r.Data.Price)
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Medium");
+    await Assert.That(rows[0].Data.Price).IsEqualTo(50.00m);
+    await Assert.That(rows[1].Data.Name).IsEqualTo("Expensive");
+    await Assert.That(rows[1].Data.Price).IsEqualTo(100.00m);
+  }
+
+  // ==========================================================================
+  // Split Mode: ORDER BY — Physical Column Used, Results Populated
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_OrderByDescending_PhysicalField_OrdersAndPopulatesAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("A", 10.00m, "a");
+    await _insertSplitRowAsync("B", 30.00m, "b");
+    await _insertSplitRowAsync("C", 20.00m, "c");
+
+    // Act
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .OrderByDescending(r => r.Data.Price)
+        .ToListAsync(cancellationToken);
+
+    // Assert — ordered by price descending, physical fields populated
+    await Assert.That(rows).Count().IsEqualTo(3);
+    await Assert.That(rows[0].Data.Price).IsEqualTo(30.00m);
+    await Assert.That(rows[1].Data.Price).IsEqualTo(20.00m);
+    await Assert.That(rows[2].Data.Price).IsEqualTo(10.00m);
+  }
+
+  // ==========================================================================
+  // Split Mode: SQL Verification — Physical Column Used, Not JSONB
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Where_GeneratedSql_UsesPhysicalColumn_NotJsonbAsync(CancellationToken cancellationToken) {
+    // Arrange — build query (don't execute)
+    var query = _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .Where(r => r.Data.Price >= 50.00m);
+
+    // Act
+    var sql = query.ToQueryString();
+
+    // Assert — SQL should use physical column, NOT JSONB extraction
+    await Assert.That(sql).DoesNotContain("data ->> 'Price'")
+      .Because("Physical field Price should be queried from column, not JSONB");
+    await Assert.That(sql.ToLowerInvariant()).Contains(".price >= ")
+      .Because("Should use physical column name 'price' in WHERE clause");
+  }
+
+  // ==========================================================================
+  // Split Mode: Pagination
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Skip_Take_WithPhysicalFieldOrder_PaginatesAndPopulatesAsync(CancellationToken cancellationToken) {
+    // Arrange — insert 5 rows
+    for (var i = 1; i <= 5; i++) {
+      await _insertSplitRowAsync($"Item {i}", i * 10.00m, $"desc {i}");
+    }
+
+    // Act — page 2 (skip 2, take 2) ordered by price
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .OrderBy(r => r.Data.Price)
+        .Skip(2)
+        .Take(2)
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows[0].Data.Price).IsEqualTo(30.00m);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Item 3");
+    await Assert.That(rows[1].Data.Price).IsEqualTo(40.00m);
+    await Assert.That(rows[1].Data.Name).IsEqualTo("Item 4");
+  }
+
+  // ==========================================================================
+  // Helpers
+  // ==========================================================================
+
+  /// <summary>
+  /// Inserts a Split-mode row with physical fields in columns and stripped from JSONB.
+  /// Simulates what the generated PerspectiveRunner does.
+  /// </summary>
+  private async Task _insertSplitRowAsync(string name, decimal price, string description) {
+    var strategy = new PostgresUpsertStrategy();
+    var testId = _idProvider.NewGuid();
+    var strippedModel = new SplitTestModel { Description = description };
+    var physicalFieldValues = new Dictionary<string, object?> {
+      ["name"] = name,
+      ["price"] = price
+    };
+    var metadata = new PerspectiveMetadata {
+      EventType = "TestEvent",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+    var scope = new PerspectiveScope();
+
+    await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context!, "wh_per_split_test", testId, strippedModel, metadata, scope,
+        physicalFieldValues, default);
+    await _context!.SaveChangesAsync();
   }
 }
