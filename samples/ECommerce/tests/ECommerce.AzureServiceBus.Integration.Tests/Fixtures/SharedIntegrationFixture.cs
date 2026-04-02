@@ -572,14 +572,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for InventoryWorker
     using (var scope = _inventoryHost!.Services.CreateScope()) {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
-      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken);
+      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken: cancellationToken);
     }
 
     // Initialize BFF schema using EFCore
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for BFF
     using (var scope = _bffHost!.Services.CreateScope()) {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
-      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
+      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken: cancellationToken);
     }
   }
 

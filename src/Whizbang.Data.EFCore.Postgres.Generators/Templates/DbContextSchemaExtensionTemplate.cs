@@ -19,6 +19,7 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 /// <summary>
 /// Extension methods for __DBCONTEXT_CLASS__ schema initialization.
 /// AOT-compatible - uses PostgresSchemaBuilder instead of EF Core's GenerateCreateScript().
+/// PgBouncer-compatible - uses transaction-level advisory locks (pg_try_advisory_xact_lock).
 /// </summary>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
@@ -27,169 +28,382 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Creates core infrastructure tables, perspective tables, executes migrations, and adds constraints.
   /// Idempotent - safe to call multiple times.
   /// AOT-compatible - no reflection, no dynamic code generation.
+  /// PgBouncer-compatible - uses transaction-level advisory locks that work with transaction pooling.
   ///
   /// Steps:
-  /// 1. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.) - generated at runtime from C# definitions
-  /// 2. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables) - generated at build time from discovered types
-  /// 3. Adds composite PK and FK constraints
-  /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch)
-  /// 5. Registers perspective associations (populates wh_message_associations for event routing)
+  /// 1. Fast path: bulk-query existing per-object hashes to detect changes without acquiring a lock
+  /// 2. Slow path: acquire transaction-level advisory lock, re-check hashes, run only changed phases
+  /// 3. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.) - generated at runtime from C# definitions
+  /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch) with hash tracking
+  /// 5. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables) - generated at build time from discovered types
+  /// 6. Adds composite PK and FK constraints
+  /// 7. Registers perspective associations (populates wh_message_associations for event routing)
+  /// 8. Reconciles perspective registry (CLR type → table name mappings)
+  /// 9. Runs database maintenance (outside transaction/lock)
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
+  /// <param name="initConnectionString">Optional direct PostgreSQL connection string (bypasses PgBouncer). Falls back to DbContext connection if null.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   public static async Task EnsureWhizbangDatabaseInitializedAsync(
     this __DBCONTEXT_FQN__ dbContext,
     ILogger? logger = null,
+    string? initConnectionString = null,
     CancellationToken cancellationToken = default) {
 
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
     var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
     var phaseSw = new System.Diagnostics.Stopwatch();
+    var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
+    var rng = new Random();
 
-    // Open connection explicitly BEFORE acquiring advisory lock.
-    // EF Core's ExecuteSqlRawAsync opens/closes connections per call by default,
-    // which would release the session-level advisory lock between operations.
-    // Keeping the connection open ensures the lock is held across all phases.
-    await dbContext.Database.OpenConnectionAsync(cancellationToken);
+    // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).
+    // Separate from the inner advisory lock retry loop which handles normal lock contention.
+    // No max attempt limit — loops until cancellationToken fires (host shutdown).
+    // Backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter.
+    var retryAttempt = 0;
+    while (true) {
+      cancellationToken.ThrowIfCancellationRequested();
 
-    try {
-      // Acquire advisory lock to prevent race conditions when multiple services start simultaneously
-      // Lock ID is based on schema name hash to allow parallel initialization of different schemas
-      // Uses pg_try_advisory_lock (non-blocking) with randomized exponential backoff
-      // to avoid thundering herd when many pods start simultaneously
-      var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
-      if (logger is not null) {
-        Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiringAdvisoryLock(logger, lockId, "__SCHEMA__");
-      }
-
-      {
-        var attempt = 0;
-        var baseDelayMs = 100;
-        var maxDelayMs = 20_000;
-        var rng = new Random();
-        var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
-        while (true) {
-          cancellationToken.ThrowIfCancellationRequested();
-
-          // pg_try_advisory_lock returns boolean: true if lock acquired, false if held by another session
-          // Use ExecuteScalarAsync to read the boolean result directly
-          await using var lockCmd = connection.CreateCommand();
-          lockCmd.CommandText = $"SELECT pg_try_advisory_lock({lockId})";
-          var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken);
-          if (lockResult is true) {
-            break;
-          }
-
-          attempt++;
-          // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 20s, plus random jitter
-          var delay = Math.Min(baseDelayMs * (1 << Math.Min(attempt - 1, 20)), maxDelayMs);
-          var jitter = rng.Next(0, delay / 2);
-          var totalDelay = delay + jitter;
-
-          if (logger is not null) {
-            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AdvisoryLockRetry(logger, lockId, attempt, totalDelay);
-          }
-
-          await Task.Delay(totalDelay, cancellationToken);
-        }
-      }
-
-      if (logger is not null) {
-        Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiredAdvisoryLock(logger, lockId, "__SCHEMA__");
-      }
+      // Open connection explicitly. EF Core's ExecuteSqlRawAsync opens/closes connections per call
+      // by default, which would break connection-scoped state. Keeping the connection open ensures
+      // all phases run on the same backend connection.
+      await dbContext.Database.OpenConnectionAsync(cancellationToken);
 
       try {
-        logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__)...", "__DBCONTEXT_CLASS__");
+        var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
 
-        // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
-        logger?.LogDebug("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
-        phases.Add(("CoreInfrastructure", phaseSw.ElapsedMilliseconds, "completed"));
+        // ═══════════════════════════════════════════════════════════════════════════
+        // FAST PATH: Bulk-query existing per-object hashes BEFORE acquiring any lock.
+        // This is a single SELECT with no lock, no transaction — lightweight and PgBouncer-safe.
+        // If all hashes match, skip initialization entirely (no lock contention on normal startup).
+        // ═══════════════════════════════════════════════════════════════════════════
+        bool infraChanged;
+        bool perspChanged;
 
-        // Step 2: Create PostgreSQL functions and migration tracking tables
-        // Must run before perspectives so tracking tables exist for per-perspective hash detection
-        logger?.LogDebug("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        migrationsApplied = await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
-        phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, "completed"));
-
-        // Step 3: Create perspective tables with per-perspective hash tracking
-        logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
-        phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, "completed"));
-
-        // Step 4: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
-        logger?.LogDebug("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
-        phases.Add(("Constraints", phaseSw.ElapsedMilliseconds, "completed"));
-
-        // Step 5: Register perspective associations (populates wh_message_associations for event routing)
-        logger?.LogDebug("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        #region REGISTER_ASSOCIATIONS
-        #endregion
-        phases.Add(("Associations", phaseSw.ElapsedMilliseconds, "completed"));
-
-        // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
-        logger?.LogDebug("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
-        phases.Add(("Registry", phaseSw.ElapsedMilliseconds, "completed"));
-
-        // Step 7: Run database maintenance (purge completed messages, etc.)
-        // Gracefully handles failures so it never prevents service startup
-        logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
-        phaseSw.Restart();
-        await PerformMaintenanceAsync(dbContext, logger, cancellationToken);
-        phases.Add(("Maintenance", phaseSw.ElapsedMilliseconds, "completed"));
-
-        sw.Stop();
-        var phaseSummary = string.Join(", ", phases.Select(p => $"{p.Name}={p.Ms}ms({p.Status})"));
-        logger?.LogInformation(
-          "Database initialization complete for {DbContext} — {MigrationsApplied} migration(s) in {ElapsedMs}ms [{Phases}]",
-          "__DBCONTEXT_CLASS__", migrationsApplied, sw.ElapsedMilliseconds, phaseSummary);
-
-        // Clear all Npgsql connection pools after migrations complete.
-        // CREATE OR REPLACE FUNCTION assigns new OIDs to functions, but connections
-        // already in the pool still cache the old OIDs. Clearing pools forces new
-        // connections with correct OID mappings. This only runs once at startup.
-        Npgsql.NpgsqlConnection.ClearAllPools();
-        logger?.LogDebug("Cleared Npgsql connection pools to refresh function OID mappings");
-      } finally {
-        // Release advisory lock - allows other services waiting on initialization to proceed
-        // Use CancellationToken.None to ensure the lock is always released, even if the
-        // original cancellationToken has been cancelled. A cancelled unlock would crash
-        // and leave the lock held, blocking all other pods indefinitely.
         try {
-          var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
-          await using var unlockCmd = connection.CreateCommand();
-          unlockCmd.CommandText = $"SELECT pg_advisory_unlock({lockId})";
-          await unlockCmd.ExecuteScalarAsync(CancellationToken.None);
+          var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
+          (infraChanged, perspChanged) = _compareHashes(existingHashes);
+
+          if (!infraChanged && !perspChanged) {
+            if (logger is not null) {
+              Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+            }
+            break; // Exit retry loop — no changes, no lock needed
+          }
 
           if (logger is not null) {
-            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.ReleasedAdvisoryLock(logger, lockId, "__SCHEMA__");
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaChangesDetected(logger, "__SCHEMA__", infraChanged, perspChanged);
           }
+        } catch {
+          // wh_schema_migrations table doesn't exist yet (first run) or query failed.
+          // Fall through to slow path — the DDL will create the tracking tables.
+          infraChanged = true;
+          perspChanged = true;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SLOW PATH: Hash mismatch or first run — acquire lock and run DDL.
+        // Uses pg_try_advisory_xact_lock (transaction-level, non-blocking) with exponential backoff.
+        // Transaction-level locks are PgBouncer-safe: PgBouncer pins the backend connection
+        // for the duration of the transaction, and the lock auto-releases on commit/rollback.
+        // ═══════════════════════════════════════════════════════════════════════════
+        if (logger is not null) {
+          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiringAdvisoryLock(logger, lockId, "__SCHEMA__");
+        }
+
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        {
+          var lockAttempt = 0;
+          var baseDelayMs = 100;
+          var maxDelayMs = 20_000;
+          while (true) {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Begin a transaction to pin the PgBouncer backend connection
+            // and scope the advisory lock to this transaction
+            transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+            // pg_try_advisory_xact_lock returns boolean: true if lock acquired, false if held
+            // Transaction-level: auto-releases on commit/rollback (no manual unlock needed)
+            await using var lockCmd = connection.CreateCommand();
+            lockCmd.CommandText = $"SELECT pg_try_advisory_xact_lock({lockId})";
+            var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken);
+            if (lockResult is true) {
+              break; // Lock acquired, transaction is active
+            }
+
+            // Lock not acquired — rollback transaction to release PgBouncer backend connection
+            // during the backoff delay, freeing it for other clients
+            await transaction.RollbackAsync(CancellationToken.None);
+            await transaction.DisposeAsync();
+            transaction = null;
+
+            lockAttempt++;
+            // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 20s, plus random jitter
+            var delay = Math.Min(baseDelayMs * (1 << Math.Min(lockAttempt - 1, 20)), maxDelayMs);
+            var jitter = rng.Next(0, delay / 2);
+            var totalDelay = delay + jitter;
+
+            if (logger is not null) {
+              Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AdvisoryLockRetry(logger, lockId, lockAttempt, totalDelay);
+            }
+
+            await Task.Delay(totalDelay, cancellationToken);
+          }
+        }
+
+        if (logger is not null) {
+          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiredAdvisoryLock(logger, lockId, "__SCHEMA__");
+        }
+
+        try {
+          // Re-check hashes inside the lock — another pod may have just completed initialization
+          // while we were waiting for the lock. This prevents redundant DDL execution.
+          // Uses a SAVEPOINT to isolate the query: if wh_schema_migrations doesn't exist yet,
+          // the failed SELECT would mark the PostgreSQL transaction as aborted. Rolling back to
+          // the savepoint restores the transaction to a usable state.
+          try {
+            await transaction!.CreateSavepointAsync("hash_recheck", cancellationToken);
+            var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
+            await transaction!.ReleaseSavepointAsync("hash_recheck", cancellationToken);
+            (infraChanged, perspChanged) = _compareHashes(existingHashes);
+
+            if (!infraChanged && !perspChanged) {
+              await transaction!.CommitAsync(cancellationToken);
+              if (logger is not null) {
+                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
+                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.TransactionCommitted(logger, lockId, "__SCHEMA__");
+              }
+              break; // Exit retry loop — another pod handled it
+            }
+          } catch {
+            // Tracking tables don't exist yet — rollback to savepoint to restore transaction state,
+            // then run everything
+            try { await transaction!.RollbackToSavepointAsync("hash_recheck", CancellationToken.None); } catch { /* best effort */ }
+            infraChanged = true;
+            perspChanged = true;
+          }
+
+          // Set command timeout to 10 minutes for DDL operations.
+          // Multiple services may be running DDL concurrently (different schemas)
+          // and lock contention on catalog tables can cause delays.
+          dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(600));
+
+          logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__, infra={InfraChanged}, persp={PerspChanged})...",
+            "__DBCONTEXT_CLASS__", infraChanged, perspChanged);
+
+          if (infraChanged) {
+            // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
+            logger?.LogDebug("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
+            phases.Add(("CoreInfrastructure", phaseSw.ElapsedMilliseconds, "completed"));
+
+            // Step 2: Create PostgreSQL functions and migration tracking tables
+            // Must run before perspectives so tracking tables exist for per-perspective hash detection
+            logger?.LogDebug("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            migrationsApplied = await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+            phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, "completed"));
+          } else {
+            phases.Add(("CoreInfrastructure", 0, "skipped (hash match)"));
+            phases.Add(("Migrations", 0, "skipped (hash match)"));
+          }
+
+          if (infraChanged || perspChanged) {
+            // Step 3: Create perspective tables with per-perspective hash tracking
+            logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
+            phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, "completed"));
+          } else {
+            phases.Add(("PerspectiveTables", 0, "skipped (hash match)"));
+          }
+
+          if (infraChanged) {
+            // Step 4: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
+            logger?.LogDebug("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
+            phases.Add(("Constraints", phaseSw.ElapsedMilliseconds, "completed"));
+          } else {
+            phases.Add(("Constraints", 0, "skipped (hash match)"));
+          }
+
+          if (infraChanged || perspChanged) {
+            // Step 5: Register perspective associations (populates wh_message_associations for event routing)
+            logger?.LogDebug("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            #region REGISTER_ASSOCIATIONS
+            #endregion
+            phases.Add(("Associations", phaseSw.ElapsedMilliseconds, "completed"));
+
+            // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
+            logger?.LogDebug("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
+            phases.Add(("Registry", phaseSw.ElapsedMilliseconds, "completed"));
+          } else {
+            phases.Add(("Associations", 0, "skipped (hash match)"));
+            phases.Add(("Registry", 0, "skipped (hash match)"));
+          }
+
+          // Commit transaction — this automatically releases the advisory lock
+          await transaction!.CommitAsync(cancellationToken);
+
+          if (logger is not null) {
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.TransactionCommitted(logger, lockId, "__SCHEMA__");
+          }
+
+          // Reset command timeout to default
+          dbContext.Database.SetCommandTimeout(null);
+
+          sw.Stop();
+          var phaseSummary = string.Join(", ", phases.Select(p => $"{p.Name}={p.Ms}ms({p.Status})"));
+          logger?.LogInformation(
+            "Database initialization complete for {DbContext} — {MigrationsApplied} migration(s) in {ElapsedMs}ms [{Phases}]",
+            "__DBCONTEXT_CLASS__", migrationsApplied, sw.ElapsedMilliseconds, phaseSummary);
+
+          // Clear all Npgsql connection pools after migrations complete.
+          // CREATE OR REPLACE FUNCTION assigns new OIDs to functions, but connections
+          // already in the pool still cache the old OIDs. Clearing pools forces new
+          // connections with correct OID mappings. This only runs once at startup.
+          Npgsql.NpgsqlConnection.ClearAllPools();
+          logger?.LogDebug("Cleared Npgsql connection pools to refresh function OID mappings");
+        } catch {
+          // Rollback on failure — this automatically releases the advisory lock
+          try {
+            if (transaction is not null) {
+              await transaction.RollbackAsync(CancellationToken.None);
+              await transaction.DisposeAsync();
+            }
+          } catch { /* best effort rollback */ }
+
+          // Reset command timeout to default
+          try { dbContext.Database.SetCommandTimeout(null); } catch { /* best effort */ }
+
+          throw;
+        }
+
+        break; // Success — exit outer retry loop
+      } catch (Exception ex) when (_isRetryableError(ex)) {
+        retryAttempt++;
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter
+        var delay = Math.Min(1000 * (1 << Math.Min(retryAttempt - 1, 20)), 180_000);
+        var jitter = rng.Next(0, Math.Min(delay / 4, 5000));
+        var totalDelay = delay + jitter;
+
+        if (logger is not null) {
+          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.InitializationRetry(logger, "__SCHEMA__", retryAttempt, totalDelay, ex.Message);
+        }
+
+        // Reset state for retry
+        phases.Clear();
+        migrationsApplied = 0;
+        sw.Restart();
+
+        await Task.Delay(totalDelay, cancellationToken);
+      } finally {
+        // Close the explicitly-opened connection (returns to pool)
+        try {
+          await dbContext.Database.CloseConnectionAsync();
         } catch (Exception ex) {
           if (logger is not null) {
-            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.FailedToReleaseAdvisoryLock(logger, ex, lockId, "__SCHEMA__");
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.FailedToCloseConnection(logger, ex, "__SCHEMA__");
           }
-        }
-      }
-    } finally {
-      // Close the explicitly-opened connection (returns to pool, which also releases advisory lock)
-      try {
-        await dbContext.Database.CloseConnectionAsync();
-      } catch (Exception ex) {
-        if (logger is not null) {
-          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.FailedToCloseConnection(logger, ex, "__SCHEMA__");
         }
       }
     }
+
+    // Step 7: Run database maintenance (purge completed messages, etc.)
+    // Runs outside the transaction and advisory lock because:
+    // 1. VACUUM ANALYZE cannot run inside a transaction block
+    // 2. Maintenance is non-critical and should not hold the lock
+    // 3. Multiple pods can run maintenance concurrently without issues
+    // Gracefully handles failures so it never prevents service startup
+    logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await PerformMaintenanceAsync(dbContext, logger, initConnectionString, cancellationToken);
+  }
+
+  /// <summary>
+  /// Determines if an exception is transient and the initialization should be retried.
+  /// </summary>
+  internal static bool _isRetryableError(Exception ex) {
+    if (ex is Npgsql.NpgsqlException npgsqlEx) {
+      if (npgsqlEx.IsTransient) return true;
+      if (npgsqlEx is Npgsql.PostgresException pgEx) {
+        // 40001 = serialization_failure, 40P01 = deadlock_detected, 57014 = query_canceled (timeout)
+        return pgEx.SqlState is "40001" or "40P01" or "57014";
+      }
+    }
+    if (ex is TimeoutException) return true;
+    if (ex is System.IO.IOException) return true;
+    return false;
+  }
+
+  /// <summary>
+  /// Bulk-queries all per-object hashes from wh_schema_migrations.
+  /// Used by the fast path to detect changes without acquiring a lock.
+  /// </summary>
+  private static async Task<System.Collections.Generic.List<(string FileName, string Hash, string Owner)>> _bulkGetHashesAsync(
+      Npgsql.NpgsqlConnection connection, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"SELECT file_name, content_hash, owner FROM __QUOTED_SCHEMA__.wh_schema_migrations";
+    cmd.CommandTimeout = 30;
+    var results = new System.Collections.Generic.List<(string, string, string)>();
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      var owner = reader.IsDBNull(2) ? "whizbang" : reader.GetString(2);
+      results.Add((reader.GetString(0), reader.GetString(1), owner));
+    }
+    return results;
+  }
+
+  /// <summary>
+  /// Compares existing per-object hashes against build-time hashes.
+  /// Partitions by owner column to determine infrastructure vs perspective changes independently.
+  /// </summary>
+  private static (bool InfraChanged, bool PerspChanged) _compareHashes(
+      System.Collections.Generic.List<(string FileName, string Hash, string Owner)> existingRows) {
+    var infraHashes = new System.Collections.Generic.Dictionary<string, string>();
+    var perspHashes = new System.Collections.Generic.Dictionary<string, string>();
+    foreach (var (fileName, hash, owner) in existingRows) {
+      if (owner == "perspective") {
+        perspHashes[fileName] = hash;
+      } else {
+        infraHashes[fileName] = hash;
+      }
+    }
+
+    // Compare infrastructure migrations
+    var infraChanged = false;
+    var migrations = GetMigrationScripts();
+    foreach (var (name, sql) in migrations) {
+      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
+      var hash = Convert.ToHexStringLower(
+          System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
+      if (!infraHashes.TryGetValue(name, out var existingHash) || existingHash != hash) {
+        infraChanged = true;
+        break;
+      }
+    }
+
+    // Compare perspective entries
+    var perspChanged = false;
+    var perspectives = GetPerspectiveEntries();
+    foreach (var (name, sql) in perspectives) {
+      var key = $"perspective:{name}";
+      var hash = Convert.ToHexStringLower(
+          System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql)));
+      if (!perspHashes.TryGetValue(key, out var existingHash) || existingHash != hash) {
+        perspChanged = true;
+        break;
+      }
+    }
+
+    return (infraChanged, perspChanged);
   }
 
   /// <summary>
@@ -208,16 +422,27 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Backward-compatibility: rename old table names before creating new ones.
     // Must happen before CREATE TABLE IF NOT EXISTS, otherwise the old table remains
     // orphaned and migration 033 fails with 42P07 (relation already exists).
+    // Uses PL/pgSQL exception handling to avoid aborting the enclosing transaction
+    // (PostgreSQL marks transactions as aborted after any unhandled error).
     const string BackwardCompatRenames = @"
-ALTER TABLE IF EXISTS ""__SCHEMA__"".wh_perspective_checkpoints RENAME TO wh_perspective_cursors;
-ALTER INDEX IF EXISTS idx_perspective_checkpoints_perspective_name RENAME TO idx_perspective_cursors_perspective_name;
-ALTER INDEX IF EXISTS idx_perspective_checkpoints_last_event_id RENAME TO idx_perspective_cursors_last_event_id;
+DO $$
+BEGIN
+  ALTER TABLE IF EXISTS ""__SCHEMA__"".wh_perspective_checkpoints RENAME TO wh_perspective_cursors;
+EXCEPTION WHEN duplicate_table OR undefined_table THEN NULL;
+END $$;
+DO $$
+BEGIN
+  ALTER INDEX IF EXISTS idx_perspective_checkpoints_perspective_name RENAME TO idx_perspective_cursors_perspective_name;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+DO $$
+BEGIN
+  ALTER INDEX IF EXISTS idx_perspective_checkpoints_last_event_id RENAME TO idx_perspective_cursors_last_event_id;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
 ";
     try {
       await dbContext.Database.ExecuteSqlRawAsync(BackwardCompatRenames, cancellationToken);
-    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-      // Target table already exists — old table was already renamed or new table was created fresh
-      logger?.LogDebug("Backward-compat rename skipped (target already exists): {Message}", ex.MessageText);
     } catch (Exception ex) {
       // Non-critical — log and continue (fresh databases won't have the old table)
       logger?.LogDebug(ex, "Backward-compat rename completed or skipped");
@@ -234,9 +459,6 @@ ALTER INDEX IF EXISTS idx_perspective_checkpoints_last_event_id RENAME TO idx_pe
     try {
       await dbContext.Database.ExecuteSqlRawAsync(coreInfrastructureSchema, cancellationToken);
       logger?.LogDebug("Core infrastructure tables created successfully");
-    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-      // 42P07 = duplicate_table (expected if tables already exist)
-      logger?.LogDebug("Core infrastructure tables already exist (expected): {Table}", ex.TableName ?? "unknown");
     } catch (Exception ex) {
       logger?.LogError(ex, "Failed to create core infrastructure tables");
       throw;
@@ -312,13 +534,13 @@ ALTER INDEX IF EXISTS idx_perspective_checkpoints_last_event_id RENAME TO idx_pe
         var status = isUpdate ? 2 : 1;
         var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
 
-        await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, status, desc, executionOrder, cancellationToken);
+        await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, status, desc, executionOrder, "perspective", cancellationToken);
         logger?.LogDebug("Perspective {Perspective}: {Status}", name, desc);
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-        await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, 3, "Skipped (table already exists)", executionOrder, cancellationToken);
+        await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, 3, "Skipped (table already exists)", executionOrder, "perspective", cancellationToken);
         logger?.LogDebug("Perspective table already exists (expected): {Table}", ex.TableName ?? "unknown");
       } catch (Exception ex) {
-        try { await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, cancellationToken); } catch { /* best effort */ }
+        try { await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, "perspective", cancellationToken); } catch { /* best effort */ }
         logger?.LogError(ex, "Failed to create perspective table for {Perspective}", name);
         throw;
       }
@@ -437,9 +659,11 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           status_description TEXT,
           previous_content TEXT,
           execution_order INTEGER,
+          owner VARCHAR(20) NOT NULL DEFAULT 'whizbang',
           applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );";
+        );
+        ALTER TABLE __QUOTED_SCHEMA__.wh_schema_migrations ADD COLUMN IF NOT EXISTS owner VARCHAR(20) NOT NULL DEFAULT 'whizbang';";
       createCmd.CommandTimeout = 30;
       await createCmd.ExecuteNonQueryAsync(cancellationToken);
 
@@ -481,13 +705,13 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           var status = isUpdate ? 2 : 1;
           var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
 
-          await _upsertMigrationAsync(connection, name, hash, versionId.Value, status, desc, executionOrder, cancellationToken);
+          await _upsertMigrationAsync(connection, name, hash, versionId.Value, status, desc, executionOrder, "whizbang", cancellationToken);
           logger?.LogDebug("Migration {Migration}: {Status} in {ElapsedMs}ms", name, desc, migSw.ElapsedMilliseconds);
         } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
-          await _upsertMigrationAsync(connection, name, hash, versionId.Value, 3, "Skipped (function already exists)", executionOrder, cancellationToken);
+          await _upsertMigrationAsync(connection, name, hash, versionId.Value, 3, "Skipped (function already exists)", executionOrder, "whizbang", cancellationToken);
           logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);
         } catch (Exception ex) {
-          try { await _upsertMigrationAsync(connection, name, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, cancellationToken); } catch { /* best effort */ }
+          try { await _upsertMigrationAsync(connection, name, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, "whizbang", cancellationToken); } catch { /* best effort */ }
           logger?.LogError(ex, "Failed to execute migration {Migration}", name);
           throw;
         }
@@ -522,7 +746,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     cmd.Parameters.AddWithValue("version", "__LIBRARY_VERSION__");
     cmd.Parameters.AddWithValue("appVersion", "__APPLICATION_VERSION__");
     cmd.Parameters.AddWithValue("notes", DBNull.Value);
-    cmd.CommandTimeout = 10;
+    cmd.CommandTimeout = 30;
     var result = await cmd.ExecuteScalarAsync(ct);
     return (int)result!;
   }
@@ -531,7 +755,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"SELECT content_hash FROM __QUOTED_SCHEMA__.wh_schema_migrations WHERE file_name = @name";
     cmd.Parameters.AddWithValue("name", fileName);
-    cmd.CommandTimeout = 10;
+    cmd.CommandTimeout = 30;
     var result = await cmd.ExecuteScalarAsync(ct);
     return result as string;
   }
@@ -546,28 +770,29 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     cmd.Parameters.AddWithValue("status", (short)status);
     cmd.Parameters.AddWithValue("desc", desc);
     cmd.Parameters.AddWithValue("versionId", versionId);
-    cmd.CommandTimeout = 10;
+    cmd.CommandTimeout = 30;
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
   private static async Task _upsertMigrationAsync(
       Npgsql.NpgsqlConnection connection, string fileName, string hash, int versionId,
-      int status, string desc, int executionOrder, CancellationToken ct) {
+      int status, string desc, int executionOrder, string owner, CancellationToken ct) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO __QUOTED_SCHEMA__.wh_schema_migrations (file_name, content_hash, version_id, status, status_description, execution_order)
-      VALUES (@name, @hash, @versionId, @status, @desc, @execOrder)
+      INSERT INTO __QUOTED_SCHEMA__.wh_schema_migrations (file_name, content_hash, version_id, status, status_description, execution_order, owner)
+      VALUES (@name, @hash, @versionId, @status, @desc, @execOrder, @owner)
       ON CONFLICT (file_name) DO UPDATE SET
         content_hash = EXCLUDED.content_hash, version_id = EXCLUDED.version_id,
         status = EXCLUDED.status, status_description = EXCLUDED.status_description,
-        execution_order = EXCLUDED.execution_order, updated_at = NOW()";
+        execution_order = EXCLUDED.execution_order, owner = EXCLUDED.owner, updated_at = NOW()";
     cmd.Parameters.AddWithValue("name", fileName);
     cmd.Parameters.AddWithValue("hash", hash);
     cmd.Parameters.AddWithValue("versionId", versionId);
     cmd.Parameters.AddWithValue("status", (short)status);
     cmd.Parameters.AddWithValue("desc", desc);
     cmd.Parameters.AddWithValue("execOrder", executionOrder);
-    cmd.CommandTimeout = 10;
+    cmd.Parameters.AddWithValue("owner", owner);
+    cmd.CommandTimeout = 30;
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
@@ -813,12 +1038,13 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   private static async Task PerformMaintenanceAsync(
     __DBCONTEXT_FQN__ dbContext,
     ILogger? logger,
+    string? initConnectionString,
     CancellationToken cancellationToken) {
     try {
       // Call the maintenance function and log results
       using var command = dbContext.Database.GetDbConnection().CreateCommand();
       command.CommandText = @"SELECT * FROM __QUOTED_SCHEMA__.perform_maintenance()";
-      command.CommandTimeout = 10;
+      command.CommandTimeout = 30;
 
       await dbContext.Database.OpenConnectionAsync(cancellationToken);
 
@@ -834,21 +1060,27 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       }
 
       // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined.
-      // When using NpgsqlDataSource (Aspire/cloud), GetConnectionString() strips the password,
-      // so creating a new NpgsqlConnection from it would fail auth.
-      // Instead, get the DbDataSource from EF Core's options extension which preserves full auth.
+      // When an initConnectionString is provided, use it directly for VACUUM (bypasses PgBouncer).
+      // Otherwise, get NpgsqlDataSource from EF Core options which preserves full auth.
       Npgsql.NpgsqlConnection? vacuumConn = null;
       try {
-        var npgsqlExt = dbContext.GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>()
-          .Extensions.OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
-          .FirstOrDefault();
-        var dataSource = npgsqlExt?.DataSource as Npgsql.NpgsqlDataSource;
-        if (dataSource != null) {
-          vacuumConn = dataSource.CreateConnection();
+        if (!string.IsNullOrEmpty(initConnectionString)) {
+          vacuumConn = new Npgsql.NpgsqlConnection(initConnectionString);
         } else {
-          var connectionString = dbContext.Database.GetConnectionString();
-          if (!string.IsNullOrEmpty(connectionString)) {
-            vacuumConn = new Npgsql.NpgsqlConnection(connectionString);
+          // When using NpgsqlDataSource (Aspire/cloud), GetConnectionString() strips the password,
+          // so creating a new NpgsqlConnection from it would fail auth.
+          // Instead, get the DbDataSource from EF Core's options extension which preserves full auth.
+          var npgsqlExt = dbContext.GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>()
+            .Extensions.OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
+            .FirstOrDefault();
+          var dataSource = npgsqlExt?.DataSource as Npgsql.NpgsqlDataSource;
+          if (dataSource != null) {
+            vacuumConn = dataSource.CreateConnection();
+          } else {
+            var connectionString = dbContext.Database.GetConnectionString();
+            if (!string.IsNullOrEmpty(connectionString)) {
+              vacuumConn = new Npgsql.NpgsqlConnection(connectionString);
+            }
           }
         }
 

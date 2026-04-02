@@ -210,12 +210,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     using (var initScope = _inventoryHost.Services.CreateScope()) {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<ServiceBusIntegrationFixture>>();
-      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: cancellationToken);
     }
     using (var initScope = _bffHost.Services.CreateScope()) {
       var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<ServiceBusIntegrationFixture>>();
-      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: cancellationToken);
     }
     Console.WriteLine("[ServiceBusFixture] Database schema initialized.");
 

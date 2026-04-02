@@ -595,7 +595,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
       Console.WriteLine("[InMemoryFixture] Initializing InventoryWorker schema...");
-      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger, cancellationToken);
+      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger, cancellationToken: cancellationToken);
       Console.WriteLine("[InMemoryFixture] InventoryWorker schema (inventory) initialized");
     }
 
@@ -605,7 +605,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
       Console.WriteLine("[InMemoryFixture] Initializing BFF schema...");
-      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger, cancellationToken);
+      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger, cancellationToken: cancellationToken);
       Console.WriteLine("[InMemoryFixture] BFF schema (bff) initialized");
     }
 
