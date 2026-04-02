@@ -318,11 +318,9 @@ public class OutboxPublishPipelineIntegrationTests {
     await worker.StartAsync(cts.Token);
 
     try {
-      // Act — same pattern as working tests
-      strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchOptions.None);
-
-      // publishedTcs set deterministically by TestPublishStrategy.PublishAsync
+      // Act — coordinator loop picks up WorkToReturn via ProcessWorkBatchAsync,
+      // writes to channel, publisher loop reads and publishes.
+      // No need to call strategy.FlushAsync — the coordinator loop handles this.
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
       // postLifecycleFired set deterministically by PostLifecycleTrackingInvoker
