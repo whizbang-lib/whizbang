@@ -139,6 +139,7 @@ public partial class PerspectiveWorker(
 
     await _initializePerspectiveRegistryAsync();
     await _processInitialCheckpointsAsync(stoppingToken);
+    await _reconcileOrphanedLifecyclesAsync(stoppingToken);
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -249,6 +250,71 @@ public partial class PerspectiveWorker(
     var cleaned = lifecycleCoordinator?.CleanupStaleTracking(TimeSpan.FromMinutes(5)) ?? 0;
     if (cleaned > 0) {
       LogStaleTrackingCleaned(_logger, cleaned);
+    }
+  }
+
+  /// <summary>
+  /// Reconciles orphaned lifecycle events at startup.
+  /// Finds events where all perspectives completed but PostLifecycle never fired
+  /// (e.g., due to process crash) and replays the lifecycle stages.
+  /// </summary>
+  private async Task _reconcileOrphanedLifecyclesAsync(CancellationToken ct) {
+    if (_perspectivesPerEventType is null || _perspectivesPerEventType.Count == 0) {
+      return;
+    }
+
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var workCoordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+      if (workCoordinator is null || lifecycleCoordinator is null) {
+        return;
+      }
+
+      var orphaned = await workCoordinator.GetOrphanedLifecycleEventsAsync(
+        _perspectivesPerEventType, TimeSpan.FromMinutes(30), ct);
+
+      if (orphaned.Count == 0) {
+        return;
+      }
+
+      LogReconciliationStarting(_logger, orphaned.Count);
+
+      foreach (var orphan in orphaned) {
+        try {
+          var tracking = lifecycleCoordinator.BeginTracking(
+            orphan.EventId, orphan.Envelope,
+            LifecycleStage.PostAllPerspectivesDetached, MessageSource.Local,
+            orphan.StreamId);
+
+          await _establishSecurityContextAsync(orphan.Envelope, scope.ServiceProvider, ct);
+          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scope.ServiceProvider, ct);
+          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scope.ServiceProvider, ct);
+          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, ct);
+          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct);
+
+          await workCoordinator.RecordLifecycleCompletionAsync(orphan.EventId, ct);
+          LogReconciliationCompleted(_logger, orphan.EventId);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          LogReconciliationError(_logger, ex, orphan.EventId);
+        }
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogReconciliationFailed(_logger, ex);
+    }
+  }
+
+  /// <summary>
+  /// Records a durable lifecycle completion marker for crash recovery.
+  /// </summary>
+  private static async Task _recordLifecycleCompletionAsync(
+    Guid eventId,
+    IServiceProvider scopedProvider,
+    CancellationToken ct) {
+    var workCoordinator = scopedProvider.GetService<IWorkCoordinator>();
+    if (workCoordinator is not null) {
+      await workCoordinator.RecordLifecycleCompletionAsync(eventId, ct);
     }
   }
 
@@ -1194,6 +1260,9 @@ public partial class PerspectiveWorker(
           await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
           await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
           coordinatorMetrics?.PostLifecycleFired.Add(1);
+
+          // Record durable lifecycle completion marker for crash recovery
+          await _recordLifecycleCompletionAsync(eventId, scopedProvider, cancellationToken);
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // Isolate per-event errors — one failing receptor must not prevent other events
@@ -1992,6 +2061,34 @@ public partial class PerspectiveWorker(
     Message = "PostLifecycle stage failed for event {EventId}. Error isolated — other events continue processing."
   )]
   static partial void LogPostLifecycleError(ILogger logger, Exception exception, Guid eventId);
+
+  [LoggerMessage(
+    EventId = 48,
+    Level = LogLevel.Information,
+    Message = "Reconciliation starting: {Count} orphaned lifecycle events found"
+  )]
+  static partial void LogReconciliationStarting(ILogger logger, int count);
+
+  [LoggerMessage(
+    EventId = 49,
+    Level = LogLevel.Information,
+    Message = "Reconciliation completed for event {EventId}"
+  )]
+  static partial void LogReconciliationCompleted(ILogger logger, Guid eventId);
+
+  [LoggerMessage(
+    EventId = 50,
+    Level = LogLevel.Error,
+    Message = "Reconciliation failed for event {EventId}. Error isolated — other events continue."
+  )]
+  static partial void LogReconciliationError(ILogger logger, Exception exception, Guid eventId);
+
+  [LoggerMessage(
+    EventId = 51,
+    Level = LogLevel.Error,
+    Message = "Lifecycle reconciliation scan failed. Will retry on next startup."
+  )]
+  static partial void LogReconciliationFailed(ILogger logger, Exception exception);
 }
 
 /// <summary>

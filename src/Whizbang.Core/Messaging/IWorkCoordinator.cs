@@ -327,7 +327,7 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
   Task RecordLifecycleCompletionAsync(
     Guid eventId,
-    CancellationToken cancellationToken = default);
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   /// <summary>
   /// Finds events where all perspective cursors are past the event but no lifecycle
@@ -342,7 +342,7 @@ public interface IWorkCoordinator {
   Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
     Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
     TimeSpan lookbackWindow,
-    CancellationToken cancellationToken = default);
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<OrphanedLifecycleEvent>>([]);
 
   /// <summary>
   /// Deletes lifecycle completion markers older than the specified retention period.
@@ -354,7 +354,7 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
   Task<int> CleanupLifecycleCompletionsAsync(
     TimeSpan retentionPeriod,
-    CancellationToken cancellationToken = default);
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
 }
 
 /// <summary>
