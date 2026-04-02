@@ -490,6 +490,144 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
   }
 
   // ==========================================================================
+  // Split Mode: Advanced LINQ
+  // ==========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Select_ProjectPhysicalField_ReturnsValueAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Projected", 42.00m, "proj desc");
+
+    // Act — project just the physical field
+    var names = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .Select(r => r.Data.Name)
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(names).Count().IsEqualTo(1);
+    await Assert.That(names[0]).IsEqualTo("Projected");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Count_Where_PhysicalField_ReturnsCorrectCountAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("A", 10.00m, "a");
+    await _insertSplitRowAsync("B", 50.00m, "b");
+    await _insertSplitRowAsync("C", 100.00m, "c");
+
+    // Act
+    var count = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .CountAsync(r => r.Data.Price > 25.00m, cancellationToken);
+
+    // Assert
+    await Assert.That(count).IsEqualTo(2);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Any_PhysicalField_TranslatesToSqlAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Widget", 10.00m, "w");
+
+    // Act
+    var exists = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .AnyAsync(r => r.Data.Name == "Widget", cancellationToken);
+    var notExists = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .AnyAsync(r => r.Data.Name == "NonExistent", cancellationToken);
+
+    // Assert
+    await Assert.That(exists).IsTrue();
+    await Assert.That(notExists).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Where_StringContainsOnPhysicalField_FiltersCorrectlyAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Widget Alpha", 10.00m, "a");
+    await _insertSplitRowAsync("Gadget Beta", 20.00m, "b");
+    await _insertSplitRowAsync("Widget Gamma", 30.00m, "c");
+
+    // Act — string Contains on physical field
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .Where(r => r.Data.Name.Contains("Widget"))
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows.All(r => r.Data.Name.Contains("Widget"))).IsTrue();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Where_CombinedPhysicalAndJsonbFields_FiltersCorrectlyAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowAsync("Widget", 50.00m, "cheap widget");
+    await _insertSplitRowAsync("Widget", 100.00m, "expensive widget");
+    await _insertSplitRowAsync("Gadget", 50.00m, "cheap gadget");
+
+    // Act — WHERE on physical field (Name) AND JSONB field (Description)
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .Where(r => r.Data.Name == "Widget" && r.Data.Description!.Contains("expensive"))
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Widget");
+    await Assert.That(rows[0].Data.Price).IsEqualTo(100.00m);
+    await Assert.That(rows[0].Data.Description).IsEqualTo("expensive widget");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_OrderByThenBy_MixedFields_OrdersCorrectlyAsync(CancellationToken cancellationToken) {
+    // Arrange — same name, different prices and descriptions
+    await _insertSplitRowAsync("Widget", 30.00m, "z-desc");
+    await _insertSplitRowAsync("Widget", 10.00m, "a-desc");
+    await _insertSplitRowAsync("Gadget", 20.00m, "m-desc");
+
+    // Act — OrderBy physical field, ThenBy physical field
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .OrderBy(r => r.Data.Name)
+        .ThenBy(r => r.Data.Price)
+        .ToListAsync(cancellationToken);
+
+    // Assert — Gadget first (alphabetically), then Widgets ordered by price
+    await Assert.That(rows).Count().IsEqualTo(3);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Gadget");
+    await Assert.That(rows[1].Data.Name).IsEqualTo("Widget");
+    await Assert.That(rows[1].Data.Price).IsEqualTo(10.00m);
+    await Assert.That(rows[2].Data.Name).IsEqualTo("Widget");
+    await Assert.That(rows[2].Data.Price).IsEqualTo(30.00m);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_OrderBy_GeneratedSql_UsesPhysicalColumn_NotJsonbAsync(CancellationToken cancellationToken) {
+    // Arrange
+    var query = _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .OrderBy(r => r.Data.Price);
+
+    // Act
+    var sql = query.ToQueryString();
+
+    // Assert
+    await Assert.That(sql).DoesNotContain("data ->> 'Price'")
+      .Because("Physical field Price should be ordered by column, not JSONB");
+    await Assert.That(sql.ToLowerInvariant()).Contains("order by")
+      .Because("Should have ORDER BY clause");
+  }
+
+  // ==========================================================================
   // Helpers
   // ==========================================================================
 
