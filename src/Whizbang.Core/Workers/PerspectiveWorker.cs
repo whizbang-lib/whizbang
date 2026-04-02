@@ -1179,20 +1179,28 @@ public partial class PerspectiveWorker(
         continue;
       }
 
-      await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
+      try {
+        await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
 
-      // Get existing tracking (created during PrePerspective via BeginTracking/GetOrAdd)
-      var tracking = lifecycleCoordinator.GetTracking(eventId);
-      if (tracking is not null) {
-        // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
-        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
-        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
-        coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
+        // Get existing tracking (created during PrePerspective via BeginTracking/GetOrAdd)
+        var tracking = lifecycleCoordinator.GetTracking(eventId);
+        if (tracking is not null) {
+          // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
+          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, scopedProvider, cancellationToken);
+          await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scopedProvider, cancellationToken);
+          coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
 
-        // PostLifecycle: fires once per event as the final lifecycle stage
-        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
-        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
-        coordinatorMetrics?.PostLifecycleFired.Add(1);
+          // PostLifecycle: fires once per event as the final lifecycle stage
+          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, cancellationToken);
+          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
+          coordinatorMetrics?.PostLifecycleFired.Add(1);
+        }
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Isolate per-event errors — one failing receptor must not prevent other events
+        // from firing PostLifecycle. Without this, a single throwing receptor kills the
+        // entire batch loop and all subsequent events never get PostLifecycle.
+        LogPostLifecycleError(_logger, ex, eventId);
+        coordinatorMetrics?.PostLifecycleErrors.Add(1);
       }
 
       // DON'T abandon tracking after stages fire — the tracking instance's stage guard
@@ -1977,6 +1985,13 @@ public partial class PerspectiveWorker(
     Message = "Cleaned {Count} stale lifecycle tracking entries (inactive > 5 minutes)"
   )]
   static partial void LogStaleTrackingCleaned(ILogger logger, int count);
+
+  [LoggerMessage(
+    EventId = 47,
+    Level = LogLevel.Error,
+    Message = "PostLifecycle stage failed for event {EventId}. Error isolated — other events continue processing."
+  )]
+  static partial void LogPostLifecycleError(ILogger logger, Exception exception, Guid eventId);
 }
 
 /// <summary>
