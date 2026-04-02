@@ -53,6 +53,9 @@ public sealed class LifecycleCoordinatorMetrics {
   /// <summary>Stale tracking entries cleaned by inactivity threshold.</summary>
   public Counter<long> StaleTrackingCleaned { get; }
 
+  /// <summary>Stale entries preserved because perspectives were partially complete.</summary>
+  public Counter<long> StaleTrackingPreservedPartialPerspectives { get; }
+
   /// <summary>Initializes a new instance of the <see cref="LifecycleCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public LifecycleCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
@@ -91,5 +94,9 @@ public sealed class LifecycleCoordinatorMetrics {
     StaleTrackingCleaned = meter.CreateCounter<long>(
       "whizbang.lifecycle_coordinator.stale_tracking_cleaned",
       description: "Stale tracking entries cleaned by inactivity threshold");
+
+    StaleTrackingPreservedPartialPerspectives = meter.CreateCounter<long>(
+      "whizbang.lifecycle_coordinator.stale_tracking_preserved_partial_perspectives",
+      description: "Stale entries preserved because perspectives were partially complete");
   }
 }
