@@ -166,7 +166,15 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
         continue;
       }
 
-      // Stale and incomplete — remove all associated state
+      // Guard: do NOT clean entries with partial perspective completions.
+      // These are actively being worked on across batch cycles — cleaning them
+      // destroys completed signals and permanently prevents PostAllPerspectives.
+      if (_perspectiveStates.TryGetValue(kvp.Key, out var perspState) && perspState.HasPartialCompletions) {
+        _metrics?.StaleTrackingPreservedPartialPerspectives.Add(1);
+        continue;
+      }
+
+      // Stale and incomplete with no partial progress — safe to remove
       if (_tracked.TryRemove(kvp.Key, out _)) {
         _perspectiveStates.TryRemove(kvp.Key, out _);
         _whenAllStates.TryRemove(kvp.Key, out _);
@@ -201,6 +209,14 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     /// <summary>Fast-path check for completion.</summary>
     public bool IsComplete {
       get { lock (_lock) { return _allComplete; } }
+    }
+
+    /// <summary>
+    /// Returns true if at least one (but not all) expected perspectives have completed.
+    /// Used by cleanup to avoid destroying in-progress cross-batch tracking.
+    /// </summary>
+    public bool HasPartialCompletions {
+      get { lock (_lock) { return !_allComplete && _completed.Count > 0; } }
     }
 
     /// <summary>
