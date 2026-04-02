@@ -151,6 +151,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Discover physical fields (including vector fields) on model properties
     var physicalFields = _discoverPhysicalFields(modelType);
 
+    // Extract storage mode from [PerspectiveStorage] attribute on model type
+    var storageMode = _extractStorageMode(modelType);
+
+    // Check if model is a record type (supports 'with {}' expressions for immutable copies)
+    var isModelRecord = modelType is INamedTypeSymbol namedModel && namedModel.IsRecord;
+
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
             ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -163,7 +169,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
-            PhysicalFields: physicalFields.Length > 0 ? physicalFields : null
+            PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
+            StorageMode: storageMode,
+            IsModelRecord: isModelRecord
         ),
         Warning: null
     );
@@ -389,6 +397,25 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
       sb.AppendLine("    };");
       sb.AppendLine();
+
+      // Split mode (StorageMode == 2): strip physical fields from model before JSONB serialization.
+      // Physical field values are already captured in the dictionary for column storage.
+      // This prevents data duplication — JSONB contains only non-physical fields.
+      if (perspective.StorageMode == 2 && perspective.PhysicalFields.Length > 0) {
+        sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
+        if (perspective.IsModelRecord) {
+          // Records: use 'with {}' expression for immutable copy
+          var withProps = string.Join(", ", perspective.PhysicalFields.Select(f => $"{f.PropertyName} = default"));
+          sb.AppendLine($"    model = model with {{ {withProps} }};");
+        } else {
+          // Classes: null out each property directly
+          foreach (var field in perspective.PhysicalFields) {
+            sb.AppendLine($"    model.{field.PropertyName} = default;");
+          }
+        }
+        sb.AppendLine();
+      }
+
       sb.AppendLine("    // Upsert model with physical field values (insert or update)");
       sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
       sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
@@ -644,6 +671,26 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _getRunnerName(string simpleName) {
     // Remove dots from nested type names to create valid C# identifier
     return $"{simpleName.Replace(".", "")}Runner";
+  }
+
+  /// <summary>
+  /// Extracts the FieldStorageMode from the [PerspectiveStorage] attribute on the model type.
+  /// Returns 0 (JsonOnly) if the attribute is not present.
+  /// </summary>
+  private static int _extractStorageMode(ITypeSymbol modelType) {
+    if (modelType is not INamedTypeSymbol namedModelType) {
+      return 0;
+    }
+
+    foreach (var attribute in namedModelType.GetAttributes()) {
+      if (attribute.AttributeClass?.Name == "PerspectiveStorageAttribute" &&
+          attribute.ConstructorArguments.Length > 0 &&
+          attribute.ConstructorArguments[0].Value is int mode) {
+        return mode;
+      }
+    }
+
+    return 0; // JsonOnly
   }
 
   /// <summary>

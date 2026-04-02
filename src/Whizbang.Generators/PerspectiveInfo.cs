@@ -31,7 +31,9 @@ internal sealed record PerspectiveInfo(
     string[]? MustExistEventTypes = null,
     EventReturnTypeInfo[]? EventReturnTypes = null,
     PhysicalFieldInfoCompact[]? PhysicalFields = null,
-    bool IsWithActionsInterface = false
+    bool IsWithActionsInterface = false,
+    int StorageMode = 0,
+    bool IsModelRecord = false
 );
 
 /// <summary>
