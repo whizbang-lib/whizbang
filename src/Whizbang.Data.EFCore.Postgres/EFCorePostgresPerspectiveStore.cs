@@ -152,6 +152,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <param name="streamId">Stream ID (aggregate ID) to store model for</param>
   /// <param name="model">The read model data to store (full model or filtered for Split mode)</param>
   /// <param name="physicalFieldValues">Dictionary of column name to value for physical fields</param>
+  /// <param name="scope">The perspective scope (tenant/user context) from event hops</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordDoesNotExist_CreatesShadowPropertiesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordExists_UpdatesShadowPropertiesAsync</tests>
@@ -159,9 +160,10 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       Guid streamId,
       TModel model,
       IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope = null,
       CancellationToken cancellationToken = default) =>
     _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
-        _context, _tableName, streamId, model, _defaultMetadata, new PerspectiveScope(),
+        _context, _tableName, streamId, model, _defaultMetadata, scope ?? new PerspectiveScope(),
         physicalFieldValues, cancellationToken);
 
   /// <inheritdoc/>
