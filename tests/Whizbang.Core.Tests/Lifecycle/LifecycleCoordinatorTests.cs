@@ -1221,6 +1221,111 @@ public class LifecycleCoordinatorTests {
 
   #endregion
 
+  #region PostLifecycle Error Isolation
+
+  [Test]
+  public async Task AdvanceToAsync_InlineStageThrows_ExceptionPropagatesAsync() {
+    // Arrange — inline stages propagate exceptions (the PerspectiveWorker wraps in try/catch)
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "throws"));
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    var throwingRegistry = new ThrowingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(throwingRegistry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(throwingRegistry, sp));
+    var provider = services.BuildServiceProvider();
+
+    // Act & Assert — inline stage exception propagates
+    await Assert.That(async () =>
+      await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, provider, CancellationToken.None)
+    ).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task PostLifecycle_MultipleEvents_OneThrows_OthersStillFireAsync() {
+    // Arrange — simulates the error isolation pattern used in PerspectiveWorker
+    var coordinator = new LifecycleCoordinator();
+
+    // Event A: will throw during PostAllPerspectivesInline
+    var eventIdA = Guid.NewGuid();
+    var envelopeA = _createEnvelope(new TestEvent(eventIdA, "thrower"));
+    var trackingA = coordinator.BeginTracking(eventIdA, envelopeA, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    // Event B: should succeed (uses no-op provider)
+    var eventIdB = Guid.NewGuid();
+    var envelopeB = _createEnvelope(new TestEvent(eventIdB, "succeeder"));
+    var trackingB = coordinator.BeginTracking(eventIdB, envelopeB, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    var throwingRegistry = new ThrowingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
+    var throwingServices = new ServiceCollection();
+    throwingServices.AddSingleton<IReceptorRegistry>(throwingRegistry);
+    throwingServices.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(throwingRegistry, sp));
+    var throwingProvider = throwingServices.BuildServiceProvider();
+
+    var successProvider = _createScopedProvider();
+
+    var errorCount = 0;
+    var successCount = 0;
+
+    // Act — simulate the error-isolated loop from PerspectiveWorker
+    // Event A with throwing provider
+    try {
+      await trackingA.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, throwingProvider, CancellationToken.None);
+      await trackingA.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, throwingProvider, CancellationToken.None);
+      await trackingA.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, throwingProvider, CancellationToken.None);
+      await trackingA.AdvanceToAsync(LifecycleStage.PostLifecycleInline, throwingProvider, CancellationToken.None);
+      successCount++;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      errorCount++;
+    }
+    // Event B with non-throwing provider — proves loop continues after A's error
+    try {
+      await trackingB.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, successProvider, CancellationToken.None);
+      await trackingB.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, successProvider, CancellationToken.None);
+      await trackingB.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, successProvider, CancellationToken.None);
+      await trackingB.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, successProvider, CancellationToken.None);
+      successCount++;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      errorCount++;
+    }
+
+    // Assert — event A threw (errorCount=1), event B succeeded
+    await Assert.That(errorCount).IsEqualTo(1);
+    await Assert.That(successCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PostLifecycle_OperationCanceled_NotCaughtByIsolationAsync() {
+    // Arrange — OperationCanceledException must propagate (shutdown signal)
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "canceled"));
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
+
+    var cancelingRegistry = new CancelingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(cancelingRegistry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(cancelingRegistry, sp));
+    var provider = services.BuildServiceProvider();
+
+    // Act & Assert — OperationCanceledException is NOT caught by `when (ex is not OperationCanceledException)`
+    var caught = false;
+    try {
+      try {
+        await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, provider, CancellationToken.None);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        caught = true; // This should NOT be reached for OCE
+      }
+    } catch (OperationCanceledException) {
+      // Expected — OCE should escape the inner catch
+    }
+    await Assert.That(caught).IsFalse();
+  }
+
+  #endregion
+
   #region Test Helpers
 
   /// <summary>
@@ -1301,6 +1406,48 @@ public class LifecycleCoordinatorTests {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       var key = (messageType, stage);
       return _receptors.TryGetValue(key, out var list) ? list : [];
+    }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  /// <summary>
+  /// Registry that throws InvalidOperationException at the specified lifecycle stage.
+  /// </summary>
+  private sealed class ThrowingReceptorRegistry(LifecycleStage throwAtStage) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      if (stage == throwAtStage) {
+        return [new ReceptorInfo(
+          MessageType: messageType,
+          ReceptorId: "ThrowingReceptor",
+          InvokeAsync: (sp, msg, envelope, callerInfo, ct) =>
+            throw new InvalidOperationException("Simulated receptor failure"))];
+      }
+      return [];
+    }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  /// <summary>
+  /// Registry that throws OperationCanceledException at the specified lifecycle stage.
+  /// </summary>
+  private sealed class CancelingReceptorRegistry(LifecycleStage cancelAtStage) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      if (stage == cancelAtStage) {
+        return [new ReceptorInfo(
+          MessageType: messageType,
+          ReceptorId: "CancelingReceptor",
+          InvokeAsync: (sp, msg, envelope, callerInfo, ct) =>
+            throw new OperationCanceledException("Simulated cancellation"))];
+      }
+      return [];
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
