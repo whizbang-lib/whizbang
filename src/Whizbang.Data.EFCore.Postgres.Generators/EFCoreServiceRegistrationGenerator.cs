@@ -700,6 +700,46 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates multi-model ILensQuery transient registrations for a DbContext.
+  /// Generates PhysicalFieldHydratorRegistry.Register call for a model with physical fields.
+  /// The hydrator reads shadow property values via MaterializationInterceptionData.GetPropertyValue
+  /// and copies them into the Data model (AOT-safe, no reflection).
+  /// </summary>
+  private static void _generatePhysicalFieldHydratorRegistration(
+      StringBuilder sb,
+      PerspectiveModelInfo model) {
+
+    sb.AppendLine($"        // Register physical field hydrator for {model.ModelTypeName}");
+    sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
+    sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
+
+    foreach (var field in model.PhysicalFields) {
+      if (field.IsVector) {
+        // Vector fields: GetPropertyValue returns Pgvector.Vector, convert to float[]
+        sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
+        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
+        sb.AppendLine($"          }}");
+      } else {
+        // Non-vector fields: direct type cast
+        var clrType = field.TypeName;
+        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
+        if (isNullable) {
+          sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
+          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
+          sb.AppendLine($"          }}");
+        } else {
+          sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
+        }
+      }
+    }
+
+    sb.AppendLine("        });");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Generates multi-model ILensQuery registrations for perspective lens queries.
   /// Cross-references model types against known perspectives to get table names.
   /// Reports WHIZ401 for unknown models, WHIZ402 for successful auto-detection.
   /// </summary>
@@ -1068,6 +1108,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
     sb.AppendLine("using Microsoft.Extensions.Logging;");
+    sb.AppendLine("using Microsoft.EntityFrameworkCore.Diagnostics;");
     sb.AppendLine("using global::Whizbang.Core.Lenses;");
     sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres;");
     // Add pgvector usings if ANY DbContext has vector fields
@@ -1123,6 +1164,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
             .Replace("__TABLE_NAME__", model.TableName);
         sb.AppendLine(TemplateUtilities.IndentCode(perspectiveCode, "        "));
         sb.AppendLine();
+      }
+
+      // Generate physical field hydrator registrations for models with physical fields
+      // These enable IMaterializationInterceptor to hydrate Split-mode fields after query
+      foreach (var model in group.Models) {
+        if (model.PhysicalFields.Length > 0) {
+          _generatePhysicalFieldHydratorRegistration(sb, model);
+        }
       }
 
       // Generate multi-model ILensQuery registrations (auto-detected from constructor parameters)
