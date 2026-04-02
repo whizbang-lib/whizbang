@@ -208,6 +208,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
       // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
       (PerspectiveCursorsSchema.Table, "Perspective Cursors - Read model projection tracking (cursor-style)"),
+      // NOTE: LifecycleCompletionsSchema.Table is created by migration 035, not by base schema
       (PerspectiveSnapshotsSchema.Table, "Perspective Snapshots - Periodic state snapshots for efficient rewind"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (PerspectiveRegistrySchema.Table, "Perspective Registry - CLR type to table name mappings with schema JSON"),

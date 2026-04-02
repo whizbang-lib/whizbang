@@ -237,9 +237,9 @@ public class FlushModeTests {
     await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
     // Assert
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1)
-      .Because("returned work should be written to channel immediately");
-    await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId);
+    // Channel writes no longer happen during flush — work persisted to DB
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
   }
 
   // ========================================

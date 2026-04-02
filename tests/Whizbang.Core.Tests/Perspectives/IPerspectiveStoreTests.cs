@@ -76,6 +76,7 @@ public class IPerspectiveStoreTests {
       Guid streamId,
       TestModel model,
       IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope = null,
       CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 

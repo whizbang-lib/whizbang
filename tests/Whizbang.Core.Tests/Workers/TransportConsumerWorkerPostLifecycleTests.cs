@@ -271,13 +271,18 @@ public class TransportConsumerWorkerPostLifecycleTests {
       work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None, detachedTasks.Add);
     await Task.WhenAll(detachedTasks);
 
-    // Assert: PostAllPerspectivesDetached fires BEFORE PostLifecycleDetached
+    // Assert: Both detached stages fire (ordering between detached stages is non-deterministic
+    // since they run via Task.Run, but inline stages are ordered deterministically)
     var stages = spyInvoker.InvokedStages;
-    var postAllPerspIdx = stages.IndexOf(LifecycleStage.PostAllPerspectivesDetached);
-    var postLifecycleIdx = stages.IndexOf(LifecycleStage.PostLifecycleDetached);
-    await Assert.That(postAllPerspIdx).IsGreaterThanOrEqualTo(0);
-    await Assert.That(postLifecycleIdx).IsGreaterThanOrEqualTo(0);
-    await Assert.That(postAllPerspIdx).IsLessThan(postLifecycleIdx);
+    await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesDetached);
+    await Assert.That(stages).Contains(LifecycleStage.PostLifecycleDetached);
+
+    // Verify inline ordering is correct: PostAllPerspectivesInline fires BEFORE PostLifecycleInline
+    var postAllPerspInlineIdx = stages.IndexOf(LifecycleStage.PostAllPerspectivesInline);
+    var postLifecycleInlineIdx = stages.IndexOf(LifecycleStage.PostLifecycleInline);
+    await Assert.That(postAllPerspInlineIdx).IsGreaterThanOrEqualTo(0);
+    await Assert.That(postLifecycleInlineIdx).IsGreaterThanOrEqualTo(0);
+    await Assert.That(postAllPerspInlineIdx).IsLessThan(postLifecycleInlineIdx);
   }
 
   [Test]
@@ -398,11 +403,16 @@ public class TransportConsumerWorkerPostLifecycleTests {
   /// Spy receptor invoker that records all stages InvokeAsync is called with.
   /// </summary>
   private sealed class SpyReceptorInvoker : IReceptorInvoker {
-    public List<LifecycleStage> InvokedStages { get; } = [];
+    private readonly Lock _lock = new();
+    private readonly List<LifecycleStage> _invokedStages = [];
+
+    public List<LifecycleStage> InvokedStages {
+      get { lock (_lock) { return [.. _invokedStages]; } }
+    }
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
       ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
-      InvokedStages.Add(stage);
+      lock (_lock) { _invokedStages.Add(stage); }
       return ValueTask.CompletedTask;
     }
   }

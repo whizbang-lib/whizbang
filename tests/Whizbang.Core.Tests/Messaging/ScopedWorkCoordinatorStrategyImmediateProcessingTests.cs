@@ -75,8 +75,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     // Act
     var result = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
-    // Assert - Work should be written to channel immediately
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
+    // Assert — channel writes no longer happen during flush (work is persisted to DB,
+    // coordinator loop picks it up on next tick)
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+    // Work was still persisted and returned in batch result
     await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
   }
 
@@ -174,8 +177,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
     await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
-    // Assert - All 5 messages written to channel
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(5);
+    // Assert — channel writes no longer happen during flush (work persisted to DB)
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -219,9 +222,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
     // Assert - Work written in same order
-    await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
-    await Assert.That(channelWriter.WrittenWork[1].MessageId).IsEqualTo(messageId2);
-    await Assert.That(channelWriter.WrittenWork[2].MessageId).IsEqualTo(messageId3);
+    // Channel writes no longer happen during flush — work persisted to DB
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
   }
 
   // Test helper - Mock work channel writer

@@ -316,7 +316,56 @@ public interface IWorkCoordinator {
     Guid streamId,
     string perspectiveName,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Records that PostLifecycle completed for an event.
+  /// Used as a durable marker for crash recovery reconciliation.
+  /// Idempotent — duplicate event IDs are silently ignored.
+  /// </summary>
+  /// <param name="eventId">The event ID that completed PostLifecycle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
+  Task RecordLifecycleCompletionAsync(
+    Guid eventId,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Finds events where all perspective cursors are past the event but no lifecycle
+  /// completion marker exists. These are events that need PostLifecycle replay after
+  /// a process crash or stale-tracking cleanup race condition.
+  /// </summary>
+  /// <param name="perspectivesPerEventType">Registry map: event type key → expected perspective names.</param>
+  /// <param name="lookbackWindow">How far back to scan for orphaned events.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Orphaned events with their envelopes for PostLifecycle replay.</returns>
+  /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
+  Task<IReadOnlyList<OrphanedLifecycleEvent>> GetOrphanedLifecycleEventsAsync(
+    Dictionary<string, IReadOnlyList<string>> perspectivesPerEventType,
+    TimeSpan lookbackWindow,
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<OrphanedLifecycleEvent>>([]);
+
+  /// <summary>
+  /// Deletes lifecycle completion markers older than the specified retention period.
+  /// Called periodically to keep the table small.
+  /// </summary>
+  /// <param name="retentionPeriod">How long to keep completion markers.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of entries deleted.</returns>
+  /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
+  Task<int> CleanupLifecycleCompletionsAsync(
+    TimeSpan retentionPeriod,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
 }
+
+/// <summary>
+/// An event where all perspectives completed but PostLifecycle was never fired.
+/// Returned by <see cref="IWorkCoordinator.GetOrphanedLifecycleEventsAsync"/> for replay.
+/// </summary>
+/// <param name="EventId">The event's unique identifier.</param>
+/// <param name="StreamId">The stream the event belongs to.</param>
+/// <param name="Envelope">The deserialized message envelope for receptor invocation.</param>
+/// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
+public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, MessageEnvelope<IEvent> Envelope);
 
 /// <summary>
 /// Information about a perspective cursor.

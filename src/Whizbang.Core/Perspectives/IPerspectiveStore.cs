@@ -60,11 +60,13 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="streamId">Stream ID (aggregate ID) to store model for</param>
   /// <param name="model">The read model data to store</param>
   /// <param name="physicalFieldValues">Dictionary mapping column names to values for physical fields</param>
+  /// <param name="scope">The perspective scope (tenant/user context) extracted from event hops</param>
   /// <param name="cancellationToken">Cancellation token</param>
   Task UpsertWithPhysicalFieldsAsync(
       Guid streamId,
       TModel model,
       IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope = null,
       CancellationToken cancellationToken = default);
 
   /// <summary>

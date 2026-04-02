@@ -1525,14 +1525,40 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("    // Register initialization callback for EnsureWhizbangInitializedAsync()");
     sb.AppendLine("    // This enables turnkey initialization via app.EnsureWhizbangInitializedAsync()");
+    sb.AppendLine("    // Supports optional '{Name}-init' connection string to bypass PgBouncer for DDL");
     sb.AppendLine($"    DbContextInitializationRegistry.Register<{dbContext.FullyQualifiedName}>(async (sp, logger, ct) => {{");
     sb.AppendLine("      using var scope = sp.CreateScope();");
-    sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
-    sb.AppendLine("      if (dbContext == null) {");
-    sb.AppendLine($"        logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
-    sb.AppendLine("        return;");
+    sb.AppendLine();
+    sb.AppendLine("      // Convention: try \"{Name}-init\" connection string first (direct Postgres, bypasses PgBouncer)");
+    sb.AppendLine("      var config = scope.ServiceProvider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();");
+    sb.AppendLine($"      var initConnStr = config?.GetConnectionString(\"{defaultConnectionStringKey}-init\");");
+    sb.AppendLine();
+    sb.AppendLine("      if (initConnStr != null) {");
+    sb.AppendLine("        if (logger is not null) {");
+    sb.AppendLine($"          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.UsingInitConnectionString(logger, \"{defaultConnectionStringKey}\");");
+    sb.AppendLine("        }");
+    sb.AppendLine("        // Build dedicated DbContext with direct Postgres connection for initialization");
+    sb.AppendLine("        var initDsBuilder = new Npgsql.NpgsqlDataSourceBuilder(initConnStr);");
+    sb.AppendLine("        var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+    sb.AppendLine("        initDsBuilder.ConfigureJsonOptions(jsonOptions);");
+    sb.AppendLine("        initDsBuilder.EnableDynamicJson();");
+    if (hasVectorFields) {
+      sb.AppendLine("        initDsBuilder.UseVector();");
+    }
+    sb.AppendLine("        await using var initDataSource = initDsBuilder.Build();");
+    sb.AppendLine($"        var initOptions = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<{dbContext.FullyQualifiedName}>()");
+    sb.AppendLine("            .UseNpgsql(initDataSource)");
+    sb.AppendLine("            .Options;");
+    sb.AppendLine($"        await using var initDbContext = new {dbContext.FullyQualifiedName}(initOptions);");
+    sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, ct);");
+    sb.AppendLine("      } else {");
+    sb.AppendLine($"        var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
+    sb.AppendLine("        if (dbContext == null) {");
+    sb.AppendLine($"          logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
+    sb.AppendLine("          return;");
+    sb.AppendLine("        }");
+    sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, ct);");
     sb.AppendLine("      }");
-    sb.AppendLine("      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
   }
