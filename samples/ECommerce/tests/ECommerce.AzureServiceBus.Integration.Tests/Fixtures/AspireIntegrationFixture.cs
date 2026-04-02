@@ -153,12 +153,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     using (var initScope = _inventoryHost.Services.CreateScope()) {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
-      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: cancellationToken);
     }
     using (var initScope = _bffHost.Services.CreateScope()) {
       var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
-      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken: cancellationToken);
     }
     Console.WriteLine("[AspireFixture] Database schema initialized.");
 
