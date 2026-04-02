@@ -89,11 +89,9 @@ public class OutboxPublishPipelineIntegrationTests {
     await worker.StartAsync(cts.Token);
 
     try {
-      // Act
-      strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchOptions.None);
-
-      // Wait for publish to complete
+      // Act — coordinator loop picks up WorkToReturn via ProcessWorkBatchAsync,
+      // writes to channel, publisher loop reads and publishes.
+      // No need to manually flush — the coordinator loop handles this.
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
       // Assert
@@ -146,11 +144,7 @@ public class OutboxPublishPipelineIntegrationTests {
     await worker.StartAsync(cts.Token);
 
     try {
-      // Act
-      var msgId = Guid.CreateVersion7();
-      strategy.QueueOutboxMessage(_createOutboxMessage(msgId));
-      await strategy.FlushAsync(WorkBatchOptions.None);
-
+      // Act — coordinator loop picks up WorkToReturn, no manual flush needed
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
       // Assert
@@ -206,10 +200,7 @@ public class OutboxPublishPipelineIntegrationTests {
     await worker.StartAsync(cts.Token);
 
     try {
-      // Act
-      strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchOptions.None);
-
+      // Act — coordinator loop picks up WorkToReturn, no manual flush needed
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
       // Assert
@@ -258,10 +249,7 @@ public class OutboxPublishPipelineIntegrationTests {
     await worker.StartAsync(cts.Token);
 
     try {
-      // Act
-      strategy.QueueOutboxMessage(_createOutboxMessage());
-      await strategy.FlushAsync(WorkBatchOptions.None);
-
+      // Act — coordinator loop picks up WorkToReturn, no manual flush needed
       await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
       // Assert
