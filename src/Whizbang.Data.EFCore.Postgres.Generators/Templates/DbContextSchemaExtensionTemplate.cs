@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
@@ -1008,7 +1009,18 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       serviceNameParam.Value = "__SERVICE_NAME__";
       command.Parameters.Add(serviceNameParam);
 
-      await dbContext.Database.OpenConnectionAsync(cancellationToken);
+      // Connection is already open from the parent EnsureWhizbangTablesCreatedAsync transaction.
+      // Do NOT call dbContext.Database.OpenConnectionAsync — it goes through the execution
+      // strategy which rejects user-initiated transactions under NpgsqlRetryingExecutionStrategy.
+      // Use the raw connection directly and assign the current transaction to the command.
+      var connection = dbContext.Database.GetDbConnection();
+      if (connection.State != System.Data.ConnectionState.Open) {
+        await connection.OpenAsync(cancellationToken);
+      }
+      var currentTransaction = dbContext.Database.CurrentTransaction;
+      if (currentTransaction is not null) {
+        command.Transaction = currentTransaction.GetDbTransaction();
+      }
 
       using var reader = await command.ExecuteReaderAsync(cancellationToken);
       var insertedCount = 0;

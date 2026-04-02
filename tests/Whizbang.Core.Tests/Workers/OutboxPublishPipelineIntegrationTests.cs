@@ -328,6 +328,11 @@ public class OutboxPublishPipelineIntegrationTests {
       // postLifecycleFired set deterministically by PostLifecycleTrackingInvoker
       await postLifecycleFired.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
+      // Drain detached tasks — PostLifecycleDetached runs via Task.Run and may not have
+      // added to stagesFired yet even though PostLifecycleInline (which signals the TCS) has completed
+      var lifecycleCoordinator = (Whizbang.Core.Lifecycle.LifecycleCoordinator)sp.GetRequiredService<Whizbang.Core.Lifecycle.ILifecycleCoordinator>();
+      await lifecycleCoordinator.DrainAllDetachedAsync();
+
       // Assert — publish happened AND PostLifecycle fired
       await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(1);
       await Assert.That(stagesFired.Contains(LifecycleStage.PostLifecycleDetached)).IsTrue()

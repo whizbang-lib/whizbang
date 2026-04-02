@@ -1194,7 +1194,7 @@ public partial class PerspectiveWorker(
         batchProcessedEvents, lifecycleCoordinator, groupedWork, scopedProvider, cancellationToken);
     } else if (receptorInvoker is not null) {
       await _firePostLifecycleFallbackAsync(
-        batchProcessedEvents, receptorInvoker, scopedProvider, cancellationToken);
+        batchProcessedEvents, receptorInvoker, scopedProvider, cancellationToken, _detachedTasks.Add);
     }
   }
 
@@ -1287,7 +1287,8 @@ public partial class PerspectiveWorker(
       Dictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       IReceptorInvoker receptorInvoker,
       IServiceProvider scopedProvider,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      Action<Task>? trackDetachedTask = null) {
 
     foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
       var context = new LifecycleExecutionContext {
@@ -1301,7 +1302,8 @@ public partial class PerspectiveWorker(
       await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
       // Detached: fire-and-forget with own DI scope
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
-      _ = _fireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
+      var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, envelope, LifecycleStage.PostLifecycleDetached, context);
+      trackDetachedTask?.Invoke(detachedTask);
       // Inline: blocks pipeline
       await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
         context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);

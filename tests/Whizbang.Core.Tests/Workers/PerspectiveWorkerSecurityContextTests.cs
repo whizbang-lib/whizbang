@@ -449,6 +449,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {
@@ -832,6 +833,7 @@ public class PerspectiveWorkerSecurityContextTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await worker.DrainDetachedAsync();
     cts.Cancel();
 
     try {

@@ -75,8 +75,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     // Act
     var result = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
 
-    // Assert - Work should be written to channel immediately
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
+    // Assert — channel writes no longer happen during flush (work is persisted to DB,
+    // coordinator loop picks it up on next tick)
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+    // Work was still persisted and returned in batch result
     await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
   }
 
