@@ -395,6 +395,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       sb.AppendLine("        streamId,");
       sb.AppendLine("        model,");
       sb.AppendLine("        physicalFieldValues,");
+      sb.AppendLine("        scope,");
       sb.AppendLine("        cancellationToken");
       sb.AppendLine("    );");
     }
