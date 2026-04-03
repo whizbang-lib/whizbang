@@ -216,26 +216,37 @@ if ($skippedProjects.Count -gt 0) {
 }
 Write-Host ""
 
-# Build the entire solution first to ensure all projects are up-to-date with the new version
+# Build solution to ensure all projects have the new version
 Write-Host "Building solution to ensure consistent version across all projects..." -ForegroundColor Cyan
-$slnFiles = Get-ChildItem -Path $repoRoot -Filter "*.sln" -Depth 0
-if ($slnFiles.Count -gt 0) {
-    $buildOutput = dotnet build $slnFiles[0].FullName -c $Configuration @extraPackArgs 2>&1
+$slnFile = Get-ChildItem -Path $repoRoot -Include "*.sln","*.slnx" -Depth 0 | Select-Object -First 1
+if ($slnFile) {
+    $buildOutput = dotnet build $slnFile.FullName -c $Configuration @extraPackArgs 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Solution build failed!" -ForegroundColor Red
+        Write-Host "Build failed!" -ForegroundColor Red
         $buildOutput | Where-Object { $_ -match "error" } | ForEach-Object {
             Write-Host "  $_" -ForegroundColor Red
         }
         exit 1
     }
-    Write-Host "Solution build succeeded." -ForegroundColor Green
+    Write-Host "Build succeeded." -ForegroundColor Green
 } else {
-    Write-Host "No solution file found, building individual projects..." -ForegroundColor Yellow
-    $buildOutput = dotnet build (Join-Path $srcDir "..") -c $Configuration @extraPackArgs 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Build failed!" -ForegroundColor Red
+    Write-Host "No solution file found (.sln or .slnx), building individual projects..." -ForegroundColor Yellow
+    $buildFailed = $false
+    foreach ($project in $projects) {
+        $buildOutput = dotnet build $project.FullName -c $Configuration @extraPackArgs 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Build failed: $($project.BaseName)" -ForegroundColor Red
+            $buildOutput | Where-Object { $_ -match "error" } | ForEach-Object {
+                Write-Host "    $_" -ForegroundColor Red
+            }
+            $buildFailed = $true
+        }
+    }
+    if ($buildFailed) {
+        Write-Host "One or more projects failed to build." -ForegroundColor Red
         exit 1
     }
+    Write-Host "Build succeeded." -ForegroundColor Green
 }
 Write-Host ""
 
