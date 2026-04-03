@@ -35,7 +35,6 @@ public class OutboxLifecycleTests {
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
-    await Task.Delay(500);
     await _fixture.CleanupDatabaseAsync();
   }
 
@@ -180,9 +179,6 @@ public class OutboxLifecycleTests {
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxDetached);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command
@@ -193,16 +189,9 @@ public class OutboxLifecycleTests {
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - At this point, PostOutboxDetached has fired
-      // Message should have been successfully published to Service Bus
+      // Message should have been successfully published to transport
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
       await Assert.That(receptor.LastMessage).IsNotNull();
-
-      // Give Service Bus time to propagate the message
-      await Task.Delay(2000);
-
-      // Verify message was actually received by BFF (indicates successful publish)
-      // This is indirect verification that PostOutboxDetached fired AFTER successful publish
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 60000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxDetached);

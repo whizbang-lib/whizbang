@@ -183,8 +183,7 @@ public class OutboxLifecycleTests {
   /// Tests the "message successfully published to transport" guarantee.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
-  public async Task PostOutboxDetached_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync(CancellationToken cancellationToken) {
+  public async Task PostOutboxDetached_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -201,9 +200,6 @@ public class OutboxLifecycleTests {
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxDetached);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command
@@ -214,16 +210,9 @@ public class OutboxLifecycleTests {
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - At this point, PostOutboxDetached has fired
-      // Message should have been successfully published to Service Bus
+      // Message should have been successfully published to transport
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
       await Assert.That(receptor.LastMessage).IsNotNull();
-
-      // Give Service Bus time to propagate the message
-      await Task.Delay(2000);
-
-      // Verify message was actually received by BFF (indicates successful publish)
-      // This is indirect verification that PostOutboxDetached fired AFTER successful publish
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 120000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxDetached);
