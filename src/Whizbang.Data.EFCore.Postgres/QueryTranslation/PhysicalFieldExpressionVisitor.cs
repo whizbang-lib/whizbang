@@ -63,7 +63,11 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
       }
 
       // Check if this property is registered as a physical field
-      if (PhysicalFieldRegistry.TryGetMapping(modelType, propertyInfo.Name, out var mapping)) {
+      if (modelType is not null) {
+        System.Console.WriteLine($"[PhysicalFieldVisitor] Checking {modelType.FullName}.{propertyInfo.Name} (registry has {PhysicalFieldRegistry.Count} mappings)");
+      }
+      if (modelType is not null && PhysicalFieldRegistry.TryGetMapping(modelType, propertyInfo.Name, out var mapping)) {
+        System.Console.WriteLine($"[PhysicalFieldVisitor] REWRITING {propertyInfo.Name} -> {mapping.ShadowPropertyName} (IsVector={mapping.IsVector})");
         // Rewrite to: EF.Property<TProperty>(r, "shadow_property_name")
         // Where r is the PerspectiveRow parameter (dataAccess.Expression)
 
