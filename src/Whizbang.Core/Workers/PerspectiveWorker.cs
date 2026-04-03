@@ -414,12 +414,14 @@ public partial class PerspectiveWorker(
           streamCtx, cancellationToken);
 
         // Phase 3.2: Execute perspective runner (rewind or normal path)
-        var (result, processingMode) = await _executePerspectiveRunnerAsync(
+        var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
           group, runner, checkpoint, streamCtx,
           enablePerspectiveSpans, cancellationToken);
 
-        // Skip this group if rewind lock could not be acquired (sentinel: Status=None)
-        if (result.Status == PerspectiveProcessingStatus.None) {
+        // Skip this group ONLY if rewind lock could not be acquired.
+        // Do NOT skip when Status=None from normal path (no new events) — that's legitimate
+        // and downstream lifecycle stages may still need to fire.
+        if (rewindLockSkipped) {
           continue;
         }
 
@@ -847,9 +849,9 @@ public partial class PerspectiveWorker(
   /// Executes the perspective runner via the rewind path or normal path,
   /// including snapshot bootstrap when needed.
   /// Returns the result and the processing mode used.
-  /// The rewind path returns a special continue-sentinel (status=None) when lock acquisition fails.
+  /// When the rewind path cannot acquire a lock, RewindLockSkipped=true is returned.
   /// </summary>
-  private async Task<(PerspectiveCursorCompletion Result, ProcessingMode? Mode)>
+  private async Task<(PerspectiveCursorCompletion Result, ProcessingMode? Mode, bool RewindLockSkipped)>
     _executePerspectiveRunnerAsync(
       IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork> group,
       IPerspectiveRunner runner,
@@ -864,10 +866,10 @@ public partial class PerspectiveWorker(
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
     if (needsRewind && rewindTriggerEventId.HasValue) {
-      var result = await _executeRewindPathAsync(
+      var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
         enablePerspectiveSpans, cancellationToken);
-      return (result, ProcessingMode.Replay);
+      return (result, ProcessingMode.Replay, lockSkipped);
     }
 
     // Bootstrap snapshot if needed (existing stream with events but no snapshots)
@@ -877,14 +879,14 @@ public partial class PerspectiveWorker(
     var normalResult = await _executeNormalPathAsync(
       runner, streamCtx.StreamId, streamCtx.PerspectiveName, streamCtx.LastProcessedEventId,
       enablePerspectiveSpans, cancellationToken);
-    return (normalResult, null);
+    return (normalResult, null, false);
   }
 
   /// <summary>
   /// Rewind path: acquire stream lock, restore from snapshot and replay events.
   /// Throws OperationCanceledException if lock cannot be acquired (caller handles via continue).
   /// </summary>
-  private async Task<PerspectiveCursorCompletion> _executeRewindPathAsync(
+  private async Task<(PerspectiveCursorCompletion Result, bool LockSkipped)> _executeRewindPathAsync(
       IPerspectiveRunner runner,
       Guid streamId,
       string perspectiveName,
@@ -900,13 +902,12 @@ public partial class PerspectiveWorker(
           streamId, perspectiveName, _instanceProvider.InstanceId, "rewind", cancellationToken);
         if (!lockAcquired) {
           LogFailedToAcquireRewindLock(_logger, perspectiveName, streamId);
-          // Return sentinel value — caller detects via Status=None and continues to next group
-          return new PerspectiveCursorCompletion {
+          return (new PerspectiveCursorCompletion {
             StreamId = streamId,
             PerspectiveName = perspectiveName,
             LastEventId = Guid.Empty,
             Status = PerspectiveProcessingStatus.None
-          };
+          }, LockSkipped: true);
         }
       }
 
@@ -939,7 +940,7 @@ public partial class PerspectiveWorker(
       }
     }
 
-    return result;
+    return (result, LockSkipped: false);
   }
 
   /// <summary>

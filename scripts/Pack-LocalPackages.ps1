@@ -322,7 +322,7 @@ $zipDate = (Get-Date).ToString("yyyy-MM-dd")
 $zipName = "${packVersion}_${zipDate}.zip"
 $zipPath = Join-Path $localPackagesDir $zipName
 
-$packFiles = Get-ChildItem -Path $localPackagesDir -Include "*.nupkg","*.snupkg" -File
+$packFiles = @(Get-ChildItem -Path (Join-Path $localPackagesDir "*") -Include "*.nupkg","*.snupkg" -File)
 if ($packFiles.Count -gt 0) {
     Compress-Archive -Path $packFiles.FullName -DestinationPath $zipPath -Force
     $zipSize = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
