@@ -216,9 +216,15 @@ if ($skippedProjects.Count -gt 0) {
 }
 Write-Host ""
 
+# Clean before building to prevent stale DLLs from being packed
+Write-Host "Cleaning build output to prevent stale artifacts..." -ForegroundColor Cyan
+$slnFile = Get-ChildItem -Path $repoRoot -Include "*.sln","*.slnx" -Depth 0 | Select-Object -First 1
+if ($slnFile) {
+    dotnet clean $slnFile.FullName -c $Configuration --verbosity quiet 2>&1 | Out-Null
+}
+
 # Build solution to ensure all projects have the new version
 Write-Host "Building solution to ensure consistent version across all projects..." -ForegroundColor Cyan
-$slnFile = Get-ChildItem -Path $repoRoot -Include "*.sln","*.slnx" -Depth 0 | Select-Object -First 1
 if ($slnFile) {
     $buildOutput = dotnet build $slnFile.FullName -c $Configuration @extraPackArgs 2>&1
     if ($LASTEXITCODE -ne 0) {
