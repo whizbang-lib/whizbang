@@ -75,11 +75,24 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
         // Visit the entity expression in case it needs transformation
         var visitedEntity = Visit(entityExpression);
 
-        // Create EF.Property<TProperty>(entity, "shadow_property_name")
-        var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
-        var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
+        if (mapping.IsVector) {
+          // Vector fields: shadow property is Pgvector.Vector, but model property is float[].
+          // Rewrite to: EF.Property<Vector?>(r, "column").ToArray()
+          // This lets EF Core read the Vector column, then .ToArray() converts to float[].
+          var vectorType = typeof(Pgvector.Vector);
+          var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(vectorType);
+          var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
+          var efPropertyCall = Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
 
-        return Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
+          // Call .ToArray() on the Vector result
+          var toArrayMethod = vectorType.GetMethod("ToArray")!;
+          return Expression.Call(efPropertyCall, toArrayMethod);
+        } else {
+          // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")
+          var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
+          var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
+          return Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
+        }
       }
     }
 

@@ -105,7 +105,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     // Register physical field mappings so PhysicalFieldExpressionVisitor rewrites queries
     PhysicalFieldRegistry.Register<SplitTestModel>("Name", "name");
     PhysicalFieldRegistry.Register<SplitTestModel>("Price", "price");
-    PhysicalFieldRegistry.Register<SplitTestModel>("Embeddings", "embeddings");
+    PhysicalFieldRegistry.Register<SplitTestModel>("Embeddings", "embeddings", isVector: true);
 
     // Register hydrator so PhysicalFieldMaterializationInterceptor populates Data after query
     // This simulates what generated code does at startup (AOT-safe, no reflection)
