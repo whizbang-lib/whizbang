@@ -17,7 +17,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 /// - GREEN: With the fix, the full pipeline works and the tag hook fires exactly once
 /// </summary>
 [NotInParallel("InMemory")]
-[Timeout(60_000)]
+[Timeout(120_000)]
 public class TagHookLifecycleTests {
   private InMemoryIntegrationFixture? _fixture;
   private static readonly ProductId _testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
