@@ -144,6 +144,7 @@ public class InboxLifecycleTests {
   /// Tests the "receptor may complete before this stage finishes" guarantee.
   /// </summary>
   [Test]
+  [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
   public async Task PreInboxDetached_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -220,6 +221,7 @@ public class InboxLifecycleTests {
   /// Tests the "receptor has completed successfully" guarantee.
   /// </summary>
   [Test]
+  [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
   public async Task PostInboxDetached_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
