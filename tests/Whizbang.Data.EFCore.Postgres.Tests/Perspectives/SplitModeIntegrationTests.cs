@@ -43,6 +43,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     public decimal Price { get; set; }
     public string? Description { get; set; }
     public float[]? Embeddings { get; set; }
+    public List<Guid>? TagIds { get; set; } // Nullable collection of structs — triggers EF Core bug with ComplexProperty.ToJson when null in JSONB
   }
 
   private sealed class SplitModeTestDbContext(DbContextOptions<SplitModeIntegrationTests.SplitModeTestDbContext> options) : DbContext(options) {
@@ -636,6 +637,67 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
       .Because("Physical field Price should be ordered by column, not JSONB");
     await Assert.That(sql.ToLowerInvariant()).Contains("order by")
       .Because("Should have ORDER BY clause");
+  }
+
+  // ==========================================================================
+  // Split Mode: ComplexProperty.ToJson() crashes on null collections (EF Core bug)
+  // ==========================================================================
+
+  /// <summary>
+  /// Repro for: ComplexProperty().ToJson() throws InvalidOperationException
+  /// "Invalid token type 'Null'" when a nullable List&lt;Guid&gt;? is null in JSONB.
+  /// This happens because Split mode strips physical fields to default, and the
+  /// JSON materializer's JsonCollectionOfStructsReaderWriter can't handle null.
+  /// Fix: Split models should use Property().HasColumnType("jsonb") not ComplexProperty().ToJson().
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_ComplexPropertyToJson_NullCollection_ThrowsAsync(CancellationToken cancellationToken) {
+    // Arrange — create a DbContext using ComplexProperty().ToJson() (production generated pattern)
+    var optionsBuilder = new DbContextOptionsBuilder<ComplexPropertySplitTestDbContext>();
+    optionsBuilder.UseNpgsql(_dataSource!, o => o.UseVector())
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+        .AddInterceptors(new PhysicalFieldQueryInterceptor(), new PhysicalFieldMaterializationInterceptor());
+    await using var complexContext = new ComplexPropertySplitTestDbContext(optionsBuilder.Options);
+
+    // Insert a row with null TagIds (simulating Split mode stripped JSONB)
+    await _insertSplitRowAsync("ComplexPropTest", 10.00m, "test");
+
+    // Act & Assert — ComplexProperty.ToJson() should crash on null List<Guid>? in JSONB
+    // This verifies the bug exists with ComplexProperty mapping
+    await Assert.That(async () => {
+      await complexContext.Set<PerspectiveRow<SplitTestModel>>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(cancellationToken);
+    }).ThrowsException(); // NullReferenceException or InvalidOperationException from JsonCollectionOfStructsReaderWriter
+  }
+
+  /// <summary>
+  /// DbContext using ComplexProperty().ToJson() — reproduces the EF Core bug.
+  /// Split models should NOT use this pattern; use Property().HasColumnType("jsonb") instead.
+  /// </summary>
+  private sealed class ComplexPropertySplitTestDbContext(DbContextOptions<SplitModeIntegrationTests.ComplexPropertySplitTestDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      base.OnModelCreating(modelBuilder);
+
+      modelBuilder.Entity<PerspectiveRow<SplitTestModel>>(entity => {
+        entity.ToTable("wh_per_split_test");
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+        entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+        entity.Property(e => e.Version).HasColumnName("version");
+
+        // THIS IS THE BUG: ComplexProperty().ToJson() for Split models
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+        entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
+        entity.ComplexProperty(e => e.Scope, s => s.ToJson("scope"));
+
+        entity.Property<string?>("name").HasColumnName("name").HasMaxLength(200);
+        entity.Property<decimal>("price").HasColumnName("price");
+        entity.Property<Vector?>("embeddings").HasColumnName("embeddings").HasColumnType("vector(3)");
+      });
+    }
   }
 
   // ==========================================================================
