@@ -767,6 +767,258 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   // ========================================================================
+  // LensQuery Integration — Full Framework Path
+  // Tests through EFCorePostgresLensQuery which includes scoped access,
+  // conditional tracking, and ChangeTracker hydration.
+  // ========================================================================
+
+  private EFCorePostgresLensQuery<SplitProductionModel> _createLensQuery() =>
+      new(_context!, "wh_per_split_production_test");
+
+  private EFCorePostgresLensQuery<CategoryModel> _createCategoryLensQuery() =>
+      new(_context!, "wh_per_category_test");
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_GetByIdAsync_PhysicalFieldsHydratedAsync(CancellationToken ct) {
+    var tenantId = Guid.CreateVersion7();
+    var id = await _insertSplitRowReturningIdAsync(tenantId, "lens-cat", 55.55m, "LensItem", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var lensQuery = _createLensQuery();
+    var model = await lensQuery.GetByIdAsync(id, ct);
+
+    await Assert.That(model).IsNotNull();
+    await Assert.That(model!.TenantId).IsEqualTo(tenantId)
+      .Because("Physical Guid field must be hydrated via LensQuery");
+    await Assert.That(model.Category).IsEqualTo("lens-cat")
+      .Because("Physical string field must be hydrated via LensQuery");
+    await Assert.That(model.Price).IsEqualTo(55.55m)
+      .Because("Physical decimal field must be hydrated via LensQuery");
+    await Assert.That(model.Name).IsEqualTo("LensItem")
+      .Because("JSONB-only field must still work via LensQuery");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_GetByIdAsync_VectorFieldHydratedAsync(CancellationToken ct) {
+    var id = await _insertSplitRowReturningIdAsync(Guid.CreateVersion7(), "vec", 10.00m, "VecItem", "desc", [0.4f, 0.5f, 0.6f], null);
+
+    var model = await _createLensQuery().GetByIdAsync(id, ct);
+
+    await Assert.That(model).IsNotNull();
+    await Assert.That(model!.Embeddings).IsNotNull()
+      .Because("Vector field must be hydrated via LensQuery ChangeTracker path");
+    await Assert.That(model.Embeddings![0]).IsEqualTo(0.4f).Within(0.001f);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_GetByIdAsync_NonExistent_ReturnsNullAsync(CancellationToken ct) {
+    var model = await _createLensQuery().GetByIdAsync(Guid.CreateVersion7(), ct);
+    await Assert.That(model).IsNull();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_ToListAsync_PhysicalFieldsHydratedAsync(CancellationToken ct) {
+    var tenant1 = Guid.CreateVersion7();
+    var tenant2 = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenant1, "list-a", 10.00m, "Item1", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(tenant2, "list-b", 20.00m, "Item2", "desc", [0.4f, 0.5f, 0.6f], null);
+
+    var rows = await _createLensQuery().Query
+        .OrderBy(r => r.Data.Price)
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows[0].Data.TenantId).IsEqualTo(tenant1);
+    await Assert.That(rows[0].Data.Category).IsEqualTo("list-a");
+    await Assert.That(rows[0].Data.Price).IsEqualTo(10.00m);
+    await Assert.That(rows[1].Data.TenantId).IsEqualTo(tenant2);
+    await Assert.That(rows[1].Data.Price).IsEqualTo(20.00m);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_Where_PhysicalField_FiltersCorrectlyAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "target", 10.00m, "Target", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "other", 20.00m, "Other", "desc", [0.4f, 0.5f, 0.6f], null);
+
+    var rows = await _createLensQuery().Query
+        .Where(r => r.Data.Category == "target")
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Target");
+    await Assert.That(rows[0].Data.Category).IsEqualTo("target");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_OrderBy_PhysicalFieldAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "c", 30.00m, "High", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Low", "desc", [0.4f, 0.5f, 0.6f], null);
+
+    var rows = await _createLensQuery().Query
+        .OrderBy(r => r.Data.Price)
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows[0].Data.Price).IsEqualTo(10.00m);
+    await Assert.That(rows[1].Data.Price).IsEqualTo(30.00m);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_Select_PhysicalFieldAsync(CancellationToken ct) {
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "sel-cat", 42.00m, "SelItem", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var categories = await _createLensQuery().Query
+        .Select(r => r.Data.Category)
+        .ToListAsync(ct);
+
+    await Assert.That(categories).Count().IsEqualTo(1);
+    await Assert.That(categories[0]).IsEqualTo("sel-cat");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_GroupBy_PhysicalFieldAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "A", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 20.00m, "B", "desc", [0.4f, 0.5f, 0.6f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "clothing", 30.00m, "C", "desc", [0.7f, 0.8f, 0.9f], null);
+
+    var groups = await _createLensQuery().Query
+        .GroupBy(r => r.Data.Category)
+        .Select(g => new { Category = g.Key, Count = g.Count(), Total = g.Sum(r => r.Data.Price) })
+        .OrderBy(g => g.Category)
+        .ToListAsync(ct);
+
+    await Assert.That(groups).Count().IsEqualTo(2);
+    await Assert.That(groups[0].Category).IsEqualTo("clothing");
+    await Assert.That(groups[1].Category).IsEqualTo("electronics");
+    await Assert.That(groups[1].Count).IsEqualTo(2);
+    await Assert.That(groups[1].Total).IsEqualTo(30.00m);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_CountAsync_PhysicalFieldPredicateAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Cheap", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 100.00m, "Expensive", "desc", [0.4f, 0.5f, 0.6f], null);
+
+    var count = await _createLensQuery().Query
+        .CountAsync(r => r.Data.Price > 50.00m, ct);
+
+    await Assert.That(count).IsEqualTo(1);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_AnyAsync_PhysicalFieldPredicateAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var exists = await _createLensQuery().Query.AnyAsync(r => r.Data.Category == "electronics", ct);
+    var notExists = await _createLensQuery().Query.AnyAsync(r => r.Data.Category == "nonexistent", ct);
+
+    await Assert.That(exists).IsTrue();
+    await Assert.That(notExists).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_Query_SkipTake_PhysicalFieldOrderingAsync(CancellationToken ct) {
+    for (var i = 1; i <= 5; i++) {
+      await _insertSplitRowAsync(Guid.CreateVersion7(), $"cat{i}", i * 10.00m, $"Item{i}", "desc", [0.1f * i, 0.2f * i, 0.3f * i], null);
+    }
+
+    var rows = await _createLensQuery().Query
+        .OrderBy(r => r.Data.Price)
+        .Skip(2).Take(2)
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Item3");
+    await Assert.That(rows[1].Data.Name).IsEqualTo("Item4");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_SplitModel_EntitiesDetachedAfterQueryAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "detach", 10.00m, "DetachItem", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var rows = await _createLensQuery().Query.ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(rows[0].Data.Category).IsEqualTo("detach")
+      .Because("Physical field must be hydrated");
+    await Assert.That(_context!.ChangeTracker.Entries().Count()).IsEqualTo(0)
+      .Because("All entities must be detached after ChangeTracker hydration");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_NonSplitModel_StillUsesAsNoTrackingAsync(CancellationToken ct) {
+    await _insertCategoryRowAsync("notrack-code", "NoTrack Display");
+
+    var catLens = _createCategoryLensQuery();
+    var rows = await catLens.Query.ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(1);
+    await Assert.That(_context!.ChangeTracker.Entries().Count()).IsEqualTo(0)
+      .Because("Non-Split models must use AsNoTracking — zero tracking overhead");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_NullablePhysicalField_ReturnsNullAsync(CancellationToken ct) {
+    // ParentId is Guid? — stored as null in physical column
+    var id = await _insertSplitRowReturningIdAsync(Guid.CreateVersion7(), "nullable", 10.00m, "NullableItem", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var model = await _createLensQuery().GetByIdAsync(id, ct);
+
+    await Assert.That(model).IsNotNull();
+    await Assert.That(model!.ParentId).IsNull()
+      .Because("Nullable physical field with null value must remain null");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_LargeResultSet_AllHydratedAsync(CancellationToken ct) {
+    // Insert 50 rows to verify no detach-during-iteration bugs
+    for (var i = 0; i < 50; i++) {
+      await _insertSplitRowAsync(Guid.CreateVersion7(), $"large-{i}", i * 1.11m, $"Large{i}", "desc", [0.1f, 0.2f, 0.3f], null);
+    }
+
+    var rows = await _createLensQuery().Query
+        .OrderBy(r => r.Data.Price)
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(50);
+    // Verify every row has hydrated physical fields
+    foreach (var row in rows) {
+      await Assert.That(row.Data.Category).IsNotNull().And.IsNotEmpty()
+        .Because("Every row must have Category hydrated from physical column");
+      await Assert.That(row.Data.TenantId).IsNotEqualTo(Guid.Empty)
+        .Because("Every row must have TenantId hydrated from physical column");
+    }
+    await Assert.That(_context!.ChangeTracker.Entries().Count()).IsEqualTo(0)
+      .Because("All 50 entities must be detached");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task LensQuery_EmptyResult_NoExceptionAsync(CancellationToken ct) {
+    // No data inserted — query should return empty, not crash
+    var rows = await _createLensQuery().Query.ToListAsync(ct);
+    await Assert.That(rows).Count().IsEqualTo(0);
+
+    var model = await _createLensQuery().GetByIdAsync(Guid.CreateVersion7(), ct);
+    await Assert.That(model).IsNull();
+  }
+
+  // ========================================================================
   // ChangeTracker.Tracked Timing Validation (GATE TEST)
   // ========================================================================
 
@@ -936,17 +1188,32 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   /// <summary>
+  /// Inserts a split row and returns its ID (for GetByIdAsync tests).
+  /// </summary>
+  private async Task<Guid> _insertSplitRowReturningIdAsync(
+      Guid tenantId, string category, decimal price, string name, string description,
+      float[]? embeddings, List<Guid>? tagIds) {
+    var id = _idProvider.NewGuid();
+    await _insertSplitRowCoreAsync(id, tenantId, category, price, name, description, embeddings, tagIds);
+    return id;
+  }
+
+  /// <summary>
   /// Simulates what the generated PerspectiveRunner does in Split mode:
   /// 1. Strip physical fields from model (set to default)
   /// 2. Store physical field values via shadow properties
   /// The JSONB will contain stripped model (physical fields = default/null)
   /// </summary>
-  private async Task _insertSplitRowAsync(
+  private Task _insertSplitRowAsync(
       Guid tenantId, string category, decimal price, string name, string description,
+      float[]? embeddings, List<Guid>? tagIds) =>
+      _insertSplitRowCoreAsync(_idProvider.NewGuid(), tenantId, category, price, name, description, embeddings, tagIds);
+
+  private async Task _insertSplitRowCoreAsync(
+      Guid testId, Guid tenantId, string category, decimal price, string name, string description,
       float[]? embeddings, List<Guid>? tagIds) {
 
     var strategy = new PostgresUpsertStrategy();
-    var testId = _idProvider.NewGuid();
 
     // Model as it would be AFTER Apply() but BEFORE stripping
     var strippedModel = new SplitProductionModel {
