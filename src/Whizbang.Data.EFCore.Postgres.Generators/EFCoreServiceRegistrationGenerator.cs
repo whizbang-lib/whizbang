@@ -1195,7 +1195,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // This enables turnkey setup via .WithEFCore<T>().WithDriver.Postgres
     foreach (var group in dbContextGroups) {
       var dbContextHasVectorFields = group.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
-      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields);
+      var dbContextHasPhysicalFields = group.Models.Any(m => m.PhysicalFields.Length > 0);
+      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
     }
 
     sb.AppendLine("  }");
@@ -1488,7 +1489,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _generateDbContextRegistrationCallback(
       StringBuilder sb,
       DbContextInfo dbContext,
-      bool hasVectorFields) {
+      bool hasVectorFields,
+      bool hasPhysicalFields = false) {
 
     // Use connection string name from attribute (or derived default) as the fallback
     var defaultConnectionStringKey = dbContext.ConnectionStringName;
@@ -1566,14 +1568,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          npgsqlOptions.UseVector();");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine("        });");
-      sb.AppendLine(CLOSE_BRACE_INDENT_6);
     } else {
       sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
       sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine("        });");
-      sb.AppendLine(CLOSE_BRACE_INDENT_6);
     }
+    // Register physical field interceptors (query rewriting + materialization hydration)
+    if (hasPhysicalFields) {
+      sb.AppendLine("        options.UseWhizbangPhysicalFields();");
+    }
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine();
     sb.AppendLine("      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
     sb.AppendLine("      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
