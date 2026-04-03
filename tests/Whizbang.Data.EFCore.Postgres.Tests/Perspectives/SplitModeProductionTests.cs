@@ -631,6 +631,9 @@ public class SplitModeProductionTests : IAsyncDisposable {
     row.Data.ParentId = entry.Property<Guid?>("parent_id").CurrentValue;
     var embeddings = entry.Property<Vector?>("embeddings").CurrentValue;
     if (embeddings is not null) { row.Data.Embeddings = embeddings.ToArray(); }
+
+    // Detach after hydration — entity was only tracked to read shadow properties
+    entry.State = EntityState.Detached;
   }
 
   private static void _hydratePhysicalFieldsList(DbContext context, List<PerspectiveRow<SplitProductionModel>> rows) {
