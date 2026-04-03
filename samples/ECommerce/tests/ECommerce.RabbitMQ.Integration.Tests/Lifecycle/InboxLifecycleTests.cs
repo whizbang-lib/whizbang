@@ -36,7 +36,7 @@ public class InboxLifecycleTests {
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
-  public async Task SetupAsync() {
+  public async Task SetupAsync(CancellationToken cancellationToken) {
     // Initialize shared containers (first test only)
     await SharedRabbitMqFixtureSource.InitializeAsync();
 
@@ -56,7 +56,7 @@ public class InboxLifecycleTests {
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
+  public async Task CleanupAsync(CancellationToken cancellationToken) {
     if (_fixture != null) {
       await _fixture.DisposeAsync();
       _fixture = null;
@@ -72,7 +72,7 @@ public class InboxLifecycleTests {
   /// Receptor invocation should wait for this lifecycle receptor to complete.
   /// </summary>
   [Test]
-  public async Task PreInboxInline_FiresBeforeReceptorInvocation_BlocksUntilCompleteAsync() {
+  public async Task PreInboxInline_FiresBeforeReceptorInvocation_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -110,7 +110,7 @@ public class InboxLifecycleTests {
   /// Should use Task.Run and not block receptor invocation.
   /// </summary>
   [Test]
-  public async Task PreInboxDetached_FiresParallelWithReceptor_NonBlockingAsync() {
+  public async Task PreInboxDetached_FiresParallelWithReceptor_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -145,7 +145,7 @@ public class InboxLifecycleTests {
   /// </summary>
   [Test]
   [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
-  public async Task PreInboxDetached_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync() {
+  public async Task PreInboxDetached_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -187,7 +187,7 @@ public class InboxLifecycleTests {
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostInboxDetached_FiresAfterReceptorCompletes_NonBlockingAsync() {
+  public async Task PostInboxDetached_FiresAfterReceptorCompletes_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -222,7 +222,7 @@ public class InboxLifecycleTests {
   /// </summary>
   [Test]
   [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
-  public async Task PostInboxDetached_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync() {
+  public async Task PostInboxDetached_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -265,7 +265,7 @@ public class InboxLifecycleTests {
   /// Next step should wait for this lifecycle receptor to complete.
   /// </summary>
   [Test]
-  public async Task PostInboxInline_FiresAfterReceptorCompletes_BlocksUntilCompleteAsync() {
+  public async Task PostInboxInline_FiresAfterReceptorCompletes_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -303,7 +303,7 @@ public class InboxLifecycleTests {
   /// PreInboxInline → PreInboxDetached (parallel with receptor) → PostInboxDetached → PostInboxInline
   /// </summary>
   [Test]
-  public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync() {
+  public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -365,7 +365,7 @@ public class InboxLifecycleTests {
   /// Verifies that multiple inbox messages trigger all Inbox stages for each message.
   /// </summary>
   [Test]
-  public async Task InboxStages_MultipleMessages_AllStagesFireForEachAsync() {
+  public async Task InboxStages_MultipleMessages_AllStagesFireForEachAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
