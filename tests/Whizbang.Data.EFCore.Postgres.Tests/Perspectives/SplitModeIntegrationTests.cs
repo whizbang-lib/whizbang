@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Pgvector;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Testing.Containers;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -41,6 +42,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     public string Name { get; set; } = string.Empty;
     public decimal Price { get; set; }
     public string? Description { get; set; }
+    public float[]? Embeddings { get; set; }
   }
 
   private sealed class SplitModeTestDbContext(DbContextOptions<SplitModeIntegrationTests.SplitModeTestDbContext> options) : DbContext(options) {
@@ -63,6 +65,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
         // Physical fields as shadow properties
         entity.Property<string?>("name").HasColumnName("name").HasMaxLength(200);
         entity.Property<decimal>("price").HasColumnName("price");
+        entity.Property<Vector?>("embeddings").HasColumnName("embeddings").HasColumnType("vector(3)");
 
         entity.HasIndex("name");
         entity.HasIndex("price");
@@ -88,10 +91,11 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
 
     var dataSourceBuilder = new NpgsqlDataSourceBuilder(_connectionString);
     dataSourceBuilder.EnableDynamicJson();
+    dataSourceBuilder.UseVector();
     _dataSource = dataSourceBuilder.Build();
 
     var optionsBuilder = new DbContextOptionsBuilder<SplitModeTestDbContext>();
-    optionsBuilder.UseNpgsql(_dataSource)
+    optionsBuilder.UseNpgsql(_dataSource, o => o.UseVector())
         .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
         .AddInterceptors(new PhysicalFieldQueryInterceptor(), new PhysicalFieldMaterializationInterceptor());
     _context = new SplitModeTestDbContext(optionsBuilder.Options);
@@ -101,6 +105,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     // Register physical field mappings so PhysicalFieldExpressionVisitor rewrites queries
     PhysicalFieldRegistry.Register<SplitTestModel>("Name", "name");
     PhysicalFieldRegistry.Register<SplitTestModel>("Price", "price");
+    PhysicalFieldRegistry.Register<SplitTestModel>("Embeddings", "embeddings");
 
     // Register hydrator so PhysicalFieldMaterializationInterceptor populates Data after query
     // This simulates what generated code does at startup (AOT-safe, no reflection)
@@ -113,6 +118,10 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
       var price = data.GetPropertyValue<decimal>("price");
       if (price != default) {
         row.Data.Price = price;
+      }
+      var embeddings = data.GetPropertyValue<Vector?>("embeddings");
+      if (embeddings is not null) {
+        row.Data.Embeddings = embeddings.ToArray();
       }
     });
   }
@@ -140,6 +149,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
     await connection.ExecuteAsync("""
+      CREATE EXTENSION IF NOT EXISTS vector;
       CREATE TABLE IF NOT EXISTS wh_per_split_test (
         id UUID PRIMARY KEY,
         data JSONB NOT NULL,
@@ -149,7 +159,8 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
         updated_at TIMESTAMPTZ NOT NULL,
         version INTEGER NOT NULL,
         name VARCHAR(200),
-        price DECIMAL NOT NULL DEFAULT 0
+        price DECIMAL NOT NULL DEFAULT 0,
+        embeddings vector(3)
       );
       CREATE INDEX IF NOT EXISTS idx_split_test_name ON wh_per_split_test(name);
       CREATE INDEX IF NOT EXISTS idx_split_test_price ON wh_per_split_test(price);
@@ -628,6 +639,63 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
   }
 
   // ==========================================================================
+  // Split Mode: Vector Field Select Projection (bug repro from screenshot)
+  // ==========================================================================
+
+  /// <summary>
+  /// Repro for: .Select(r => r.Data.Embeddings) throws InvalidOperationException
+  /// "Invalid token type 'Null'" because PhysicalFieldExpressionVisitor rewrites to
+  /// EF.Property&lt;float[]&gt;(r, "embeddings") but the shadow property is Vector, not float[].
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Select_VectorField_ReturnsFloatArrayAsync(CancellationToken cancellationToken) {
+    // Arrange — insert row with vector data
+    await _insertSplitRowWithEmbeddingsAsync("VecItem", 10.00m, "vec desc", [0.1f, 0.2f, 0.3f]);
+
+    // Act — Select projection on vector physical field (this is the exact pattern from the bug)
+    var embeddings = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .Select(r => r.Data.Embeddings)
+        .ToListAsync(cancellationToken);
+
+    // Assert
+    await Assert.That(embeddings).Count().IsEqualTo(1);
+    await Assert.That(embeddings[0]).IsNotNull();
+    await Assert.That(embeddings[0]!.Length).IsEqualTo(3);
+    await Assert.That(embeddings[0]![0]).IsEqualTo(0.1f).Within(0.001f);
+    await Assert.That(embeddings[0]![1]).IsEqualTo(0.2f).Within(0.001f);
+    await Assert.That(embeddings[0]![2]).IsEqualTo(0.3f).Within(0.001f);
+  }
+
+  /// <summary>
+  /// Verifies that WHERE on a vector field combined with Select projection works.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task SplitMode_Where_VectorFieldNotNull_Select_ReturnsPopulatedModelAsync(CancellationToken cancellationToken) {
+    // Arrange
+    await _insertSplitRowWithEmbeddingsAsync("WithVec", 20.00m, "has vec", [0.4f, 0.5f, 0.6f]);
+    await _insertSplitRowAsync("NoVec", 30.00m, "no vec");
+
+    // Act — full entity query, verify vector field is populated on materialized result
+    var rows = await _context!.Set<PerspectiveRow<SplitTestModel>>()
+        .AsNoTracking()
+        .OrderBy(r => r.Data.Price)
+        .ToListAsync(cancellationToken);
+
+    // Assert — row with embeddings should have populated field
+    await Assert.That(rows).Count().IsEqualTo(2);
+    await Assert.That(rows[0].Data.Name).IsEqualTo("WithVec");
+    await Assert.That(rows[0].Data.Embeddings).IsNotNull();
+    await Assert.That(rows[0].Data.Embeddings!.Length).IsEqualTo(3);
+    await Assert.That(rows[0].Data.Embeddings![0]).IsEqualTo(0.4f).Within(0.001f);
+    // Row without embeddings
+    await Assert.That(rows[1].Data.Name).IsEqualTo("NoVec");
+    await Assert.That(rows[1].Data.Embeddings).IsNull();
+  }
+
+  // ==========================================================================
   // Split Mode: GroupBy
   // ==========================================================================
 
@@ -710,6 +778,27 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
   /// Inserts a Split-mode row with physical fields in columns and stripped from JSONB.
   /// Simulates what the generated PerspectiveRunner does.
   /// </summary>
+  private async Task _insertSplitRowWithEmbeddingsAsync(string name, decimal price, string description, float[] embeddings) {
+    var strategy = new PostgresUpsertStrategy();
+    var testId = _idProvider.NewGuid();
+    var strippedModel = new SplitTestModel { Description = description };
+    var physicalFieldValues = new Dictionary<string, object?> {
+      ["name"] = name,
+      ["price"] = price,
+      ["embeddings"] = new Vector(embeddings)
+    };
+    var metadata = new PerspectiveMetadata {
+      EventType = "TestEvent",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+
+    await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context!, "wh_per_split_test", testId, strippedModel, metadata, new PerspectiveScope(),
+        physicalFieldValues, default);
+    await _context!.SaveChangesAsync();
+  }
+
   private async Task _insertSplitRowAsync(string name, decimal price, string description) {
     var strategy = new PostgresUpsertStrategy();
     var testId = _idProvider.NewGuid();
