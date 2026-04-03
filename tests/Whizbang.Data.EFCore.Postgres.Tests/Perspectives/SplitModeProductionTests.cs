@@ -567,6 +567,100 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   // ========================================================================
+  // SQL Verification — Every LINQ operator uses physical columns
+  // ========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Where_GuidField_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Where(r => r.Data.TenantId == Guid.Empty)
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("WHERE on TenantId must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.tenant_id").Because("WHERE must use physical column tenant_id");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Where_StringField_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Where(r => r.Data.Category == "test")
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("WHERE on Category must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.category").Because("WHERE must use physical column category");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Where_DecimalField_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Where(r => r.Data.Price >= 50.0m)
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("WHERE on Price must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.price >= ").Because("WHERE must use physical column price");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_OrderBy_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .OrderBy(r => r.Data.Price)
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("ORDER BY must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("order by w.price").Because("ORDER BY must use physical column price");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_GroupBy_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .GroupBy(r => r.Data.Category)
+        .Select(g => new { Category = g.Key, Count = g.Count() })
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("GROUP BY must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("group by w.category").Because("GROUP BY must use physical column category");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Select_VectorField_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Select(r => r.Data.Embeddings)
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("SELECT on Embeddings must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.embeddings").Because("SELECT must use physical column embeddings");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Select_GuidField_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Select(r => r.Data.TenantId)
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("SELECT on TenantId must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.tenant_id").Because("SELECT must use physical column tenant_id");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Count_Where_UsesPhysicalColumnAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Where(r => r.Data.Price > 50.0m)
+        .Select(r => r.Id)  // Need to materialize something for ToQueryString
+        .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("data ->>").Because("COUNT WHERE must not use JSONB extraction");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.price >").Because("WHERE must use physical column price");
+  }
+
+  // ========================================================================
   // Helpers
   // ========================================================================
 
