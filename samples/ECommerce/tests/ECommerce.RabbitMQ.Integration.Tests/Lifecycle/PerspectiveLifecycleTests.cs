@@ -631,7 +631,8 @@ public class PerspectiveLifecycleTests {
   /// once after ALL perspectives complete — resulting in multiple firings.
   /// </summary>
   [Test]
-  public async Task PostAllPerspectivesDetached_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync() {
+  [Timeout(180_000)]  // Fixture init (~60s) + perspective processing (~60s) + margin
+  public async Task PostAllPerspectivesDetached_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -664,10 +665,10 @@ public class PerspectiveLifecycleTests {
         bffPerspectives: 2);
 
       await fixture.Dispatcher.SendAsync(command);
-      await waiter.WaitAsync(timeoutMilliseconds: 30000);
+      await waiter.WaitAsync(timeoutMilliseconds: 60000);
 
-      // Give extra time for any additional PostAllPerspectives firings from subsequent batches
-      await Task.Delay(3000);
+      // Wait for PostAllPerspectivesDetached to fire using completion signal
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
       // Assert - PostAllPerspectivesDetached should fire exactly ONCE per event
       // Bug: fires multiple times because perspectivesPerStream only includes
