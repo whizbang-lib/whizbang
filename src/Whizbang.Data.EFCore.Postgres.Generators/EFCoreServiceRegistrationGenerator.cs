@@ -1115,9 +1115,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
     var anyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
+    var anyPhysicalFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Length > 0));
     if (anyVectorFields) {
       sb.AppendLine("using Npgsql;");
       sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+    }
+    if (anyPhysicalFields) {
+      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.QueryTranslation;");
     }
     sb.AppendLine();
 
