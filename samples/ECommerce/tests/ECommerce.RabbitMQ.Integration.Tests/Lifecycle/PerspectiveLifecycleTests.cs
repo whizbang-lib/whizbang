@@ -631,7 +631,7 @@ public class PerspectiveLifecycleTests {
   /// once after ALL perspectives complete — resulting in multiple firings.
   /// </summary>
   [Test]
-  [Timeout(180_000)]  // Fixture init (~60s) + perspective processing (~60s) + margin
+  [Timeout(300_000)]  // Fixture init (~60s) + 4 batch cycles with PerspectiveBatchSize=1 under load
   public async Task PostAllPerspectivesDetached_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
