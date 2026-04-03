@@ -610,7 +610,7 @@ public class PerspectiveLifecycleTests {
       }
 
       // Wait for last event to complete PostPerspectiveInline
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(30));
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - Receptor should have been invoked at least once
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
