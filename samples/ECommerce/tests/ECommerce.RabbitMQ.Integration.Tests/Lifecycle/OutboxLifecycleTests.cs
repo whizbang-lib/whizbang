@@ -30,6 +30,7 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 [Category("Integration")]
 [Category("Lifecycle")]
 [NotInParallel("RabbitMQ")]
+[Timeout(120_000)]  // Fixture init (~60s) + test body (~25s) + margin
 public class OutboxLifecycleTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
