@@ -38,7 +38,10 @@ public static class WhizbangDbContextOptionsBuilderExtensions {
     ArgumentNullException.ThrowIfNull(optionsBuilder);
 
     // Add the query interceptor that transforms r.Data.PropertyName to EF.Property()
-    optionsBuilder.AddInterceptors(new PhysicalFieldQueryInterceptor());
+    // and the materialization interceptor that hydrates physical field values into Data after query
+    optionsBuilder.AddInterceptors(
+      new PhysicalFieldQueryInterceptor(),
+      new PhysicalFieldMaterializationInterceptor());
 
     return optionsBuilder;
   }
