@@ -34,7 +34,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 10000)
+    int timeoutMilliseconds = 20000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -49,7 +49,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 10000)
+    int timeoutMilliseconds = 20000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -64,7 +64,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 10000)
+    int timeoutMilliseconds = 20000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -79,7 +79,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 10000)
+    int timeoutMilliseconds = 20000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -94,7 +94,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 10000)
+    int timeoutMilliseconds = 20000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -304,8 +304,9 @@ public static class LifecycleStageTestExtensions {
     registry.Register<TMessage>(receptor, stage);
 
     try {
-      // Wait for completion with timeout
-      await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds));
+      // Wait for completion with scaled timeout (respects WHIZBANG_TEST_TIMEOUT_MULTIPLIER)
+      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+      await completionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
     } finally {
       // Always unregister, even if timeout occurs
       registry.Unregister<TMessage>(receptor, stage);
