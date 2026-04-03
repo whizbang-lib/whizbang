@@ -264,7 +264,7 @@ foreach ($project in $projects) {
     $projectName = $project.BaseName
     Write-Host "Packing $projectName..." -ForegroundColor Cyan -NoNewline
 
-    $output = dotnet pack $project.FullName -o $localPackagesDir -c $Configuration --no-build @extraPackArgs 2>&1
+    $output = dotnet pack $project.FullName -o $localPackagesDir -c $Configuration @extraPackArgs 2>&1
     $exitCode = $LASTEXITCODE
 
     # Check for success (package created)
