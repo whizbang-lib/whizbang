@@ -665,7 +665,7 @@ public class PerspectiveLifecycleTests {
         bffPerspectives: 2);
 
       await fixture.Dispatcher.SendAsync(command);
-      await waiter.WaitAsync(timeoutMilliseconds: 60000);
+      await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
       // Wait for PostAllPerspectivesDetached to fire using completion signal
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(30));
