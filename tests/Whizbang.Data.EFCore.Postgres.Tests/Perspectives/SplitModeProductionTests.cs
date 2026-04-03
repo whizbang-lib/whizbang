@@ -441,10 +441,120 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
     var sql = query.ToQueryString();
 
-    await Assert.That(sql).DoesNotContain("data")
-      .Because("Physical field Price should use column, not JSONB extraction");
-    await Assert.That(sql.ToLowerInvariant()).Contains(".price")
-      .Because("Should use physical column name 'price'");
+    // WHERE clause must use physical column, not JSONB extraction like data->>'Price'
+    await Assert.That(sql).DoesNotContain("data ->>")
+      .Because("Physical field Price should use column, not JSONB path extraction");
+    await Assert.That(sql).DoesNotContain("data->>'Price'")
+      .Because("Should not extract Price from JSONB");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.price >= ")
+      .Because("WHERE should use physical column name 'price'");
+  }
+
+  // ========================================================================
+  // LINQ Regression — SQL Translation Verification
+  // ========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task GroupBy_PhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "A", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 20.00m, "B", "desc", [0.4f, 0.5f, 0.6f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "clothing", 30.00m, "C", "desc", [0.7f, 0.8f, 0.9f], null);
+
+    var groups = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .AsNoTracking()
+        .GroupBy(r => r.Data.Category)
+        .Select(g => new { Category = g.Key, Count = g.Count(), Total = g.Sum(r => r.Data.Price) })
+        .OrderBy(g => g.Category)
+        .ToListAsync(ct);
+
+    await Assert.That(groups).Count().IsEqualTo(2);
+    await Assert.That(groups[0].Category).IsEqualTo("clothing");
+    await Assert.That(groups[0].Count).IsEqualTo(1);
+    await Assert.That(groups[1].Category).IsEqualTo("electronics");
+    await Assert.That(groups[1].Count).IsEqualTo(2);
+    await Assert.That(groups[1].Total).IsEqualTo(30.00m);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Count_WherePhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Cheap", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 50.00m, "Mid", "desc", [0.4f, 0.5f, 0.6f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "c", 100.00m, "Pricey", "desc", [0.7f, 0.8f, 0.9f], null);
+
+    var count = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .AsNoTracking()
+        .CountAsync(r => r.Data.Price > 25.00m, ct);
+
+    await Assert.That(count).IsEqualTo(2);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Any_WherePhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
+
+    var exists = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .AsNoTracking()
+        .AnyAsync(r => r.Data.Category == "electronics", ct);
+    var notExists = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .AsNoTracking()
+        .AnyAsync(r => r.Data.Category == "nonexistent", ct);
+
+    await Assert.That(exists).IsTrue();
+    await Assert.That(notExists).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task SkipTake_OrderByPhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
+    for (var i = 1; i <= 5; i++) {
+      await _insertSplitRowAsync(Guid.CreateVersion7(), $"cat{i}", i * 10.00m, $"Item{i}", "desc", [0.1f * i, 0.2f * i, 0.3f * i], null);
+    }
+
+    // Page 2: skip 2, take 2, ordered by price
+    var rows = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .AsNoTracking()
+        .OrderBy(r => r.Data.Price)
+        .Skip(2)
+        .Take(2)
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(2);
+    // Prices should be 30 and 40 (3rd and 4th items)
+    await Assert.That(rows[0].Data.Name).IsEqualTo("Item3");
+    await Assert.That(rows[1].Data.Name).IsEqualTo("Item4");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task GroupBy_PhysicalField_SqlNotClientEvalAsync(CancellationToken ct) {
+    var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .GroupBy(r => r.Data.Category)
+        .Select(g => new { Category = g.Key, Count = g.Count() });
+
+    var sql = query.ToQueryString();
+
+    // GROUP BY must use physical column, not JSONB
+    await Assert.That(sql.ToLowerInvariant()).Contains("group by")
+      .Because("GROUP BY must be translated to SQL, not client-evaluated");
+    await Assert.That(sql).DoesNotContain("data ->>")
+      .Because("GROUP BY should use physical column, not JSONB extraction");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OrderBy_PhysicalField_SqlNotClientEvalAsync(CancellationToken ct) {
+    var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .OrderBy(r => r.Data.Price);
+
+    var sql = query.ToQueryString();
+
+    await Assert.That(sql.ToLowerInvariant()).Contains("order by")
+      .Because("ORDER BY must be translated to SQL");
+    await Assert.That(sql).DoesNotContain("data ->>")
+      .Because("ORDER BY should use physical column, not JSONB extraction");
   }
 
   // ========================================================================
