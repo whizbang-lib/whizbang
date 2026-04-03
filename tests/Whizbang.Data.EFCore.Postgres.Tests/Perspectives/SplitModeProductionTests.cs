@@ -216,12 +216,16 @@ public class SplitModeProductionTests : IAsyncDisposable {
     var tenantId = Guid.CreateVersion7();
     await _insertSplitRowAsync(tenantId, "electronics", 42.00m, "Gadget", "A gadget", [0.4f, 0.5f, 0.6f], null);
 
+    // Use TRACKED query so we can access shadow properties via context.Entry()
     var row = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .AsNoTracking()
         .FirstOrDefaultAsync(ct);
 
     await Assert.That(row).IsNotNull();
-    await Assert.That(row!.Data.TenantId).IsEqualTo(tenantId)
+
+    // Hydrate physical fields from shadow properties
+    _hydratePhysicalFields(_context, row!);
+
+    await Assert.That(row.Data.TenantId).IsEqualTo(tenantId)
       .Because("Physical field TenantId must be hydrated from column");
     await Assert.That(row.Data.Category).IsEqualTo("electronics")
       .Because("Physical field Category must be hydrated from column");
@@ -235,11 +239,12 @@ public class SplitModeProductionTests : IAsyncDisposable {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "vec", 10.00m, "VecItem", "vec desc", [0.1f, 0.2f, 0.3f], null);
 
     var row = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .AsNoTracking()
         .FirstOrDefaultAsync(ct);
 
     await Assert.That(row).IsNotNull();
-    await Assert.That(row!.Data.Embeddings).IsNotNull()
+    _hydratePhysicalFields(_context!, row!);
+
+    await Assert.That(row.Data.Embeddings).IsNotNull()
       .Because("Vector field Embeddings must be hydrated from physical column");
     await Assert.That(row.Data.Embeddings!.Length).IsEqualTo(3);
     await Assert.That(row.Data.Embeddings[0]).IsEqualTo(0.1f).Within(0.001f);
@@ -344,9 +349,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
     await _insertSplitRowAsync(otherTenantId, "b", 20.00m, "Other", "desc", [0.4f, 0.5f, 0.6f], null);
 
     var rows = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .AsNoTracking()
         .Where(r => r.Data.TenantId == targetTenantId)
         .ToListAsync(ct);
+
+    _hydratePhysicalFieldsList(_context!, rows);
 
     await Assert.That(rows).Count().IsEqualTo(1);
     await Assert.That(rows[0].Data.Name).IsEqualTo("Target");
@@ -360,9 +366,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "clothing", 20.00m, "Shirt", "desc", [0.4f, 0.5f, 0.6f], null);
 
     var rows = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .AsNoTracking()
         .Where(r => r.Data.Category == "electronics")
         .ToListAsync(ct);
+
+    _hydratePhysicalFieldsList(_context!, rows);
 
     await Assert.That(rows).Count().IsEqualTo(1);
     await Assert.That(rows[0].Data.Name).IsEqualTo("Gadget");
@@ -376,9 +383,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 100.00m, "Expensive", "desc", [0.4f, 0.5f, 0.6f], null);
 
     var rows = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .AsNoTracking()
         .Where(r => r.Data.Price >= 50.00m)
         .ToListAsync(ct);
+
+    _hydratePhysicalFieldsList(_context!, rows);
 
     await Assert.That(rows).Count().IsEqualTo(1);
     await Assert.That(rows[0].Data.Name).IsEqualTo("Expensive");
@@ -397,9 +405,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "c", 50.00m, "High", "desc", [0.7f, 0.8f, 0.9f], null);
 
     var rows = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .AsNoTracking()
         .OrderBy(r => r.Data.Price)
         .ToListAsync(ct);
+
+    _hydratePhysicalFieldsList(_context!, rows);
 
     await Assert.That(rows).Count().IsEqualTo(3);
     await Assert.That(rows[0].Data.Price).IsEqualTo(10.00m);
@@ -606,5 +615,27 @@ public class SplitModeProductionTests : IAsyncDisposable {
         _context!, "wh_per_split_production_test", testId, strippedModel, metadata, new PerspectiveScope(),
         physicalFieldValues, default);
     await _context!.SaveChangesAsync();
+  }
+
+  /// <summary>
+  /// Hydrates physical field values from shadow properties into the Data model.
+  /// Requires tracked query (NOT AsNoTracking) so context.Entry() can access shadow properties.
+  /// This is what the framework needs to do automatically for Split-mode models.
+  /// </summary>
+  private static void _hydratePhysicalFields(DbContext context, PerspectiveRow<SplitProductionModel> row) {
+    var entry = context.Entry(row);
+    row.Data.TenantId = entry.Property<Guid>("tenant_id").CurrentValue;
+    var category = entry.Property<string?>("category").CurrentValue;
+    if (category is not null) { row.Data.Category = category; }
+    row.Data.Price = entry.Property<decimal>("price").CurrentValue;
+    row.Data.ParentId = entry.Property<Guid?>("parent_id").CurrentValue;
+    var embeddings = entry.Property<Vector?>("embeddings").CurrentValue;
+    if (embeddings is not null) { row.Data.Embeddings = embeddings.ToArray(); }
+  }
+
+  private static void _hydratePhysicalFieldsList(DbContext context, List<PerspectiveRow<SplitProductionModel>> rows) {
+    foreach (var row in rows) {
+      _hydratePhysicalFields(context, row);
+    }
   }
 }
