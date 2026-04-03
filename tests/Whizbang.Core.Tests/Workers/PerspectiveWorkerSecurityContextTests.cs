@@ -581,9 +581,12 @@ public class PerspectiveWorkerSecurityContextTests {
     var scopeContextAccessor = new TestScopeContextAccessor();
 
     // Create lifecycle invoker that captures the IMessageContext state
+    // Capture at PrePerspectiveInline (fires synchronously on the main thread) rather than
+    // PrePerspectiveDetached (fires via Task.Run and may not complete before test cancellation).
+    // Security context is established BEFORE all stages, so the context is already set.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveDetached) {
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
           capturedScopeContext = messageContextAccessor.Current?.ScopeContext;
@@ -680,9 +683,11 @@ public class PerspectiveWorkerSecurityContextTests {
     var messageContextAccessor = new TestMessageContextAccessor();
     var scopeContextAccessor = new TestScopeContextAccessor();
 
+    // Capture at PrePerspectiveInline (fires synchronously) rather than PrePerspectiveDetached
+    // (fires via Task.Run). Security context is established before all stages.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveDetached) {
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
         }
