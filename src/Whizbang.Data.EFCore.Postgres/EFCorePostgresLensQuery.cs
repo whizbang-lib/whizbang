@@ -146,8 +146,21 @@ internal static class ScopedAccessHelper {
 
 internal sealed class UnfilteredScopedAccess<TModel>(DbContext context) : IScopedLensAccess<TModel>
     where TModel : class {
-  public IQueryable<PerspectiveRow<TModel>> Query =>
-      context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+
+  // Static per TModel — computed once, zero per-query overhead.
+  // Uses closed generic type for zero-reflection AOT-safe lookup.
+  private static readonly bool _isSplitMode =
+      SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<TModel>));
+
+  public IQueryable<PerspectiveRow<TModel>> Query {
+    get {
+      if (_isSplitMode) {
+        SplitModeChangeTrackerHydrator.EnsureHooked(context);
+        return context.Set<PerspectiveRow<TModel>>().AsQueryable();
+      }
+      return context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+    }
+  }
 
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
@@ -157,8 +170,23 @@ internal sealed class UnfilteredScopedAccess<TModel>(DbContext context) : IScope
 
 internal sealed class FilteredScopedAccess<TModel>(DbContext context, ScopeFilterInfo filterInfo) : IScopedLensAccess<TModel>
     where TModel : class {
-  public IQueryable<PerspectiveRow<TModel>> Query =>
-      ScopedAccessHelper.ApplyFilterInfo(context.Set<PerspectiveRow<TModel>>().AsNoTracking(), filterInfo);
+
+  // Static per TModel — computed once, zero per-query overhead.
+  private static readonly bool _isSplitMode =
+      SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<TModel>));
+
+  public IQueryable<PerspectiveRow<TModel>> Query {
+    get {
+      IQueryable<PerspectiveRow<TModel>> baseQuery;
+      if (_isSplitMode) {
+        SplitModeChangeTrackerHydrator.EnsureHooked(context);
+        baseQuery = context.Set<PerspectiveRow<TModel>>().AsQueryable();
+      } else {
+        baseQuery = context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+      }
+      return ScopedAccessHelper.ApplyFilterInfo(baseQuery, filterInfo);
+    }
+  }
 
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);

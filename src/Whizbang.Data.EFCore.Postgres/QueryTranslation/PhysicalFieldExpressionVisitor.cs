@@ -77,11 +77,17 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
 
         if (mapping.IsVector) {
           // Vector fields: DO NOT rewrite member access.
-          // The Whizbang vector extensions (OrderByCosineDistance, WithCosineDistance, etc.)
-          // handle float[] → Vector conversion internally. Rewriting here causes type
-          // mismatches in different LINQ contexts (Select wants float[], WHERE wants Vector).
-          // The only gap is `r.Data.Embeddings != null` in Split mode (no JSONB value) —
-          // that needs a separate null-check-aware rewrite.
+          //
+          // The shadow property is Vector? but the model property is float[]? — EF Core
+          // cannot coerce between these types in expression trees. Rewriting causes:
+          //   "No coercion operator is defined between types 'String' and 'Single[]'"
+          //   or "Expression of type 'Vector' cannot be used for return type 'Single[]'"
+          //
+          // Full entity materialization works via ChangeTracker hydration (SplitModeChangeTrackerHydrator).
+          // For Select projections, use EF.Property<Vector?>(r, "embeddings") explicitly.
+          // The Whizbang vector extensions (OrderByCosineDistance, etc.) handle their own rewriting.
+          //
+          // TODO: Unify shadow property type to float[]? (requires vector extension refactor).
           return base.VisitMember(node);
         } else {
           // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")

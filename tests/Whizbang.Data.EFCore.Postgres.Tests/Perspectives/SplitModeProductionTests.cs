@@ -152,7 +152,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
     PhysicalFieldRegistry.Register<SplitProductionModel>("ParentId", "parent_id");
     PhysicalFieldRegistry.Register<SplitProductionModel>("Embeddings", "embeddings", isVector: true);
 
-    // Register hydrator
+    // Register materialization interceptor hydrator (fallback — no-ops when Data is null with ComplexProperty().ToJson())
     PhysicalFieldHydratorRegistry.Register<SplitProductionModel>((data, entity) => {
       var row = (PerspectiveRow<SplitProductionModel>)entity;
       if (row.Data is null) { return; }
@@ -164,6 +164,20 @@ public class SplitModeProductionTests : IAsyncDisposable {
       if (parentId is not null) { row.Data.ParentId = parentId; }
       var embeddings = data.GetPropertyValue<Vector?>("embeddings");
       if (embeddings is not null) { row.Data.Embeddings = embeddings.ToArray(); }
+    });
+
+    // Register ChangeTracker-based hydrator (primary path — fires after ComplexProperty().ToJson() populates Data)
+    SplitModeChangeTrackerHydrator.Register(typeof(PerspectiveRow<SplitProductionModel>), entry => {
+      var row = (PerspectiveRow<SplitProductionModel>)entry.Entity;
+      if (row.Data is null) { return; }
+      row.Data.TenantId = (Guid)entry.Property("tenant_id").CurrentValue!;
+      var category = (string?)entry.Property("category").CurrentValue;
+      if (category is not null) { row.Data.Category = category; }
+      row.Data.Price = (decimal)entry.Property("price").CurrentValue!;
+      row.Data.ParentId = (Guid?)entry.Property("parent_id").CurrentValue;
+      var embeddings = (Vector?)entry.Property("embeddings").CurrentValue;
+      if (embeddings is not null) { row.Data.Embeddings = embeddings.ToArray(); }
+      entry.State = EntityState.Detached;
     });
   }
 
@@ -321,20 +335,24 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
-  public async Task Select_VectorField_ReturnsRealValuesAsync(CancellationToken ct) {
+  public async Task Select_VectorField_ViaEFProperty_ReturnsRealValuesAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "cat", 10.00m, "Item", "desc", [0.7f, 0.8f, 0.9f], null);
 
-    // This should read from the physical column, not JSONB (which has [] or null)
-    var embeddings = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+    // Vector Select projections require explicit EF.Property<Vector?> because the shadow property
+    // type (Vector) differs from the model property type (float[]). The expression visitor
+    // cannot rewrite due to type coercion limitations in EF Core expression trees.
+    // Full entity materialization uses ChangeTracker hydration instead.
+    var vectors = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .AsNoTracking()
-        .Select(r => r.Data.Embeddings)
+        .Select(r => EF.Property<Vector?>(r, "embeddings"))
         .ToListAsync(ct);
 
-    await Assert.That(embeddings).Count().IsEqualTo(1);
-    await Assert.That(embeddings[0]).IsNotNull()
-      .Because("Select projection on vector field must return real values from physical column");
-    await Assert.That(embeddings[0]!.Length).IsEqualTo(3);
-    await Assert.That(embeddings[0]![0]).IsEqualTo(0.7f).Within(0.001f);
+    await Assert.That(vectors).Count().IsEqualTo(1);
+    await Assert.That(vectors[0]).IsNotNull()
+      .Because("EF.Property<Vector?> must read from physical column, not JSONB");
+    var floats = vectors[0]!.ToArray();
+    await Assert.That(floats.Length).IsEqualTo(3);
+    await Assert.That(floats[0]).IsEqualTo(0.7f).Within(0.001f);
   }
 
   [Test]
@@ -714,9 +732,11 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
-  public async Task Sql_Select_VectorField_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Select_VectorField_ViaEFProperty_UsesPhysicalColumnAsync(CancellationToken ct) {
+    // Vector Select projections use EF.Property<Vector?> directly (not the expression visitor)
+    // because shadow property type (Vector) differs from model type (float[])
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
-        .Select(r => r.Data.Embeddings)
+        .Select(r => EF.Property<Vector?>(r, "embeddings"))
         .ToQueryString();
 
     await Assert.That(sql).DoesNotContain("data ->>").Because("SELECT on Embeddings must not use JSONB extraction");
@@ -744,6 +764,171 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
     await Assert.That(sql).DoesNotContain("data ->>").Because("COUNT WHERE must not use JSONB extraction");
     await Assert.That(sql.ToLowerInvariant()).Contains("w.price >").Because("WHERE must use physical column price");
+  }
+
+  // ========================================================================
+  // ChangeTracker.Tracked Timing Validation (GATE TEST)
+  // ========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ChangeTrackerTracked_FiresAfterComplexPropertyPopulatedAsync(CancellationToken ct) {
+    // This test validates the fundamental assumption of our hydration approach:
+    // ChangeTracker.Tracked fires AFTER ComplexProperty().ToJson() populates Data.
+    // If this test fails, the ChangeTracker approach won't work and we need to redesign.
+
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "gate-test", 99.99m, "GateItem", "gate desc", [0.1f, 0.2f, 0.3f], null);
+
+    var trackedEventFired = false;
+    var dataWasNonNull = false;
+    var dataNameValue = (string?)null;
+
+    _context!.ChangeTracker.Tracked += (sender, args) => {
+      trackedEventFired = true;
+      var entity = args.Entry.Entity;
+      if (entity is PerspectiveRow<SplitProductionModel> row) {
+        dataWasNonNull = row.Data is not null;
+        if (row.Data is not null) {
+          dataNameValue = row.Data.Name;
+        }
+      }
+    };
+
+    // Execute a TRACKED query (no AsNoTracking) — this should fire the Tracked event
+    var row = await _context.Set<PerspectiveRow<SplitProductionModel>>()
+        .FirstOrDefaultAsync(ct);
+
+    await Assert.That(row).IsNotNull()
+      .Because("Query should return a row");
+    await Assert.That(trackedEventFired).IsTrue()
+      .Because("ChangeTracker.Tracked event must fire for tracked queries");
+    await Assert.That(dataWasNonNull).IsTrue()
+      .Because("CRITICAL: row.Data must be non-null when Tracked fires — this validates ComplexProperty().ToJson() populates Data BEFORE the Tracked event");
+    await Assert.That(dataNameValue).IsEqualTo("GateItem")
+      .Because("JSONB-only field Name must be populated when Tracked fires — proves full materialization is complete");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ChangeTrackerTracked_CanReadShadowPropertiesAsync(CancellationToken ct) {
+    // Validates that shadow properties (physical columns) are accessible via EntityEntry
+    // within the Tracked event handler — needed for hydration.
+
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "shadow-test", 42.00m, "ShadowItem", "desc", [0.7f, 0.8f, 0.9f], null);
+
+    Guid? readTenantId = null;
+    string? readCategory = null;
+    decimal? readPrice = null;
+    float[]? readEmbeddings = null;
+
+    _context!.ChangeTracker.Tracked += (sender, args) => {
+      if (args.Entry.Entity is PerspectiveRow<SplitProductionModel>) {
+        // Non-generic EntityEntry — use Property("name").CurrentValue with casts
+        readTenantId = (Guid)args.Entry.Property("tenant_id").CurrentValue!;
+        readCategory = (string?)args.Entry.Property("category").CurrentValue;
+        readPrice = (decimal)args.Entry.Property("price").CurrentValue!;
+        var vec = (Vector?)args.Entry.Property("embeddings").CurrentValue;
+        readEmbeddings = vec?.ToArray();
+      }
+    };
+
+    var row = await _context.Set<PerspectiveRow<SplitProductionModel>>()
+        .FirstOrDefaultAsync(ct);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(readTenantId).IsEqualTo(tenantId)
+      .Because("Shadow property tenant_id must be readable in Tracked handler");
+    await Assert.That(readCategory).IsEqualTo("shadow-test")
+      .Because("Shadow property category must be readable in Tracked handler");
+    await Assert.That(readPrice).IsEqualTo(42.00m)
+      .Because("Shadow property price must be readable in Tracked handler");
+    await Assert.That(readEmbeddings).IsNotNull()
+      .Because("Shadow property embeddings must be readable in Tracked handler");
+    await Assert.That(readEmbeddings![0]).IsEqualTo(0.7f).Within(0.001f);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ChangeTrackerTracked_CanHydrateAndDetachAsync(CancellationToken ct) {
+    // Validates the full hydration + immediate detach pattern works:
+    // 1. Tracked fires with Data populated
+    // 2. We can read shadow properties and write to Data
+    // 3. We can detach immediately
+    // 4. The result list still has valid references with hydrated data
+
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "hydrate-test", 77.77m, "HydrateItem", "desc", [0.4f, 0.5f, 0.6f], null);
+
+    _context!.ChangeTracker.Tracked += (sender, args) => {
+      if (args.Entry.Entity is PerspectiveRow<SplitProductionModel> row && row.Data is not null) {
+        // Hydrate physical fields from shadow properties (non-generic EntityEntry)
+        _hydrateFromEntry(row, args.Entry);
+        // Immediately detach
+        args.Entry.State = EntityState.Detached;
+      }
+    };
+
+    var result = await _context.Set<PerspectiveRow<SplitProductionModel>>()
+        .FirstOrDefaultAsync(ct);
+
+    // Verify hydration worked
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Data.TenantId).IsEqualTo(tenantId)
+      .Because("Physical field must be hydrated via Tracked handler");
+    await Assert.That(result.Data.Category).IsEqualTo("hydrate-test");
+    await Assert.That(result.Data.Price).IsEqualTo(77.77m);
+    await Assert.That(result.Data.Embeddings).IsNotNull();
+    await Assert.That(result.Data.Embeddings![0]).IsEqualTo(0.4f).Within(0.001f);
+
+    // Verify JSONB-only fields still work
+    await Assert.That(result.Data.Name).IsEqualTo("HydrateItem");
+
+    // Verify entity was detached
+    await Assert.That(_context.ChangeTracker.Entries().Count()).IsEqualTo(0)
+      .Because("Entity must be detached after hydration — zero tracking overhead");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ChangeTrackerTracked_BulkResults_AllHydratedAndDetachedAsync(CancellationToken ct) {
+    // Validates that immediate detach during bulk materialization doesn't break iteration.
+    // Each row is hydrated and detached as it's tracked, while ToListAsync is still collecting rows.
+
+    var tenant1 = Guid.CreateVersion7();
+    var tenant2 = Guid.CreateVersion7();
+    var tenant3 = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenant1, "bulk-a", 10.00m, "Item1", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(tenant2, "bulk-b", 20.00m, "Item2", "desc", [0.4f, 0.5f, 0.6f], null);
+    await _insertSplitRowAsync(tenant3, "bulk-c", 30.00m, "Item3", "desc", [0.7f, 0.8f, 0.9f], null);
+
+    var hydratedCount = 0;
+
+    _context!.ChangeTracker.Tracked += (sender, args) => {
+      if (args.Entry.Entity is PerspectiveRow<SplitProductionModel> row && row.Data is not null) {
+        _hydrateFromEntry(row, args.Entry);
+        args.Entry.State = EntityState.Detached;
+        Interlocked.Increment(ref hydratedCount);
+      }
+    };
+
+    var rows = await _context.Set<PerspectiveRow<SplitProductionModel>>()
+        .OrderBy(r => r.Data.Price) // Uses PhysicalFieldExpressionVisitor
+        .ToListAsync(ct);
+
+    await Assert.That(rows).Count().IsEqualTo(3);
+    await Assert.That(hydratedCount).IsEqualTo(3)
+      .Because("All 3 rows must be hydrated via Tracked handler");
+
+    // Verify all rows have correct physical field values
+    await Assert.That(rows[0].Data.Price).IsEqualTo(10.00m);
+    await Assert.That(rows[0].Data.Category).IsEqualTo("bulk-a");
+    await Assert.That(rows[1].Data.Price).IsEqualTo(20.00m);
+    await Assert.That(rows[2].Data.Price).IsEqualTo(30.00m);
+
+    // Verify all detached
+    await Assert.That(_context.ChangeTracker.Entries().Count()).IsEqualTo(0)
+      .Because("All entities must be detached — zero tracking overhead");
   }
 
   // ========================================================================
@@ -815,6 +1000,20 @@ public class SplitModeProductionTests : IAsyncDisposable {
     await strategy.UpsertPerspectiveRowAsync(
         _context!, "wh_per_category_test", testId, model, metadata, new PerspectiveScope(), default);
     await _context!.SaveChangesAsync();
+  }
+
+  /// <summary>
+  /// Hydrates from a non-generic EntityEntry (as provided by ChangeTracker.Tracked event).
+  /// This is the pattern the framework will use — zero generic type args, just casts.
+  /// </summary>
+  private static void _hydrateFromEntry(PerspectiveRow<SplitProductionModel> row, Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry entry) {
+    row.Data.TenantId = (Guid)entry.Property("tenant_id").CurrentValue!;
+    var category = (string?)entry.Property("category").CurrentValue;
+    if (category is not null) { row.Data.Category = category; }
+    row.Data.Price = (decimal)entry.Property("price").CurrentValue!;
+    row.Data.ParentId = (Guid?)entry.Property("parent_id").CurrentValue;
+    var embeddings = (Vector?)entry.Property("embeddings").CurrentValue;
+    if (embeddings is not null) { row.Data.Embeddings = embeddings.ToArray(); }
   }
 
   private static void _hydratePhysicalFields(DbContext context, PerspectiveRow<SplitProductionModel> row) {
