@@ -73,7 +73,14 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
         return DefaultScope.Query;
       }
 
-      return _applyFilterInfo(_context.Set<PerspectiveRow<TModel>>().AsNoTracking(), _filterInfo);
+      IQueryable<PerspectiveRow<TModel>> baseQuery;
+      if (SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<TModel>))) {
+        SplitModeChangeTrackerHydrator.EnsureHooked(_context);
+        baseQuery = _context.Set<PerspectiveRow<TModel>>().AsQueryable();
+      } else {
+        baseQuery = _context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+      }
+      return _applyFilterInfo(baseQuery, _filterInfo);
     }
   }
 
@@ -154,8 +161,18 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
   /// Scoped access that returns unfiltered queries (Global scope).
   /// </summary>
   private sealed class UnfilteredScopedAccess(DbContext context) : IScopedLensAccess<TModel> {
-    public IQueryable<PerspectiveRow<TModel>> Query =>
-        context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+    private static readonly bool _isSplitMode =
+        SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<TModel>));
+
+    public IQueryable<PerspectiveRow<TModel>> Query {
+      get {
+        if (_isSplitMode) {
+          SplitModeChangeTrackerHydrator.EnsureHooked(context);
+          return context.Set<PerspectiveRow<TModel>>().AsQueryable();
+        }
+        return context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+      }
+    }
 
     public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
@@ -167,8 +184,21 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
   /// Scoped access that applies filter info to queries.
   /// </summary>
   private sealed class FilteredScopedAccess(DbContext context, ScopeFilterInfo filterInfo) : IScopedLensAccess<TModel> {
-    public IQueryable<PerspectiveRow<TModel>> Query =>
-        _applyFilterInfo(context.Set<PerspectiveRow<TModel>>().AsNoTracking(), filterInfo);
+    private static readonly bool _isSplitMode =
+        SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<TModel>));
+
+    public IQueryable<PerspectiveRow<TModel>> Query {
+      get {
+        IQueryable<PerspectiveRow<TModel>> baseQuery;
+        if (_isSplitMode) {
+          SplitModeChangeTrackerHydrator.EnsureHooked(context);
+          baseQuery = context.Set<PerspectiveRow<TModel>>().AsQueryable();
+        } else {
+          baseQuery = context.Set<PerspectiveRow<TModel>>().AsNoTracking();
+        }
+        return _applyFilterInfo(baseQuery, filterInfo);
+      }
+    }
 
     public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);

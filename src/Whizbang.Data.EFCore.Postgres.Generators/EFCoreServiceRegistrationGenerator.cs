@@ -711,6 +711,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        // Register physical field hydrator for {model.ModelTypeName}");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
     sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
+    sb.AppendLine($"          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
 
     foreach (var field in model.PhysicalFields) {
       if (field.IsVector) {
@@ -734,6 +735,42 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
+    sb.AppendLine("        });");
+    sb.AppendLine();
+  }
+
+  private static void _generateChangeTrackerHydratorRegistration(
+      StringBuilder sb,
+      PerspectiveModelInfo model) {
+
+    var rowType = $"global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>";
+    sb.AppendLine($"        // Register ChangeTracker-based hydrator for {model.ModelTypeName} (zero reflection, AOT-safe)");
+    sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof({rowType}), entry => {{");
+    sb.AppendLine($"          var row = ({rowType})entry.Entity;");
+    sb.AppendLine($"          if (row.Data is null) {{ return; }}");
+
+    foreach (var field in model.PhysicalFields) {
+      if (field.IsVector) {
+        // Vector: read as Pgvector.Vector?, convert to float[]
+        sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
+        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
+        sb.AppendLine($"          }}");
+      } else {
+        var clrType = field.TypeName;
+        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
+        if (isNullable) {
+          sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
+          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
+          sb.AppendLine($"          }}");
+        } else {
+          sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
+        }
+      }
+    }
+
+    sb.AppendLine($"          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
     sb.AppendLine("        });");
     sb.AppendLine();
   }
@@ -1182,6 +1219,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
           // Register hydrator for IMaterializationInterceptor (Split-mode field hydration after query)
           _generatePhysicalFieldHydratorRegistration(sb, model);
+
+          // Register ChangeTracker-based hydrator for post-query hydration (zero reflection, AOT-safe)
+          _generateChangeTrackerHydratorRegistration(sb, model);
         }
       }
 

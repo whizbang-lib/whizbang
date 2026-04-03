@@ -16,7 +16,13 @@ internal static class MultiModelScopeHelper {
       DbContext context,
       ScopeFilterInfo? filterInfo)
       where T : class {
-    var query = context.Set<PerspectiveRow<T>>().AsNoTracking();
+    IQueryable<PerspectiveRow<T>> query;
+    if (SplitModeChangeTrackerHydrator.HasHydrator(typeof(PerspectiveRow<T>))) {
+      SplitModeChangeTrackerHydrator.EnsureHooked(context);
+      query = context.Set<PerspectiveRow<T>>().AsQueryable();
+    } else {
+      query = context.Set<PerspectiveRow<T>>().AsNoTracking();
+    }
     if (filterInfo.HasValue && !filterInfo.Value.IsEmpty) {
       query = ScopedAccessHelper.ApplyFilterInfo(query, filterInfo.Value);
     }
