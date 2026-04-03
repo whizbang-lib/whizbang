@@ -1042,9 +1042,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       System.Reflection.Assembly assembly,
       PerspectiveInfo perspective,
       string effectiveSchema) {
-    // Split-mode models use the polymorphic snippet (Property().HasColumnType("jsonb"))
-    // because ComplexProperty().ToJson() crashes on null values for stripped physical fields.
-    var snippetName = perspective.HasPolymorphicProperties || perspective.IsSplitMode
+    var snippetName = perspective.HasPolymorphicProperties
         ? "PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET"
         : "PERSPECTIVE_ENTITY_CONFIG_SNIPPET";
     var snippet = TemplateUtilities.ExtractSnippet(
