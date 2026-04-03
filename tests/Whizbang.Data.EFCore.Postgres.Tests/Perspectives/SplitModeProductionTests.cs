@@ -57,6 +57,14 @@ public class SplitModeProductionTests : IAsyncDisposable {
     public List<Guid>? TagIds { get; set; }
   }
 
+  /// <summary>
+  /// Second model for join tests — represents a category lookup table.
+  /// </summary>
+  public class CategoryModel {
+    public string Code { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+  }
+
   // ========================================================================
   // DbContext — uses ComplexProperty().ToJson() (PRODUCTION pattern)
   // ========================================================================
@@ -85,6 +93,21 @@ public class SplitModeProductionTests : IAsyncDisposable {
         entity.Property<decimal>("price").HasColumnName("price");
         entity.Property<Guid?>("parent_id").HasColumnName("parent_id");
         entity.Property<Vector?>("embeddings").HasColumnName("embeddings").HasColumnType("vector(3)");
+      });
+
+      // Second entity for JOIN tests
+      modelBuilder.Entity<PerspectiveRow<CategoryModel>>(entity => {
+        entity.ToTable("wh_per_category_test");
+        entity.HasKey(e => e.Id);
+
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+        entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+        entity.Property(e => e.Version).HasColumnName("version");
+
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+        entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
+        entity.ComplexProperty(e => e.Scope, s => s.ToJson("scope"));
       });
     }
   }
@@ -181,6 +204,15 @@ public class SplitModeProductionTests : IAsyncDisposable {
         price DECIMAL NOT NULL DEFAULT 0,
         parent_id UUID,
         embeddings vector(3)
+      );
+      CREATE TABLE IF NOT EXISTS wh_per_category_test (
+        id UUID PRIMARY KEY,
+        data JSONB NOT NULL,
+        metadata JSONB NOT NULL,
+        scope JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        version INTEGER NOT NULL
       );
       """);
   }
@@ -567,6 +599,60 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   // ========================================================================
+  // LINQ Regression — Joins
+  // ========================================================================
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Join_OnPhysicalField_TranslatesToSqlJoinAsync(CancellationToken ct) {
+    // Arrange — products with categories, join on category code
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 50.00m, "Laptop", "desc", [0.1f, 0.2f, 0.3f], null);
+    await _insertSplitRowAsync(Guid.CreateVersion7(), "clothing", 30.00m, "Shirt", "desc", [0.4f, 0.5f, 0.6f], null);
+    await _insertCategoryRowAsync("electronics", "Electronics & Gadgets");
+    await _insertCategoryRowAsync("clothing", "Apparel & Fashion");
+
+    // Act — LINQ join between products and categories using physical field Category
+    var results = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Join(
+            _context.Set<PerspectiveRow<CategoryModel>>(),
+            product => product.Data.Category,        // physical field on product
+            category => category.Data.Code,           // JSONB field on category
+            (product, category) => new {
+              ProductName = product.Data.Name,
+              Category = product.Data.Category,
+              Price = product.Data.Price,
+              CategoryDisplay = category.Data.DisplayName
+            })
+        .OrderBy(r => r.ProductName)
+        .ToListAsync(ct);
+
+    // Assert — join worked, physical fields populated
+    await Assert.That(results).Count().IsEqualTo(2);
+    await Assert.That(results[0].ProductName).IsEqualTo("Laptop");
+    await Assert.That(results[0].CategoryDisplay).IsEqualTo("Electronics & Gadgets");
+    await Assert.That(results[1].ProductName).IsEqualTo("Shirt");
+    await Assert.That(results[1].CategoryDisplay).IsEqualTo("Apparel & Fashion");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Sql_Join_OnPhysicalField_UsesColumnNotJsonbAsync(CancellationToken ct) {
+    var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Join(
+            _context.Set<PerspectiveRow<CategoryModel>>(),
+            product => product.Data.Category,
+            category => category.Data.Code,
+            (product, category) => new { product, category })
+        .ToQueryString();
+
+    // JOIN condition must use physical column for Category, not JSONB
+    await Assert.That(sql.ToLowerInvariant()).Contains("join")
+      .Because("Must translate to SQL JOIN, not client-side join");
+    await Assert.That(sql.ToLowerInvariant()).Contains("w.category")
+      .Because("Join key on physical field must use column");
+  }
+
+  // ========================================================================
   // SQL Verification — Every LINQ operator uses physical columns
   // ========================================================================
 
@@ -716,6 +802,21 @@ public class SplitModeProductionTests : IAsyncDisposable {
   /// Requires tracked query (NOT AsNoTracking) so context.Entry() can access shadow properties.
   /// This is what the framework needs to do automatically for Split-mode models.
   /// </summary>
+  private async Task _insertCategoryRowAsync(string code, string displayName) {
+    var strategy = new PostgresUpsertStrategy();
+    var testId = _idProvider.NewGuid();
+    var model = new CategoryModel { Code = code, DisplayName = displayName };
+    var metadata = new PerspectiveMetadata {
+      EventType = "TestEvent",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+
+    await strategy.UpsertPerspectiveRowAsync(
+        _context!, "wh_per_category_test", testId, model, metadata, new PerspectiveScope(), default);
+    await _context!.SaveChangesAsync();
+  }
+
   private static void _hydratePhysicalFields(DbContext context, PerspectiveRow<SplitProductionModel> row) {
     var entry = context.Entry(row);
     row.Data.TenantId = entry.Property<Guid>("tenant_id").CurrentValue;
