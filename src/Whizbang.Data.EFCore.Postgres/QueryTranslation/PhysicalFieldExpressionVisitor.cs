@@ -63,11 +63,7 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
       }
 
       // Check if this property is registered as a physical field
-      if (modelType is not null) {
-        System.Console.WriteLine($"[PhysicalFieldVisitor] Checking {modelType.FullName}.{propertyInfo.Name} (registry has {PhysicalFieldRegistry.Count} mappings)");
-      }
-      if (modelType is not null && PhysicalFieldRegistry.TryGetMapping(modelType, propertyInfo.Name, out var mapping)) {
-        System.Console.WriteLine($"[PhysicalFieldVisitor] REWRITING {propertyInfo.Name} -> {mapping.ShadowPropertyName} (IsVector={mapping.IsVector})");
+      if (PhysicalFieldRegistry.TryGetMapping(modelType, propertyInfo.Name, out var mapping)) {
         // Rewrite to: EF.Property<TProperty>(r, "shadow_property_name")
         // Where r is the PerspectiveRow parameter (dataAccess.Expression)
 
@@ -80,17 +76,13 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
         var visitedEntity = Visit(entityExpression);
 
         if (mapping.IsVector) {
-          // Vector fields: shadow property is Pgvector.Vector, but model property is float[].
-          // Rewrite to: EF.Property<Vector?>(r, "column").ToArray()
-          // This lets EF Core read the Vector column, then .ToArray() converts to float[].
-          var vectorType = typeof(Pgvector.Vector);
-          var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(vectorType);
-          var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
-          var efPropertyCall = Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
-
-          // Call .ToArray() on the Vector result
-          var toArrayMethod = vectorType.GetMethod("ToArray")!;
-          return Expression.Call(efPropertyCall, toArrayMethod);
+          // Vector fields: DO NOT rewrite member access.
+          // The Whizbang vector extensions (OrderByCosineDistance, WithCosineDistance, etc.)
+          // handle float[] → Vector conversion internally. Rewriting here causes type
+          // mismatches in different LINQ contexts (Select wants float[], WHERE wants Vector).
+          // The only gap is `r.Data.Embeddings != null` in Split mode (no JSONB value) —
+          // that needs a separate null-check-aware rewrite.
+          return base.VisitMember(node);
         } else {
           // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")
           var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
