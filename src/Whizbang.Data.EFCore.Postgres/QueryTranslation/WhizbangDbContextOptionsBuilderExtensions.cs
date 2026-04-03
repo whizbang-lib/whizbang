@@ -6,6 +6,10 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// Extension methods for configuring Whizbang physical field query translation on DbContext.
 /// </summary>
 public static class WhizbangDbContextOptionsBuilderExtensions {
+  // Singleton interceptor instances — reuse across all DbContext resolutions
+  // to avoid creating new EF Core internal service providers (ManyServiceProvidersCreatedWarning)
+  private static readonly PhysicalFieldQueryInterceptor _queryInterceptor = new();
+  private static readonly PhysicalFieldMaterializationInterceptor _materializationInterceptor = new();
   /// <summary>
   /// Enables Whizbang physical field query translation.
   /// When enabled, queries using r.Data.PropertyName will automatically use
@@ -39,9 +43,7 @@ public static class WhizbangDbContextOptionsBuilderExtensions {
 
     // Add the query interceptor that transforms r.Data.PropertyName to EF.Property()
     // and the materialization interceptor that hydrates physical field values into Data after query
-    optionsBuilder.AddInterceptors(
-      new PhysicalFieldQueryInterceptor(),
-      new PhysicalFieldMaterializationInterceptor());
+    optionsBuilder.AddInterceptors(_queryInterceptor, _materializationInterceptor);
 
     return optionsBuilder;
   }
