@@ -596,9 +596,7 @@ public class PerspectiveLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource,
-      perspectiveName: "ProductCatalogPerspective");
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
@@ -609,7 +607,7 @@ public class PerspectiveLifecycleTests {
         await fixture.Dispatcher.SendAsync(command);
       }
 
-      // Wait for last event to complete PostPerspectiveInline
+      // Wait for any perspective to complete PostPerspectiveInline
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - Receptor should have been invoked at least once
