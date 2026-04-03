@@ -37,7 +37,7 @@ public class OutboxLifecycleTests {
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
-  public async Task SetupAsync() {
+  public async Task SetupAsync(CancellationToken cancellationToken) {
     // Initialize shared containers (first test only)
     await SharedRabbitMqFixtureSource.InitializeAsync();
 
@@ -57,7 +57,7 @@ public class OutboxLifecycleTests {
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
+  public async Task CleanupAsync(CancellationToken cancellationToken) {
     if (_fixture != null) {
       await _fixture.DisposeAsync();
       _fixture = null;
@@ -73,7 +73,7 @@ public class OutboxLifecycleTests {
   /// Transport publish should wait for this receptor to complete.
   /// </summary>
   [Test]
-  public async Task PreOutboxInline_FiresBeforeTransportPublish_BlocksUntilCompleteAsync() {
+  public async Task PreOutboxInline_FiresBeforeTransportPublish_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -111,7 +111,7 @@ public class OutboxLifecycleTests {
   /// Should use Task.Run and not block message publishing.
   /// </summary>
   [Test]
-  public async Task PreOutboxDetached_FiresParallelWithPublish_NonBlockingAsync() {
+  public async Task PreOutboxDetached_FiresParallelWithPublish_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -149,7 +149,7 @@ public class OutboxLifecycleTests {
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostOutboxDetached_FiresAfterTransportPublish_NonBlockingAsync() {
+  public async Task PostOutboxDetached_FiresAfterTransportPublish_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -183,7 +183,7 @@ public class OutboxLifecycleTests {
   /// Tests the "message successfully published to transport" guarantee.
   /// </summary>
   [Test]
-  public async Task PostOutboxDetached_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync() {
+  public async Task PostOutboxDetached_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -229,7 +229,7 @@ public class OutboxLifecycleTests {
   /// </summary>
   [Test]
   [Retry(2)]
-  public async Task PostOutboxInline_FiresAfterTransportPublish_BlocksUntilCompleteAsync() {
+  public async Task PostOutboxInline_FiresAfterTransportPublish_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -267,7 +267,7 @@ public class OutboxLifecycleTests {
   /// PreOutboxInline → PreOutboxDetached (parallel with publish) → PostOutboxDetached → PostOutboxInline
   /// </summary>
   [Test]
-  public async Task OutboxStages_FireInCorrectOrder_AllStagesInvokedAsync() {
+  public async Task OutboxStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -329,7 +329,7 @@ public class OutboxLifecycleTests {
   /// Verifies that multiple events trigger all Outbox stages for each event.
   /// </summary>
   [Test]
-  public async Task OutboxStages_MultipleEvents_AllStagesFireForEachAsync() {
+  public async Task OutboxStages_MultipleEvents_AllStagesFireForEachAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
