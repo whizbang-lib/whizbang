@@ -1343,6 +1343,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           : [.. perspectives.Where(p => _matchesDbContext(p, dbContext))];
 
       var hasVectorFields = matchingPerspectives.Any(m => m.PhysicalFields.Any(f => f.IsVector));
+      var hasPhysicalFields = matchingPerspectives.Any(m => m.PhysicalFields.Length > 0);
 
       var sb = new StringBuilder();
 
@@ -1362,6 +1363,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
       if (hasVectorFields) {
         sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+      }
+      if (hasPhysicalFields) {
+        sb.AppendLine("using Whizbang.Data.EFCore.Postgres.QueryTranslation;");
       }
       sb.AppendLine();
 
@@ -1434,14 +1438,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine("        npgsqlOptions.UseVector();");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
-        sb.AppendLine(CLOSE_BRACE_INDENT_4);
       } else {
         sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
         sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
-        sb.AppendLine(CLOSE_BRACE_INDENT_4);
       }
+      // Register physical field interceptors (query rewriting + materialization hydration)
+      if (hasPhysicalFields) {
+        sb.AppendLine("      options.UseWhizbangPhysicalFields();");
+      }
+      sb.AppendLine(CLOSE_BRACE_INDENT_4);
       sb.AppendLine();
       sb.AppendLine("    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
       sb.AppendLine("    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
