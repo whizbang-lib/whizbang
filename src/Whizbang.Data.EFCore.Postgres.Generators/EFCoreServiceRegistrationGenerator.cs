@@ -1166,10 +1166,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
 
-      // Generate physical field hydrator registrations for models with physical fields
-      // These enable IMaterializationInterceptor to hydrate Split-mode fields after query
+      // Generate physical field registrations for query rewriting and materialization hydration
       foreach (var model in group.Models) {
         if (model.PhysicalFields.Length > 0) {
+          // Register field mappings for PhysicalFieldExpressionVisitor (WHERE/ORDER BY rewriting)
+          foreach (var field in model.PhysicalFields) {
+            var isVector = field.IsVector ? "true" : "false";
+            sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
+          }
+          sb.AppendLine();
+
+          // Register hydrator for IMaterializationInterceptor (Split-mode field hydration after query)
           _generatePhysicalFieldHydratorRegistration(sb, model);
         }
       }
