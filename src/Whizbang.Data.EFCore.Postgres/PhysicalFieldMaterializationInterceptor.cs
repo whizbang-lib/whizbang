@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs</tests>
 public class PhysicalFieldMaterializationInterceptor : IMaterializationInterceptor {
   /// <inheritdoc/>
   public object InitializedInstance(

@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <para>Thread-safe for concurrent registration and lookup.</para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs</tests>
 public static class PhysicalFieldHydratorRegistry {
   private static readonly ConcurrentDictionary<Type, Action<MaterializationInterceptionData, object>> _hydrators = new();
 
