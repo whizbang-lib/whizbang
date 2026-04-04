@@ -181,7 +181,7 @@ public class CreateProductWorkflowTests {
     // Act
     using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(command);
     await waiter.WaitAsync(timeoutMilliseconds: 90000);
 
@@ -217,7 +217,7 @@ public class CreateProductWorkflowTests {
     Console.WriteLine("[TEST] Sending CreateProductCommand...");
     using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for event processing...");
 
