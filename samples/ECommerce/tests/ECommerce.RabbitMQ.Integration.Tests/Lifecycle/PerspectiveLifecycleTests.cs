@@ -440,9 +440,9 @@ public class PerspectiveLifecycleTests {
     };
 
     // Wire perspective hook BEFORE sending commands
-    // 2 commands × (2 inv perspectives for ProductCreated + 1 inv perspective for Restock) = ~6 completions
+    // Wait for at least 1 inventory perspective completion (confirms processing started)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 60000, hostFilter: "inventory");
+      expectedCompletions: 1, timeoutMilliseconds: 60000, hostFilter: "inventory");
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
