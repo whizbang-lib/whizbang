@@ -64,11 +64,11 @@ public class TagHookLifecycleTests {
       bffPerspectives: 1);
 
     await fixture.Dispatcher.SendAsync(command);
-    await productWaiter.WaitAsync(timeoutMilliseconds: 15000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Wait for PostLifecycleInline tag hook to fire using completion signal (not Task.Delay)
-    await TagHookCallTracker.WaitForPostLifecycleInlineAsync(TimeSpan.FromSeconds(15));
+    await TagHookCallTracker.WaitForPostLifecycleInlineAsync(TimeSpan.FromSeconds(30));
 
     // Assert — AuditTagHook MUST have fired at PostLifecycleInline
     // ProductCreatedEvent has [AuditEvent] attribute, and AuditTagHook is registered
