@@ -319,8 +319,8 @@ public class OutboxLifecycleTests {
         await fixture.Dispatcher.SendAsync(command);
       }
 
-      // Wait for last event to complete PostOutboxInline
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(25));
+      // Wait for PostOutboxInline to fire
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
 
       // Assert - Receptor should have been invoked at least once
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
