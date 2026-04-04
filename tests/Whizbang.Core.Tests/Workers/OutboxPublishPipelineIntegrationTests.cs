@@ -482,6 +482,7 @@ public class OutboxPublishPipelineIntegrationTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

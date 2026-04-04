@@ -147,6 +147,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel;
     private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _tryWriteCount;

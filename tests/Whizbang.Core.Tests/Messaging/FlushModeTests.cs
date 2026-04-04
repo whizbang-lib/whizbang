@@ -624,6 +624,7 @@ public class FlushModeTests {
   }
 
   private sealed class FakeWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>

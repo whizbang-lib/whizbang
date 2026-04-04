@@ -228,6 +228,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
   // Test helper - Mock work channel writer
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>

@@ -508,6 +508,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly List<OutboxWork> _writtenWork = [];
     public IReadOnlyList<OutboxWork> WrittenWork => _writtenWork;
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
