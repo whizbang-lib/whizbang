@@ -219,10 +219,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _deleteQueueAsync($"inventory-products-queue-{_testId}");
     await _deleteQueueAsync($"bff-inventory-queue-{_testId}");
 
-    // Truncate all Whizbang infrastructure tables in the inventory schema
-    // Both hosts share the same database schema prefix, so one truncation covers both
-    const int maxRetries = 3;
-    const int retryDelayMs = 100;
+    // Delete all data from Whizbang infrastructure tables in the inventory schema.
+    // Uses DELETE instead of TRUNCATE to avoid ACCESS EXCLUSIVE locks that deadlock
+    // with the shared fixture's running workers (PerspectiveWorker, OutboxWorker).
+    const int maxRetries = 5;
+    const int retryDelayMs = 200;
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         await using var connection = new Npgsql.NpgsqlConnection(_inventoryPostgresConnection);
@@ -232,7 +233,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
           DO $$
           BEGIN
             EXECUTE (
-              SELECT string_agg('TRUNCATE TABLE ' || schemaname || '.' || tablename || ' CASCADE', '; ')
+              SELECT string_agg('DELETE FROM ' || schemaname || '.' || tablename, '; ')
               FROM pg_tables
               WHERE schemaname = 'inventory'
                 AND tablename LIKE 'wh_%'
@@ -241,7 +242,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         await cmd.ExecuteNonQueryAsync(cancellationToken);
         break;
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
-        // Deadlock — retry
+        // Deadlock — retry with backoff
         await Task.Delay(retryDelayMs * attempt, cancellationToken);
       }
     }
