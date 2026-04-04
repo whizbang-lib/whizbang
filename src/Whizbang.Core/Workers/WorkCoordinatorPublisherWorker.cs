@@ -715,7 +715,10 @@ public partial class WorkCoordinatorPublisherWorker(
       // and prevents re-queuing until the DB clears it via process_work_batch completions.
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
-      OnOutboxMessagePublished?.Invoke(work.MessageId, work.Destination);
+      OnOutboxMessagePublished?.Invoke(new OutboxMessagePublishedEvent {
+        MessageId = work.MessageId,
+        Destination = work.Destination
+      });
     } else if (result.Reason == MessageFailureReason.TransportException) {
       // Keep in-flight — message is re-queued to channel for retry
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
@@ -1384,19 +1387,41 @@ public delegate void WorkProcessingIdleHandler();
 
 /// <summary>
 /// Callback invoked after a message is successfully published to transport.
-/// Fires synchronously on the publisher thread after publish confirmation.
 /// </summary>
-/// <param name="messageId">The unique ID of the published message.</param>
-/// <param name="destination">The transport destination (topic/queue name), or null for local-only.</param>
 /// <docs>operations/workers/publisher-worker#processing-hooks</docs>
-public delegate void OutboxMessagePublishedHandler(Guid messageId, string? destination);
+public delegate void OutboxMessagePublishedHandler(OutboxMessagePublishedEvent e);
+
+/// <summary>
+/// Event data for <see cref="OutboxMessagePublishedHandler"/>.
+/// Carries all details about a successfully published outbox message.
+/// </summary>
+/// <docs>operations/workers/publisher-worker#processing-hooks</docs>
+public sealed record OutboxMessagePublishedEvent {
+  /// <summary>The unique ID of the published message.</summary>
+  public required Guid MessageId { get; init; }
+
+  /// <summary>The transport destination (topic/queue name), or null for local-only.</summary>
+  public string? Destination { get; init; }
+}
 
 /// <summary>
 /// Callback invoked after a perspective successfully processes events for a stream.
-/// Fires synchronously on the perspective worker thread after completion buffering.
 /// </summary>
-/// <param name="perspectiveName">The name of the perspective that processed events.</param>
-/// <param name="streamId">The stream ID that was processed.</param>
-/// <param name="eventCount">The number of events processed in this batch.</param>
 /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
-public delegate void PerspectiveEventProcessedHandler(string perspectiveName, Guid streamId, int eventCount);
+public delegate void PerspectiveEventProcessedHandler(PerspectiveEventProcessedEvent e);
+
+/// <summary>
+/// Event data for <see cref="PerspectiveEventProcessedHandler"/>.
+/// Carries all details about a perspective that finished processing events.
+/// </summary>
+/// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+public sealed record PerspectiveEventProcessedEvent {
+  /// <summary>The name of the perspective that processed events.</summary>
+  public required string PerspectiveName { get; init; }
+
+  /// <summary>The stream ID that was processed.</summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>The number of events processed in this batch.</summary>
+  public required int EventCount { get; init; }
+}

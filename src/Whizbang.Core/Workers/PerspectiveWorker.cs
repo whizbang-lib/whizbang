@@ -468,7 +468,11 @@ public partial class PerspectiveWorker(
 
         // Fire processing hook after confirmed successful perspective processing
         if (processedEvents.Count > 0) {
-          OnPerspectiveEventProcessed?.Invoke(perspectiveName, streamId, processedEvents.Count);
+          OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
+            PerspectiveName = perspectiveName,
+            StreamId = streamId,
+            EventCount = processedEvents.Count
+          });
         }
 
         // Record per-stream metrics
