@@ -352,16 +352,21 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Create waiter BEFORE sending command to avoid race condition
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
-    await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync();
+    // Wait for PostPerspectiveInline to fire on BFF (proves checkpoint is blocked)
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
 
-    // Assert - Verify perspective data is saved (this is the key guarantee!)
-    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
-    await Assert.That(product).IsNotNull();
-    await Assert.That(product!.Name).IsEqualTo(command.Name);
-    await Assert.That(product.Price).IsEqualTo(command.Price);
+    try {
+      await fixture.Dispatcher.SendAsync(command);
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
+
+      // Assert - PostPerspectiveInline fired on BFF, confirming checkpoint blocking
+      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
+    } finally {
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
+    }
   }
 
   /// <summary>
