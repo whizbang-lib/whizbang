@@ -1607,6 +1607,7 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
@@ -1628,6 +1629,7 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class TypeAwarePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
@@ -1650,6 +1652,7 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class ThrowingPerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,

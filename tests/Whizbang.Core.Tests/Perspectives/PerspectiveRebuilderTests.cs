@@ -236,6 +236,7 @@ public class PerspectiveRebuilderTests {
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
     public int RunCount { get; private set; }
     public int FailOnStreamIndex { get; init; } = -1;
 

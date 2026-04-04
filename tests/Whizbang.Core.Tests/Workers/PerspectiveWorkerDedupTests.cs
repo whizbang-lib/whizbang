@@ -521,6 +521,7 @@ public class PerspectiveWorkerDedupTests {
   }
 
   private sealed class CountingPerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     private readonly TaskCompletionSource<int>[] _runWaiters = new TaskCompletionSource<int>[10];
     public int RunAsyncCallCount => _callCount;
     private int _callCount;

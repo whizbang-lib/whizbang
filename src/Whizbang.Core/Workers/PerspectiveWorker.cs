@@ -428,7 +428,7 @@ public partial class PerspectiveWorker(
         // Phase 3.1: Invoke PrePerspective lifecycle stages
         await _invokePrePerspectiveLifecycleAsync(
           upcomingEvents, enableLifecycleSpans, lifecycleCoordinator, receptorInvoker,
-          streamCtx, cancellationToken);
+          streamCtx, runner, cancellationToken);
 
         // Phase 3.2: Execute perspective runner (rewind or normal path)
         var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
@@ -828,6 +828,7 @@ public partial class PerspectiveWorker(
       ILifecycleCoordinator? lifecycleCoordinator,
       IReceptorInvoker? receptorInvoker,
       PerspectiveStreamContext streamCtx,
+      IPerspectiveRunner runner,
       CancellationToken cancellationToken) {
 
     using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspective", ActivityKind.Internal) : null) {
@@ -840,7 +841,7 @@ public partial class PerspectiveWorker(
               // Coordinator path: BeginTracking + AdvanceToAsync (stage guard = exactly-once)
               var tracking = lifecycleCoordinator.BeginTracking(
                 envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
-                MessageSource.Local, streamCtx.StreamId);
+                MessageSource.Local, streamCtx.StreamId, runner.PerspectiveType);
 
               // Stage guard ensures these fire once per event, not once per perspective group
               await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, streamCtx.ScopedProvider, cancellationToken);
