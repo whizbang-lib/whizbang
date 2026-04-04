@@ -208,6 +208,60 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _deleteExchangeAsync($"products-{testId}", ct);
   }
 
+  /// <summary>
+  /// Cleans up all test data between tests when using the shared fixture pattern.
+  /// Purges RabbitMQ queues and deletes all Whizbang infrastructure table data.
+  /// </summary>
+  public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
+    // 1. Purge RabbitMQ queues to prevent stale messages from previous tests
+    await _purgeQueueAsync($"bff-products-queue-{_testId}");
+    await _purgeQueueAsync($"inventory-products-queue-{_testId}");
+    await _purgeQueueAsync($"bff-inventory-queue-{_testId}");
+
+    // 2. Delete all Whizbang infrastructure table data (explicit ordering for FK safety)
+    const int maxRetries = 5;
+    const int retryDelayMs = 300;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await using var connection = new Npgsql.NpgsqlConnection(_inventoryPostgresConnection);
+        await connection.OpenAsync(cancellationToken);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = @"
+          DELETE FROM inventory.wh_perspective_events;
+          DELETE FROM inventory.wh_perspective_cursors;
+          DELETE FROM inventory.wh_lifecycle_completions;
+          DELETE FROM inventory.wh_outbox;
+          DELETE FROM inventory.wh_inbox;
+          DELETE FROM inventory.wh_receptor_processing;
+          DELETE FROM inventory.wh_message_deduplication;
+          DELETE FROM inventory.wh_event_store;
+          DELETE FROM inventory.wh_active_streams;
+          DELETE FROM inventory.wh_per_inventory_level;
+          DELETE FROM inventory.wh_per_product;
+          DELETE FROM inventory.wh_perspective_snapshots;";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        break;
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+        Console.WriteLine($"[RabbitMqFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
+        await Task.Delay(retryDelayMs * attempt, cancellationToken);
+      }
+    }
+
+    // 3. Wait for workers to drain any in-flight messages from purged state
+    await _waitForWorkersReadyAsync(cancellationToken);
+
+    Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
+  }
+
+  private async Task _purgeQueueAsync(string queueName, CancellationToken ct = default) {
+    try {
+      var response = await _managementClient.DeleteAsync($"/api/queues/%2F/{queueName}/contents", ct);
+      // 204 = purged, 404 = queue doesn't exist — both are fine
+    } catch {
+      // Queue might not exist, ignore
+    }
+  }
+
   private IHost _createInventoryHost() {
     var builder = Host.CreateApplicationBuilder();
 
