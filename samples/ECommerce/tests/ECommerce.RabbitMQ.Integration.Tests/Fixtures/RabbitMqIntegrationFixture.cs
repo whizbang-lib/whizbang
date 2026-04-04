@@ -777,6 +777,78 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await waiter.WaitAsync(timeoutMilliseconds);
   }
 
+  /// <summary>
+  /// Waits for a message to be published via the outbox worker using the
+  /// <see cref="WorkCoordinatorPublisherWorker.OnOutboxMessagePublished"/> hook.
+  /// Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
+    var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    if (worker is null) {
+      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    }
+
+    OutboxMessagePublishedHandler? handler = null;
+    handler = (e) => {
+      tcs.TrySetResult(e.MessageId);
+      worker.OnOutboxMessagePublished -= handler;
+    };
+    worker.OnOutboxMessagePublished += handler;
+
+    try {
+      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+      return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    } finally {
+      worker.OnOutboxMessagePublished -= handler;
+    }
+  }
+
+  /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
+  /// Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) {
+        return;
+      }
+
+      PerspectiveEventProcessedHandler? handler = null;
+      handler = (e) => {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) {
+          tcs.TrySetResult(true);
+        }
+      };
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+
+    if (hostFilter is null or "bff") {
+      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
   public async ValueTask DisposeAsync() {
     // Dispose scopes first
     _inventoryScope?.Dispose();
