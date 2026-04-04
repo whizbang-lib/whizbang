@@ -87,7 +87,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF from RabbitMQ)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -125,7 +125,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -202,7 +202,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -280,7 +280,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);

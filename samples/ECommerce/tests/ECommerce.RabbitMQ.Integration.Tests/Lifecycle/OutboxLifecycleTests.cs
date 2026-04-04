@@ -88,7 +88,7 @@ public class OutboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (the event published to Service Bus)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPreOutboxInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -126,7 +126,7 @@ public class OutboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPreOutboxDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -164,7 +164,7 @@ public class OutboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPostOutboxDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -244,7 +244,7 @@ public class OutboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPostOutboxInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
