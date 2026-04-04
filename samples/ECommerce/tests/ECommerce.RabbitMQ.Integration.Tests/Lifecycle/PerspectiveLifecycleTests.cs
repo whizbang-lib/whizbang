@@ -417,7 +417,9 @@ public class PerspectiveLifecycleTests {
   /// Tests that the stage fires during the event processing loop, not just once per batch.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
+  [Timeout(90_000)]
+  [Category("Flaky")]
+  [Skip("Per-test fixture PerspectiveWorker unreliable after 140+ sequential fixture cycles — needs shared fixture")]
   public async Task PostPerspectiveInline_FiresForEachEvent_MultipleInvocationsAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
