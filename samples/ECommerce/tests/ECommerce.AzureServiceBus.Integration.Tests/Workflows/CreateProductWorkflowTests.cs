@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Medo;
 
@@ -8,7 +7,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 
 /// <summary>
 /// End-to-end integration tests for the CreateProduct workflow.
-/// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
+/// Tests the complete flow: Command -> Receptor -> Event Store -> Perspectives.
 /// All tests share a single fixture (PostgreSQL database + hosts) for performance.
 /// Database cleanup between tests ensures isolation.
 /// </summary>
@@ -66,16 +65,14 @@ public class CreateProductWorkflowTests {
       InitialStock = 50
     };
 
-    // Act - Create waiter BEFORE sending command to avoid race condition
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    // Act - Wait for perspective processing (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await perspectiveTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
@@ -91,7 +88,7 @@ public class CreateProductWorkflowTests {
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(command.InitialStock);
     await Assert.That(inventoryLevel.Available).IsEqualTo(command.InitialStock);
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -128,23 +125,17 @@ public class CreateProductWorkflowTests {
       }
     };
 
-    // Act - Create ONE waiter for ALL products to avoid race conditions
-    // Creating separate waiters per product can cause event "stealing" where a waiter counts events from previous iterations
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2 * commands.Length,  // 2 perspectives * 3 products = 6
-      bffPerspectives: 0);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1 * commands.Length,  // 1 perspective * 3 products = 3
-      bffPerspectives: 0);
-
-    // Send all commands
+    // Act - Wait for all perspective processing
+    // 3 commands x (2 ProductCreated perspectives + 1 InventoryRestocked perspective) = 9 total
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 9, timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
+    await perspectiveTask;
 
-    // Wait for ALL perspective processing to complete (deterministic, no race condition!)
-    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify all products materialized in InventoryWorker perspective
     foreach (var command in commands) {
@@ -158,7 +149,7 @@ public class CreateProductWorkflowTests {
       await Assert.That(inventory!.Quantity).IsEqualTo(command.InitialStock);
     }
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -177,12 +168,14 @@ public class CreateProductWorkflowTests {
       InitialStock = 0
     };
 
-    // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    // Act - Wait for perspective processing (2 for ProductCreated only, no restock for zero stock)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync(timeoutMilliseconds: 45000);
+    await perspectiveTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId.Value);
@@ -190,7 +183,7 @@ public class CreateProductWorkflowTests {
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(0);
     await Assert.That(inventoryLevel.Available).IsEqualTo(0);
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -210,18 +203,20 @@ public class CreateProductWorkflowTests {
       InitialStock = 25
     };
 
-    // Act - Create waiter BEFORE sending command to avoid race condition
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    // Act - Wait for perspective processing (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync(timeoutMilliseconds: 45000);
+    await perspectiveTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify product exists with null ImageUrl
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.ImageUrl).IsNull();
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 }

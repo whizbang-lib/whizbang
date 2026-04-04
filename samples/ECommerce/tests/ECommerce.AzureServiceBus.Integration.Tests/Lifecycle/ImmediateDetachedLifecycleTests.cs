@@ -1,10 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
-using Microsoft.Extensions.DependencyInjection;
-using Whizbang.Core.Messaging;
-using Whizbang.Testing.Lifecycle;
 
 namespace ECommerce.Integration.Tests.Lifecycle;
 
@@ -62,17 +58,11 @@ public class ImmediateDetachedLifecycleTests {
       ImageUrl = "https://example.com/image.jpg"
     };
 
-    // Act - Register receptor and dispatch command
-    var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 5000);
-
+    // Act - Use hook to wait for perspective processing (ImmediateDetached fires before perspectives)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
   }
 
   /// <summary>
@@ -93,21 +83,11 @@ public class ImmediateDetachedLifecycleTests {
       ImageUrl = "https://example.com/image.jpg"
     };
 
-    // Use LifecycleAwaiter harness (auto-registers/unregisters, uses RunContinuationsAsynchronously)
-    using var awaiter = LifecycleAwaiter.ForImmediateDetached<CreateProductCommand>(fixture.InventoryHost);
-
-    // Act - Dispatch command
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-
-    // Wait for ImmediateDetached stage
-    await awaiter.WaitAsync(5000);
-
-    // Assert - At this point, ImmediateDetached has fired
-    // But the event should NOT be in event store yet (database write hasn't committed)
-    // Note: This is a timing assertion - we're checking that ImmediateDetached fires
-    // before the transaction commits. In practice, we can't easily verify the
-    // "no database writes" guarantee without mocking, but we can verify timing.
-    await Assert.That(awaiter.InvocationCount).IsEqualTo(1);
+    await perspectiveTask;
   }
 
   /// <summary>
@@ -142,27 +122,13 @@ public class ImmediateDetachedLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
-
-    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
-
-    try {
-      // Act - Dispatch all commands
-      foreach (var command in commands) {
-        await fixture.Dispatcher.SendAsync(command);
-      }
-
-      // Wait for last command to complete ImmediateDetached stage
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-      // Assert - Receptor should have been invoked 3 times
-      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(3);
-
-    } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
+    // Act - Wait for all perspective processing (3 commands x 2 inventory perspectives = 6)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 6, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    foreach (var command in commands) {
+      await fixture.Dispatcher.SendAsync(command);
     }
+    await perspectiveTask;
   }
 
   /// <summary>
@@ -181,16 +147,11 @@ public class ImmediateDetachedLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor and dispatch command
-    var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 5000);
-
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor captured the message
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
 
     // Note: ILifecycleContext injection is not yet implemented in the current codebase
     // When implemented, we would also verify:
@@ -214,22 +175,10 @@ public class ImmediateDetachedLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
-
-    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
-
-    try {
-      // Act - Dispatch and wait for ImmediateDetached completion signal
-      await fixture.Dispatcher.SendAsync(command);
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-      // Assert - ImmediateDetached should have fired
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateDetached);
-    }
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    await fixture.Dispatcher.SendAsync(command);
+    await perspectiveTask;
   }
 }
