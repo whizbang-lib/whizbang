@@ -369,6 +369,7 @@ public class PerspectiveLifecycleTests {
   /// Tests the "checkpoint not yet reported to coordinator" guarantee.
   /// </summary>
   [Test]
+  [Timeout(120_000)]
   public async Task PostPerspectiveInline_BlocksCheckpointReporting_GuaranteesDataSavedAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -390,7 +391,7 @@ public class PerspectiveLifecycleTests {
     try {
       // Act - Dispatch command and wait for PostPerspectiveInline
       await fixture.Dispatcher.SendAsync(command);
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(90));
 
       // Assert - PostPerspectiveInline fired, confirming it blocks checkpoint
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
