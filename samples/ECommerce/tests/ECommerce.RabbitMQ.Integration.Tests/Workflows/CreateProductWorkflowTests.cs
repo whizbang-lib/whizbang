@@ -83,17 +83,16 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
+    // Wait for ALL perspectives including BFF (via RabbitMQ transport)
     using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);  // BFF has InventoryLevelsPerspective that handles this event
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for perspective processing...");
 
-    // Wait for perspective processing to complete (deterministic, no race condition!)
-    // Longer timeout for workflow tests (45s) due to per-test container initialization
     await productWaiter.WaitAsync(timeoutMilliseconds: 90000);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
