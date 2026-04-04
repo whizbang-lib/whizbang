@@ -32,31 +32,14 @@ public class CreateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Initialize shared containers (first test only)
-    await SharedRabbitMqFixtureSource.InitializeAsync();
-
-    // Get separate database connections for each host (eliminates lock contention)
-    var inventoryDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
-    var bffDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
-
-    // Create and initialize test fixture with separate databases
-    var testId = Guid.NewGuid().ToString("N")[..12];
-    _fixture = new RabbitMqIntegrationFixture(
-      SharedRabbitMqFixtureSource.RabbitMqConnectionString,
-      inventoryDbConnection,
-      bffDbConnection,
-      SharedRabbitMqFixtureSource.ManagementApiUri,
-      testId: testId
-    );
-    await _fixture.InitializeAsync();
+    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync();
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public Task CleanupAsync() {
+    // Shared fixture is reused across tests — don't dispose
+    return Task.CompletedTask;
   }
 
   /// <summary>

@@ -11,6 +11,38 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 /// </summary>
 public static class SharedRabbitMqFixtureSource {
   private static bool _initialized = false;
+  private static RabbitMqIntegrationFixture? _fixture;
+  private static readonly SemaphoreSlim _fixtureLock = new(1, 1);
+
+  /// <summary>
+  /// Gets or creates the shared RabbitMQ integration fixture.
+  /// Created once, reused across ALL tests. Thread-safe via semaphore.
+  /// Tests call CleanupDatabaseAsync between runs for isolation.
+  /// </summary>
+  public static async Task<RabbitMqIntegrationFixture> GetFixtureAsync(CancellationToken cancellationToken = default) {
+    await _fixtureLock.WaitAsync(cancellationToken);
+    try {
+      if (_fixture == null) {
+        await InitializeAsync(cancellationToken);
+
+        var inventoryDbConnection = GetPerTestDatabaseConnectionString();
+        var bffDbConnection = GetPerTestDatabaseConnectionString();
+
+        _fixture = new RabbitMqIntegrationFixture(
+          RabbitMqConnectionString,
+          inventoryDbConnection,
+          bffDbConnection,
+          ManagementApiUri,
+          testId: Guid.NewGuid().ToString("N")[..12]
+        );
+        await _fixture.InitializeAsync(cancellationToken);
+        Console.WriteLine("[SharedRabbitMqFixture] Shared fixture created and initialized");
+      }
+      return _fixture;
+    } finally {
+      _fixtureLock.Release();
+    }
+  }
 
   /// <summary>
   /// Gets the shared RabbitMQ connection string.
