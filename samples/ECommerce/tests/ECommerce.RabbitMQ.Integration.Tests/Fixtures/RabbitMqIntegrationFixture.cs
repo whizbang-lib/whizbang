@@ -744,12 +744,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       _bffHost.Dispose();
     }
 
-    // CRITICAL: Wait for RabbitMQ connections to fully close
-    // RabbitMQ consumers dispose asynchronously, and connections need time to clean up
-    // Increased delay to ensure cleanup under resource exhaustion
-    Console.WriteLine("[RabbitMqFixture] Waiting for RabbitMQ connections to close...");
-    await Task.Delay(3000); // 3 second delay for connection cleanup (increased for resource exhaustion scenarios)
-    Console.WriteLine("[RabbitMqFixture] RabbitMQ connections closed.");
+    // Clean up RabbitMQ resources for this test to prevent stale messages bleeding into subsequent tests
+    Console.WriteLine($"[RabbitMqFixture] Cleaning up RabbitMQ resources for testId={_testId}...");
+    await _deleteQueueAsync($"bff-products-queue-{_testId}");
+    await _deleteQueueAsync($"inventory-products-queue-{_testId}");
+    await _deleteQueueAsync($"bff-inventory-queue-{_testId}");
+    await _deleteExchangeAsync($"products-{_testId}");
+    await _deleteExchangeAsync($"inventory-{_testId}");
+    Console.WriteLine("[RabbitMqFixture] RabbitMQ resources cleaned up.");
 
     // Clear connection pools to ensure all DB connections are closed
     // CRITICAL: Must happen BEFORE dropping databases

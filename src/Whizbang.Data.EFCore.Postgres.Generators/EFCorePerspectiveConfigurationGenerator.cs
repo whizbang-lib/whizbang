@@ -879,35 +879,16 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _getCSharpType(PhysicalFieldInfo field) {
     if (field.IsVector) {
-      return "Pgvector.Vector";
+      return "Pgvector.Vector?";
     }
 
-    // Return the normalized type
+    // Use the model's declared type directly — preserves nullability from the model.
+    // If the model says Guid (non-nullable), the shadow property should also be Guid.
+    // If the model says Guid? (nullable), the shadow property should also be Guid?.
     var typeName = field.TypeName
         .Replace("global::", "");
 
-    // Handle nullable types
-    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
-      return typeName;
-    }
-
-    // Non-nullable value types that could be null in database
-    return typeName switch {
-      "System.Int32" or "int" => "int?",
-      "System.Int64" or "long" => "long?",
-      "System.Int16" or "short" => "short?",
-      "System.Decimal" or "decimal" => "decimal?",
-      "System.Double" or "double" => "double?",
-      "System.Single" or "float" => "float?",
-      "System.Boolean" or "bool" => "bool?",
-      "System.Guid" => "System.Guid?",
-      "System.DateTime" => "System.DateTime?",
-      "System.DateTimeOffset" => "System.DateTimeOffset?",
-      "System.DateOnly" => "System.DateOnly?",
-      "System.TimeOnly" => "System.TimeOnly?",
-      "System.String" or "string" => "string?",
-      _ => $"{typeName}?"
-    };
+    return typeName;
   }
 
   /// <summary>
