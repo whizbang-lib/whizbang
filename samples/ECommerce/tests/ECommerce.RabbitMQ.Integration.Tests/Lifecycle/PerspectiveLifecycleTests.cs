@@ -439,14 +439,17 @@ public class PerspectiveLifecycleTests {
       }
     };
 
+    // Wire up hook BEFORE sending commands to avoid race condition
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 4, timeoutMilliseconds: 45000, hostFilter: "inventory");
+
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    // Wait for inventory perspective processing using OnPerspectiveEventProcessed hooks
-    // 2 commands × 2 inventory perspectives = 4 completions on the local (fast) host
-    await fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 4, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Wait for inventory perspective processing
+    await perspectiveTask;
 
     // Assert - Verify both products are saved
     var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId.Value);
