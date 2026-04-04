@@ -950,6 +950,7 @@ public class IntervalWorkCoordinatorStrategyTests {
   // ========================================
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -973,6 +974,7 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 

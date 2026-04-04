@@ -93,6 +93,9 @@ public class WorkChannelWriter : IWorkChannelWriter {
   public void RemoveInFlight(Guid messageId) => _inFlight.TryRemove(messageId, out _);
 
   /// <inheritdoc />
+  public void ClearInFlight() => _inFlight.Clear();
+
+  /// <inheritdoc />
   public bool ShouldRenewLease(Guid messageId) {
     if (_inFlight.TryGetValue(messageId, out var trackedAt)) {
       return DateTimeOffset.UtcNow - trackedAt > _leaseRenewalThreshold;

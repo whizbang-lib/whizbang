@@ -537,6 +537,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
   }
 
   private sealed class IdleTestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel;
 
     public IdleTestWorkChannelWriter() {

@@ -363,6 +363,7 @@ public class WorkCoordinatorFlushHelperTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel = Channel.CreateUnbounded<OutboxWork>();
     public List<OutboxWork> WrittenWork { get; } = [];
 

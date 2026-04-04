@@ -353,6 +353,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
   // Test helper - Mock work channel writer with deterministic signals
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _writeCount;

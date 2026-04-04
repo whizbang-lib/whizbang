@@ -473,6 +473,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
   // Test helper - Mock work channel writer
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

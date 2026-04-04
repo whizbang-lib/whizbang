@@ -213,6 +213,14 @@ public partial class WorkCoordinatorPublisherWorker(
   public bool IsIdle => _isIdle;
 
   /// <summary>
+  /// Clears the in-flight tracking state for the publisher channel.
+  /// Call between tests when using a shared fixture to prevent stale in-flight
+  /// entries from blocking new messages.
+  /// </summary>
+  /// <docs>operations/testing/shared-fixtures#cleanup</docs>
+  public void ClearPublishInFlightState() => _workChannelWriter.ClearInFlight();
+
+  /// <summary>
   /// Event fired when work processing starts (idle → active transition).
   /// Fires when work appears after consecutive empty polls.
   /// </summary>

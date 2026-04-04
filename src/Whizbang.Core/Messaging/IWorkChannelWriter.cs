@@ -78,6 +78,13 @@ public interface IWorkChannelWriter {
   void RemoveInFlight(Guid messageId);
 
   /// <summary>
+  /// Clears all in-flight tracking state.
+  /// Used during test cleanup to prevent stale in-flight entries from blocking
+  /// new messages in shared fixture scenarios.
+  /// </summary>
+  void ClearInFlight();
+
+  /// <summary>
   /// Checks whether an in-flight message's lease should be renewed.
   /// Returns true when the message has been in-flight for more than half the lease duration,
   /// preventing unnecessary lease renewals on every tick while ensuring the lease doesn't expire.
