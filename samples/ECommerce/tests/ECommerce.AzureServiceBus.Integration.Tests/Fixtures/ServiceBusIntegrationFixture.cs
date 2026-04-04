@@ -1473,7 +1473,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     var completionCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     void WireWorker(PerspectiveWorker? worker) {
-      if (worker is null) return;
+      if (worker is null) {
+        return;
+      }
+
       PerspectiveEventProcessedHandler? handler = null;
       handler = (e) => {
         var current = Interlocked.Increment(ref completionCount);
