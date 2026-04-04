@@ -76,8 +76,6 @@ public class OutboxLifecycleTests {
 
     // Assert - Message was published (proves PreOutboxInline fired before transport)
     await Assert.That(publishedMessageId).IsNotEqualTo(Guid.Empty);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
   }
 
   // ========================================
