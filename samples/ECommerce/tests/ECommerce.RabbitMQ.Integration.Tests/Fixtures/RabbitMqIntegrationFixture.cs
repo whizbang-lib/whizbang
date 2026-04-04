@@ -247,7 +247,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     }
 
-    // 3. Clear publisher in-flight state (prevents stale entries from blocking new messages)
+    // 3. Wait for workers to drain any in-flight messages from purged state
+    await _waitForWorkersReadyAsync(cancellationToken);
+
+    // 4. Clear publisher in-flight state AFTER workers are idle
+    // Workers may have re-added entries during the idle drain above
     var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
       .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
     inventoryPublisher?.ClearPublishInFlightState();
@@ -255,9 +259,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
       .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
     bffPublisher?.ClearPublishInFlightState();
-
-    // 4. Wait for workers to drain any in-flight messages from purged state
-    await _waitForWorkersReadyAsync(cancellationToken);
 
     Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
   }
