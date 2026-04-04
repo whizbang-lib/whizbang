@@ -675,6 +675,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[RabbitMqFixture] All workers completed first poll cycle");
   }
 
+  /// <summary>
+  /// Waits for all workers on both hosts to become idle.
+  /// Useful after perspective processing to ensure DB commits are flushed.
+  /// </summary>
+  public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
+    await _waitForWorkersReadyAsync(default);
+  }
+
   private async Task _deleteQueueAsync(string queueName, CancellationToken ct = default) {
     try {
       var response = await _managementClient.DeleteAsync($"/api/queues/%2F/{queueName}", ct);

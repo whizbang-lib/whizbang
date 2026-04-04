@@ -449,8 +449,11 @@ public class PerspectiveLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    // Wait for inventory perspective completions
+    // Wait for inventory perspective completions (processing done, but DB commit is batched)
     await perspectiveTask;
+
+    // Wait for worker to go idle (DB commits happen in the next batch cycle)
+    await fixture.WaitForWorkersIdleAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify both products are saved on inventory host
     var product1 = await fixture.InventoryProductLens.GetByIdAsync(commands[0].ProductId);
