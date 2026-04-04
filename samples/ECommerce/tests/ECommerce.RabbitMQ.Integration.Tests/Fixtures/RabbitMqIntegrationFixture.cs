@@ -208,6 +208,47 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _deleteExchangeAsync($"products-{testId}", ct);
   }
 
+  /// <summary>
+  /// Cleans up all test data from the database between tests.
+  /// Truncates Whizbang infrastructure tables and perspective tables.
+  /// Used by shared fixture pattern to reset state between sequential tests.
+  /// </summary>
+  public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
+    // Purge RabbitMQ queues to prevent stale messages from previous tests
+    await _deleteQueueAsync($"bff-products-queue-{_testId}");
+    await _deleteQueueAsync($"inventory-products-queue-{_testId}");
+    await _deleteQueueAsync($"bff-inventory-queue-{_testId}");
+
+    // Truncate all Whizbang infrastructure tables in the inventory schema
+    // Both hosts share the same database schema prefix, so one truncation covers both
+    const int maxRetries = 3;
+    const int retryDelayMs = 100;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await using var connection = new Npgsql.NpgsqlConnection(_inventoryPostgresConnection);
+        await connection.OpenAsync(cancellationToken);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = @"
+          DO $$
+          BEGIN
+            EXECUTE (
+              SELECT string_agg('TRUNCATE TABLE ' || schemaname || '.' || tablename || ' CASCADE', '; ')
+              FROM pg_tables
+              WHERE schemaname = 'inventory'
+                AND tablename LIKE 'wh_%'
+            );
+          END $$;";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        break;
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+        // Deadlock — retry
+        await Task.Delay(retryDelayMs * attempt, cancellationToken);
+      }
+    }
+
+    Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
+  }
+
   private IHost _createInventoryHost() {
     var builder = Host.CreateApplicationBuilder();
 
