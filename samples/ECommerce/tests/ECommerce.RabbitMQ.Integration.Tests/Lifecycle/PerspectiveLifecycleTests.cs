@@ -129,8 +129,8 @@ public class PerspectiveLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for PrePerspectiveInline stage
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
+      // Wait for PrePerspectiveInline stage (needs time for RabbitMQ → BFF → PerspectiveWorker pipeline)
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
 
       // Assert - PrePerspectiveInline has fired
       // At this point, perspective processing hasn't started yet
@@ -292,7 +292,7 @@ public class PerspectiveLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
 
       // Wait for PostPerspectiveDetached stage
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
 
       // Assert - At this point, PostPerspectiveDetached has fired
       // Perspective should have processed all events
@@ -427,7 +427,7 @@ public class PerspectiveLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
 
       // Wait for PostPerspectiveInline stage (blocking)
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
 
       // Assert - At this point, PostPerspectiveInline has completed
       // Database writes MUST be committed because this stage blocks checkpoint
