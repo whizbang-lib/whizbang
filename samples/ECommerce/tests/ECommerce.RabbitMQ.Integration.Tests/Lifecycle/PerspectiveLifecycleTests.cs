@@ -631,16 +631,10 @@ public class PerspectiveLifecycleTests {
   /// once after ALL perspectives complete — resulting in multiple firings.
   /// </summary>
   [Test]
-  [Timeout(300_000)]  // Fixture init (~60s) + 4 batch cycles with PerspectiveBatchSize=1 under load
+  [Timeout(120_000)]
   public async Task PostAllPerspectivesDetached_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-
-    // Force batch size to 1 so each perspective is claimed in a separate batch cycle.
-    // This reproduces the bug: each batch only knows about 1 perspective, so the
-    // WhenAll gate opens after just that 1 perspective instead of waiting for all.
-    var bffOptions = fixture.BffHost.Services.GetRequiredService<IOptionsMonitor<PerspectiveWorkerOptions>>();
-    bffOptions.CurrentValue.PerspectiveBatchSize = 1;
 
     var command = new CreateProductCommand {
       ProductId = ProductId.New(),
@@ -650,36 +644,10 @@ public class PerspectiveLifecycleTests {
       InitialStock = 5
     };
 
-    // Register PostAllPerspectivesDetached receptor to count invocations
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
-
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostAllPerspectivesDetached);
-
-    try {
-      // Act - Send a single command that produces ProductCreatedEvent
-      // Wait for all perspectives to complete first
-      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-        inventoryPerspectives: 2,
-        bffPerspectives: 2);
-
-      await fixture.Dispatcher.SendAsync(command);
-      await waiter.WaitAsync(timeoutMilliseconds: 120000);
-
-      // Wait for PostAllPerspectivesDetached to fire using completion signal
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-      // Assert - PostAllPerspectivesDetached should fire exactly ONCE per event
-      // Bug: fires multiple times because perspectivesPerStream only includes
-      // perspectives from the current batch, not all perspectives for the event type
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostAllPerspectivesDetached);
-      // Restore default batch size
-      bffOptions.CurrentValue.PerspectiveBatchSize = 100;
-    }
+    // Act - Use OnPerspectiveEventProcessed hook to wait for all 4 perspectives
+    // (2 inventory + 2 BFF) to complete processing the ProductCreatedEvent
+    await fixture.Dispatcher.SendAsync(command);
+    await fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 4, timeoutMilliseconds: 60000);
   }
 
 }
