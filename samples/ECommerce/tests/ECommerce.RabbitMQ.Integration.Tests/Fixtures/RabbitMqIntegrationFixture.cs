@@ -643,7 +643,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       WorkProcessingIdleHandler? h = null;
       h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
       w.OnWorkProcessingIdle += h;
-      if (w.IsIdle) tcs.TrySetResult(true); // re-check after subscribe (race)
+      if (w.IsIdle) {
+        tcs.TrySetResult(true); // re-check after subscribe (race)
+      }
     }
 
     void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
@@ -652,7 +654,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       WorkProcessingIdleHandler? h = null;
       h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
       w.OnWorkProcessingIdle += h;
-      if (w.IsIdle) tcs.TrySetResult(true);
+      if (w.IsIdle) {
+        tcs.TrySetResult(true);
+      }
     }
 
     WireOnce(inventoryPub, tcsInventoryPub);
