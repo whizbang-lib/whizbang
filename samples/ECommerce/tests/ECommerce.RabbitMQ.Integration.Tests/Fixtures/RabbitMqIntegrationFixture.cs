@@ -220,29 +220,37 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _deleteQueueAsync($"bff-inventory-queue-{_testId}");
 
     // Delete all data from Whizbang infrastructure tables in the inventory schema.
-    // Uses DELETE instead of TRUNCATE to avoid ACCESS EXCLUSIVE locks that deadlock
+    // Uses individual DELETE statements with specific ordering to minimize lock contention
     // with the shared fixture's running workers (PerspectiveWorker, OutboxWorker).
+    // Perspective tables must be deleted first (FK dependencies).
     const int maxRetries = 5;
-    const int retryDelayMs = 200;
+    const int retryDelayMs = 300;
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         await using var connection = new Npgsql.NpgsqlConnection(_inventoryPostgresConnection);
         await connection.OpenAsync(cancellationToken);
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = @"
-          DO $$
-          BEGIN
-            EXECUTE (
-              SELECT string_agg('DELETE FROM ' || schemaname || '.' || tablename, '; ')
-              FROM pg_tables
-              WHERE schemaname = 'inventory'
-                AND tablename LIKE 'wh_%'
-            );
-          END $$;";
+          -- Delete perspective data first (breaks FK chains)
+          DELETE FROM inventory.wh_perspective_events;
+          DELETE FROM inventory.wh_perspective_cursors;
+          DELETE FROM inventory.wh_lifecycle_completions;
+          -- Delete messaging infrastructure
+          DELETE FROM inventory.wh_outbox;
+          DELETE FROM inventory.wh_inbox;
+          DELETE FROM inventory.wh_receptor_processing;
+          DELETE FROM inventory.wh_message_deduplication;
+          -- Delete event store and streams last
+          DELETE FROM inventory.wh_event_store;
+          DELETE FROM inventory.wh_active_streams;
+          -- Delete perspective model tables
+          DELETE FROM inventory.wh_per_inventory_level;
+          DELETE FROM inventory.wh_per_product;";
         await cmd.ExecuteNonQueryAsync(cancellationToken);
         break;
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
         // Deadlock — retry with backoff
+        Console.WriteLine($"[RabbitMqFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
         await Task.Delay(retryDelayMs * attempt, cancellationToken);
       }
     }
