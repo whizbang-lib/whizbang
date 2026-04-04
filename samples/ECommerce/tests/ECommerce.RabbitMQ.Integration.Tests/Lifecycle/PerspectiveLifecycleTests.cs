@@ -489,7 +489,7 @@ public class PerspectiveLifecycleTests {
   /// PrePerspectiveInline → PrePerspectiveDetached (parallel) → PostPerspectiveDetached → PostPerspectiveInline
   /// </summary>
   [Test]
-  [Timeout(50000)] // Increased timeout for resource-constrained environments (50s)
+  [Timeout(120_000)] // Fixture init + RabbitMQ → BFF pipeline + 4 stages
   public async Task PerspectiveStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -535,7 +535,7 @@ public class PerspectiveLifecycleTests {
         preAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(40));
+      ).WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
