@@ -125,6 +125,23 @@ public partial class PerspectiveWorker(
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   /// <summary>
+  /// Event fired after a perspective successfully processes events for a stream.
+  /// Fires synchronously on the perspective worker thread after completion buffering.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this hook for deterministic test synchronization (replaces CountingPerspectiveReceptor
+  /// and PerspectiveCompletionWaiter which depend on PostPerspectiveInline lifecycle stage).
+  /// </para>
+  /// <para>
+  /// Also useful in production for monitoring perspective processing throughput,
+  /// triggering downstream actions after materialization, or building custom completion gates.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public event PerspectiveEventProcessedHandler? OnPerspectiveEventProcessed;
+
+  /// <summary>
   /// Groups per-stream perspective processing parameters that travel together through lifecycle phases.
   /// </summary>
   private readonly record struct PerspectiveStreamContext(
@@ -448,6 +465,11 @@ public partial class PerspectiveWorker(
 
         // Buffer event completions and update dedup cache
         _bufferCompletionsAndUpdateCache(group, processedEvents, lifecycleCoordinator, perspectiveName);
+
+        // Fire processing hook after confirmed successful perspective processing
+        if (processedEvents.Count > 0) {
+          OnPerspectiveEventProcessed?.Invoke(perspectiveName, streamId, processedEvents.Count);
+        }
 
         // Record per-stream metrics
         _metrics?.StreamsUpdated.Add(1);

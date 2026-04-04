@@ -225,6 +225,23 @@ public partial class WorkCoordinatorPublisherWorker(
   /// </summary>
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
+  /// <summary>
+  /// Event fired after a message is successfully published to transport.
+  /// Fires synchronously on the publisher thread after publish confirmation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this hook for deterministic test synchronization (replaces PostOutboxInline/PostOutboxDetached
+  /// lifecycle receptors which depend on the LifecycleCoordinator path).
+  /// </para>
+  /// <para>
+  /// Also useful in production for monitoring, auditing, or triggering side effects
+  /// after confirmed message delivery.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/publisher-worker#processing-hooks</docs>
+  public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
+
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(
@@ -698,6 +715,7 @@ public partial class WorkCoordinatorPublisherWorker(
       // and prevents re-queuing until the DB clears it via process_work_batch completions.
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
+      OnOutboxMessagePublished?.Invoke(work.MessageId, work.Destination);
     } else if (result.Reason == MessageFailureReason.TransportException) {
       // Keep in-flight — message is re-queued to channel for retry
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
@@ -1363,3 +1381,22 @@ public delegate void WorkProcessingStartedHandler();
 /// Useful for integration tests to wait for event processing completion.
 /// </summary>
 public delegate void WorkProcessingIdleHandler();
+
+/// <summary>
+/// Callback invoked after a message is successfully published to transport.
+/// Fires synchronously on the publisher thread after publish confirmation.
+/// </summary>
+/// <param name="messageId">The unique ID of the published message.</param>
+/// <param name="destination">The transport destination (topic/queue name), or null for local-only.</param>
+/// <docs>operations/workers/publisher-worker#processing-hooks</docs>
+public delegate void OutboxMessagePublishedHandler(Guid messageId, string? destination);
+
+/// <summary>
+/// Callback invoked after a perspective successfully processes events for a stream.
+/// Fires synchronously on the perspective worker thread after completion buffering.
+/// </summary>
+/// <param name="perspectiveName">The name of the perspective that processed events.</param>
+/// <param name="streamId">The stream ID that was processed.</param>
+/// <param name="eventCount">The number of events processed in this batch.</param>
+/// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+public delegate void PerspectiveEventProcessedHandler(string perspectiveName, Guid streamId, int eventCount);
