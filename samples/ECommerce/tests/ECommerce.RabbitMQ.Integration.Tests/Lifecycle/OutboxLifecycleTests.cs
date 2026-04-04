@@ -255,12 +255,17 @@ public class OutboxLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
 
       // Wait for all stages to complete (with timeout)
-      await Task.WhenAll(
-        preInlineCompletion.Task,
-        preAsyncCompletion.Task,
-        postAsyncCompletion.Task,
-        postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(45));
+      try {
+        await Task.WhenAll(
+          preInlineCompletion.Task,
+          preAsyncCompletion.Task,
+          postAsyncCompletion.Task,
+          postInlineCompletion.Task
+        ).WaitAsync(TimeSpan.FromSeconds(45));
+      } catch (TimeoutException) {
+        Console.WriteLine($"[DIAG-OutboxOrder] PreInline={preInlineCompletion.Task.IsCompleted}, PreAsync={preAsyncCompletion.Task.IsCompleted}, PostAsync={postAsyncCompletion.Task.IsCompleted}, PostInline={postInlineCompletion.Task.IsCompleted}");
+        throw;
+      }
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
