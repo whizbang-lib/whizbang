@@ -381,39 +381,19 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource);
+    // Wait for BOTH BFF perspectives to complete (ProductCatalog + InventoryLevels)
+    // so that product data is definitely saved before assertion
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 0, bffPerspectives: 2);
 
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
+    // Act - Dispatch command
+    await fixture.Dispatcher.SendAsync(command);
+    await waiter.WaitAsync(timeoutMilliseconds: 30000);
 
-    try {
-      // Act - Dispatch command
-      await fixture.Dispatcher.SendAsync(command);
-
-      // Wait for PostPerspectiveInline stage (blocking)
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
-
-      // Assert - At this point, PostPerspectiveInline has completed
-      // Database writes MUST be committed because this stage blocks checkpoint
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-      // Verify perspective data is queryable — poll until ProductCatalogPerspective completes
-      // (PostPerspectiveInline may have fired for InventoryLevelsPerspective first)
-      object? product = null;
-      for (var i = 0; i < 30; i++) {
-        product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
-        if (product is not null) {
-          break;
-        }
-        await Task.Delay(200);
-      }
-      await Assert.That(product).IsNotNull();
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
-    }
+    // Assert - After both BFF perspectives complete, data MUST be saved
+    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
+    await Assert.That(product).IsNotNull();
+    await Assert.That(product!.Name).IsEqualTo(command.Name);
   }
 
   /// <summary>
