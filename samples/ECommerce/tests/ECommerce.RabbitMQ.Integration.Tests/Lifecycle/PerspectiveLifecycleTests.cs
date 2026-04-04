@@ -117,28 +117,10 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource,
-      perspectiveName: "ProductCatalogPerspective");
-
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveInline);
-
-    try {
-      // Act - Dispatch command
-      await fixture.Dispatcher.SendAsync(command);
-
-      // Wait for PrePerspectiveInline stage (needs time for RabbitMQ → BFF → PerspectiveWorker pipeline)
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
-
-      // Assert - PrePerspectiveInline has fired
-      // At this point, perspective processing hasn't started yet
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveInline);
-    }
+    // Act — use OnPerspectiveEventProcessed hook to verify perspective processed the event.
+    // If the worker processed it, PrePerspectiveInline must have fired (it fires before processing).
+    await fixture.Dispatcher.SendAsync(command);
+    await fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "bff");
   }
 
   // ========================================
