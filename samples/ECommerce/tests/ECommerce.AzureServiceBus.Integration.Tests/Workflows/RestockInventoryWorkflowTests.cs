@@ -3,7 +3,6 @@
 
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Medo;
 
@@ -11,7 +10,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 
 /// <summary>
 /// End-to-end integration tests for the RestockInventory workflow.
-/// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
+/// Tests the complete flow: Command -> Receptor -> Event Store -> Perspectives.
 /// All tests share a single fixture (PostgreSQL database + hosts) for performance.
 /// Database cleanup between tests ensures isolation.
 /// </summary>
@@ -53,8 +52,6 @@ public class RestockInventoryWorkflowTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
 
-
-
     // First, create a product with initial stock
     var createCommand = new CreateProductCommand {
       ProductId = _testProdRestock1,
@@ -64,33 +61,29 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock.png",
       InitialStock = 10
     };
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // CreateProductReceptor publishes both events when InitialStock > 0
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
-    using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdRestock1,
       QuantityToAdd = 50
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    var restockTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
 
     // SQL diagnostic: Check event flow after command dispatch
     await Task.Delay(5000); // Give system time to process
     await fixture.DiagnoseEventFlowAsync("InventoryRestockedEvent", fixture.GetLogger<RestockInventoryWorkflowTests>(), forceDebug: true);
 
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify InventoryWorker perspective updated
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
@@ -98,7 +91,7 @@ public class RestockInventoryWorkflowTests {
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(60); // 10 + 50
     await Assert.That(inventoryLevel.Available).IsEqualTo(60);
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -110,8 +103,6 @@ public class RestockInventoryWorkflowTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
 
-
-
     // Create product with initial stock of 5
     var createCommand = new CreateProductCommand {
       ProductId = _testProdMultiRestock,
@@ -121,20 +112,13 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/multi-restock.png",
       InitialStock = 5
     };
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // CreateProductReceptor publishes both events when InitialStock > 0
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
-    using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
 
     // Act - Perform multiple restock operations
-    // Wait between each restock to ensure events are processed and perspectives are updated
     var restockCommands = new[] {
       new RestockInventoryCommand { ProductId = _testProdMultiRestock, QuantityToAdd = 10 },
       new RestockInventoryCommand { ProductId = _testProdMultiRestock, QuantityToAdd = 20 },
@@ -142,12 +126,14 @@ public class RestockInventoryWorkflowTests {
     };
 
     foreach (var restockCommand in restockCommands) {
-      using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-        inventoryPerspectives: 1,
-        bffPerspectives: 0);
+      var restockTask = fixture.WaitForPerspectiveProcessingAsync(
+        expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
       await fixture.Dispatcher.SendAsync(restockCommand);
-      await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await restockTask;
     }
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify total quantity = 5 + 10 + 20 + 15 = 50
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
@@ -155,7 +141,7 @@ public class RestockInventoryWorkflowTests {
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(50);
     await Assert.That(inventoryLevel.Available).IsEqualTo(50);
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -166,8 +152,6 @@ public class RestockInventoryWorkflowTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
 
-
-
     // Create product with zero initial stock
     var createCommand = new CreateProductCommand {
       ProductId = _testProdRestockZero,
@@ -177,34 +161,35 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock-zero.png",
       InitialStock = 0
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdRestockZero,
       QuantityToAdd = 100
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    var restockTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
 
     // SQL diagnostic: Check event flow after command dispatch
     await Task.Delay(5000); // Give system time to process
     await fixture.DiagnoseEventFlowAsync("InventoryRestockedEvent", fixture.GetLogger<RestockInventoryWorkflowTests>(), forceDebug: true);
 
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify quantity increased from 0 to 100
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(100);
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -215,8 +200,6 @@ public class RestockInventoryWorkflowTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
 
-
-
     // Create product with initial stock
     var createCommand = new CreateProductCommand {
       ProductId = _testProdRestockZeroQty,
@@ -226,28 +209,24 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/zero-qty.png",
       InitialStock = 25
     };
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // CreateProductReceptor publishes both events when InitialStock > 0
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
-    using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdRestockZeroQty,
       QuantityToAdd = 0
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    var restockTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify quantity unchanged
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
@@ -255,7 +234,7 @@ public class RestockInventoryWorkflowTests {
     Console.WriteLine($"[TEST] Inventory quantity: {inventoryLevel!.Quantity}, expected: 25 (no change)");
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(25); // No change
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -266,8 +245,6 @@ public class RestockInventoryWorkflowTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
 
-
-
     // Create product with small initial stock
     var createCommand = new CreateProductCommand {
       ProductId = _testProdLargeRestock,
@@ -277,28 +254,24 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/large-restock.png",
       InitialStock = 50
     };
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // CreateProductReceptor publishes both events when InitialStock > 0
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
-    using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdLargeRestock,
       QuantityToAdd = 10000
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    var restockTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify large quantity handled
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
@@ -306,6 +279,6 @@ public class RestockInventoryWorkflowTests {
     Console.WriteLine($"[TEST] Inventory quantity: {inventoryLevel!.Quantity}, expected: 10050");
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(10050); // 50 + 10000
 
-    // BFF assertions removed — BFF receives via Service Bus transport
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 }

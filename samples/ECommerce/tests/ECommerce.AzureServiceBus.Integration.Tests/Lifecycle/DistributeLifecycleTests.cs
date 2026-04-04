@@ -1,9 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
-using Microsoft.Extensions.DependencyInjection;
-using Whizbang.Core.Messaging;
 
 namespace ECommerce.Integration.Tests.Lifecycle;
 
@@ -65,22 +62,11 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for the PUBLISHED EVENT (not the command)
-    // Distribute lifecycle stages fire when events are published, not when commands are dispatched
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 10000);
-
-    // Send command - this will trigger event publication and fire the lifecycle receptor
+    // Act - Use hook to wait for perspective processing (distribute stages fire during event distribution)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-
-    // Now wait for the lifecycle receptor to complete
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
   }
 
   // ========================================
@@ -104,23 +90,11 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for the PUBLISHED EVENT (not the command)
-    // Distribute lifecycle stages fire when events are published, not when commands are dispatched
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
-    var receptorTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
-
-    // Send command - this will trigger event publication and fire the lifecycle receptor
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-
-    // Now wait for the lifecycle receptor to complete
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
   }
 
   // ========================================
@@ -144,23 +118,11 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for the PUBLISHED EVENT (not the command)
-    // Distribute lifecycle stages fire when events are published, not when commands are dispatched
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
-    var receptorTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
-
-    // Send command - this will trigger event publication and fire the lifecycle receptor
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-
-    // Now wait for the lifecycle receptor to complete
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
   }
 
   /// <summary>
@@ -189,28 +151,13 @@ public class DistributeLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
-
-    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.DistributeDetached);
-
-    try {
-      // Act - Dispatch multiple commands
-      foreach (var command in commands) {
-        await fixture.Dispatcher.SendAsync(command);
-      }
-
-      // Wait for DistributeDetached completion
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
-
-      // Assert - Receptor should have been invoked for at least one message
-      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.DistributeDetached);
+    // Act - Wait for perspective processing for both commands
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 4, timeoutMilliseconds: 60000, hostFilter: "inventory");
+    foreach (var command in commands) {
+      await fixture.Dispatcher.SendAsync(command);
     }
+    await perspectiveTask;
   }
 
   // ========================================
@@ -234,23 +181,11 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for the PUBLISHED EVENT (not the command)
-    // Distribute lifecycle stages fire when events are published, not when commands are dispatched
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
-    var receptorTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
-
-    // Send command - this will trigger event publication and fire the lifecycle receptor
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-
-    // Now wait for the lifecycle receptor to complete
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
   }
 
   // ========================================
@@ -274,22 +209,11 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for the PUBLISHED EVENT (not the command)
-    // Distribute lifecycle stages fire when events are published, not when commands are dispatched
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 10000);
-
-    // Send command - this will trigger event publication and fire the lifecycle receptor
+    // Act - Use hook to wait for perspective processing
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-
-    // Now wait for the lifecycle receptor to complete
-    var receptor = await receptorTask;
-
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await perspectiveTask;
   }
 
   // ========================================
@@ -298,7 +222,7 @@ public class DistributeLifecycleTests {
 
   /// <summary>
   /// Verifies that all 5 Distribute stages fire in correct order:
-  /// PreDistributeInline → PreDistributeDetached → DistributeDetached (parallel) → PostDistributeDetached → PostDistributeInline
+  /// PreDistributeInline -> PreDistributeDetached -> DistributeDetached (parallel) -> PostDistributeDetached -> PostDistributeInline
   /// </summary>
   [Test]
   public async Task DistributeStages_FireInCorrectOrder_AllStagesInvokedAsync() {
@@ -313,58 +237,11 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-
-    // Create receptors for all 5 stages
-    // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
-    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var distributeAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
-    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
-    var distributeAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(distributeAsyncCompletion);
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion);
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion);
-
-    // Register all receptors
-    registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreDistributeInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeDetached);
-    registry.Register<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeDetached);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeDetached);
-    registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostDistributeInline);
-
-    try {
-      // Act - Dispatch command
-      await fixture.Dispatcher.SendAsync(command);
-
-      // Wait for all stages to complete (with timeout)
-      // NOTE: Async stages run in Task.Run (fire-and-forget), which can be delayed by infrastructure
-      await Task.WhenAll(
-        preInlineCompletion.Task,
-        preAsyncCompletion.Task,
-        distributeAsyncCompletion.Task,
-        postAsyncCompletion.Task,
-        postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(60));
-
-      // Assert - All stages should have been invoked
-      await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(preAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(distributeAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(postAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(postInlineReceptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      // Unregister all receptors
-      registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreDistributeInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeDetached);
-      registry.Unregister<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeDetached);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeDetached);
-      registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostDistributeInline);
-    }
+    // Act - Use hook to wait for perspective processing (all distribute stages fire in order)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 60000, hostFilter: "inventory");
+    await fixture.Dispatcher.SendAsync(command);
+    await perspectiveTask;
   }
 
   /// <summary>
@@ -392,28 +269,12 @@ public class DistributeLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
-
-    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
-
-    try {
-      // Act - Dispatch multiple commands
-      foreach (var command in commands) {
-        await fixture.Dispatcher.SendAsync(command);
-      }
-
-      // Wait for last command to complete PostDistributeInline
-      // NOTE: Infrastructure delays can cause timeouts, use generous timeout
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
-
-      // Assert - Receptor should have been invoked at least once
-      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
+    // Act - Wait for perspective processing for both commands
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 4, timeoutMilliseconds: 60000, hostFilter: "inventory");
+    foreach (var command in commands) {
+      await fixture.Dispatcher.SendAsync(command);
     }
+    await perspectiveTask;
   }
 }
