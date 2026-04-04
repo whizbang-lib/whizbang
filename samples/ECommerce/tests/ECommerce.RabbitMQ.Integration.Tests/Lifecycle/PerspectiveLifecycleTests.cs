@@ -440,18 +440,19 @@ public class PerspectiveLifecycleTests {
     };
 
     // Wire perspective hook BEFORE sending commands
+    // 2 commands × (2 inv perspectives for ProductCreated + 1 inv perspective for Restock) = ~6 completions
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 6, timeoutMilliseconds: 60000, hostFilter: "inventory");
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    // Wait for at least 2 inventory perspective completions
+    // Wait for inventory perspective completions
     await perspectiveTask;
 
-    // Assert - Verify both products are saved on inventory host (local, fast)
+    // Assert - Verify both products are saved on inventory host
     var product1 = await fixture.InventoryProductLens.GetByIdAsync(commands[0].ProductId);
     var product2 = await fixture.InventoryProductLens.GetByIdAsync(commands[1].ProductId);
     await Assert.That(product1).IsNotNull();
