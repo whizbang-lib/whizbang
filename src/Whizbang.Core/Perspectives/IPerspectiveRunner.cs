@@ -9,6 +9,12 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 public interface IPerspectiveRunner {
   /// <summary>
+  /// Gets the CLR type of the perspective this runner processes.
+  /// Used by lifecycle stages to identify which perspective is processing.
+  /// </summary>
+  Type PerspectiveType { get; }
+
+  /// <summary>
   /// Processes perspective checkpoint for a stream using unit-of-work pattern.
   /// Loads events from event store, applies them in UUID7 order, and saves checkpoint.
   /// Supports partial success - saves checkpoint at last successful event before failure.
