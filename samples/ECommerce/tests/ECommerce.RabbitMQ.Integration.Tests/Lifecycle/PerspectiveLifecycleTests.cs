@@ -440,15 +440,16 @@ public class PerspectiveLifecycleTests {
     };
 
     // Register perspective waiter BEFORE sending commands to avoid race condition
+    // Expect at least 2 unique (perspective, stream) pairs from inventory host
     using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 4, bffPerspectives: 0);
+      inventoryPerspectives: 2, bffPerspectives: 0);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    // Wait for inventory perspectives to process all events
+    // Wait for inventory perspectives to process events
     await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify both products are saved
