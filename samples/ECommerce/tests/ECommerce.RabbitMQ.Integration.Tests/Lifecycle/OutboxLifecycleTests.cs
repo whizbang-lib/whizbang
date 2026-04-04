@@ -85,9 +85,9 @@ public class OutboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (the event published to Service Bus)
+    // Act - Register receptor for InventoryRestockedEvent (the event published to transport)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.InventoryHost.WaitForPreOutboxInlineAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForPreOutboxInlineAsync<InventoryRestockedEvent>(
 );
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -123,9 +123,9 @@ public class OutboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent
+    // Act - Register receptor for InventoryRestockedEvent
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
-    var receptorTask = fixture.InventoryHost.WaitForPreOutboxDetachedAsync<ProductCreatedEvent>(
+    var receptorTask = fixture.InventoryHost.WaitForPreOutboxDetachedAsync<InventoryRestockedEvent>(
 );
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
@@ -255,16 +255,16 @@ public class OutboxLifecycleTests {
     var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
-    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion);
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion);
+    var preInlineReceptor = new GenericLifecycleCompletionReceptor<InventoryRestockedEvent>(preInlineCompletion);
+    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<InventoryRestockedEvent>(preAsyncCompletion);
+    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<InventoryRestockedEvent>(postAsyncCompletion);
+    var postInlineReceptor = new GenericLifecycleCompletionReceptor<InventoryRestockedEvent>(postInlineCompletion);
 
     // Register all receptors
-    registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreOutboxInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxDetached);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxDetached);
-    registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostOutboxInline);
+    registry.Register<InventoryRestockedEvent>(preInlineReceptor, LifecycleStage.PreOutboxInline);
+    registry.Register<InventoryRestockedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxDetached);
+    registry.Register<InventoryRestockedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxDetached);
+    registry.Register<InventoryRestockedEvent>(postInlineReceptor, LifecycleStage.PostOutboxInline);
 
     try {
       // Act - Dispatch command
@@ -286,10 +286,10 @@ public class OutboxLifecycleTests {
 
     } finally {
       // Unregister all receptors
-      registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreOutboxInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxDetached);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxDetached);
-      registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostOutboxInline);
+      registry.Unregister<InventoryRestockedEvent>(preInlineReceptor, LifecycleStage.PreOutboxInline);
+      registry.Unregister<InventoryRestockedEvent>(preAsyncReceptor, LifecycleStage.PreOutboxDetached);
+      registry.Unregister<InventoryRestockedEvent>(postAsyncReceptor, LifecycleStage.PostOutboxDetached);
+      registry.Unregister<InventoryRestockedEvent>(postInlineReceptor, LifecycleStage.PostOutboxInline);
     }
   }
 
@@ -319,10 +319,10 @@ public class OutboxLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+    var receptor = new GenericLifecycleCompletionReceptor<InventoryRestockedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxInline);
+    registry.Register<InventoryRestockedEvent>(receptor, LifecycleStage.PostOutboxInline);
 
     try {
       // Act - Dispatch multiple commands
@@ -337,7 +337,7 @@ public class OutboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
 
     } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxInline);
+      registry.Unregister<InventoryRestockedEvent>(receptor, LifecycleStage.PostOutboxInline);
     }
   }
 }
