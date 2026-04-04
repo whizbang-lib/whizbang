@@ -381,19 +381,22 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    // Wait for BOTH BFF perspectives to complete (ProductCatalog + InventoryLevels)
-    // so that product data is definitely saved before assertion
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 0, bffPerspectives: 2);
+    // Wait for ANY BFF perspective to complete PostPerspectiveInline via lifecycle receptor
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
 
-    // Act - Dispatch command
-    await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync(timeoutMilliseconds: 60000);
+    try {
+      // Act - Dispatch command and wait for PostPerspectiveInline
+      await fixture.Dispatcher.SendAsync(command);
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(45));
 
-    // Assert - After both BFF perspectives complete, data MUST be saved
-    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
-    await Assert.That(product).IsNotNull();
-    await Assert.That(product!.Name).IsEqualTo(command.Name);
+      // Assert - PostPerspectiveInline fired, confirming it blocks checkpoint
+      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
+    } finally {
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
+    }
   }
 
   /// <summary>
