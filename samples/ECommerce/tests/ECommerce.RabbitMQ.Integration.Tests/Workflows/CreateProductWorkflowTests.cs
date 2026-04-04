@@ -75,6 +75,10 @@ public class CreateProductWorkflowTests {
     Console.WriteLine("[TEST] Command sent, waiting for perspective processing...");
 
     await perspectiveTask;
+
+    // Wait for workers to go idle (ensures DB commits are flushed)
+    await fixture.WaitForWorkersIdleAsync();
+
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
