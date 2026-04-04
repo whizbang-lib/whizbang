@@ -568,6 +568,7 @@ public partial class WorkCoordinatorPublisherWorker(
     CancellationToken stoppingToken) {
 
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      LogSkippedPreOutboxNoDependencies(_logger, work.MessageId, _lifecycleMessageDeserializer is null, receptorInvoker is null);
       return (null, null);
     }
 
@@ -575,6 +576,7 @@ public partial class WorkCoordinatorPublisherWorker(
     // These messages exist for event store persistence only — no transport publish occurs,
     // so PreOutbox/PostOutbox side effects should not fire.
     if (string.IsNullOrEmpty(work.Destination)) {
+      LogSkippedPreOutboxNoDestination(_logger, work.MessageId, work.MessageType);
       return (null, null);
     }
 
@@ -1266,6 +1268,20 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "Error in {Stage} lifecycle for inbox message {MessageId}"
   )]
   static partial void LogInboxLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Debug,
+    Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId}: missing dependencies (deserializer={NoDeserializer}, invoker={NoInvoker})"
+  )]
+  static partial void LogSkippedPreOutboxNoDependencies(ILogger logger, Guid messageId, bool noDeserializer, bool noInvoker);
+
+  [LoggerMessage(
+    EventId = 28,
+    Level = LogLevel.Debug,
+    Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId} ({MessageType}): event-store-only (no transport destination)"
+  )]
+  static partial void LogSkippedPreOutboxNoDestination(ILogger logger, Guid messageId, string messageType);
 
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.
