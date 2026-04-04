@@ -282,7 +282,8 @@ public static class LifecycleStageTestExtensions {
     IHost host,
     LifecycleStage stage,
     int timeoutMilliseconds,
-    string? perspectiveName = null)
+    string? perspectiveName = null,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     ArgumentNullException.ThrowIfNull(host);
@@ -295,7 +296,8 @@ public static class LifecycleStageTestExtensions {
     var receptor = new GenericLifecycleCompletionReceptor<TMessage>(
       completionSource,
       expectedStage: stage,
-      perspectiveName: perspectiveName);
+      perspectiveName: perspectiveName,
+      messageFilter: messageFilter);
 
     // Get registry from host
     var registry = host.Services.GetRequiredService<IReceptorRegistry>();
