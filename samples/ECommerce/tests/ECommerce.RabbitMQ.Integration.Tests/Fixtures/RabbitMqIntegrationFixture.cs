@@ -255,6 +255,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     }
 
+    // Wait for workers to process any in-flight messages from the purged queues.
+    // After DB cleanup, workers will find no matching data and go idle.
+    await _waitForWorkersReadyAsync(cancellationToken);
     Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
   }
 
