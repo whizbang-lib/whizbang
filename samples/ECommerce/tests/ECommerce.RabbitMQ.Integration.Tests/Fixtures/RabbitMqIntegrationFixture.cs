@@ -159,12 +159,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task InitializeAsync(CancellationToken ct = default) {
     Console.WriteLine($"[RabbitMqFixture] InitializeAsync START (testId={_testId})");
 
-    // CRITICAL: Add small random delay to stagger test initialization
-    // This prevents all 60 tests from hitting PostgreSQL/RabbitMQ simultaneously
-    var staggerDelay = Random.Shared.Next(50, 200); // 50-200ms random delay
-    await Task.Delay(staggerDelay, ct);
-    Console.WriteLine($"[RabbitMqFixture] Stagger delay: {staggerDelay}ms (reduces concurrent resource contention)");
-
     // Create hosts
     Console.WriteLine("[RabbitMqFixture] Creating InventoryWorker host...");
     _inventoryHost = _createInventoryHost();
@@ -186,11 +180,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _bffHost.StartAsync(ct);
     Console.WriteLine("[RabbitMqFixture] BFF host started");
 
-    // Wait for TransportConsumerWorker to fully subscribe
-    // StartAsync returns before background services are fully initialized
-    Console.WriteLine("[RabbitMqFixture] Waiting for consumer workers to subscribe (3s delay)...");
-    await Task.Delay(3000, ct); // 3 seconds for subscription setup
-    Console.WriteLine("[RabbitMqFixture] Consumer workers ready");
+    // Wait for workers to complete their first polling cycle (ready to process)
+    // Uses completion signals instead of Task.Delay — deterministic and doesn't waste time
+    Console.WriteLine("[RabbitMqFixture] Waiting for workers to become ready...");
+    await _waitForWorkersReadyAsync(ct);
+    Console.WriteLine("[RabbitMqFixture] Workers ready");
 
     // Create long-lived scopes for lenses
     Console.WriteLine("[RabbitMqFixture] Creating long-lived scopes for lenses...");
@@ -624,6 +618,57 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
 
     Console.WriteLine("[RabbitMqFixture] Database initialization complete.");
+  }
+
+  /// <summary>
+  /// Waits for all workers (outbox publisher + perspective) on both hosts to complete
+  /// their first polling cycle. Uses OnWorkProcessingIdle completion signals instead of
+  /// Task.Delay, making the wait deterministic and fast.
+  /// </summary>
+  private async Task _waitForWorkersReadyAsync(CancellationToken ct) {
+    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var inventoryPersp = _inventoryHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
+    var bffPersp = _bffHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
+
+    // Wire one-shot idle handlers (signal on first idle = worker completed first poll cycle)
+    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) tcs.TrySetResult(true); // re-check after subscribe (race)
+    }
+
+    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) tcs.TrySetResult(true);
+    }
+
+    WireOnce(inventoryPub, tcsInventoryPub);
+    WireOnce(bffPub, tcsBffPub);
+    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
+    WirePerspOnce(bffPersp, tcsBffPersp);
+
+    // Wait for all 4 workers to signal idle (or timeout as safety net)
+    await Task.WhenAll(
+      tcsInventoryPub.Task,
+      tcsBffPub.Task,
+      tcsInventoryPersp.Task,
+      tcsBffPersp.Task
+    ).WaitAsync(TimeSpan.FromSeconds(30), ct);
+
+    Console.WriteLine("[RabbitMqFixture] All workers completed first poll cycle");
   }
 
   private async Task _deleteQueueAsync(string queueName, CancellationToken ct = default) {
