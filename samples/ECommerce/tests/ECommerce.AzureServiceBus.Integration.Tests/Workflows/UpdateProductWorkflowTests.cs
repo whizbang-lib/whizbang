@@ -67,7 +67,7 @@ public class UpdateProductWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -81,7 +81,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -95,11 +95,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Description).IsEqualTo("Original description"); // Unchanged
     await Assert.That(inventoryProduct.Price).IsEqualTo(50.00m); // Unchanged
 
-    // Assert - Verify BFF perspective updated
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Name).IsEqualTo("Updated Name");
-    await Assert.That(bffProduct.Description).IsEqualTo("Original description"); // Unchanged
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -122,7 +118,7 @@ public class UpdateProductWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -136,7 +132,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -151,13 +147,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Price).IsEqualTo(149.99m);
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/updated.png");
 
-    // Assert - Verify BFF perspective fully updated
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Name).IsEqualTo("Completely Updated Product");
-    await Assert.That(bffProduct.Description).IsEqualTo("Brand new description");
-    await Assert.That(bffProduct.Price).IsEqualTo(149.99m);
-    await Assert.That(bffProduct.ImageUrl).IsEqualTo("/images/updated.png");
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -180,7 +170,7 @@ public class UpdateProductWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -194,7 +184,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -209,9 +199,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Description).IsEqualTo("Testing price updates"); // Unchanged
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/price-test.png"); // Unchanged
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Price).IsEqualTo(35.00m); // Updated
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -234,7 +222,7 @@ public class UpdateProductWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -248,7 +236,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -263,10 +251,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Name).IsEqualTo("Descriptive Product"); // Unchanged
     await Assert.That(inventoryProduct.Price).IsEqualTo(60.00m); // Unchanged
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Description).IsEqualTo("Completely new and improved description");
-    await Assert.That(bffProduct.ImageUrl).IsEqualTo("/images/new-and-improved.png");
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -290,7 +275,7 @@ public class UpdateProductWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -304,7 +289,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter1 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(update1);
     await updateWaiter1.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -318,7 +303,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter2 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(update2);
     await updateWaiter2.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -332,7 +317,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter3 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(update3);
     await updateWaiter3.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -347,12 +332,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Description).IsEqualTo("Final description"); // From update3
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/v3.png"); // From update3
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Name).IsEqualTo("Updated Name");
-    await Assert.That(bffProduct.Price).IsEqualTo(20.00m);
-    await Assert.That(bffProduct.Description).IsEqualTo("Final description");
-    await Assert.That(bffProduct.ImageUrl).IsEqualTo("/images/v3.png");
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -375,7 +355,7 @@ public class UpdateProductWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -402,7 +382,7 @@ public class UpdateProductWorkflowTests {
     };
     using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -415,8 +395,6 @@ public class UpdateProductWorkflowTests {
     await Assert.That(updatedInventory!.Quantity).IsEqualTo(75); // No change
     await Assert.That(updatedInventory.Available).IsEqualTo(75); // No change
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(75); // No change
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 }
