@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Medo;
@@ -64,11 +63,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 10
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
@@ -78,11 +77,11 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -116,11 +115,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 20
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
@@ -130,11 +129,11 @@ public class UpdateProductWorkflowTests {
       Price = 149.99m,
       ImageUrl = "/images/updated.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -169,11 +168,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/price-test.png",
       InitialStock = 15
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
@@ -183,11 +182,11 @@ public class UpdateProductWorkflowTests {
       Price = 35.00m,
       ImageUrl = null
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -222,11 +221,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/old.png",
       InitialStock = 30
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
@@ -236,11 +235,11 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/new-and-improved.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -276,11 +275,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/v1.png",
       InitialStock = 5
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
@@ -290,11 +289,11 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
-    using var updateWaiter1 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update1);
-    await updateWaiter1.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update price
     var update2 = new UpdateProductCommand {
@@ -304,11 +303,11 @@ public class UpdateProductWorkflowTests {
       Price = 20.00m,
       ImageUrl = null
     };
-    using var updateWaiter2 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update2);
-    await updateWaiter2.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update description and image
     var update3 = new UpdateProductCommand {
@@ -318,11 +317,11 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/v3.png"
     };
-    using var updateWaiter3 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update3);
-    await updateWaiter3.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -357,13 +356,14 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/isolation.png",
       InitialStock = 75
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Verify initial inventory
+    fixture.RefreshLensScopes();
     var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(initialInventory).IsNotNull();
     await Assert.That(initialInventory!.Quantity).IsEqualTo(75);
@@ -376,11 +376,11 @@ public class UpdateProductWorkflowTests {
       Price = 50.00m,
       ImageUrl = "/images/updated-isolation.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
