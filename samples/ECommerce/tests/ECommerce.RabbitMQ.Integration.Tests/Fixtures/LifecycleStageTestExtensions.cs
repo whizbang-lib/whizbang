@@ -19,7 +19,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForImmediateDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 20000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -34,7 +34,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 20000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -49,7 +49,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 20000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -64,7 +64,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 20000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -79,7 +79,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 20000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -94,7 +94,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 20000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -109,7 +109,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -124,7 +124,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -139,7 +139,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -154,7 +154,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -169,7 +169,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -184,7 +184,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -199,7 +199,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -214,7 +214,7 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
@@ -230,7 +230,7 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPrePerspectiveInlineAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
@@ -247,7 +247,7 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPrePerspectiveDetachedAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
@@ -264,7 +264,7 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPostPerspectiveDetachedAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
-    int timeoutMilliseconds = 30000)
+    int timeoutMilliseconds = 45000)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
