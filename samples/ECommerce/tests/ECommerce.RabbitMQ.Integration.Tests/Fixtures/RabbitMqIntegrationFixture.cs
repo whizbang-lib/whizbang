@@ -215,9 +215,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// </summary>
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
     // Purge RabbitMQ queues to prevent stale messages from previous tests
-    await _deleteQueueAsync($"bff-products-queue-{_testId}");
-    await _deleteQueueAsync($"inventory-products-queue-{_testId}");
-    await _deleteQueueAsync($"bff-inventory-queue-{_testId}");
+    await _purgeQueueAsync($"bff-products-queue-{_testId}");
+    await _purgeQueueAsync($"inventory-products-queue-{_testId}");
+    await _purgeQueueAsync($"bff-inventory-queue-{_testId}");
 
     // Delete all data from Whizbang infrastructure tables in the inventory schema.
     // Uses individual DELETE statements with specific ordering to minimize lock contention
@@ -723,6 +723,15 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ).WaitAsync(TimeSpan.FromSeconds(30), ct);
 
     Console.WriteLine("[RabbitMqFixture] All workers completed first poll cycle");
+  }
+
+  private async Task _purgeQueueAsync(string queueName, CancellationToken ct = default) {
+    try {
+      var response = await _managementClient.DeleteAsync($"/api/queues/%2F/{queueName}/contents", ct);
+      // 204 = purged, 404 = queue doesn't exist — both are fine
+    } catch {
+      // Queue might not exist, ignore
+    }
   }
 
   private async Task _deleteQueueAsync(string queueName, CancellationToken ct = default) {
