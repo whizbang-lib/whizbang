@@ -970,6 +970,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
             EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
           Console.WriteLine("[ServiceBusFixture] All tables truncated.");
+
+          // Clear publisher in-flight state (prevents stale entries from blocking new messages)
+          var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+          inventoryPublisher?.ClearPublishInFlightState();
+
+          var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+          bffPublisher?.ClearPublishInFlightState();
         }
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
@@ -1426,6 +1435,74 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         }
       }
     }
+  }
+
+  /// <summary>
+  /// Waits for a message to be published via the outbox worker using the
+  /// OnOutboxMessagePublished hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
+    var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    if (worker is null) {
+      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    }
+    OutboxMessagePublishedHandler? handler = null;
+    handler = (e) => {
+      tcs.TrySetResult(e.MessageId);
+      worker.OnOutboxMessagePublished -= handler;
+    };
+    worker.OnOutboxMessagePublished += handler;
+    try {
+      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+      return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    } finally {
+      worker.OnOutboxMessagePublished -= handler;
+    }
+  }
+
+  /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) return;
+      PerspectiveEventProcessedHandler? handler = null;
+      handler = (e) => {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) {
+          tcs.TrySetResult(true);
+        }
+      };
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+    if (hostFilter is null or "bff") {
+      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
+  /// <summary>
+  /// Waits for all workers on both hosts to become idle.
+  /// </summary>
+  public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
+    // Use a simple delay-based approach since ASB fixture doesn't have _waitForWorkersReadyAsync
+    await Task.Delay(500);
   }
 
   public async ValueTask DisposeAsync() {

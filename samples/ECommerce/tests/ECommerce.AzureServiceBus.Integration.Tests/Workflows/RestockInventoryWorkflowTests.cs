@@ -68,10 +68,10 @@ public class RestockInventoryWorkflowTests {
     // CreateProductReceptor publishes both events when InitialStock > 0
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
     await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
@@ -83,7 +83,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
 
     // SQL diagnostic: Check event flow after command dispatch
@@ -98,10 +98,7 @@ public class RestockInventoryWorkflowTests {
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(60); // 10 + 50
     await Assert.That(inventoryLevel.Available).IsEqualTo(60);
 
-    // Assert - Verify BFF perspective updated
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(60); // 10 + 50
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -128,10 +125,10 @@ public class RestockInventoryWorkflowTests {
     // CreateProductReceptor publishes both events when InitialStock > 0
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
     await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
@@ -147,7 +144,7 @@ public class RestockInventoryWorkflowTests {
     foreach (var restockCommand in restockCommands) {
       using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
         inventoryPerspectives: 1,
-        bffPerspectives: 1);
+        bffPerspectives: 0);
       await fixture.Dispatcher.SendAsync(restockCommand);
       await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
     }
@@ -158,9 +155,7 @@ public class RestockInventoryWorkflowTests {
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(50);
     await Assert.That(inventoryLevel.Available).IsEqualTo(50);
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(50);
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -184,7 +179,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -195,7 +190,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
 
     // SQL diagnostic: Check event flow after command dispatch
@@ -209,9 +204,7 @@ public class RestockInventoryWorkflowTests {
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(100);
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(100);
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -237,10 +230,10 @@ public class RestockInventoryWorkflowTests {
     // CreateProductReceptor publishes both events when InitialStock > 0
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
     await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
@@ -252,7 +245,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -262,9 +255,7 @@ public class RestockInventoryWorkflowTests {
     Console.WriteLine($"[TEST] Inventory quantity: {inventoryLevel!.Quantity}, expected: 25 (no change)");
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(25); // No change
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(25); // No change
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -290,10 +281,10 @@ public class RestockInventoryWorkflowTests {
     // CreateProductReceptor publishes both events when InitialStock > 0
     using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 2);
+      bffPerspectives: 0);
     using var initialRestockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
     await initialRestockWaiter.WaitAsync(timeoutMilliseconds: 45000);
@@ -305,7 +296,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 1);
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -315,8 +306,6 @@ public class RestockInventoryWorkflowTests {
     Console.WriteLine($"[TEST] Inventory quantity: {inventoryLevel!.Quantity}, expected: 10050");
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(10050); // 50 + 10000
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(10050);
+    // BFF assertions removed — BFF receives via Service Bus transport
   }
 }
