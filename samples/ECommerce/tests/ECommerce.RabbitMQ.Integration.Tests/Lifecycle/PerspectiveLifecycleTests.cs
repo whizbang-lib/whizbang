@@ -439,24 +439,17 @@ public class PerspectiveLifecycleTests {
       }
     };
 
-    // Wire up outbox publish hook BEFORE sending commands
-    var publishCount = 0;
-    var publishTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var publishTask = fixture.WaitForOutboxPublishAsync();
+    // Register perspective waiter BEFORE sending commands to avoid race condition
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 4, bffPerspectives: 0);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    // Wait for at least one outbox publish (confirms events are flowing)
-    await publishTask;
-
-    // Then wait for perspectives using the PerspectiveCompletionWaiter on inventory host (local, fast)
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 4, bffPerspectives: 0);
-    // Events are already flowing — waiter should catch completions quickly
-    await waiter.WaitAsync(timeoutMilliseconds: 30000);
+    // Wait for inventory perspectives to process all events
+    await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify both products are saved
     var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId.Value);
