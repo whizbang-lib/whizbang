@@ -178,27 +178,25 @@ public class CreateProductWorkflowTests {
       InitialStock = 0
     };
 
-    // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    // Act — use hooks for deterministic waiting
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(0);
     await Assert.That(inventoryLevel.Available).IsEqualTo(0);
-
-    // BFF assertions removed — BFF receives via RabbitMQ transport
   }
 
   /// <summary>
   /// Tests that creating a product without an image URL works correctly (nullable field).
   /// </summary>
   [Test]
-  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)]
   public async Task CreateProduct_NoImageUrl_MaterializesWithNullImageAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -214,21 +212,16 @@ public class CreateProductWorkflowTests {
     };
 
     // Act
-    Console.WriteLine("[TEST] Sending CreateProductCommand...");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    // Act — use hooks for deterministic waiting
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
-    Console.WriteLine("[TEST] Command sent, waiting for event processing...");
-
-    await waiter.WaitAsync(timeoutMilliseconds: 90000);
-    Console.WriteLine("[TEST] Perspective processing complete");
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify product exists with null ImageUrl
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.ImageUrl).IsNull();
-
-    // BFF assertions removed — BFF receives via RabbitMQ transport
   }
 }
