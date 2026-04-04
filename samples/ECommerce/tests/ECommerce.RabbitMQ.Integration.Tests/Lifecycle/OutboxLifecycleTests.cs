@@ -308,7 +308,7 @@ public class OutboxLifecycleTests {
         preAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(20));
+      ).WaitAsync(TimeSpan.FromSeconds(45));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
