@@ -88,7 +88,6 @@ public class PerspectiveLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent in BFF (where perspective processing happens)
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
-      perspectiveName: "ProductCatalogPerspective",
       timeoutMilliseconds: 20000);
 
     await fixture.Dispatcher.SendAsync(command);
@@ -146,7 +145,6 @@ public class PerspectiveLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent in BFF
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
-      perspectiveName: "ProductCatalogPerspective",
       timeoutMilliseconds: 20000);
 
     await fixture.Dispatcher.SendAsync(command);
@@ -176,9 +174,7 @@ public class PerspectiveLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource,
-      perspectiveName: "ProductCatalogPerspective");
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveDetached);
@@ -229,7 +225,6 @@ public class PerspectiveLifecycleTests {
 
     // Act - Register receptor for ProductCreatedEvent in BFF
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
-      perspectiveName: "ProductCatalogPerspective",
       timeoutMilliseconds: 20000);
 
     await fixture.Dispatcher.SendAsync(command);
@@ -259,9 +254,7 @@ public class PerspectiveLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource,
-      perspectiveName: "ProductCatalogPerspective");
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveDetached);
@@ -309,12 +302,8 @@ public class PerspectiveLifecycleTests {
     var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      postAsyncCompletion,
-      perspectiveName: "ProductCatalogPerspective");
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      postInlineCompletion,
-      perspectiveName: "ProductCatalogPerspective");
+    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion);
+    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveDetached);
@@ -397,9 +386,7 @@ public class PerspectiveLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource,
-      perspectiveName: "ProductCatalogPerspective");
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
@@ -510,14 +497,10 @@ public class PerspectiveLifecycleTests {
     var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      preInlineCompletion, perspectiveName: "ProductCatalogPerspective");
-    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      preAsyncCompletion, perspectiveName: "ProductCatalogPerspective");
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      postAsyncCompletion, perspectiveName: "ProductCatalogPerspective");
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      postInlineCompletion, perspectiveName: "ProductCatalogPerspective");
+    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
+    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
+    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion);
+    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion);
 
     // Register all receptors
     registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PrePerspectiveInline);
