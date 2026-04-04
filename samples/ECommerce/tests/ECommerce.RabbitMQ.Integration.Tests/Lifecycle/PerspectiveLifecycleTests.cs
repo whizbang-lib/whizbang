@@ -451,9 +451,9 @@ public class PerspectiveLifecycleTests {
     // Wait for at least 2 inventory perspective completions
     await perspectiveTask;
 
-    // Assert - Verify both products are saved
-    var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId.Value);
-    var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId.Value);
+    // Assert - Verify both products are saved on inventory host (local, fast)
+    var product1 = await fixture.InventoryProductLens.GetByIdAsync(commands[0].ProductId);
+    var product2 = await fixture.InventoryProductLens.GetByIdAsync(commands[1].ProductId);
     await Assert.That(product1).IsNotNull();
     await Assert.That(product2).IsNotNull();
   }
