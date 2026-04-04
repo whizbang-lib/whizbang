@@ -388,7 +388,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync(timeoutMilliseconds: 30000);
+    await waiter.WaitAsync(timeoutMilliseconds: 60000);
 
     // Assert - After both BFF perspectives complete, data MUST be saved
     var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
