@@ -399,14 +399,15 @@ public class PerspectiveLifecycleTests {
       // Database writes MUST be committed because this stage blocks checkpoint
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
-      // Verify perspective data is queryable (may need a moment for EF Core save to propagate)
+      // Verify perspective data is queryable — poll until ProductCatalogPerspective completes
+      // (PostPerspectiveInline may have fired for InventoryLevelsPerspective first)
       object? product = null;
-      for (var i = 0; i < 10; i++) {
+      for (var i = 0; i < 30; i++) {
         product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
         if (product is not null) {
           break;
         }
-        await Task.Delay(100);
+        await Task.Delay(200);
       }
       await Assert.That(product).IsNotNull();
 
