@@ -69,7 +69,7 @@ public class CreateProductWorkflowTests {
     // Use worker hooks for deterministic waiting (bypasses lifecycle coordinator)
     // Wait for enough perspective completions to ensure data is materialized
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 90000); // ~6 completions across both hosts
+      expectedCompletions: 4, timeoutMilliseconds: 90000); // 2 inv + 2 BFF perspectives
 
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for perspective processing...");
