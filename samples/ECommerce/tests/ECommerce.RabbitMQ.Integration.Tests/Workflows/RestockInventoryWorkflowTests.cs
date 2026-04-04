@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Medo;
@@ -63,22 +62,22 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock.png",
       InitialStock = 10
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdRestock1,
       QuantityToAdd = 50
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);  // BFF receives via RabbitMQ transport — unreliable for waiting
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -112,11 +111,11 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/multi-restock.png",
       InitialStock = 5
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Perform multiple restock operations
     // Wait between each restock to ensure events are processed and perspectives are updated
@@ -127,12 +126,12 @@ public class RestockInventoryWorkflowTests {
     };
 
     foreach (var restockCommand in restockCommands) {
-      using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-        inventoryPerspectives: 1,
-        bffPerspectives: 0);  // BFF receives via RabbitMQ transport — unreliable for waiting
+      perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+        expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
       await fixture.Dispatcher.SendAsync(restockCommand);
-      await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
+      await perspectiveTask;
     }
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -165,22 +164,22 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock-zero.png",
       InitialStock = 0
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdRestockZero,
       QuantityToAdd = 100
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);  // BFF receives via RabbitMQ transport — unreliable for waiting
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -212,22 +211,22 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/zero-qty.png",
       InitialStock = 25
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdRestockZeroQty,
       QuantityToAdd = 0
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);  // BFF receives via RabbitMQ transport — unreliable for waiting
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -259,22 +258,22 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/large-restock.png",
       InitialStock = 50
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 0);
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
       ProductId = _testProdLargeRestock,
       QuantityToAdd = 10000
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 0);  // BFF receives via RabbitMQ transport — unreliable for waiting
+    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await perspectiveTask;
+    await fixture.WaitForWorkersIdleAsync();
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
