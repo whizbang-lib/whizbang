@@ -66,6 +66,7 @@ public class RestockInventoryWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
@@ -118,6 +119,10 @@ public class RestockInventoryWorkflowTests {
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 
+    // Wait for all workers idle to drain the InventoryRestockedEvent perspective
+    // (from InitialStock) before starting restock operations
+    await fixture.WaitForWorkersIdleAsync();
+
     // Act - Perform multiple restock operations
     var restockCommands = new[] {
       new RestockInventoryCommand { ProductId = _testProdMultiRestock, QuantityToAdd = 10 },
@@ -165,6 +170,7 @@ public class RestockInventoryWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
@@ -214,6 +220,7 @@ public class RestockInventoryWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
@@ -259,6 +266,7 @@ public class RestockInventoryWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
