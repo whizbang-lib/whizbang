@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.GraphQL;
-using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 
 namespace ECommerce.Integration.Tests.Workflows;
@@ -48,13 +47,9 @@ public class SeedProductsWorkflowTests {
       fixture.BffProductLens,
       fixture.GetLogger<SeedMutations>());
 
-
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 24,  // 12 products × 2 perspectives
-      bffPerspectives: 0);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 12,  // 12 products × 1 perspective
-      bffPerspectives: 0);
+    // Wait for 24 inventory perspectives (12 products × 2 ProductCreatedEvent perspectives)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 24, timeoutMilliseconds: 90000, hostFilter: "inventory");
 
     var seededCount = await seedMutations.SeedProductsAsync();
     Console.WriteLine($"[SeedProducts] SeedProductsAsync returned: {seededCount}");
@@ -62,10 +57,10 @@ public class SeedProductsWorkflowTests {
       return; // Already seeded
     }
 
-    // Wait concurrently — both event types process in parallel through Service Bus
-    await Task.WhenAll(
-      productWaiter.WaitAsync(timeoutMilliseconds: 60000),
-      restockWaiter.WaitAsync(timeoutMilliseconds: 60000));
+    await perspectiveTask;
+
+    // Wait for workers idle to drain InventoryRestockedEvent perspectives (transport roundtrip)
+    await fixture.WaitForWorkersIdleAsync();
   }
 
   [Test]
