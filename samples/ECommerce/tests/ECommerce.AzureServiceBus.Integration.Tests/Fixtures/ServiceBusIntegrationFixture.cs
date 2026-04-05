@@ -903,18 +903,22 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    // CRITICAL: Pause BFF ServiceBusConsumerWorker BEFORE draining to prevent competing consumers
-    // This ensures the processor's receivers are inactive while we drain stale messages
-    Console.WriteLine("[ServiceBusFixture] Pausing BFF ServiceBusConsumerWorker before draining...");
-    var bffConsumerWorker = _bffHost!.Services.GetService<Microsoft.Extensions.Hosting.IHostedService>()
-      ?.GetType().Name.Contains("ServiceBusConsumerWorker") == true
-      ? _bffHost.Services.GetService<Microsoft.Extensions.Hosting.IHostedService>() as Whizbang.Core.Workers.ServiceBusConsumerWorker
-      : _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<Whizbang.Core.Workers.ServiceBusConsumerWorker>()
-        .FirstOrDefault();
+    // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
+    // This ensures the transport receivers are inactive while we drain stale messages
+    Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");
+    var inventoryConsumer = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
+      .FirstOrDefault();
+    var bffConsumer = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
+      .FirstOrDefault();
 
-    if (bffConsumerWorker != null) {
-      await bffConsumerWorker.PauseAllSubscriptionsAsync();
+    if (inventoryConsumer != null) {
+      await inventoryConsumer.PauseAllSubscriptionsAsync();
+      Console.WriteLine("[ServiceBusFixture] Inventory consumer paused.");
+    }
+    if (bffConsumer != null) {
+      await bffConsumer.PauseAllSubscriptionsAsync();
       Console.WriteLine("[ServiceBusFixture] BFF consumer paused.");
     }
 
@@ -923,9 +927,13 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
-    // Resume BFF ServiceBusConsumerWorker after draining
-    if (bffConsumerWorker != null) {
-      await bffConsumerWorker.ResumeAllSubscriptionsAsync();
+    // Resume consumer workers after draining
+    if (inventoryConsumer != null) {
+      await inventoryConsumer.ResumeAllSubscriptionsAsync();
+      Console.WriteLine("[ServiceBusFixture] Inventory consumer resumed.");
+    }
+    if (bffConsumer != null) {
+      await bffConsumer.ResumeAllSubscriptionsAsync();
       Console.WriteLine("[ServiceBusFixture] BFF consumer resumed.");
     }
 
