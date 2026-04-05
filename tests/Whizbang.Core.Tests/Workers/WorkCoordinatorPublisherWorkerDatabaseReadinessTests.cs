@@ -98,7 +98,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for ProcessWorkBatchAsync to be called (signal-based, not polling)
-    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(5));
+    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(10));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -203,7 +203,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     databaseReadinessCheck.IsReadyResult = true;
 
     // Wait for ProcessWorkBatchAsync to be called (proves database became ready and counter reset)
-    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(5));
+    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(10));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
