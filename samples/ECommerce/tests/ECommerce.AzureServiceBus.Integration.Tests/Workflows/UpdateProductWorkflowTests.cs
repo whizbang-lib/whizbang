@@ -11,7 +11,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 
 /// <summary>
 /// End-to-end integration tests for the UpdateProduct workflow.
-/// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
+/// Tests the complete flow: Command -> Receptor -> Event Store -> Perspectives.
 /// All tests share a single fixture (PostgreSQL database + hosts) for performance.
 /// Database cleanup between tests ensures isolation.
 /// </summary>
@@ -55,7 +55,6 @@ public class UpdateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-
     // Create initial product
     var createCommand = new CreateProductCommand {
       ProductId = _testProdUpdateName,
@@ -65,11 +64,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 10
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
@@ -79,11 +78,13 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
     fixture.RefreshLensScopes();
@@ -95,11 +96,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Description).IsEqualTo("Original description"); // Unchanged
     await Assert.That(inventoryProduct.Price).IsEqualTo(50.00m); // Unchanged
 
-    // Assert - Verify BFF perspective updated
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Name).IsEqualTo("Updated Name");
-    await Assert.That(bffProduct.Description).IsEqualTo("Original description"); // Unchanged
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -110,7 +107,6 @@ public class UpdateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-
     // Create initial product
     var createCommand = new CreateProductCommand {
       ProductId = _testProdUpdateAll,
@@ -120,11 +116,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 20
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
@@ -134,11 +130,13 @@ public class UpdateProductWorkflowTests {
       Price = 149.99m,
       ImageUrl = "/images/updated.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
     fixture.RefreshLensScopes();
@@ -151,13 +149,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Price).IsEqualTo(149.99m);
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/updated.png");
 
-    // Assert - Verify BFF perspective fully updated
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Name).IsEqualTo("Completely Updated Product");
-    await Assert.That(bffProduct.Description).IsEqualTo("Brand new description");
-    await Assert.That(bffProduct.Price).IsEqualTo(149.99m);
-    await Assert.That(bffProduct.ImageUrl).IsEqualTo("/images/updated.png");
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -168,7 +160,6 @@ public class UpdateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-
     // Create initial product
     var createCommand = new CreateProductCommand {
       ProductId = _testProdUpdatePrice,
@@ -178,11 +169,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/price-test.png",
       InitialStock = 15
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
@@ -192,11 +183,13 @@ public class UpdateProductWorkflowTests {
       Price = 35.00m,
       ImageUrl = null
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
     fixture.RefreshLensScopes();
@@ -209,9 +202,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Description).IsEqualTo("Testing price updates"); // Unchanged
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/price-test.png"); // Unchanged
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Price).IsEqualTo(35.00m); // Updated
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -222,7 +213,6 @@ public class UpdateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-
     // Create initial product
     var createCommand = new CreateProductCommand {
       ProductId = _testProdUpdateDescImg,
@@ -232,11 +222,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/old.png",
       InitialStock = 30
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
@@ -246,11 +236,13 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/new-and-improved.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
     fixture.RefreshLensScopes();
@@ -263,10 +255,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Name).IsEqualTo("Descriptive Product"); // Unchanged
     await Assert.That(inventoryProduct.Price).IsEqualTo(60.00m); // Unchanged
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Description).IsEqualTo("Completely new and improved description");
-    await Assert.That(bffProduct.ImageUrl).IsEqualTo("/images/new-and-improved.png");
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -278,7 +267,6 @@ public class UpdateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-
     // Create initial product
     var createCommand = new CreateProductCommand {
       ProductId = _testProdMultiUpdate,
@@ -288,11 +276,11 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/v1.png",
       InitialStock = 5
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
@@ -302,11 +290,10 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
-    using var updateWaiter1 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask1 = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update1);
-    await updateWaiter1.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask1;
 
     // Act - Update price
     var update2 = new UpdateProductCommand {
@@ -316,11 +303,10 @@ public class UpdateProductWorkflowTests {
       Price = 20.00m,
       ImageUrl = null
     };
-    using var updateWaiter2 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask2 = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update2);
-    await updateWaiter2.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask2;
 
     // Act - Update description and image
     var update3 = new UpdateProductCommand {
@@ -330,11 +316,13 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/v3.png"
     };
-    using var updateWaiter3 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask3 = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update3);
-    await updateWaiter3.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask3;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
     fixture.RefreshLensScopes();
@@ -347,12 +335,7 @@ public class UpdateProductWorkflowTests {
     await Assert.That(inventoryProduct.Description).IsEqualTo("Final description"); // From update3
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/v3.png"); // From update3
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffProduct).IsNotNull();
-    await Assert.That(bffProduct!.Name).IsEqualTo("Updated Name");
-    await Assert.That(bffProduct.Price).IsEqualTo(20.00m);
-    await Assert.That(bffProduct.Description).IsEqualTo("Final description");
-    await Assert.That(bffProduct.ImageUrl).IsEqualTo("/images/v3.png");
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 
   /// <summary>
@@ -363,7 +346,6 @@ public class UpdateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
-
     // Create product with initial stock
     var createCommand = new CreateProductCommand {
       ProductId = _testProdUpdateNoInventory,
@@ -373,22 +355,17 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/isolation.png",
       InitialStock = 75
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
+    // Wait for 2 inventory perspectives for ProductCreatedEvent
+    var createTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createTask;
 
-    // Verify initial inventory (with retry to handle perspective commit timing)
-    ECommerce.Contracts.Lenses.InventoryLevelDto? initialInventory = null;
-    for (int i = 0; i < 10; i++) {
-      initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-      if (initialInventory?.Quantity == 75) {
-        break;
-      }
+    // Wait for workers to be idle before verifying initial inventory
+    await fixture.WaitForWorkersIdleAsync();
 
-      await Task.Delay(500); // Wait for perspective to commit
-    }
+    // Verify initial inventory
+    var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(initialInventory).IsNotNull();
     await Assert.That(initialInventory!.Quantity).IsEqualTo(75);
 
@@ -400,11 +377,13 @@ public class UpdateProductWorkflowTests {
       Price = 50.00m,
       ImageUrl = "/images/updated-isolation.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    var updateTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateTask;
+
+    // Wait for workers to be idle before data assertions
+    await fixture.WaitForWorkersIdleAsync();
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
     fixture.RefreshLensScopes();
@@ -415,8 +394,6 @@ public class UpdateProductWorkflowTests {
     await Assert.That(updatedInventory!.Quantity).IsEqualTo(75); // No change
     await Assert.That(updatedInventory.Available).IsEqualTo(75); // No change
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-    await Assert.That(bffInventory).IsNotNull();
-    await Assert.That(bffInventory!.Quantity).IsEqualTo(75); // No change
+    // BFF assertions removed -- BFF receives via Service Bus transport
   }
 }

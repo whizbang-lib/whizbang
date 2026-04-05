@@ -159,12 +159,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task InitializeAsync(CancellationToken ct = default) {
     Console.WriteLine($"[RabbitMqFixture] InitializeAsync START (testId={_testId})");
 
-    // CRITICAL: Add small random delay to stagger test initialization
-    // This prevents all 60 tests from hitting PostgreSQL/RabbitMQ simultaneously
-    var staggerDelay = Random.Shared.Next(50, 200); // 50-200ms random delay
-    await Task.Delay(staggerDelay, ct);
-    Console.WriteLine($"[RabbitMqFixture] Stagger delay: {staggerDelay}ms (reduces concurrent resource contention)");
-
     // Create hosts
     Console.WriteLine("[RabbitMqFixture] Creating InventoryWorker host...");
     _inventoryHost = _createInventoryHost();
@@ -186,11 +180,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _bffHost.StartAsync(ct);
     Console.WriteLine("[RabbitMqFixture] BFF host started");
 
-    // Wait for TransportConsumerWorker to fully subscribe
-    // StartAsync returns before background services are fully initialized
-    Console.WriteLine("[RabbitMqFixture] Waiting for consumer workers to subscribe (3s delay)...");
-    await Task.Delay(3000, ct); // 3 seconds for subscription setup
-    Console.WriteLine("[RabbitMqFixture] Consumer workers ready");
+    // Wait for workers to complete their first polling cycle (ready to process)
+    // Uses completion signals instead of Task.Delay — deterministic and doesn't waste time
+    Console.WriteLine("[RabbitMqFixture] Waiting for workers to become ready...");
+    await _waitForWorkersReadyAsync(ct);
+    Console.WriteLine("[RabbitMqFixture] Workers ready");
 
     // Create long-lived scopes for lenses
     Console.WriteLine("[RabbitMqFixture] Creating long-lived scopes for lenses...");
@@ -212,6 +206,71 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _deleteQueueAsync($"bff-{testId}", ct);
     await _deleteQueueAsync($"inventory-{testId}", ct);
     await _deleteExchangeAsync($"products-{testId}", ct);
+  }
+
+  /// <summary>
+  /// Cleans up all test data between tests when using the shared fixture pattern.
+  /// Purges RabbitMQ queues and deletes all Whizbang infrastructure table data.
+  /// </summary>
+  public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
+    // 1. Wait for workers to drain any in-flight messages from the previous test FIRST.
+    // This prevents truncating data that workers are still processing.
+    await _waitForWorkersReadyAsync(cancellationToken);
+
+    // 2. Purge RabbitMQ queues to prevent stale messages from previous tests
+    await _purgeQueueAsync($"bff-products-queue-{_testId}");
+    await _purgeQueueAsync($"inventory-products-queue-{_testId}");
+    await _purgeQueueAsync($"bff-inventory-queue-{_testId}");
+
+    // 3. Delete all Whizbang infrastructure table data (explicit ordering for FK safety)
+    const int maxRetries = 5;
+    const int retryDelayMs = 300;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await using var connection = new Npgsql.NpgsqlConnection(_inventoryPostgresConnection);
+        await connection.OpenAsync(cancellationToken);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = @"
+          DELETE FROM inventory.wh_perspective_events;
+          DELETE FROM inventory.wh_perspective_cursors;
+          DELETE FROM inventory.wh_lifecycle_completions;
+          DELETE FROM inventory.wh_outbox;
+          DELETE FROM inventory.wh_inbox;
+          DELETE FROM inventory.wh_receptor_processing;
+          DELETE FROM inventory.wh_message_deduplication;
+          DELETE FROM inventory.wh_event_store;
+          DELETE FROM inventory.wh_active_streams;
+          DELETE FROM inventory.wh_per_inventory_level;
+          DELETE FROM inventory.wh_per_product;
+          DELETE FROM inventory.wh_perspective_snapshots;";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        break;
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+        Console.WriteLine($"[RabbitMqFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
+        await Task.Delay(retryDelayMs * attempt, cancellationToken);
+      }
+    }
+
+    // 4. Clear publisher in-flight state AFTER workers are idle
+    // Workers may have re-added entries during the idle drain above
+    var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    inventoryPublisher?.ClearPublishInFlightState();
+
+    var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    bffPublisher?.ClearPublishInFlightState();
+
+    Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
+  }
+
+  private async Task _purgeQueueAsync(string queueName, CancellationToken ct = default) {
+    try {
+      var response = await _managementClient.DeleteAsync($"/api/queues/%2F/{queueName}/contents", ct);
+      // 204 = purged, 404 = queue doesn't exist — both are fine
+    } catch {
+      // Queue might not exist, ignore
+    }
   }
 
   private IHost _createInventoryHost() {
@@ -626,6 +685,69 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[RabbitMqFixture] Database initialization complete.");
   }
 
+  /// <summary>
+  /// Waits for all workers (outbox publisher + perspective) on both hosts to complete
+  /// their first polling cycle. Uses OnWorkProcessingIdle completion signals instead of
+  /// Task.Delay, making the wait deterministic and fast.
+  /// </summary>
+  private async Task _waitForWorkersReadyAsync(CancellationToken ct) {
+    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var inventoryPersp = _inventoryHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
+    var bffPersp = _bffHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
+
+    // Wire one-shot idle handlers (signal on first idle = worker completed first poll cycle)
+    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) {
+        tcs.TrySetResult(true); // re-check after subscribe (race)
+      }
+    }
+
+    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) {
+        tcs.TrySetResult(true);
+      }
+    }
+
+    WireOnce(inventoryPub, tcsInventoryPub);
+    WireOnce(bffPub, tcsBffPub);
+    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
+    WirePerspOnce(bffPersp, tcsBffPersp);
+
+    // Wait for all 4 workers to signal idle (or timeout as safety net)
+    await Task.WhenAll(
+      tcsInventoryPub.Task,
+      tcsBffPub.Task,
+      tcsInventoryPersp.Task,
+      tcsBffPersp.Task
+    ).WaitAsync(TimeSpan.FromSeconds(30), ct);
+
+    Console.WriteLine("[RabbitMqFixture] All workers completed first poll cycle");
+  }
+
+  /// <summary>
+  /// Waits for all workers on both hosts to become idle.
+  /// Useful after perspective processing to ensure DB commits are flushed.
+  /// </summary>
+  public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
+    await _waitForWorkersReadyAsync(default);
+  }
+
   private async Task _deleteQueueAsync(string queueName, CancellationToken ct = default) {
     try {
       var response = await _managementClient.DeleteAsync($"/api/queues/%2F/{queueName}", ct);
@@ -728,6 +850,78 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await waiter.WaitAsync(timeoutMilliseconds);
   }
 
+  /// <summary>
+  /// Waits for a message to be published via the outbox worker using the
+  /// <see cref="WorkCoordinatorPublisherWorker.OnOutboxMessagePublished"/> hook.
+  /// Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
+    var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    if (worker is null) {
+      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    }
+
+    OutboxMessagePublishedHandler? handler = null;
+    handler = (e) => {
+      tcs.TrySetResult(e.MessageId);
+      worker.OnOutboxMessagePublished -= handler;
+    };
+    worker.OnOutboxMessagePublished += handler;
+
+    try {
+      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+      return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    } finally {
+      worker.OnOutboxMessagePublished -= handler;
+    }
+  }
+
+  /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
+  /// Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) {
+        return;
+      }
+
+      PerspectiveEventProcessedHandler? handler = null;
+      handler = (e) => {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) {
+          tcs.TrySetResult(true);
+        }
+      };
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+
+    if (hostFilter is null or "bff") {
+      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
   public async ValueTask DisposeAsync() {
     // Dispose scopes first
     _inventoryScope?.Dispose();
@@ -744,12 +938,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       _bffHost.Dispose();
     }
 
-    // CRITICAL: Wait for RabbitMQ connections to fully close
-    // RabbitMQ consumers dispose asynchronously, and connections need time to clean up
-    // Increased delay to ensure cleanup under resource exhaustion
-    Console.WriteLine("[RabbitMqFixture] Waiting for RabbitMQ connections to close...");
-    await Task.Delay(3000); // 3 second delay for connection cleanup (increased for resource exhaustion scenarios)
-    Console.WriteLine("[RabbitMqFixture] RabbitMQ connections closed.");
+    // Clean up RabbitMQ resources for this test to prevent stale messages bleeding into subsequent tests
+    Console.WriteLine($"[RabbitMqFixture] Cleaning up RabbitMQ resources for testId={_testId}...");
+    await _deleteQueueAsync($"bff-products-queue-{_testId}");
+    await _deleteQueueAsync($"inventory-products-queue-{_testId}");
+    await _deleteQueueAsync($"bff-inventory-queue-{_testId}");
+    await _deleteExchangeAsync($"products-{_testId}");
+    await _deleteExchangeAsync($"inventory-{_testId}");
+    Console.WriteLine("[RabbitMqFixture] RabbitMQ resources cleaned up.");
 
     // Clear connection pools to ensure all DB connections are closed
     // CRITICAL: Must happen BEFORE dropping databases

@@ -42,6 +42,9 @@ namespace Whizbang.Core.Generated;
 /// - Compile-time purity enforcement via Roslyn analyzer
 /// </remarks>
 internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
+  /// <inheritdoc/>
+  public Type PerspectiveType => typeof(__PERSPECTIVE_CLASS_NAME__);
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;

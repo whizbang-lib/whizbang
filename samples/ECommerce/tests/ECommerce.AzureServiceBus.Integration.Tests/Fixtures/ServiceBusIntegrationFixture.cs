@@ -903,18 +903,22 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    // CRITICAL: Pause BFF ServiceBusConsumerWorker BEFORE draining to prevent competing consumers
-    // This ensures the processor's receivers are inactive while we drain stale messages
-    Console.WriteLine("[ServiceBusFixture] Pausing BFF ServiceBusConsumerWorker before draining...");
-    var bffConsumerWorker = _bffHost!.Services.GetService<Microsoft.Extensions.Hosting.IHostedService>()
-      ?.GetType().Name.Contains("ServiceBusConsumerWorker") == true
-      ? _bffHost.Services.GetService<Microsoft.Extensions.Hosting.IHostedService>() as Whizbang.Core.Workers.ServiceBusConsumerWorker
-      : _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<Whizbang.Core.Workers.ServiceBusConsumerWorker>()
-        .FirstOrDefault();
+    // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
+    // This ensures the transport receivers are inactive while we drain stale messages
+    Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");
+    var inventoryConsumer = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
+      .FirstOrDefault();
+    var bffConsumer = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
+      .FirstOrDefault();
 
-    if (bffConsumerWorker != null) {
-      await bffConsumerWorker.PauseAllSubscriptionsAsync();
+    if (inventoryConsumer != null) {
+      await inventoryConsumer.PauseAllSubscriptionsAsync();
+      Console.WriteLine("[ServiceBusFixture] Inventory consumer paused.");
+    }
+    if (bffConsumer != null) {
+      await bffConsumer.PauseAllSubscriptionsAsync();
       Console.WriteLine("[ServiceBusFixture] BFF consumer paused.");
     }
 
@@ -923,9 +927,13 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
-    // Resume BFF ServiceBusConsumerWorker after draining
-    if (bffConsumerWorker != null) {
-      await bffConsumerWorker.ResumeAllSubscriptionsAsync();
+    // Resume consumer workers after draining
+    if (inventoryConsumer != null) {
+      await inventoryConsumer.ResumeAllSubscriptionsAsync();
+      Console.WriteLine("[ServiceBusFixture] Inventory consumer resumed.");
+    }
+    if (bffConsumer != null) {
+      await bffConsumer.ResumeAllSubscriptionsAsync();
       Console.WriteLine("[ServiceBusFixture] BFF consumer resumed.");
     }
 
@@ -970,6 +978,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
             EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
           Console.WriteLine("[ServiceBusFixture] All tables truncated.");
+
+          // Clear publisher in-flight state (prevents stale entries from blocking new messages)
+          var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+          inventoryPublisher?.ClearPublishInFlightState();
+
+          var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+          bffPublisher?.ClearPublishInFlightState();
         }
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
@@ -1426,6 +1443,119 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         }
       }
     }
+  }
+
+  /// <summary>
+  /// Waits for a message to be published via the outbox worker using the
+  /// OnOutboxMessagePublished hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
+    var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    if (worker is null) {
+      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    }
+    OutboxMessagePublishedHandler? handler = null;
+    handler = (e) => {
+      tcs.TrySetResult(e.MessageId);
+      worker.OnOutboxMessagePublished -= handler;
+    };
+    worker.OnOutboxMessagePublished += handler;
+    try {
+      var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+      return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    } finally {
+      worker.OnOutboxMessagePublished -= handler;
+    }
+  }
+
+  /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) {
+        return;
+      }
+
+      PerspectiveEventProcessedHandler? handler = null;
+      handler = (e) => {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) {
+          tcs.TrySetResult(true);
+        }
+      };
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+    if (hostFilter is null or "bff") {
+      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
+  /// <summary>
+  /// Waits for all workers on both hosts to become idle using deterministic OnWorkProcessingIdle signals.
+  /// </summary>
+  public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
+    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var inventoryPub = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var bffPub = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var inventoryPersp = _inventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<PerspectiveWorker>().FirstOrDefault();
+    var bffPersp = _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<PerspectiveWorker>().FirstOrDefault();
+
+    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) { tcs.TrySetResult(true); }
+    }
+
+    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) { tcs.TrySetResult(true); }
+    }
+
+    WireOnce(inventoryPub, tcsInventoryPub);
+    WireOnce(bffPub, tcsBffPub);
+    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
+    WirePerspOnce(bffPersp, tcsBffPersp);
+
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await Task.WhenAll(
+      tcsInventoryPub.Task,
+      tcsBffPub.Task,
+      tcsInventoryPersp.Task,
+      tcsBffPersp.Task
+    ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
   }
 
   public async ValueTask DisposeAsync() {

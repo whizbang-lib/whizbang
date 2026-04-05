@@ -296,6 +296,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
   }
 
   private sealed class CoverageTestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel;
     private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _writeCount;
@@ -331,6 +332,10 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class ControlledDatabaseReadinessCheck : IDatabaseReadinessCheck {
@@ -1431,9 +1436,9 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     // Arrange - return outbox work in non-sorted order
     var coordinator = new CoverageTestWorkCoordinator();
     var id1 = Guid.CreateVersion7();
-    await Task.Delay(1); // Ensure different UUIDv7 timestamps
+    await Task.Delay(15); // Ensure different UUIDv7 timestamps (CI timer resolution can be >1ms)
     var id2 = Guid.CreateVersion7();
-    await Task.Delay(1);
+    await Task.Delay(15);
     var id3 = Guid.CreateVersion7();
 
     // Return in reverse order

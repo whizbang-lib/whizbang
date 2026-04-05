@@ -406,13 +406,21 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         if (perspective.IsModelRecord) {
           // Records: use 'with {}' expression for immutable copy
           // Use default! to suppress nullable warnings — values are intentionally stripped
-          var withProps = string.Join(", ", perspective.PhysicalFields.Select(f => $"{f.PropertyName} = default!"));
+          // EXCEPTION: Vector fields use empty array (EF Core crashes on null float[] in JSONB)
+          var withProps = string.Join(", ", perspective.PhysicalFields.Select(f =>
+            f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
           sb.AppendLine($"    model = model with {{ {withProps} }};");
         } else {
           // Classes: set each property to default
           // Use default! to suppress nullable warnings — values are intentionally stripped
+          // EXCEPTION: Vector fields (float[]) use empty array instead of null
+          // because EF Core's JsonCollectionOfStructsReaderWriter crashes on null token
           foreach (var field in perspective.PhysicalFields) {
-            sb.AppendLine($"    model.{field.PropertyName} = default!;");
+            if (field.IsVectorField) {
+              sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
+            } else {
+              sb.AppendLine($"    model.{field.PropertyName} = default!;");
+            }
           }
         }
         sb.AppendLine();

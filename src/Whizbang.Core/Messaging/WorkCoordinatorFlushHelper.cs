@@ -140,12 +140,18 @@ internal static class WorkCoordinatorFlushHelper {
         );
       }
 
-      // NOTE: Do NOT write outbox work to channel here.
-      // Work is persisted to database and the coordinator loop in
-      // WorkCoordinatorPublisherWorker._processWorkBatchAsync picks it up
-      // on its next tick (~1s) with proper _inFlight tracking.
-      // Writing here causes _inFlight entries that the publisher may not
-      // drain, permanently blocking those messages from being re-queued.
+      // NOTE: Do NOT write outbox work to channel here — the coordinator loop in
+      // WorkCoordinatorPublisherWorker._processWorkBatchAsync writes to the channel
+      // with proper ordering and in-flight tracking (lines 879-892).
+      // Signal the coordinator to wake immediately so it picks up the work.
+      if (ctx.WorkChannelWriter is not null) {
+        if (workBatch.OutboxWork.Count > 0) {
+          ctx.WorkChannelWriter.SignalNewWorkAvailable();
+        }
+        if (workBatch.PerspectiveWork.Count > 0) {
+          ctx.WorkChannelWriter.SignalNewPerspectiveWorkAvailable();
+        }
+      }
 
       return workBatch;
     } finally {

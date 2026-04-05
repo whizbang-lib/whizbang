@@ -544,6 +544,10 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public void ClearInFlight() { }
+    public bool ShouldRenewLease(Guid messageId) => false;
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 
@@ -566,5 +570,9 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

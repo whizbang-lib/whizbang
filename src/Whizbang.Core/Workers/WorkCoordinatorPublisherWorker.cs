@@ -171,6 +171,10 @@ public partial class WorkCoordinatorPublisherWorker(
   private int _consecutiveEmptyPolls;
   private bool _isIdle = true;  // Start in idle state
 
+  // Wake signal: allows external callers to interrupt the polling delay
+  // so the coordinator loop processes new work immediately.
+  private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
+
   /// <summary>
   /// Gets the number of consecutive times the transport was not ready.
   /// Resets to 0 when transport becomes ready.
@@ -213,6 +217,29 @@ public partial class WorkCoordinatorPublisherWorker(
   public bool IsIdle => _isIdle;
 
   /// <summary>
+  /// Clears the in-flight tracking state for the publisher channel.
+  /// Call between tests when using a shared fixture to prevent stale in-flight
+  /// entries from blocking new messages.
+  /// </summary>
+  /// <docs>operations/testing/shared-fixtures#cleanup</docs>
+  public void ClearPublishInFlightState() => _workChannelWriter.ClearInFlight();
+
+  /// <summary>
+  /// Signals the coordinator loop to wake immediately and poll for new work,
+  /// instead of waiting for the next scheduled polling interval.
+  /// </summary>
+  /// <remarks>
+  /// Use this when new outbox entries have been written and you want them
+  /// processed immediately. The coordinator loop will perform a full
+  /// <c>process_work_batch</c> call on wake-up with proper in-flight tracking.
+  /// Safe to call from any thread; redundant calls are harmless.
+  /// </remarks>
+  /// <docs>operations/workers/publisher-worker#immediate-poll</docs>
+  public void RequestImmediatePoll() {
+    try { _pollWakeSignal.Release(); } catch (SemaphoreFullException) { /* already signaled */ }
+  }
+
+  /// <summary>
   /// Event fired when work processing starts (idle → active transition).
   /// Fires when work appears after consecutive empty polls.
   /// </summary>
@@ -224,6 +251,23 @@ public partial class WorkCoordinatorPublisherWorker(
   /// Useful for integration tests to wait for event processing completion.
   /// </summary>
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
+
+  /// <summary>
+  /// Event fired after a message is successfully published to transport.
+  /// Fires synchronously on the publisher thread after publish confirmation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this hook for deterministic test synchronization (replaces PostOutboxInline/PostOutboxDetached
+  /// lifecycle receptors which depend on the LifecycleCoordinator path).
+  /// </para>
+  /// <para>
+  /// Also useful in production for monitoring, auditing, or triggering side effects
+  /// after confirmed message delivery.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/publisher-worker#processing-hooks</docs>
+  public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
 
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -249,10 +293,22 @@ public partial class WorkCoordinatorPublisherWorker(
   private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
     await _processInitialWorkBatchAsync(stoppingToken);
 
+    // Subscribe to readiness changes to wake immediately instead of waiting for next poll
+    var readinessSignal = new SemaphoreSlim(0, 1);
+    _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
+
+    // Subscribe to new work signals so the coordinator polls immediately when outbox entries are flushed
+    _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          // Wait for either the poll interval OR a readiness change signal (whichever comes first)
+          try {
+            await readinessSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+          } catch (OperationCanceledException) {
+            break;
+          }
           continue;
         }
         await _processWorkBatchAsync(stoppingToken);
@@ -263,7 +319,9 @@ public partial class WorkCoordinatorPublisherWorker(
       }
 
       try {
-        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+        // Wait for either the polling interval OR an external wake signal (whichever comes first).
+        // RequestImmediatePoll() releases the semaphore, waking this loop early.
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -551,6 +609,7 @@ public partial class WorkCoordinatorPublisherWorker(
     CancellationToken stoppingToken) {
 
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      LogSkippedPreOutboxNoDependencies(_logger, work.MessageId, _lifecycleMessageDeserializer is null, receptorInvoker is null);
       return (null, null);
     }
 
@@ -558,6 +617,7 @@ public partial class WorkCoordinatorPublisherWorker(
     // These messages exist for event store persistence only — no transport publish occurs,
     // so PreOutbox/PostOutbox side effects should not fire.
     if (string.IsNullOrEmpty(work.Destination)) {
+      LogSkippedPreOutboxNoDestination(_logger, work.MessageId, work.MessageType);
       return (null, null);
     }
 
@@ -698,6 +758,10 @@ public partial class WorkCoordinatorPublisherWorker(
       // and prevents re-queuing until the DB clears it via process_work_batch completions.
       _transportMetrics?.OutboxMessagesPublished.Add(1);
       _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
+      OnOutboxMessagePublished?.Invoke(new OutboxMessagePublishedEvent {
+        MessageId = work.MessageId,
+        Destination = work.Destination
+      });
     } else if (result.Reason == MessageFailureReason.TransportException) {
       // Keep in-flight — message is re-queued to channel for retry
       _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
@@ -1246,6 +1310,20 @@ public partial class WorkCoordinatorPublisherWorker(
   )]
   static partial void LogInboxLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Debug,
+    Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId}: missing dependencies (deserializer={NoDeserializer}, invoker={NoInvoker})"
+  )]
+  static partial void LogSkippedPreOutboxNoDependencies(ILogger logger, Guid messageId, bool noDeserializer, bool noInvoker);
+
+  [LoggerMessage(
+    EventId = 28,
+    Level = LogLevel.Debug,
+    Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId} ({MessageType}): event-store-only (no transport destination)"
+  )]
+  static partial void LogSkippedPreOutboxNoDestination(ILogger logger, Guid messageId, string messageType);
+
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.
   /// AOT-safe: uses JsonNode, no reflection or Type.GetType().
@@ -1363,3 +1441,44 @@ public delegate void WorkProcessingStartedHandler();
 /// Useful for integration tests to wait for event processing completion.
 /// </summary>
 public delegate void WorkProcessingIdleHandler();
+
+/// <summary>
+/// Callback invoked after a message is successfully published to transport.
+/// </summary>
+/// <docs>operations/workers/publisher-worker#processing-hooks</docs>
+public delegate void OutboxMessagePublishedHandler(OutboxMessagePublishedEvent e);
+
+/// <summary>
+/// Event data for <see cref="OutboxMessagePublishedHandler"/>.
+/// Carries all details about a successfully published outbox message.
+/// </summary>
+/// <docs>operations/workers/publisher-worker#processing-hooks</docs>
+public sealed record OutboxMessagePublishedEvent {
+  /// <summary>The unique ID of the published message.</summary>
+  public required Guid MessageId { get; init; }
+
+  /// <summary>The transport destination (topic/queue name), or null for local-only.</summary>
+  public string? Destination { get; init; }
+}
+
+/// <summary>
+/// Callback invoked after a perspective successfully processes events for a stream.
+/// </summary>
+/// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+public delegate void PerspectiveEventProcessedHandler(PerspectiveEventProcessedEvent e);
+
+/// <summary>
+/// Event data for <see cref="PerspectiveEventProcessedHandler"/>.
+/// Carries all details about a perspective that finished processing events.
+/// </summary>
+/// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+public sealed record PerspectiveEventProcessedEvent {
+  /// <summary>The name of the perspective that processed events.</summary>
+  public required string PerspectiveName { get; init; }
+
+  /// <summary>The stream ID that was processed.</summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>The number of events processed in this batch.</summary>
+  public required int EventCount { get; init; }
+}
