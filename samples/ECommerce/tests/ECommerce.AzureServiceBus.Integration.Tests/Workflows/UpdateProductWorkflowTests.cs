@@ -68,6 +68,7 @@ public class UpdateProductWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
@@ -119,6 +120,7 @@ public class UpdateProductWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
@@ -171,6 +173,7 @@ public class UpdateProductWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
@@ -223,6 +226,7 @@ public class UpdateProductWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
@@ -276,6 +280,7 @@ public class UpdateProductWorkflowTests {
       expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
+    await fixture.WaitForWorkersIdleAsync();
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
