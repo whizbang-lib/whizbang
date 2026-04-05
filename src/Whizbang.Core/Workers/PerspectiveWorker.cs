@@ -43,7 +43,8 @@ public partial class PerspectiveWorker(
   IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null,
   IProcessedEventCacheObserver? processedEventCacheObserver = null,
   TimeProvider? timeProvider = null,
-  LifecycleCoordinatorMetrics? coordinatorMetrics = null
+  LifecycleCoordinatorMetrics? coordinatorMetrics = null,
+  IWorkChannelWriter? workChannelWriter = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly ConcurrentBag<Task> _detachedTasks = [];
@@ -94,6 +95,10 @@ public partial class PerspectiveWorker(
   private bool _isIdle = true;  // Start in idle state
   private int _batchCycleCount;
 
+  // Wake signal: allows external callers to interrupt the polling delay
+  // so the worker processes new perspective events immediately.
+  private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
+
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
   /// Resets to 0 when database becomes ready.
@@ -123,6 +128,20 @@ public partial class PerspectiveWorker(
   /// Useful for integration tests to wait for perspective processing completion.
   /// </summary>
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
+
+  /// <summary>
+  /// Signals the worker to wake immediately and poll for new perspective events,
+  /// instead of waiting for the next scheduled polling interval.
+  /// </summary>
+  /// <remarks>
+  /// Use this when new events have been written to the event store (e.g., after a
+  /// transport consumer processes a received message) and you want perspectives
+  /// to materialize immediately. Safe to call from any thread; redundant calls are harmless.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
+  public void RequestImmediatePoll() {
+    try { _pollWakeSignal.Release(); } catch (SemaphoreFullException) { /* already signaled */ }
+  }
 
   /// <summary>
   /// Event fired after a perspective successfully processes events for a stream.
@@ -158,10 +177,15 @@ public partial class PerspectiveWorker(
     await _processInitialCheckpointsAsync(stoppingToken);
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
 
+    // Subscribe to new perspective work signals so we poll immediately when events arrive
+    if (workChannelWriter is not null) {
+      workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
+    }
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
           continue;
         }
 
@@ -175,7 +199,9 @@ public partial class PerspectiveWorker(
       }
 
       try {
-        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+        // Wait for either the polling interval OR an external wake signal (whichever comes first).
+        // RequestImmediatePoll() releases the semaphore, waking this loop early.
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

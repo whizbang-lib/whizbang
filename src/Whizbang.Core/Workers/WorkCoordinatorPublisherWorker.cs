@@ -171,6 +171,10 @@ public partial class WorkCoordinatorPublisherWorker(
   private int _consecutiveEmptyPolls;
   private bool _isIdle = true;  // Start in idle state
 
+  // Wake signal: allows external callers to interrupt the polling delay
+  // so the coordinator loop processes new work immediately.
+  private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
+
   /// <summary>
   /// Gets the number of consecutive times the transport was not ready.
   /// Resets to 0 when transport becomes ready.
@@ -219,6 +223,21 @@ public partial class WorkCoordinatorPublisherWorker(
   /// </summary>
   /// <docs>operations/testing/shared-fixtures#cleanup</docs>
   public void ClearPublishInFlightState() => _workChannelWriter.ClearInFlight();
+
+  /// <summary>
+  /// Signals the coordinator loop to wake immediately and poll for new work,
+  /// instead of waiting for the next scheduled polling interval.
+  /// </summary>
+  /// <remarks>
+  /// Use this when new outbox entries have been written and you want them
+  /// processed immediately. The coordinator loop will perform a full
+  /// <c>process_work_batch</c> call on wake-up with proper in-flight tracking.
+  /// Safe to call from any thread; redundant calls are harmless.
+  /// </remarks>
+  /// <docs>operations/workers/publisher-worker#immediate-poll</docs>
+  public void RequestImmediatePoll() {
+    try { _pollWakeSignal.Release(); } catch (SemaphoreFullException) { /* already signaled */ }
+  }
 
   /// <summary>
   /// Event fired when work processing starts (idle → active transition).
@@ -278,6 +297,9 @@ public partial class WorkCoordinatorPublisherWorker(
     var readinessSignal = new SemaphoreSlim(0, 1);
     _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
 
+    // Subscribe to new work signals so the coordinator polls immediately when outbox entries are flushed
+    _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
@@ -297,7 +319,9 @@ public partial class WorkCoordinatorPublisherWorker(
       }
 
       try {
-        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+        // Wait for either the polling interval OR an external wake signal (whichever comes first).
+        // RequestImmediatePoll() releases the semaphore, waking this loop early.
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

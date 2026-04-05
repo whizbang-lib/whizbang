@@ -147,6 +147,16 @@ internal static class WorkCoordinatorFlushHelper {
       // Writing here causes _inFlight entries that the publisher may not
       // drain, permanently blocking those messages from being re-queued.
 
+      // Signal workers to poll immediately for newly available work
+      if (ctx.WorkChannelWriter is not null) {
+        if (workBatch.OutboxWork.Count > 0) {
+          ctx.WorkChannelWriter.SignalNewWorkAvailable();
+        }
+        if (workBatch.PerspectiveWork.Count > 0) {
+          ctx.WorkChannelWriter.SignalNewPerspectiveWorkAvailable();
+        }
+      }
+
       return workBatch;
     } finally {
       flushScope?.Dispose();

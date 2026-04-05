@@ -509,6 +509,10 @@ public class OutboxPublishPipelineIntegrationTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
