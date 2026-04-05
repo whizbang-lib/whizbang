@@ -583,6 +583,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Records call count, stream IDs, and detects duplicate WorkIds.
   /// </summary>
   private sealed class ApplyTrackingRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     private int _callCount;
     private readonly ConcurrentBag<Guid> _processedWorkIds = [];
     private readonly ConcurrentBag<Guid> _streamIds = [];
@@ -770,6 +771,7 @@ public class PerspectiveDedupIntegrationTests {
   }
 
   private sealed class SingleRunnerRegistry(IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
+    public Type PerspectiveType => typeof(object);
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo("Test.LockInPerspective", "global::Test.LockInPerspective", "global::Test.Model", ["global::Test.Event"])];
@@ -870,6 +872,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Tracks calls per perspective name and supports WaitForCallCount.
   /// </summary>
   private sealed class FixedEventIdRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     private readonly Guid _lastEventId;
     private int _callCount;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _callCountWaiters = new();
@@ -918,6 +921,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Used by lifecycle tests where many perspectives share the same behavior.
   /// </summary>
   private sealed class MultiPerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+    public Type PerspectiveType => typeof(object);
     private readonly HashSet<string> _knownNames;
     private readonly IPerspectiveRunner _runner;
 

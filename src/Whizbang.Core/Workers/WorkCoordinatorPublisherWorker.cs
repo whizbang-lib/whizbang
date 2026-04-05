@@ -274,10 +274,19 @@ public partial class WorkCoordinatorPublisherWorker(
   private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
     await _processInitialWorkBatchAsync(stoppingToken);
 
+    // Subscribe to readiness changes to wake immediately instead of waiting for next poll
+    var readinessSignal = new SemaphoreSlim(0, 1);
+    _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          // Wait for either the poll interval OR a readiness change signal (whichever comes first)
+          try {
+            await readinessSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+          } catch (OperationCanceledException) {
+            break;
+          }
           continue;
         }
         await _processWorkBatchAsync(stoppingToken);
