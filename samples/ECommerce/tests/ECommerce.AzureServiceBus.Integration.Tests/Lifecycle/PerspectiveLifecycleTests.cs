@@ -404,7 +404,7 @@ public class PerspectiveLifecycleTests {
     await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Verify perspective data is queryable and not stale
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Name).IsEqualTo("Data Freshness Test Product");
   }
