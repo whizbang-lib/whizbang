@@ -1436,9 +1436,9 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     // Arrange - return outbox work in non-sorted order
     var coordinator = new CoverageTestWorkCoordinator();
     var id1 = Guid.CreateVersion7();
-    await Task.Delay(1); // Ensure different UUIDv7 timestamps
+    await Task.Delay(15); // Ensure different UUIDv7 timestamps (CI timer resolution can be >1ms)
     var id2 = Guid.CreateVersion7();
-    await Task.Delay(1);
+    await Task.Delay(15);
     var id3 = Guid.CreateVersion7();
 
     // Return in reverse order
