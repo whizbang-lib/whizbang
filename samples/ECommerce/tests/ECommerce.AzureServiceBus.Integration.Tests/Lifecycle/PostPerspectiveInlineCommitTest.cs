@@ -76,7 +76,7 @@ public class PostPerspectiveInlineCommitTest {
     await fixture.WaitForWorkersIdleAsync();
 
     // Assert - Perspective data should be queryable after PostPerspectiveInline
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
 
     Console.WriteLine("==========================================================");
