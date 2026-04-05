@@ -1,10 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.InMemory.Integration.Tests.Fixtures;
 using Medo;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace ECommerce.InMemory.Integration.Tests.Workflows;
 
@@ -55,17 +52,13 @@ public class TagHookLifecycleTests {
       InitialStock = 10
     };
 
-    // Act — dispatch command, wait for ALL perspectives to complete
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    // Act — dispatch command, wait for ProductCreatedEvent perspectives to complete
+    // 4 perspectives: 2 inventory + 2 BFF (all local, no transport)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 4, timeoutMilliseconds: 45000);
 
     await fixture.Dispatcher.SendAsync(command);
-    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await perspectiveTask;
 
     // Wait for PostLifecycleInline tag hook to fire using completion signal (not Task.Delay)
     await TagHookCallTracker.WaitForPostLifecycleInlineAsync(TimeSpan.FromSeconds(30));
