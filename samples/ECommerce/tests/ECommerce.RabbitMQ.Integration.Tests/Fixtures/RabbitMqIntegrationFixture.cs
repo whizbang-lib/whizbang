@@ -213,12 +213,16 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Purges RabbitMQ queues and deletes all Whizbang infrastructure table data.
   /// </summary>
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
-    // 1. Purge RabbitMQ queues to prevent stale messages from previous tests
+    // 1. Wait for workers to drain any in-flight messages from the previous test FIRST.
+    // This prevents truncating data that workers are still processing.
+    await _waitForWorkersReadyAsync(cancellationToken);
+
+    // 2. Purge RabbitMQ queues to prevent stale messages from previous tests
     await _purgeQueueAsync($"bff-products-queue-{_testId}");
     await _purgeQueueAsync($"inventory-products-queue-{_testId}");
     await _purgeQueueAsync($"bff-inventory-queue-{_testId}");
 
-    // 2. Delete all Whizbang infrastructure table data (explicit ordering for FK safety)
+    // 3. Delete all Whizbang infrastructure table data (explicit ordering for FK safety)
     const int maxRetries = 5;
     const int retryDelayMs = 300;
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
@@ -246,9 +250,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         await Task.Delay(retryDelayMs * attempt, cancellationToken);
       }
     }
-
-    // 3. Wait for workers to drain any in-flight messages from purged state
-    await _waitForWorkersReadyAsync(cancellationToken);
 
     // 4. Clear publisher in-flight state AFTER workers are idle
     // Workers may have re-added entries during the idle drain above
