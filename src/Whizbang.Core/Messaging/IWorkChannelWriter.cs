@@ -85,6 +85,32 @@ public interface IWorkChannelWriter {
   void ClearInFlight();
 
   /// <summary>
+  /// Event raised when new outbox work has been stored and is ready for processing.
+  /// The publisher worker subscribes to wake its coordinator loop immediately.
+  /// </summary>
+  /// <docs>operations/workers/publisher-worker#immediate-poll</docs>
+  event Action? OnNewWorkAvailable;
+
+  /// <summary>
+  /// Fires <see cref="OnNewWorkAvailable"/> to wake the publisher worker immediately.
+  /// Called by strategies after flushing new outbox messages to the database.
+  /// </summary>
+  void SignalNewWorkAvailable();
+
+  /// <summary>
+  /// Event raised when new perspective events have been stored and are ready for processing.
+  /// The perspective worker subscribes to wake its processing loop immediately.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
+  event Action? OnNewPerspectiveWorkAvailable;
+
+  /// <summary>
+  /// Fires <see cref="OnNewPerspectiveWorkAvailable"/> to wake the perspective worker immediately.
+  /// Called by strategies after flushing new perspective events to the database.
+  /// </summary>
+  void SignalNewPerspectiveWorkAvailable();
+
+  /// <summary>
   /// Checks whether an in-flight message's lease should be renewed.
   /// Returns true when the message has been in-flight for more than half the lease duration,
   /// preventing unnecessary lease renewals on every tick while ensuring the lease doesn't expire.

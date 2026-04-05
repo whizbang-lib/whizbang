@@ -1501,11 +1501,53 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for all workers on both hosts to become idle.
+  /// Waits for all workers on both hosts to become idle using deterministic OnWorkProcessingIdle signals.
   /// </summary>
   public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
-    // Use a simple delay-based approach since ASB fixture doesn't have _waitForWorkersReadyAsync
-    await Task.Delay(500);
+    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var inventoryPub = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var bffPub = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var inventoryPersp = _inventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<PerspectiveWorker>().FirstOrDefault();
+    var bffPersp = _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<PerspectiveWorker>().FirstOrDefault();
+
+    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) { tcs.TrySetResult(true); }
+    }
+
+    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) { tcs.TrySetResult(true); }
+    }
+
+    WireOnce(inventoryPub, tcsInventoryPub);
+    WireOnce(bffPub, tcsBffPub);
+    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
+    WirePerspOnce(bffPersp, tcsBffPersp);
+
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await Task.WhenAll(
+      tcsInventoryPub.Task,
+      tcsBffPub.Task,
+      tcsInventoryPersp.Task,
+      tcsBffPersp.Task
+    ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
   }
 
   public async ValueTask DisposeAsync() {

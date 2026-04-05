@@ -570,5 +570,9 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }
