@@ -14,7 +14,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
-namespace Whizbang.Core.Tests.Workers;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Tests for WorkCoordinatorPublisherWorker database readiness integration.
