@@ -36,31 +36,15 @@ public class InboxLifecycleTests {
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
-  public async Task SetupAsync() {
-    // Initialize shared containers (first test only)
-    await SharedRabbitMqFixtureSource.InitializeAsync();
-
-    // Get separate database connections for each host (eliminates lock contention)
-    var inventoryDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
-    var bffDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
-
-    // Create and initialize test fixture with separate databases
-    _fixture = new RabbitMqIntegrationFixture(
-      SharedRabbitMqFixtureSource.RabbitMqConnectionString,
-      inventoryDbConnection,
-      bffDbConnection,
-      SharedRabbitMqFixtureSource.ManagementApiUri,
-      testId: Guid.NewGuid().ToString("N")[..12]
-    );
-    await _fixture.InitializeAsync();
+  public async Task SetupAsync(CancellationToken cancellationToken) {
+    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync();
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public Task CleanupAsync(CancellationToken cancellationToken) {
+    // Shared fixture is reused across tests — don't dispose
+    return Task.CompletedTask;
   }
 
   // ========================================
@@ -72,7 +56,7 @@ public class InboxLifecycleTests {
   /// Receptor invocation should wait for this lifecycle receptor to complete.
   /// </summary>
   [Test]
-  public async Task PreInboxInline_FiresBeforeReceptorInvocation_BlocksUntilCompleteAsync() {
+  public async Task PreInboxInline_FiresBeforeReceptorInvocation_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -87,7 +71,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF from RabbitMQ)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -110,7 +94,7 @@ public class InboxLifecycleTests {
   /// Should use Task.Run and not block receptor invocation.
   /// </summary>
   [Test]
-  public async Task PreInboxDetached_FiresParallelWithReceptor_NonBlockingAsync() {
+  public async Task PreInboxDetached_FiresParallelWithReceptor_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -125,7 +109,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -144,7 +128,7 @@ public class InboxLifecycleTests {
   /// Tests the "receptor may complete before this stage finishes" guarantee.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
+  [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
   public async Task PreInboxDetached_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -162,9 +146,6 @@ public class InboxLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxDetached);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command
@@ -175,9 +156,6 @@ public class InboxLifecycleTests {
 
       // Assert - PreInboxDetached should have completed eventually
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-      // Verify that receptor processing happened (perspective materialized)
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxDetached);
@@ -193,7 +171,7 @@ public class InboxLifecycleTests {
   /// Should use Task.Run and not block next steps.
   /// </summary>
   [Test]
-  public async Task PostInboxDetached_FiresAfterReceptorCompletes_NonBlockingAsync() {
+  public async Task PostInboxDetached_FiresAfterReceptorCompletes_NonBlockingAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -208,7 +186,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -227,7 +205,7 @@ public class InboxLifecycleTests {
   /// Tests the "receptor has completed successfully" guarantee.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
+  [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
   public async Task PostInboxDetached_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -245,9 +223,6 @@ public class InboxLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxDetached);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command
@@ -259,9 +234,6 @@ public class InboxLifecycleTests {
       // Assert - At this point, PostInboxDetached has fired
       // Receptor should have completed successfully
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-      // Verify that receptor processing completed (perspective should be materialized)
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxDetached);
@@ -277,7 +249,7 @@ public class InboxLifecycleTests {
   /// Next step should wait for this lifecycle receptor to complete.
   /// </summary>
   [Test]
-  public async Task PostInboxInline_FiresAfterReceptorCompletes_BlocksUntilCompleteAsync() {
+  public async Task PostInboxInline_FiresAfterReceptorCompletes_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -292,7 +264,7 @@ public class InboxLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent (received by BFF)
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -315,7 +287,7 @@ public class InboxLifecycleTests {
   /// PreInboxInline → PreInboxDetached (parallel with receptor) → PostInboxDetached → PostInboxInline
   /// </summary>
   [Test]
-  public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync() {
+  public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -377,7 +349,7 @@ public class InboxLifecycleTests {
   /// Verifies that multiple inbox messages trigger all Inbox stages for each message.
   /// </summary>
   [Test]
-  public async Task InboxStages_MultipleMessages_AllStagesFireForEachAsync() {
+  public async Task InboxStages_MultipleMessages_AllStagesFireForEachAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 

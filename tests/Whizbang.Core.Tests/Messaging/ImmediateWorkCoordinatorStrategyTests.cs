@@ -679,10 +679,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     // Act
     await sut.FlushAsync(WorkBatchOptions.None);
 
-    // Assert — channel writes no longer happen during flush (work is persisted to DB,
-    // coordinator loop picks it up on next tick)
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
     // Work was still persisted via ProcessWorkBatchAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
   }
@@ -817,6 +816,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
   // ========================================
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -837,9 +837,14 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 
@@ -853,6 +858,10 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {

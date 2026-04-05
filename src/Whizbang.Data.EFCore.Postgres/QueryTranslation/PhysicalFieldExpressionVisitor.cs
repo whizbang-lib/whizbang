@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs</tests>
 [SuppressMessage("AOT", "IL2060:MakeGenericMethod can break functionality when AOT compiling", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
 public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
@@ -75,11 +76,26 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
         // Visit the entity expression in case it needs transformation
         var visitedEntity = Visit(entityExpression);
 
-        // Create EF.Property<TProperty>(entity, "shadow_property_name")
-        var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
-        var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
-
-        return Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
+        if (mapping.IsVector) {
+          // Vector fields: DO NOT rewrite member access.
+          //
+          // The shadow property is Vector? but the model property is float[]? — EF Core
+          // cannot coerce between these types in expression trees. Rewriting causes:
+          //   "No coercion operator is defined between types 'String' and 'Single[]'"
+          //   or "Expression of type 'Vector' cannot be used for return type 'Single[]'"
+          //
+          // Full entity materialization works via ChangeTracker hydration (SplitModeChangeTrackerHydrator).
+          // For Select projections, use EF.Property<Vector?>(r, "embeddings") explicitly.
+          // The Whizbang vector extensions (OrderByCosineDistance, etc.) handle their own rewriting.
+          //
+          // TODO: Unify shadow property type to float[]? (requires vector extension refactor).
+          return base.VisitMember(node);
+        } else {
+          // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")
+          var efPropertyGeneric = _efPropertyMethod.MakeGenericMethod(propertyInfo.PropertyType);
+          var columnNameConstant = Expression.Constant(mapping.ShadowPropertyName);
+          return Expression.Call(null, efPropertyGeneric, visitedEntity, columnNameConstant);
+        }
       }
     }
 

@@ -890,6 +890,39 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) { return; }
+      PerspectiveEventProcessedHandler? handler = null;
+      handler = (e) => {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) { tcs.TrySetResult(true); }
+      };
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+    if (hostFilter is null or "bff") {
+      var bffWorker = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
+  /// <summary>
   /// Cleans up all test data from the database (truncates all tables).
   /// Call this between test classes to ensure isolation.
   /// </summary>

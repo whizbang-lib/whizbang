@@ -507,6 +507,7 @@ public class PerspectiveWorkerStrategyTests {
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
     public bool ShouldThrow { get; set; }
 
     public Task<PerspectiveCursorCompletion> RunAsync(

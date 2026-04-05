@@ -80,10 +80,9 @@ public class WorkCoordinatorFlushHelperTests {
       ct: default
     );
 
-    // Assert — channel writes no longer happen during flush (work is persisted to DB,
-    // coordinator loop picks it up on next tick)
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
     // Work was still persisted and returned in batch result
     await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
       .Because("ProcessWorkBatchAsync should still run even when lifecycle is skipped");
@@ -213,14 +212,14 @@ public class WorkCoordinatorFlushHelperTests {
       ct: default
     );
 
-    // Assert — work is persisted but NOT written to channel (coordinator loop picks it up)
+    // Assert — work is persisted AND written to channel via TryWrite
     await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
       .Because("FakeWorkCoordinator should return outbox work");
 
-    // Channel writes no longer happen during flush, so items are NOT tracked as in-flight
+    // Flush no longer writes to channel, so items should NOT be tracked as in-flight
     foreach (var work in workBatch.OutboxWork) {
       await Assert.That(realChannelWriter.IsInFlight(work.MessageId)).IsFalse()
-        .Because("Flush path no longer writes to channel; coordinator loop handles pickup");
+        .Because("ExecuteFlushAsync signals publisher but does not write to channel");
     }
   }
 
@@ -363,6 +362,7 @@ public class WorkCoordinatorFlushHelperTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel = Channel.CreateUnbounded<OutboxWork>();
     public List<OutboxWork> WrittenWork { get; } = [];
 
@@ -383,5 +383,9 @@ public class WorkCoordinatorFlushHelperTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

@@ -499,6 +499,7 @@ public class PerspectiveWorkerRewindTests {
   #region Test Doubles
 
   private sealed class TrackingPerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
     public int RunCallCount { get; private set; }
     public int RewindAndRunCallCount { get; private set; }
     public int BootstrapCallCount { get; private set; }

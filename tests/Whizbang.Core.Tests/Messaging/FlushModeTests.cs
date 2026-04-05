@@ -236,10 +236,9 @@ public class FlushModeTests {
     // Act
     await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
-    // Assert
-    // Channel writes no longer happen during flush — work persisted to DB
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
   }
 
   // ========================================
@@ -624,6 +623,7 @@ public class FlushModeTests {
   }
 
   private sealed class FakeWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -644,6 +644,10 @@ public class FlushModeTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {

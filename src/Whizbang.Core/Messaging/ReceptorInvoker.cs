@@ -178,6 +178,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (isPostInbox && _serviceName is not null && receptors.Count > 0) {
       var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
       if (string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {
+        _ensureLogger();
+        if (_logger is not null) {
+          Log.SkippedSameServicePostInbox(_logger, stage, messageType.Name, envelope.MessageId.Value, _serviceName);
+        }
         return; // same service → already fired at LocalImmediate
       }
     }
@@ -187,6 +191,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       var isOwned = _isOwnedNamespace(messageType.Namespace);
       var isEvent = message is IEvent;
       if (isPreOutbox && (isOwned ? !isEvent : isEvent)) {
+        _ensureLogger();
+        if (_logger is not null) {
+          Log.SkippedOwnedDomainFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+        }
         return; // skip owned commands + non-owned events at outbox stage
       }
     }
@@ -196,10 +204,18 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Only applies when owned domains are configured (preserves backward compat).
     if (_ownedDomains.Count > 0 && isPreOutbox && receptors.Count > 0
         && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       return;
     }
 
     if (receptors.Count == 0) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.NoReceptorsRegistered(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
       return;
     }
@@ -207,12 +223,20 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Cross-worker dedup: prevent the same message+stage from being processed twice
     // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox)
     if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage)) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedStageTrackerDedup(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       return;
     }
 
     // Suppress receptors during replay/rebuild unless they opt in with [FireDuringReplay]
     receptors = _filterForReplayMode(receptors, context);
     if (receptors.Count == 0) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedReplayModeFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       return;
     }
 
@@ -582,12 +606,52 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     return false;
   }
 
+  private void _ensureLogger() {
+    _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");
+  }
+
   private static partial class Log {
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Debug,
       Message = "Invoking receptor {ReceptorId} called from {CallerInfo}")]
     public static partial void ReceptorInvokedFromCaller(ILogger logger, string receptorId, string callerInfo);
+
+    [LoggerMessage(
+      EventId = 10,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): same-service PostInbox (source={ServiceName})")]
+    public static partial void SkippedSameServicePostInbox(ILogger logger, LifecycleStage stage, string messageType, Guid messageId, string serviceName);
+
+    [LoggerMessage(
+      EventId = 11,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): owned-domain namespace filter")]
+    public static partial void SkippedOwnedDomainFilter(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 12,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): LocalDispatch flag at PreOutbox")]
+    public static partial void SkippedLocalDispatchPreOutbox(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 13,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): LifecycleStageTracker dedup (already claimed)")]
+    public static partial void SkippedStageTrackerDedup(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 14,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): all receptors filtered by replay mode")]
+    public static partial void SkippedReplayModeFilter(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 15,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] No receptors registered for {Stage} / {MessageType} ({MessageId})")]
+    public static partial void NoReceptorsRegistered(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
   }
 }
 

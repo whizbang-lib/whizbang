@@ -43,7 +43,8 @@ public partial class PerspectiveWorker(
   IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null,
   IProcessedEventCacheObserver? processedEventCacheObserver = null,
   TimeProvider? timeProvider = null,
-  LifecycleCoordinatorMetrics? coordinatorMetrics = null
+  LifecycleCoordinatorMetrics? coordinatorMetrics = null,
+  IWorkChannelWriter? workChannelWriter = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly ConcurrentBag<Task> _detachedTasks = [];
@@ -94,6 +95,10 @@ public partial class PerspectiveWorker(
   private bool _isIdle = true;  // Start in idle state
   private int _batchCycleCount;
 
+  // Wake signal: allows external callers to interrupt the polling delay
+  // so the worker processes new perspective events immediately.
+  private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
+
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
   /// Resets to 0 when database becomes ready.
@@ -125,6 +130,37 @@ public partial class PerspectiveWorker(
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   /// <summary>
+  /// Signals the worker to wake immediately and poll for new perspective events,
+  /// instead of waiting for the next scheduled polling interval.
+  /// </summary>
+  /// <remarks>
+  /// Use this when new events have been written to the event store (e.g., after a
+  /// transport consumer processes a received message) and you want perspectives
+  /// to materialize immediately. Safe to call from any thread; redundant calls are harmless.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
+  public void RequestImmediatePoll() {
+    try { _pollWakeSignal.Release(); } catch (SemaphoreFullException) { /* already signaled */ }
+  }
+
+  /// <summary>
+  /// Event fired after a perspective successfully processes events for a stream.
+  /// Fires synchronously on the perspective worker thread after completion buffering.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this hook for deterministic test synchronization (replaces CountingPerspectiveReceptor
+  /// and PerspectiveCompletionWaiter which depend on PostPerspectiveInline lifecycle stage).
+  /// </para>
+  /// <para>
+  /// Also useful in production for monitoring perspective processing throughput,
+  /// triggering downstream actions after materialization, or building custom completion gates.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public event PerspectiveEventProcessedHandler? OnPerspectiveEventProcessed;
+
+  /// <summary>
   /// Groups per-stream perspective processing parameters that travel together through lifecycle phases.
   /// </summary>
   private readonly record struct PerspectiveStreamContext(
@@ -141,10 +177,15 @@ public partial class PerspectiveWorker(
     await _processInitialCheckpointsAsync(stoppingToken);
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
 
+    // Subscribe to new perspective work signals so we poll immediately when events arrive
+    if (workChannelWriter is not null) {
+      workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
+    }
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
           continue;
         }
 
@@ -158,7 +199,9 @@ public partial class PerspectiveWorker(
       }
 
       try {
-        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+        // Wait for either the polling interval OR an external wake signal (whichever comes first).
+        // RequestImmediatePoll() releases the semaphore, waking this loop early.
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -411,15 +454,17 @@ public partial class PerspectiveWorker(
         // Phase 3.1: Invoke PrePerspective lifecycle stages
         await _invokePrePerspectiveLifecycleAsync(
           upcomingEvents, enableLifecycleSpans, lifecycleCoordinator, receptorInvoker,
-          streamCtx, cancellationToken);
+          streamCtx, runner, cancellationToken);
 
         // Phase 3.2: Execute perspective runner (rewind or normal path)
-        var (result, processingMode) = await _executePerspectiveRunnerAsync(
+        var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
           group, runner, checkpoint, streamCtx,
           enablePerspectiveSpans, cancellationToken);
 
-        // Skip this group if rewind lock could not be acquired (sentinel: Status=None)
-        if (result.Status == PerspectiveProcessingStatus.None) {
+        // Skip this group ONLY if rewind lock could not be acquired.
+        // Do NOT skip when Status=None from normal path (no new events) — that's legitimate
+        // and downstream lifecycle stages may still need to fire.
+        if (rewindLockSkipped) {
           continue;
         }
 
@@ -446,6 +491,15 @@ public partial class PerspectiveWorker(
 
         // Buffer event completions and update dedup cache
         _bufferCompletionsAndUpdateCache(group, processedEvents, lifecycleCoordinator, perspectiveName);
+
+        // Fire processing hook after confirmed successful perspective processing
+        if (processedEvents.Count > 0) {
+          OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
+            PerspectiveName = perspectiveName,
+            StreamId = streamId,
+            EventCount = processedEvents.Count
+          });
+        }
 
         // Record per-stream metrics
         _metrics?.StreamsUpdated.Add(1);
@@ -800,6 +854,7 @@ public partial class PerspectiveWorker(
       ILifecycleCoordinator? lifecycleCoordinator,
       IReceptorInvoker? receptorInvoker,
       PerspectiveStreamContext streamCtx,
+      IPerspectiveRunner runner,
       CancellationToken cancellationToken) {
 
     using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspective", ActivityKind.Internal) : null) {
@@ -812,7 +867,7 @@ public partial class PerspectiveWorker(
               // Coordinator path: BeginTracking + AdvanceToAsync (stage guard = exactly-once)
               var tracking = lifecycleCoordinator.BeginTracking(
                 envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveDetached,
-                MessageSource.Local, streamCtx.StreamId);
+                MessageSource.Local, streamCtx.StreamId, runner.PerspectiveType);
 
               // Stage guard ensures these fire once per event, not once per perspective group
               await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, streamCtx.ScopedProvider, cancellationToken);
@@ -847,9 +902,9 @@ public partial class PerspectiveWorker(
   /// Executes the perspective runner via the rewind path or normal path,
   /// including snapshot bootstrap when needed.
   /// Returns the result and the processing mode used.
-  /// The rewind path returns a special continue-sentinel (status=None) when lock acquisition fails.
+  /// When the rewind path cannot acquire a lock, RewindLockSkipped=true is returned.
   /// </summary>
-  private async Task<(PerspectiveCursorCompletion Result, ProcessingMode? Mode)>
+  private async Task<(PerspectiveCursorCompletion Result, ProcessingMode? Mode, bool RewindLockSkipped)>
     _executePerspectiveRunnerAsync(
       IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork> group,
       IPerspectiveRunner runner,
@@ -864,10 +919,10 @@ public partial class PerspectiveWorker(
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
     if (needsRewind && rewindTriggerEventId.HasValue) {
-      var result = await _executeRewindPathAsync(
+      var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
         enablePerspectiveSpans, cancellationToken);
-      return (result, ProcessingMode.Replay);
+      return (result, ProcessingMode.Replay, lockSkipped);
     }
 
     // Bootstrap snapshot if needed (existing stream with events but no snapshots)
@@ -877,14 +932,14 @@ public partial class PerspectiveWorker(
     var normalResult = await _executeNormalPathAsync(
       runner, streamCtx.StreamId, streamCtx.PerspectiveName, streamCtx.LastProcessedEventId,
       enablePerspectiveSpans, cancellationToken);
-    return (normalResult, null);
+    return (normalResult, null, false);
   }
 
   /// <summary>
   /// Rewind path: acquire stream lock, restore from snapshot and replay events.
   /// Throws OperationCanceledException if lock cannot be acquired (caller handles via continue).
   /// </summary>
-  private async Task<PerspectiveCursorCompletion> _executeRewindPathAsync(
+  private async Task<(PerspectiveCursorCompletion Result, bool LockSkipped)> _executeRewindPathAsync(
       IPerspectiveRunner runner,
       Guid streamId,
       string perspectiveName,
@@ -900,13 +955,12 @@ public partial class PerspectiveWorker(
           streamId, perspectiveName, _instanceProvider.InstanceId, "rewind", cancellationToken);
         if (!lockAcquired) {
           LogFailedToAcquireRewindLock(_logger, perspectiveName, streamId);
-          // Return sentinel value — caller detects via Status=None and continues to next group
-          return new PerspectiveCursorCompletion {
+          return (new PerspectiveCursorCompletion {
             StreamId = streamId,
             PerspectiveName = perspectiveName,
             LastEventId = Guid.Empty,
             Status = PerspectiveProcessingStatus.None
-          };
+          }, LockSkipped: true);
         }
       }
 
@@ -939,7 +993,7 @@ public partial class PerspectiveWorker(
       }
     }
 
-    return result;
+    return (result, LockSkipped: false);
   }
 
   /// <summary>

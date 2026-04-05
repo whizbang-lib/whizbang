@@ -32,7 +32,6 @@ public class LocalInvokeCascadeSyncTests {
   [RequiresDynamicCode("Test code")]
   public async Task SetupAsync() {
     _fixture = await SharedInMemoryFixtureSource.GetFixtureAsync();
-    await Task.Delay(500);
     await _fixture.CleanupDatabaseAsync();
   }
 

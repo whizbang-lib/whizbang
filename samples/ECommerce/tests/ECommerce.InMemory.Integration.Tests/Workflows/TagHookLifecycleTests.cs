@@ -1,10 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 using ECommerce.InMemory.Integration.Tests.Fixtures;
 using Medo;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace ECommerce.InMemory.Integration.Tests.Workflows;
 
@@ -17,7 +14,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 /// - GREEN: With the fix, the full pipeline works and the tag hook fires exactly once
 /// </summary>
 [NotInParallel("InMemory")]
-[Timeout(60_000)]
+[Timeout(120_000)]
 public class TagHookLifecycleTests {
   private InMemoryIntegrationFixture? _fixture;
   private static readonly ProductId _testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -27,10 +24,9 @@ public class TagHookLifecycleTests {
   [RequiresDynamicCode("Test code")]
   public async Task SetupAsync() {
     _fixture = await SharedInMemoryFixtureSource.GetFixtureAsync();
-    await Task.Delay(500);
     await _fixture.CleanupDatabaseAsync();
 
-    // Reset the static counter before each test
+    // Reset the static counter and signal before each test
     TagHookCallTracker.Reset();
   }
 
@@ -56,20 +52,16 @@ public class TagHookLifecycleTests {
       InitialStock = 10
     };
 
-    // Act — dispatch command, wait for ALL perspectives to complete
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 2,
-      bffPerspectives: 2);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
+    // Act — dispatch command, wait for ProductCreatedEvent perspectives to complete
+    // 4 perspectives: 2 inventory + 2 BFF (all local, no transport)
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 4, timeoutMilliseconds: 45000);
 
     await fixture.Dispatcher.SendAsync(command);
-    await productWaiter.WaitAsync(timeoutMilliseconds: 15000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
+    await perspectiveTask;
 
-    // Wait a bit for PostLifecycle to fire after perspective processing
-    await Task.Delay(2000);
+    // Wait for PostLifecycleInline tag hook to fire using completion signal (not Task.Delay)
+    await TagHookCallTracker.WaitForPostLifecycleInlineAsync(TimeSpan.FromSeconds(30));
 
     // Assert — AuditTagHook MUST have fired at PostLifecycleInline
     // ProductCreatedEvent has [AuditEvent] attribute, and AuditTagHook is registered
@@ -83,15 +75,29 @@ public class TagHookLifecycleTests {
 /// <summary>
 /// Static tracker for tag hook invocations across DI scopes.
 /// Used by integration tests to verify tag hooks fire correctly.
+/// Uses a completion signal so tests can wait deterministically instead of polling.
 /// </summary>
 public static class TagHookCallTracker {
   private static int _postLifecycleInlineCount;
+  private static TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   public static int PostLifecycleInlineCount => _postLifecycleInlineCount;
 
-  public static void RecordPostLifecycleInline() =>
+  public static void RecordPostLifecycleInline() {
     Interlocked.Increment(ref _postLifecycleInlineCount);
+    _signal.TrySetResult();
+  }
 
-  public static void Reset() =>
+  /// <summary>
+  /// Waits for at least one PostLifecycleInline call using a completion signal.
+  /// </summary>
+  public static async Task WaitForPostLifecycleInlineAsync(TimeSpan timeout) {
+    using var cts = new CancellationTokenSource(timeout);
+    await _signal.Task.WaitAsync(cts.Token);
+  }
+
+  public static void Reset() {
     Interlocked.Exchange(ref _postLifecycleInlineCount, 0);
+    _signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+  }
 }

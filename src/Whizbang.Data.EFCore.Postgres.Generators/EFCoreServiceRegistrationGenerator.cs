@@ -700,6 +700,83 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates multi-model ILensQuery transient registrations for a DbContext.
+  /// Generates PhysicalFieldHydratorRegistry.Register call for a model with physical fields.
+  /// The hydrator reads shadow property values via MaterializationInterceptionData.GetPropertyValue
+  /// and copies them into the Data model (AOT-safe, no reflection).
+  /// </summary>
+  private static void _generatePhysicalFieldHydratorRegistration(
+      StringBuilder sb,
+      PerspectiveModelInfo model) {
+
+    sb.AppendLine($"        // Register physical field hydrator for {model.ModelTypeName}");
+    sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
+    sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
+    sb.AppendLine($"          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
+
+    foreach (var field in model.PhysicalFields) {
+      if (field.IsVector) {
+        // Vector fields: GetPropertyValue returns Pgvector.Vector, convert to float[]
+        sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
+        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
+        sb.AppendLine($"          }}");
+      } else {
+        // Non-vector fields: direct type cast
+        var clrType = field.TypeName;
+        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
+        if (isNullable) {
+          sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
+          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
+          sb.AppendLine($"          }}");
+        } else {
+          sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
+        }
+      }
+    }
+
+    sb.AppendLine("        });");
+    sb.AppendLine();
+  }
+
+  private static void _generateChangeTrackerHydratorRegistration(
+      StringBuilder sb,
+      PerspectiveModelInfo model) {
+
+    var rowType = $"global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>";
+    sb.AppendLine($"        // Register ChangeTracker-based hydrator for {model.ModelTypeName} (zero reflection, AOT-safe)");
+    sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof({rowType}), entry => {{");
+    sb.AppendLine($"          var row = ({rowType})entry.Entity;");
+    sb.AppendLine($"          if (row.Data is null) {{ return; }}");
+
+    foreach (var field in model.PhysicalFields) {
+      if (field.IsVector) {
+        // Vector: read as Pgvector.Vector?, convert to float[]
+        sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
+        sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+        sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
+        sb.AppendLine($"          }}");
+      } else {
+        var clrType = field.TypeName;
+        var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
+        if (isNullable) {
+          sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
+          sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
+          sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
+          sb.AppendLine($"          }}");
+        } else {
+          sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
+        }
+      }
+    }
+
+    sb.AppendLine($"          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
+    sb.AppendLine("        });");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Generates multi-model ILensQuery registrations for perspective lens queries.
   /// Cross-references model types against known perspectives to get table names.
   /// Reports WHIZ401 for unknown models, WHIZ402 for successful auto-detection.
   /// </summary>
@@ -1068,15 +1145,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
     sb.AppendLine("using Microsoft.Extensions.Logging;");
+    sb.AppendLine("using Microsoft.EntityFrameworkCore.Diagnostics;");
     sb.AppendLine("using global::Whizbang.Core.Lenses;");
     sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres;");
     // Add pgvector usings if ANY DbContext has vector fields
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
     var anyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
+    var anyPhysicalFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Length > 0));
     if (anyVectorFields) {
       sb.AppendLine("using Npgsql;");
       sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+    }
+    if (anyPhysicalFields) {
+      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.QueryTranslation;");
     }
     sb.AppendLine();
 
@@ -1125,6 +1207,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
 
+      // Generate physical field registrations for query rewriting and materialization hydration
+      foreach (var model in group.Models) {
+        if (model.PhysicalFields.Length > 0) {
+          // Register field mappings for PhysicalFieldExpressionVisitor (WHERE/ORDER BY rewriting)
+          foreach (var field in model.PhysicalFields) {
+            var isVector = field.IsVector ? "true" : "false";
+            sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
+          }
+          sb.AppendLine();
+
+          // Register hydrator for IMaterializationInterceptor (Split-mode field hydration after query)
+          _generatePhysicalFieldHydratorRegistration(sb, model);
+
+          // Register ChangeTracker-based hydrator for post-query hydration (zero reflection, AOT-safe)
+          _generateChangeTrackerHydratorRegistration(sb, model);
+        }
+      }
+
       // Generate multi-model ILensQuery registrations (auto-detected from constructor parameters)
       _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
 
@@ -1139,7 +1239,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // This enables turnkey setup via .WithEFCore<T>().WithDriver.Postgres
     foreach (var group in dbContextGroups) {
       var dbContextHasVectorFields = group.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
-      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields);
+      var dbContextHasPhysicalFields = group.Models.Any(m => m.PhysicalFields.Length > 0);
+      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
     }
 
     sb.AppendLine("  }");
@@ -1287,6 +1388,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           : [.. perspectives.Where(p => _matchesDbContext(p, dbContext))];
 
       var hasVectorFields = matchingPerspectives.Any(m => m.PhysicalFields.Any(f => f.IsVector));
+      var hasPhysicalFields = matchingPerspectives.Any(m => m.PhysicalFields.Length > 0);
 
       var sb = new StringBuilder();
 
@@ -1306,6 +1408,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
       if (hasVectorFields) {
         sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+      }
+      if (hasPhysicalFields) {
+        sb.AppendLine("using Whizbang.Data.EFCore.Postgres.QueryTranslation;");
       }
       sb.AppendLine();
 
@@ -1378,14 +1483,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine("        npgsqlOptions.UseVector();");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
-        sb.AppendLine(CLOSE_BRACE_INDENT_4);
       } else {
         sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
         sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
         sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine(CLOSE_BRACE_INDENT_6);
-        sb.AppendLine(CLOSE_BRACE_INDENT_4);
       }
+      // Register physical field interceptors (query rewriting + materialization hydration)
+      if (hasPhysicalFields) {
+        sb.AppendLine("      options.UseWhizbangPhysicalFields();");
+      }
+      sb.AppendLine(CLOSE_BRACE_INDENT_4);
       sb.AppendLine();
       sb.AppendLine("    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
       sb.AppendLine("    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
@@ -1425,7 +1533,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _generateDbContextRegistrationCallback(
       StringBuilder sb,
       DbContextInfo dbContext,
-      bool hasVectorFields) {
+      bool hasVectorFields,
+      bool hasPhysicalFields = false) {
 
     // Use connection string name from attribute (or derived default) as the fallback
     var defaultConnectionStringKey = dbContext.ConnectionStringName;
@@ -1503,14 +1612,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          npgsqlOptions.UseVector();");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine("        });");
-      sb.AppendLine(CLOSE_BRACE_INDENT_6);
     } else {
       sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
       sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine("        });");
-      sb.AppendLine(CLOSE_BRACE_INDENT_6);
     }
+    // Register physical field interceptors (query rewriting + materialization hydration)
+    if (hasPhysicalFields) {
+      sb.AppendLine("        options.UseWhizbangPhysicalFields();");
+    }
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine();
     sb.AppendLine("      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
     sb.AppendLine("      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");

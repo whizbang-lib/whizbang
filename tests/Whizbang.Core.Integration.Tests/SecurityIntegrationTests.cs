@@ -592,6 +592,7 @@ public class SecurityIntegrationTests {
       var envelope = new Observability.MessageEnvelope<TestPerspectiveEvent> {
         MessageId = ValueObjects.MessageId.New(),
         Payload = new TestPerspectiveEvent(Guid.NewGuid()),
+        DispatchContext = new Observability.MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = Messaging.MessageSource.Local },
         Hops = [
           new Observability.MessageHop {
             Type = Observability.HopType.Current,
@@ -759,6 +760,7 @@ public class SecurityIntegrationTests {
       var envelope = new Observability.MessageEnvelope<TestPerspectiveEvent> {
         MessageId = ValueObjects.MessageId.New(),
         Payload = new TestPerspectiveEvent(Guid.NewGuid()),
+        DispatchContext = new Observability.MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = Messaging.MessageSource.Local },
         Hops = [
           new Observability.MessageHop {
             Type = Observability.HopType.Current,

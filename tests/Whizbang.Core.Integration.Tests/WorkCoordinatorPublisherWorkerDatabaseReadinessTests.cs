@@ -14,7 +14,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
-namespace Whizbang.Core.Tests.Workers;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Tests for WorkCoordinatorPublisherWorker database readiness integration.
@@ -98,7 +98,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for ProcessWorkBatchAsync to be called (signal-based, not polling)
-    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(5));
+    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(2));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -203,7 +203,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     databaseReadinessCheck.IsReadyResult = true;
 
     // Wait for ProcessWorkBatchAsync to be called (proves database became ready and counter reset)
-    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(5));
+    await testWorkCoordinator.WaitForCallAsync(TimeSpan.FromSeconds(2));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -317,7 +317,15 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
     public void Dispose() => _checkSignal.Dispose();
 
-    public bool IsReadyResult { get => _isReadyResult; set => _isReadyResult = value; }
+    public event Action? OnReadinessChanged;
+
+    public bool IsReadyResult {
+      get => _isReadyResult;
+      set {
+        _isReadyResult = value;
+        OnReadinessChanged?.Invoke();
+      }
+    }
 
     /// <summary>
     /// Waits for at least one call to IsReadyAsync.
@@ -473,6 +481,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
   // Test helper - Mock work channel writer
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 
@@ -499,5 +508,9 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

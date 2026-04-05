@@ -355,11 +355,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Detect polymorphic properties in model type
     var hasPolymorphicProperties = _hasPolymorphicProperties(modelType as INamedTypeSymbol);
 
+    // Detect Split storage mode on model type
+    var isSplitMode = _isSplitStorageMode(modelType as INamedTypeSymbol);
+
     return new PerspectiveCandidate(
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
-        HasPolymorphicProperties: hasPolymorphicProperties
+        HasPolymorphicProperties: hasPolymorphicProperties,
+        IsSplitMode: isSplitMode
     );
   }
 
@@ -377,10 +381,12 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         ModelTypeName: candidate.ModelTypeName,
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
-        HasPolymorphicProperties: candidate.HasPolymorphicProperties
+        HasPolymorphicProperties: candidate.HasPolymorphicProperties,
+        IsSplitMode: candidate.IsSplitMode
     );
   }
 
+  private const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
@@ -593,6 +599,32 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Checks if a model type contains any polymorphic properties (abstract types or [JsonPolymorphic] types).
   /// </summary>
+  /// <summary>
+  /// Detects if the model type has [PerspectiveStorage(FieldStorageMode.Split)] attribute.
+  /// Split models use Property().HasColumnType("jsonb") instead of ComplexProperty().ToJson()
+  /// because ToJson() crashes on null values for stripped physical fields.
+  /// </summary>
+  private static bool _isSplitStorageMode(INamedTypeSymbol? modelType) {
+    if (modelType is null) {
+      return false;
+    }
+
+    var storageAttr = modelType.GetAttributes()
+        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == PERSPECTIVE_STORAGE_ATTRIBUTE);
+    if (storageAttr is null) {
+      return false;
+    }
+
+    // FieldStorageMode.Split == 2
+    if (storageAttr.ConstructorArguments.Length > 0 &&
+        storageAttr.ConstructorArguments[0].Value is int mode &&
+        mode == 2) {
+      return true;
+    }
+
+    return false;
+  }
+
   private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) {
     if (modelType is null) {
       return false;
@@ -847,35 +879,16 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _getCSharpType(PhysicalFieldInfo field) {
     if (field.IsVector) {
-      return "Pgvector.Vector";
+      return "Pgvector.Vector?";
     }
 
-    // Return the normalized type
+    // Use the model's declared type directly — preserves nullability from the model.
+    // If the model says Guid (non-nullable), the shadow property should also be Guid.
+    // If the model says Guid? (nullable), the shadow property should also be Guid?.
     var typeName = field.TypeName
         .Replace("global::", "");
 
-    // Handle nullable types
-    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
-      return typeName;
-    }
-
-    // Non-nullable value types that could be null in database
-    return typeName switch {
-      "System.Int32" or "int" => "int?",
-      "System.Int64" or "long" => "long?",
-      "System.Int16" or "short" => "short?",
-      "System.Decimal" or "decimal" => "decimal?",
-      "System.Double" or "double" => "double?",
-      "System.Single" or "float" => "float?",
-      "System.Boolean" or "bool" => "bool?",
-      "System.Guid" => "System.Guid?",
-      "System.DateTime" => "System.DateTime?",
-      "System.DateTimeOffset" => "System.DateTimeOffset?",
-      "System.DateOnly" => "System.DateOnly?",
-      "System.TimeOnly" => "System.TimeOnly?",
-      "System.String" or "string" => "string?",
-      _ => $"{typeName}?"
-    };
+    return typeName;
   }
 
   /// <summary>

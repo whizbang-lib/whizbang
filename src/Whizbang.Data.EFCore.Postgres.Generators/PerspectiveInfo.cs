@@ -25,7 +25,8 @@ internal sealed record PerspectiveInfo(
     string ModelTypeName,
     string TableName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
-    bool HasPolymorphicProperties
+    bool HasPolymorphicProperties,
+    bool IsSplitMode = false
 );
 
 /// <summary>
@@ -36,9 +37,11 @@ internal sealed record PerspectiveInfo(
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
+/// <param name="IsSplitMode">Whether the model uses FieldStorageMode.Split</param>
 internal sealed record PerspectiveCandidate(
     string ModelTypeName,
     string TableBaseName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
-    bool HasPolymorphicProperties
+    bool HasPolymorphicProperties,
+    bool IsSplitMode = false
 );
