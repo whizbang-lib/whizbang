@@ -544,6 +544,10 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public void ClearInFlight() { }
+    public bool ShouldRenewLease(Guid messageId) => false;
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

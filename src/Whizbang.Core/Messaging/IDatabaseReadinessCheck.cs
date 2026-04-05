@@ -45,4 +45,15 @@ public interface IDatabaseReadinessCheck {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_ChecksAllRequiredTables_VerifiesInboxOutboxEventStoreAsync</tests>
   Task<bool> IsReadyAsync(CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Event fired when database readiness state changes.
+  /// Workers can subscribe to wake immediately instead of waiting for the next poll cycle.
+  /// </summary>
+  /// <remarks>
+  /// Default implementation is a no-op event. Implementations that support change notification
+  /// should fire this when transitioning between ready and not-ready states.
+  /// </remarks>
+  /// <docs>operations/workers/database-readiness#change-notification</docs>
+  event Action? OnReadinessChanged { add { } remove { } }
 }
