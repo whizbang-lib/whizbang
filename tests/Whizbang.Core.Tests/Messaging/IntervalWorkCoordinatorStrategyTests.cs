@@ -835,9 +835,9 @@ public class IntervalWorkCoordinatorStrategyTests {
       // Act
       await sut.FlushAsync(WorkBatchOptions.None);
 
-      // Assert — ExecuteFlushAsync now writes claimed outbox work to the channel via TryWrite
-      await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1)
-        .Because("ExecuteFlushAsync writes claimed outbox work to channel for immediate processing");
+      // Assert — ExecuteFlushAsync signals publisher but does not write to channel
+      await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+        .Because("ExecuteFlushAsync signals publisher but does not write to channel");
       // Work was still persisted via ProcessWorkBatchAsync
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
     } finally {
