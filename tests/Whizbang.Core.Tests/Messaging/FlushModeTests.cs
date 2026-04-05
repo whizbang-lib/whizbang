@@ -236,9 +236,9 @@ public class FlushModeTests {
     // Act
     await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
 
-    // Assert — ExecuteFlushAsync now writes claimed outbox work to the channel via TryWrite
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1)
-      .Because("ExecuteFlushAsync writes claimed outbox work to channel for immediate processing");
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
   }
 
   // ========================================

@@ -140,15 +140,13 @@ internal static class WorkCoordinatorFlushHelper {
         );
       }
 
-      // Write claimed outbox work directly to the publisher channel for immediate processing.
-      // The work was already claimed by process_work_batch for this instance, so the
-      // coordinator loop won't re-claim it. Without writing to the channel, the work sits
-      // in the database until lease expiry (~300s).
-      // In-flight tracking (WriteAsync adds to _inFlight) prevents the coordinator from
-      // double-queuing the same message if it appears in a subsequent poll.
+      // NOTE: Do NOT write outbox work to channel here — the coordinator loop in
+      // WorkCoordinatorPublisherWorker._processWorkBatchAsync writes to the channel
+      // with proper ordering and in-flight tracking (lines 879-892).
+      // Signal the coordinator to wake immediately so it picks up the work.
       if (ctx.WorkChannelWriter is not null) {
-        foreach (var work in workBatch.OutboxWork) {
-          ctx.WorkChannelWriter.TryWrite(work);
+        if (workBatch.OutboxWork.Count > 0) {
+          ctx.WorkChannelWriter.SignalNewWorkAvailable();
         }
         if (workBatch.PerspectiveWork.Count > 0) {
           ctx.WorkChannelWriter.SignalNewPerspectiveWorkAvailable();

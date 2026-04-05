@@ -80,9 +80,9 @@ public class WorkCoordinatorFlushHelperTests {
       ct: default
     );
 
-    // Assert — ExecuteFlushAsync now writes claimed outbox work to the channel via TryWrite
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1)
-      .Because("ExecuteFlushAsync writes claimed outbox work to channel for immediate processing");
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
     // Work was still persisted and returned in batch result
     await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
       .Because("ProcessWorkBatchAsync should still run even when lifecycle is skipped");
@@ -216,10 +216,10 @@ public class WorkCoordinatorFlushHelperTests {
     await Assert.That(workBatch.OutboxWork.Count).IsGreaterThan(0)
       .Because("FakeWorkCoordinator should return outbox work");
 
-    // TryWrite adds items to _inFlight, so they should be tracked as in-flight
+    // Flush no longer writes to channel, so items should NOT be tracked as in-flight
     foreach (var work in workBatch.OutboxWork) {
-      await Assert.That(realChannelWriter.IsInFlight(work.MessageId)).IsTrue()
-        .Because("ExecuteFlushAsync writes claimed outbox work to channel for immediate processing");
+      await Assert.That(realChannelWriter.IsInFlight(work.MessageId)).IsFalse()
+        .Because("ExecuteFlushAsync signals publisher but does not write to channel");
     }
   }
 
