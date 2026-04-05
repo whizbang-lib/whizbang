@@ -350,9 +350,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/isolation.png",
       InitialStock = 75
     };
-    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 

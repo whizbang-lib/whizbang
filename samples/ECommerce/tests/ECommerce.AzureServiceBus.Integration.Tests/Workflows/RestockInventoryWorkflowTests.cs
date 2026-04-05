@@ -61,9 +61,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock.png",
       InitialStock = 10
     };
-    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 
@@ -112,9 +112,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/multi-restock.png",
       InitialStock = 5
     };
-    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 
@@ -209,9 +209,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/zero-qty.png",
       InitialStock = 25
     };
-    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 
@@ -254,9 +254,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/large-restock.png",
       InitialStock = 50
     };
-    // Wait for create perspectives (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 

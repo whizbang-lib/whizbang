@@ -301,10 +301,10 @@ public class PerspectiveLifecycleTests {
     };
 
     // Act - Wait for all perspective processing
-    // Each command creates ProductCreatedEvent (2 inventory perspectives) + InventoryRestockedEvent (1 inventory perspective)
-    // 2 commands x 3 perspective completions = 6 total
+    // Each command creates ProductCreatedEvent with 2 inventory perspectives
+    // 2 commands x 2 perspective completions = 4 total
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 4, timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
@@ -435,9 +435,9 @@ public class PerspectiveLifecycleTests {
     };
 
     // Act - Wait for all perspective processing
-    // 2 commands x 3 perspective completions (2 product + 1 restock) = 6 total
+    // 2 commands x 2 inventory perspectives for ProductCreatedEvent = 4 total
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 4, timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
