@@ -65,9 +65,9 @@ public class CreateProductWorkflowTests {
       InitialStock = 50
     };
 
-    // Act - Wait for perspective processing (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Act - Wait for 2 inventory perspectives for ProductCreatedEvent
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -126,9 +126,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act - Wait for all perspective processing
-    // 3 commands x (2 ProductCreated perspectives + 1 InventoryRestocked perspective) = 9 total
+    // 3 commands x 2 inventory perspectives for ProductCreatedEvent = 6 total
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 9, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 6, timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
@@ -203,9 +203,9 @@ public class CreateProductWorkflowTests {
       InitialStock = 25
     };
 
-    // Act - Wait for perspective processing (2 for ProductCreated + 1 for InventoryRestocked = 3)
+    // Act - Wait for 2 inventory perspectives for ProductCreatedEvent
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
