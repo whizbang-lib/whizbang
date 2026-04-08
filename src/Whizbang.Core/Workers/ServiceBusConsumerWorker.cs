@@ -35,8 +35,7 @@ public partial class ServiceBusConsumerWorker(
   ServiceBusConsumerOptions? options = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null,
-  MessageProcessingOptions? messageProcessingOptions = null,
-  IInboxBatchStrategy? inboxBatchStrategy = null
+  MessageProcessingOptions? messageProcessingOptions = null
   ) : BackgroundService {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -47,7 +46,6 @@ public partial class ServiceBusConsumerWorker(
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
-  private readonly IInboxBatchStrategy? _inboxBatchStrategy = inboxBatchStrategy;
   private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
     ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
@@ -158,15 +156,8 @@ public partial class ServiceBusConsumerWorker(
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       LogProcessingMessage(_logger, envelope.MessageId);
 
-      // 1. Serialize and deduplicate — use batch strategy if available, otherwise per-message flush
-      List<InboxWork> myWork;
-      if (_inboxBatchStrategy is not null) {
-        var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
-        var workBatch = await _inboxBatchStrategy.EnqueueAndWaitAsync(newInboxMessage, ct);
-        myWork = [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
-      } else {
-        myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
-      }
+      // Serialize and deduplicate via per-message flush
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
 
       if (myWork.Count == 0) {
         LogMessageAlreadyProcessed(_logger, envelope.MessageId);
