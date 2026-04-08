@@ -9,6 +9,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Transports;
 
@@ -203,13 +204,17 @@ public class TransportManager(
       Metadata: metadata
     );
 
-    // Wrap handler to match ITransport signature (adds envelopeType and CancellationToken parameters)
-    Task __transportHandler(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-      return handler(envelope);
-    }
-
-    // Subscribe to transport (handler is first parameter!)
-    return await transport.SubscribeAsync(__transportHandler, destination, CancellationToken.None);
+    // Subscribe to transport via batch API, wrapping per-message handler
+    return await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await handler(msg.Envelope);
+        }
+      },
+      destination,
+      new TransportBatchOptions(),
+      CancellationToken.None
+    );
   }
 
   /// <summary>

@@ -4,6 +4,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Resilience;
 
@@ -386,8 +387,8 @@ public class SubscriptionRetryHelperTests {
   // Helper Methods
   // ==========================================================================
 
-  private static Func<IMessageEnvelope, string?, CancellationToken, Task> _createNoOpHandler() {
-    return (_, _, _) => Task.CompletedTask;
+  private static Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> _createNoOpHandler() {
+    return (_, _) => Task.CompletedTask;
   }
 
   // ==========================================================================
@@ -435,6 +436,29 @@ public class SubscriptionRetryHelperTests {
       TransportDestination destination,
       string? envelopeType = null,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _attemptCount++;
+
+      if (_alwaysFail) {
+        throw new InvalidOperationException("Mock transport always fails");
+      }
+
+      if (_attemptCount <= _failFirstNAttempts) {
+        throw new InvalidOperationException($"Mock transport fails on attempt {_attemptCount}");
+      }
+
+      ISubscription subscription = _returnDisconnectableSubscription
+        ? new DisconnectableMockSubscription()
+        : new MockSubscription();
+
+      return Task.FromResult(subscription);
+    }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,

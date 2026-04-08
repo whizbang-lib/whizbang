@@ -262,7 +262,11 @@ public partial class TransportConsumerWorker : BackgroundService {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageAsync(msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       state,
       _resilienceOptions,
       _logger,

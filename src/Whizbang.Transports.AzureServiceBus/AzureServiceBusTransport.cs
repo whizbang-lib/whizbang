@@ -5,6 +5,7 @@ using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus;
 
@@ -453,8 +454,47 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <inheritdoc />
-  /// <tests>No tests found</tests>
-  public Task<ISubscription> SubscribeAsync(
+  /// <remarks>Temporary: wraps per-message subscribe with batch collector. Will be replaced with native batch implementation.</remarks>
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(batchHandler);
+    ArgumentNullException.ThrowIfNull(destination);
+    ArgumentNullException.ThrowIfNull(batchOptions);
+
+    // Temporary: wrap per-message subscribe with batch collector
+    return _subscribeBatchViaDelegateAsync(batchHandler, destination, batchOptions, cancellationToken);
+  }
+
+  private async Task<ISubscription> _subscribeBatchViaDelegateAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken
+  ) {
+    var collector = new TransportBatchCollector<TransportMessage>(
+      batchOptions,
+      batch => batchHandler(batch, CancellationToken.None)
+    );
+
+    var subscription = await _subscribeCoreAsync(
+      (envelope, envelopeType, _) => {
+        collector.Enqueue(new TransportMessage(envelope, envelopeType));
+        return Task.CompletedTask;
+      },
+      destination,
+      cancellationToken
+    );
+
+    return subscription;
+  }
+
+  // Keep SubscribeAsync as internal for backward compat during migration
+  internal Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default

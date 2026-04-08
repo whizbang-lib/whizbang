@@ -953,6 +953,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
   private sealed class UncoveredTransport : ITransport, IDisposable {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
     public int SubscribeCallCount { get; private set; }
@@ -983,6 +984,17 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       return Task.FromResult<ISubscription>(new UncoveredSubscription());
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _batchHandler = batchHandler;
+      _subscribeSignal.Release();
+      return Task.FromResult<ISubscription>(new UncoveredSubscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope, TransportDestination destination,
         CancellationToken cancellationToken = default)
@@ -990,7 +1002,9 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       throw new NotSupportedException();
 
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-      if (_handler != null) {
+      if (_batchHandler != null) {
+        await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+      } else if (_handler != null) {
         await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }

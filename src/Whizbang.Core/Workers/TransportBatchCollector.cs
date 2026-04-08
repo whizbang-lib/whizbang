@@ -134,6 +134,19 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       _hardMaxTimer?.Change(Timeout.Infinite, Timeout.Infinite);
     }
 
-    await _flushCallback(batch);
+    try {
+      await _flushCallback(batch);
+    } catch (Exception) {
+      // Re-add failed batch to pending for retry on next flush
+      lock (_lock) {
+        batch.AddRange(_pending);
+        _pending = batch;
+
+        // Restart slide timer so the batch gets retried
+        _slideTimer?.Change(_options.SlideMs, Timeout.Infinite);
+      }
+
+      throw;
+    }
   }
 }

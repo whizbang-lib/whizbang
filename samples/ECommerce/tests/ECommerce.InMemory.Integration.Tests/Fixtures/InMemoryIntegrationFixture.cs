@@ -996,15 +996,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private async Task _setupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
     // Subscribe InventoryWorker to generic topics (topic-00, topic-01)
     // CRITICAL: Must match GenericTopicRoutingStrategy which routes events to these topics
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-00", "inventory-worker"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-01", "inventory-worker"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
@@ -1012,15 +1022,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Subscribe BFF to generic topics (topic-00, topic-01) with different subscription name
     // This simulates independent Service Bus subscriptions for each service
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-00", "bff-service"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-01", "bff-service"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 

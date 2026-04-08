@@ -8,6 +8,7 @@ using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.RabbitMQ;
 
@@ -394,7 +395,52 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   }
 
   /// <inheritdoc />
-  public Task<ISubscription> SubscribeAsync(
+  /// <inheritdoc />
+  /// <remarks>Temporary: wraps per-message SubscribeAsync with batch collector. Will be replaced with native batch implementation.</remarks>
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(batchHandler);
+    ArgumentNullException.ThrowIfNull(destination);
+    ArgumentNullException.ThrowIfNull(batchOptions);
+
+    if (!_isInitialized) {
+      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+    }
+
+    // Temporary: wrap per-message subscribe with batch collector
+    return _subscribeBatchViaDelegateAsync(batchHandler, destination, batchOptions, cancellationToken);
+  }
+
+  private async Task<ISubscription> _subscribeBatchViaDelegateAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken
+  ) {
+    var collector = new TransportBatchCollector<TransportMessage>(
+      batchOptions,
+      batch => batchHandler(batch, CancellationToken.None)
+    );
+
+    var subscription = await _subscribeCoreAsync(
+      (envelope, envelopeType, _) => {
+        collector.Enqueue(new TransportMessage(envelope, envelopeType));
+        return Task.CompletedTask;
+      },
+      destination,
+      cancellationToken
+    );
+
+    return subscription;
+  }
+
+  // Keep SubscribeAsync as internal for backward compat during migration
+  internal Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default

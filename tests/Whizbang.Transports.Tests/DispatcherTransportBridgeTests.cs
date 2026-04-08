@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 using Whizbang.Transports.Tests.Generated;
 
 namespace Whizbang.Transports.Tests;
@@ -40,13 +41,15 @@ public class DispatcherTransportBridgeTests {
     IMessageEnvelope? receivedEnvelope = null;
 
     // Subscribe to the destination to simulate remote service
-    await transport.SubscribeAsync(
-      handler: (envelope, envelopeType, ct) => {
-        messageReceived = true;
-        receivedEnvelope = envelope;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          messageReceived = true;
+          receivedEnvelope = msg.Envelope;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     var message = new TestCommand { Value = 42 };
@@ -78,14 +81,17 @@ public class DispatcherTransportBridgeTests {
 
     byte[]? serializedBytes = null;
 
-    await transport.SubscribeAsync(
-      handler: async (envelope, envelopeType, ct) => {
-        // Verify serialization works
-        serializedBytes = await serializer.SerializeAsync(envelope);
-        var deserialized = await serializer.DeserializeAsync<TestCommand>(serializedBytes);
-        await Assert.That(deserialized).IsNotNull();
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          // Verify serialization works
+          serializedBytes = await serializer.SerializeAsync(msg.Envelope);
+          var deserialized = await serializer.DeserializeAsync<TestCommand>(serializedBytes);
+          await Assert.That(deserialized).IsNotNull();
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     var message = new TestCommand { Value = 42, Name = "Test" };
@@ -110,34 +116,38 @@ public class DispatcherTransportBridgeTests {
     var destination = new TransportDestination("remote-calculator");
 
     // Setup remote responder (simulates remote service)
-    await transport.SubscribeAsync(
-      handler: async (requestEnvelope, envelopeType, ct) => {
-        var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
-        var response = new TestResult { Result = request.Value * 2 };
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          var requestEnvelope = msg.Envelope;
+          var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
+          var response = new TestResult { Result = request.Value * 2 };
 
-        var responseEnvelope = new MessageEnvelope<TestResult> {
-          MessageId = MessageId.New(),
-          Payload = response,
-          Hops = [
-            new MessageHop {
-              ServiceInstance = new ServiceInstanceInfo {
-                ServiceName = "TestService",
-                InstanceId = Guid.NewGuid(),
-                HostName = "test-host",
-                ProcessId = 12345
-              },
-              Timestamp = DateTimeOffset.UtcNow,
-              CorrelationId = requestEnvelope.GetCorrelationId(),
-              CausationId = requestEnvelope.MessageId
-            }
-          ],
-          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-        };
+          var responseEnvelope = new MessageEnvelope<TestResult> {
+            MessageId = MessageId.New(),
+            Payload = response,
+            Hops = [
+              new MessageHop {
+                ServiceInstance = new ServiceInstanceInfo {
+                  ServiceName = "TestService",
+                  InstanceId = Guid.NewGuid(),
+                  HostName = "test-host",
+                  ProcessId = 12345
+                },
+                Timestamp = DateTimeOffset.UtcNow,
+                CorrelationId = requestEnvelope.GetCorrelationId(),
+                CausationId = requestEnvelope.MessageId
+              }
+            ],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+          };
 
-        var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+          var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     var query = new TestQuery { Value = 21 };
@@ -277,12 +287,14 @@ public class DispatcherTransportBridgeTests {
     var correlationId = CorrelationId.New();
 
     IMessageEnvelope? receivedEnvelope = null;
-    await transport.SubscribeAsync(
-      handler: (envelope, envelopeType, ct) => {
-        receivedEnvelope = envelope;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     var message = new TestCommand { Value = 42 };
@@ -313,12 +325,14 @@ public class DispatcherTransportBridgeTests {
     var destination = new TransportDestination("remote-service");
 
     IMessageEnvelope? receivedEnvelope = null;
-    await transport.SubscribeAsync(
-      handler: (envelope, envelopeType, ct) => {
-        receivedEnvelope = envelope;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     var message = new TestCommand { Value = 42 };
@@ -349,35 +363,39 @@ public class DispatcherTransportBridgeTests {
     IMessageEnvelope? receivedRequest = null;
 
     // Setup remote responder
-    await transport.SubscribeAsync(
-      handler: async (requestEnvelope, envelopeType, ct) => {
-        receivedRequest = requestEnvelope;
-        var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
-        var response = new TestResult { Result = request.Value * 2 };
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          var requestEnvelope = msg.Envelope;
+          receivedRequest = requestEnvelope;
+          var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
+          var response = new TestResult { Result = request.Value * 2 };
 
-        var responseEnvelope = new MessageEnvelope<TestResult> {
-          MessageId = MessageId.New(),
-          Payload = response,
-          Hops = [
-            new MessageHop {
-              ServiceInstance = new ServiceInstanceInfo {
-                ServiceName = "TestService",
-                InstanceId = Guid.NewGuid(),
-                HostName = "test-host",
-                ProcessId = 12345
-              },
-              Timestamp = DateTimeOffset.UtcNow,
-              CorrelationId = requestEnvelope.GetCorrelationId(),
-              CausationId = requestEnvelope.MessageId
-            }
-          ],
-          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-        };
+          var responseEnvelope = new MessageEnvelope<TestResult> {
+            MessageId = MessageId.New(),
+            Payload = response,
+            Hops = [
+              new MessageHop {
+                ServiceInstance = new ServiceInstanceInfo {
+                  ServiceName = "TestService",
+                  InstanceId = Guid.NewGuid(),
+                  HostName = "test-host",
+                  ProcessId = 12345
+                },
+                Timestamp = DateTimeOffset.UtcNow,
+                CorrelationId = requestEnvelope.GetCorrelationId(),
+                CausationId = requestEnvelope.MessageId
+              }
+            ],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+          };
 
-        var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+          var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     var query = new TestQuery { Value = 21 };

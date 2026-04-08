@@ -1117,6 +1117,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
   private sealed class DeepCoverageTransport : ITransport {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<DeepCoverageSubscription> _subscriptions = [];
 
     public int SubscribeCallCount { get; private set; }
@@ -1143,6 +1144,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
       return Task.FromResult<ISubscription>(subscription);
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _batchHandler = batchHandler;
+      var subscription = new DeepCoverageSubscription();
+      _subscriptions.Add(subscription);
+      return Task.FromResult<ISubscription>(subscription);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope,
         TransportDestination destination,
@@ -1152,7 +1165,9 @@ public class TransportConsumerWorkerDeepCoverageTests {
       throw new NotSupportedException();
 
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-      if (_handler != null) {
+      if (_batchHandler != null) {
+        await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+      } else if (_handler != null) {
         await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
@@ -1212,6 +1227,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
       return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      if (_shouldFail) {
+        throw new InvalidOperationException("Simulated subscription failure");
+      }
+      return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope,
         TransportDestination destination,
@@ -1243,6 +1270,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public Task<ISubscription> SubscribeAsync(
         Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
         TransportDestination destination,
+        CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _subscribeCallCount);
+      if (_isFailing && _failingTopics.Contains(destination.Address)) {
+        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
+      }
+      return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _subscribeCallCount);
       if (_isFailing && _failingTopics.Contains(destination.Address)) {

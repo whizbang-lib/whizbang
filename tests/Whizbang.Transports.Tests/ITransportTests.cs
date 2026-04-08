@@ -5,6 +5,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.Tests;
 
@@ -54,16 +55,18 @@ public class ITransportTests {
   }
 
   [Test]
-  public async Task ITransport_SubscribeAsync_RegistersHandler_ReturnsSubscriptionAsync() {
+  public async Task ITransport_SubscribeBatchAsync_RegistersHandler_ReturnsSubscriptionAsync() {
     // Arrange
     var transport = _createTestTransport();
     var destination = new TransportDestination("test-topic");
-    Task handler(IMessageEnvelope env, string? envelopeType, CancellationToken ct) {
-      return Task.CompletedTask;
-    }
 
     // Act
-    var subscription = await transport.SubscribeAsync(handler, destination, CancellationToken.None);
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
+      CancellationToken.None
+    );
 
     // Assert
     await Assert.That(subscription).IsNotNull();

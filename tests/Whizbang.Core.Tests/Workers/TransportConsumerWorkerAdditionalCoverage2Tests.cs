@@ -846,6 +846,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
   private sealed class Cov2Transport : ITransport, IDisposable {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
     public int SubscribeCallCount { get; private set; }
@@ -884,6 +885,17 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       return Task.FromResult<ISubscription>(new Cov2Subscription());
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _batchHandler = batchHandler;
+      _subscribeSignal.Release();
+      return Task.FromResult<ISubscription>(new Cov2Subscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope, TransportDestination destination,
         CancellationToken cancellationToken = default)
@@ -891,7 +903,9 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       throw new NotSupportedException();
 
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-      if (_handler != null) {
+      if (_batchHandler != null) {
+        await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+      } else if (_handler != null) {
         await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
@@ -938,6 +952,16 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
         CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
       _handler = handler;
+      _subscribeSignal.Release();
+      return Task.FromResult<ISubscription>(new Cov2Subscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
       _subscribeSignal.Release();
       return Task.FromResult<ISubscription>(new Cov2Subscription());
     }
