@@ -415,7 +415,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     return _subscribeBatchCoreAsync(batchHandler, destination, batchOptions, cancellationToken);
   }
 
-  private readonly record struct PendingRabbitMessage(IChannel Channel, BasicDeliverEventArgs Args, string QueueName);
+  /// <summary>
+  /// Pending message with a COPIED body. BasicDeliverEventArgs.Body is a ReadOnlyMemory&lt;byte&gt;
+  /// backed by a shared buffer that RabbitMQ recycles after ReceivedAsync returns Task.CompletedTask.
+  /// We must copy the body before the buffer is recycled.
+  /// </summary>
+  private readonly record struct PendingRabbitMessage(IChannel Channel, BasicDeliverEventArgs Args, byte[] BodyCopy, string QueueName);
 
   private async Task<ISubscription> _subscribeBatchCoreAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -468,7 +473,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         return _nackPausedMessageAsync(channel, args, queueName);
       }
 
-      collector.Enqueue(new PendingRabbitMessage(channel, args, queueName));
+      // Copy body BEFORE returning — RabbitMQ recycles the buffer after this handler returns
+      var bodyCopy = args.Body.ToArray();
+      collector.Enqueue(new PendingRabbitMessage(channel, args, bodyCopy, queueName));
       return Task.CompletedTask; // Non-blocking — lets ConsumerDispatchConcurrency=1 dispatch next immediately
     };
 
@@ -526,7 +533,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     foreach (var pending in pendingMessages) {
       try {
-        var envelope = _deserializeMessage(pending.Args, out var envelopeTypeName);
+        var envelope = _deserializeMessageFromBody(pending.Args, pending.BodyCopy, out var envelopeTypeName);
         if (envelope == null) {
           await _nackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
           continue;
@@ -998,6 +1005,50 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <summary>
   /// Deserializes a message from RabbitMQ delivery args.
   /// </summary>
+  /// <summary>
+  /// Deserializes from a copied body (batch path — original buffer may have been recycled).
+  /// </summary>
+  private IMessageEnvelope? _deserializeMessageFromBody(BasicDeliverEventArgs args, byte[] body, out string? envelopeTypeName) {
+    envelopeTypeName = null;
+
+    if (body.Length == 0) {
+      _logger?.LogError("Message {MessageId} has an empty body; skipping",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID);
+      return null;
+    }
+
+    // Get envelope type from headers
+    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+        envelopeTypeObj is not byte[] envelopeTypeBytes) {
+      _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
+      return null;
+    }
+
+    envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
+    var json = Encoding.UTF8.GetString(body);
+
+    if (string.IsNullOrWhiteSpace(json) || json[0] == '\0') {
+      var hex = Convert.ToHexString(body.AsSpan(0, Math.Min(8, body.Length)));
+      _logger?.LogError("Message {MessageId} body is not valid JSON (starts with 0x{Hex}); skipping",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, hex);
+      return null;
+    }
+
+    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    if (typeInfo == null) {
+      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+      return null;
+    }
+
+    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
+      _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
+        args.BasicProperties.MessageId, envelopeTypeName);
+      return null;
+    }
+
+    return envelope;
+  }
+
   private IMessageEnvelope? _deserializeMessage(BasicDeliverEventArgs args, out string? envelopeTypeName) {
     envelopeTypeName = null;
 
