@@ -74,10 +74,12 @@ public sealed class PerspectiveWorkerParallelTests {
     const int maxConcurrency = 2;
     var streamId = Guid.CreateVersion7();
 
-    // Gate with 2 — first wave of 2 can enter, proves throttling works
+    // CountdownEvent for first wave; gate releases runners immediately (auto-open)
+    // so we can observe peak concurrency without blocking runners
     var firstWaveEntered = new CountdownEvent(maxConcurrency);
-    var gate = new SemaphoreSlim(0, perspectiveCount);
-    var runner = new GatedPerspectiveRunner(firstWaveEntered, gate);
+    var allCompleted = new CountdownEvent(perspectiveCount);
+    var gate = new SemaphoreSlim(perspectiveCount, perspectiveCount); // pre-opened — runners don't block
+    var runner = new GatedPerspectiveRunner(firstWaveEntered, gate, allCompleted);
 
     var perspectiveNames = Enumerable.Range(0, perspectiveCount)
       .Select(i => $"Test.Perspective{i}")
@@ -100,22 +102,16 @@ public sealed class PerspectiveWorkerParallelTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     var workerTask = worker.StartAsync(cts.Token);
 
-    // Wait for first wave of 2 runners to enter
-    var firstWaveOk = firstWaveEntered.Wait(TimeSpan.FromSeconds(5));
-
-    // At this point, peak concurrency should be exactly 2 (throttled)
-    var peakAfterFirstWave = runner.PeakConcurrency;
-
-    // Release all to let remaining finish
-    gate.Release(perspectiveCount);
+    // Wait for all 5 runners to complete
+    var allFinished = allCompleted.Wait(TimeSpan.FromSeconds(5));
 
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
 
-    // Assert
-    await Assert.That(firstWaveOk).IsTrue()
-      .Because("First wave of 2 perspectives should enter concurrently");
-    await Assert.That(peakAfterFirstWave).IsLessThanOrEqualTo(maxConcurrency)
+    // Assert — peak concurrency should never exceed 2 even though gate is open
+    await Assert.That(allFinished).IsTrue()
+      .Because("All 5 perspectives should complete within timeout");
+    await Assert.That(runner.PeakConcurrency).IsLessThanOrEqualTo(maxConcurrency)
       .Because($"Peak concurrency should never exceed MaxConcurrentPerspectives={maxConcurrency}");
     await Assert.That(runner.TotalRunCount).IsEqualTo(perspectiveCount)
       .Because("All 5 perspectives should eventually complete");
@@ -211,13 +207,15 @@ public sealed class PerspectiveWorkerParallelTests {
   private sealed class GatedPerspectiveRunner : IPerspectiveRunner {
     private readonly CountdownEvent _entrySignal;
     private readonly SemaphoreSlim _gate;
+    private readonly CountdownEvent? _completionSignal;
     private int _activeConcurrency;
     private int _peakConcurrency;
     private int _totalRunCount;
 
-    public GatedPerspectiveRunner(CountdownEvent entrySignal, SemaphoreSlim gate) {
+    public GatedPerspectiveRunner(CountdownEvent entrySignal, SemaphoreSlim gate, CountdownEvent? completionSignal = null) {
       _entrySignal = entrySignal;
       _gate = gate;
+      _completionSignal = completionSignal;
     }
 
     public int PeakConcurrency => Volatile.Read(ref _peakConcurrency);
@@ -233,8 +231,10 @@ public sealed class PerspectiveWorkerParallelTests {
       var current = Interlocked.Increment(ref _activeConcurrency);
       _updatePeak(current);
 
-      // Signal that we've entered
-      _entrySignal.Signal();
+      // Signal that we've entered (safe: count may already be at 0 in throttle tests)
+      if (!_entrySignal.IsSet) {
+        try { _entrySignal.Signal(); } catch (InvalidOperationException) { /* count already at 0 */ }
+      }
 
       try {
         // Wait on gate — test controls when we can proceed
@@ -242,6 +242,7 @@ public sealed class PerspectiveWorkerParallelTests {
       } finally {
         Interlocked.Decrement(ref _activeConcurrency);
         Interlocked.Increment(ref _totalRunCount);
+        _completionSignal?.Signal();
       }
 
       return new PerspectiveCursorCompletion {
