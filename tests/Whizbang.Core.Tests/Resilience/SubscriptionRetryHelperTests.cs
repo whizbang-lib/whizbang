@@ -127,7 +127,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert
@@ -150,7 +150,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert
@@ -173,7 +173,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert
@@ -197,7 +197,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act & Assert - TaskCanceledException is a subclass of OperationCanceledException
     await Assert.That(() => SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, cts.Token))
       .Throws<OperationCanceledException>();
   }
@@ -216,7 +216,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should end up Healthy but IncrementAttempt should have been called
@@ -237,7 +237,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - subscribe successfully
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -267,7 +267,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - subscribe successfully
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -299,7 +299,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - subscribe successfully
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Trigger disconnect with exception
@@ -334,7 +334,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - this will go through attempts 1-16, succeeding on 16
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should succeed after 16 attempts
@@ -353,7 +353,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should succeed (logs would use "#" as default routing key)
@@ -375,7 +375,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should log "established after N attempts" since attempt > 1

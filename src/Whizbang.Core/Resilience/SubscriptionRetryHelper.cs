@@ -24,6 +24,7 @@ public static partial class SubscriptionRetryHelper {
     ITransport Transport,
     TransportDestination Destination,
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> BatchHandler,
+    TransportBatchOptions BatchOptions,
     SubscriptionState State,
     SubscriptionResilienceOptions Options,
     ILogger Logger);
@@ -52,6 +53,7 @@ public static partial class SubscriptionRetryHelper {
     ITransport transport,
     TransportDestination destination,
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportBatchOptions batchOptions,
     SubscriptionState state,
     SubscriptionResilienceOptions options,
     ILogger logger,
@@ -74,13 +76,13 @@ public static partial class SubscriptionRetryHelper {
         var subscription = await transport.SubscribeBatchAsync(
           batchHandler,
           destination,
-          new TransportBatchOptions(),
+          batchOptions,
           cancellationToken
         );
         state.Subscription = subscription;
         state.Status = SubscriptionStatus.Healthy;
 
-        var subscriptionCtx = new SubscriptionContext(transport, destination, batchHandler, state, options, logger);
+        var subscriptionCtx = new SubscriptionContext(transport, destination, batchHandler, batchOptions, state, options, logger);
         _hookDisconnectionReconnect(subscription, subscriptionCtx, cancellationToken);
         _logSubscriptionSuccess(logger, destination, attempt);
 
@@ -118,7 +120,7 @@ public static partial class SubscriptionRetryHelper {
       _ = Task.Run(async () => {
         try {
           await Task.Delay(ctx.Options.InitialRetryDelay, cancellationToken);
-          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
+          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.BatchOptions, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
         } catch (OperationCanceledException) {
           // Shutdown - ignore
         } catch (Exception ex) {

@@ -58,6 +58,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly string? _serviceName;
   private readonly SemaphoreSlim? _concurrencySemaphore;
   private readonly IInboxBatchStrategy? _inboxBatchStrategy;
+  private readonly TransportBatchOptions _transportBatchOptions;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -94,7 +95,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
     IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
-    IInboxBatchStrategy? inboxBatchStrategy = null
+    IInboxBatchStrategy? inboxBatchStrategy = null,
+    TransportBatchOptions? transportBatchOptions = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -117,6 +119,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
     _inboxBatchStrategy = inboxBatchStrategy;
+    _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
@@ -273,6 +276,7 @@ public partial class TransportConsumerWorker : BackgroundService {
           }
         }
       },
+      _transportBatchOptions,
       state,
       _resilienceOptions,
       _logger,
