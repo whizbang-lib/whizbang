@@ -200,6 +200,9 @@ public static class TransportConsumerBuilderExtensions {
     // Register MessageProcessingOptions (consumer can override by registering before this)
     builder.Services.TryAddSingleton(new MessageProcessingOptions());
 
+    // Register TransportBatchOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new TransportBatchOptions());
+
     // Register default IInboxBatchStrategy (consumer can override by registering before this)
     builder.Services.TryAddSingleton<IInboxBatchStrategy>(sp => {
       var options = sp.GetRequiredService<MessageProcessingOptions>();
@@ -330,6 +333,9 @@ public static class TransportConsumerBuilderExtensions {
 
     // Register MessageProcessingOptions (consumer can override by registering before this)
     builder.Services.TryAddSingleton(new MessageProcessingOptions());
+
+    // Register TransportBatchOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new TransportBatchOptions());
 
     // Register default IInboxBatchStrategy (consumer can override by registering before this)
     builder.Services.TryAddSingleton<IInboxBatchStrategy>(sp => {
