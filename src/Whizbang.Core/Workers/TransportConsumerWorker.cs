@@ -264,7 +264,13 @@ public partial class TransportConsumerWorker : BackgroundService {
       state.Destination,
       async (batch, ct) => {
         foreach (var msg in batch) {
-          await _handleMessageAsync(msg.Envelope, msg.EnvelopeType, ct);
+          try {
+            await _handleMessageAsync(msg.Envelope, msg.EnvelopeType, ct);
+          } catch (OperationCanceledException) {
+            throw; // Don't swallow cancellation
+          } catch (Exception ex) {
+            _logger.LogError(ex, "Error processing message {MessageId} in batch — skipping", msg.Envelope.MessageId);
+          }
         }
       },
       state,
