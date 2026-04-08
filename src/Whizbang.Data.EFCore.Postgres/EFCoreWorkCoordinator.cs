@@ -8,6 +8,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 
@@ -1051,8 +1052,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
             orphaned.Add(new OrphanedLifecycleEvent(row.EventId, row.StreamId, envelope));
           } catch (Exception ex) {
             if (_logger?.IsEnabled(LogLevel.Warning) == true) {
-              var eventId = row.EventId;
-              _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} for reconciliation", eventId);
+              _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} (type: {EventType}) for reconciliation", row.EventId, row.EventType);
             }
           }
         }
@@ -1088,31 +1088,80 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cancellationToken);
   }
 
-  private MessageEnvelope<IEvent> _deserializeEventEnvelope(OrphanedEventRow row) {
-    // Deserialize from event_store columns into a MessageEnvelope
-    var eventData = row.EventData;
-    var metadata = row.Metadata;
-
-    // The event_type column contains the CLR type key: "FullName, AssemblyName"
-    var eventTypeInfo = _jsonOptions.GetTypeInfo(typeof(IEvent));
-    var payload = eventTypeInfo is not null
-      ? (IEvent?)System.Text.Json.JsonSerializer.Deserialize(eventData, eventTypeInfo)
-      : null;
-
-    if (payload is null) {
-      throw new InvalidOperationException(
-        $"Failed to deserialize event {row.EventId} of type {row.EventType}");
+  /// <summary>
+  /// Deserializes an orphaned event row from the event store into a MessageEnvelope with JsonElement payload.
+  /// Falls back to JsonDocument.Parse when the type resolver returns incompatible type info.
+  /// </summary>
+  /// <docs>fundamentals/events/event-store-serialization</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_DeserializesOrphanedEvent_AsJsonElementAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_FallsBackToJsonDocumentParse_WhenTypeResolverFailsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_DeserializesEventData_WithTypeDiscriminatorAsync</tests>
+  private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
+    // Deserialize event_data as JsonElement for AOT compatibility — same pattern as _deserializeEnvelope.
+    // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
+    JsonElement payload;
+    try {
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for JsonElement.");
+      payload = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event {row.EventId} as JsonElement."));
+    } catch (NotSupportedException) {
+      // Fallback: deserializing an interface/abstract type is not supported.
+      // The chained type resolver may return polymorphic IEvent type info.
+      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+    } catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible JsonTypeInfo")) {
+      // Fallback: the type resolver returned a JsonTypeInfo for a different type
+      // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
+      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
     }
 
-    return new MessageEnvelope<IEvent> {
+    // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
+    // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.
+    var hops = _buildHopsFromScope(row.Scope);
+
+    return new MessageEnvelope<JsonElement> {
       MessageId = new MessageId(row.EventId),
       Payload = payload,
-      Hops = [],
+      Hops = hops,
       DispatchContext = new MessageDispatchContext {
         Mode = DispatchModes.Local,
         Source = MessageSource.Local
       }
     };
+  }
+
+  private List<MessageHop> _buildHopsFromScope(string? scopeJson) {
+    if (string.IsNullOrEmpty(scopeJson)) {
+      return [];
+    }
+
+    try {
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for JsonElement.");
+      var scopeElement = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(scopeJson, typeInfo)!);
+
+      string? tenantId = null;
+      string? userId = null;
+
+      if (scopeElement.TryGetProperty("t", out var t) && t.ValueKind == JsonValueKind.String) {
+        tenantId = t.GetString();
+      }
+      if (scopeElement.TryGetProperty("u", out var u) && u.ValueKind == JsonValueKind.String) {
+        userId = u.GetString();
+      }
+
+      if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+        return [new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId })
+        }];
+      }
+    } catch {
+      // Scope parsing is best-effort for reconciliation
+    }
+
+    return [];
   }
 
   private static Guid _instanceId() {

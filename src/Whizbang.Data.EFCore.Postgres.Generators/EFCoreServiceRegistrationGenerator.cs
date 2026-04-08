@@ -880,19 +880,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     return typeName switch {
       "System.Guid" => "UUID",
-      "System.String" => "TEXT",
-      "System.Int32" => "INTEGER",
-      "System.Int64" => "BIGINT",
-      "System.Int16" => "SMALLINT",
-      "System.Boolean" => "BOOLEAN",
+      "System.String" or "string" => "TEXT",
+      "System.Int32" or "int" => "INTEGER",
+      "System.Int64" or "long" => "BIGINT",
+      "System.Int16" or "short" => "SMALLINT",
+      "System.Boolean" or "bool" => "BOOLEAN",
       "System.DateTime" => "TIMESTAMPTZ",
       "System.DateTimeOffset" => "TIMESTAMPTZ",
       "System.DateOnly" => "DATE",
       "System.TimeOnly" => "TIME",
-      "System.Decimal" => "NUMERIC",
-      "System.Double" => "DOUBLE PRECISION",
-      "System.Single" => "REAL",
-      "System.Byte[]" => "BYTEA",
+      "System.Decimal" or "decimal" => "NUMERIC",
+      "System.Double" or "double" => "DOUBLE PRECISION",
+      "System.Single" or "float" => "REAL",
+      "System.Byte[]" or "byte[]" => "BYTEA",
       "float[]" => "REAL[]", // Array of floats
       "double[]" => "DOUBLE PRECISION[]",
       _ => "TEXT" // Default to TEXT for unknown types
