@@ -57,7 +57,6 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly SemaphoreSlim? _concurrencySemaphore;
-  private readonly IInboxBatchStrategy? _inboxBatchStrategy;
   private readonly TransportBatchOptions _transportBatchOptions;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
@@ -95,7 +94,6 @@ public partial class TransportConsumerWorker : BackgroundService {
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
     IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
-    IInboxBatchStrategy? inboxBatchStrategy = null,
     TransportBatchOptions? transportBatchOptions = null
   ) {
 #pragma warning restore S107
@@ -118,7 +116,6 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
-    _inboxBatchStrategy = inboxBatchStrategy;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
@@ -406,15 +403,8 @@ public partial class TransportConsumerWorker : BackgroundService {
 
       _populateDeliveredAtTimestamp(envelope, envelopeType);
 
-      // 1. Serialize and deduplicate — use batch strategy if available, otherwise per-message flush
-      List<InboxWork> myWork;
-      if (_inboxBatchStrategy is not null) {
-        var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
-        var workBatch = await _inboxBatchStrategy.EnqueueAndWaitAsync(newInboxMessage, cancellationToken);
-        myWork = [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
-      } else {
-        myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
-      }
+      // Serialize and deduplicate via per-message flush
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
 
       if (myWork.Count == 0) {
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
