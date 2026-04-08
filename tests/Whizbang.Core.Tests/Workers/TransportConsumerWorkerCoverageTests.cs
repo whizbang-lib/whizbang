@@ -444,10 +444,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - null envelope type should cause InvalidOperationException
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType: null);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType: null);
 
     cts.Cancel();
   }
@@ -486,10 +484,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - empty envelope type should cause InvalidOperationException
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType: "");
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType: "");
 
     cts.Cancel();
   }
@@ -534,10 +530,8 @@ public class TransportConsumerWorkerCoverageTests {
     // Invalid format - no [[ ]] delimiters
     const string invalidEnvelopeType = "SomeType.Without.Brackets";
 
-    // Act & Assert
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, invalidEnvelopeType);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, invalidEnvelopeType);
 
     cts.Cancel();
   }
@@ -808,10 +802,8 @@ public class TransportConsumerWorkerCoverageTests {
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act & Assert - exception should propagate
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the exception (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }

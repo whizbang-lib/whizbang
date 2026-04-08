@@ -167,10 +167,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
-    // Act & Assert - exercises InboxMessagesFailed counter, activity error tags, and InboxReceiveDuration in finally
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the exception; InboxMessagesFailed counter, activity error tags, and InboxReceiveDuration in finally are still exercised
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -347,10 +345,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var envelope = _createJsonEnvelopeWithStreamId(messageId, Guid.Empty);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.Workers.TransportConsumerWorkerUncoveredPathsTests+UncoveredTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
-    // Act & Assert - StreamIdGuard.ThrowIfEmpty should fire
-    await Assert.ThrowsAsync<InvalidStreamIdException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the InvalidStreamIdException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -580,10 +576,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - null envelopeType should throw (guard clause in _serializeToNewInboxMessage)
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, null);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, null);
 
     cts.Cancel();
   }
@@ -625,10 +619,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - will throw but exercises "Unknown" message type with metrics
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, null);
-    });
+    // Act - per-message error isolation catches the exception; "Unknown" message type with metrics is still exercised
+    await transport.SimulateMessageReceivedAsync(envelope, null);
 
     cts.Cancel();
   }

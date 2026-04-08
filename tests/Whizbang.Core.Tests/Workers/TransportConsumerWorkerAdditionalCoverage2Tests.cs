@@ -139,10 +139,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
-    // Act & Assert - should throw InvalidOperationException about JsonElement payload mismatch
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -315,10 +313,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       }]
     };
 
-    // Act & Assert - null envelopeType skips timestamp, then throws on serialization
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, null);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, null);
 
     cts.Cancel();
   }
@@ -614,10 +610,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.Cov2TestCommand, TestApp]], Whizbang.Core";
 
-    // Act & Assert - should throw because IEnvelopeSerializer is required but not registered
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }

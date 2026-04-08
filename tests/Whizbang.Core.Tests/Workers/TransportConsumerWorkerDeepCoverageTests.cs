@@ -450,10 +450,8 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act & Assert
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the exception (Activity error tags still set internally)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -493,10 +491,8 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - whitespace envelopeType hits guard clause
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, "   ");
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, "   ");
 
     cts.Cancel();
   }

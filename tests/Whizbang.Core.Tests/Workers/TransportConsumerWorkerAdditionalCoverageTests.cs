@@ -236,10 +236,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, traceParent);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act & Assert - exception should propagate, Activity error path exercised
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the exception (Activity error path still exercised internally)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -401,10 +399,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var envelope = new NonJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act & Assert - will throw because no IEnvelopeSerializer registered, but _populateDeliveredAtTimestamp is exercised first
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the exception; _populateDeliveredAtTimestamp is exercised first
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -598,10 +594,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var envelope = _createJsonEnvelope(messageId);
     const string invalidType = "Type]]BadOrder[[";
 
-    // Act & Assert
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, invalidType);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, invalidType);
 
     cts.Cancel();
   }
@@ -641,10 +635,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var envelope = _createJsonEnvelope(messageId);
     const string emptyTypeEnvelope = "Type[[ ]]";
 
-    // Act & Assert
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, emptyTypeEnvelope);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, emptyTypeEnvelope);
 
     cts.Cancel();
   }
