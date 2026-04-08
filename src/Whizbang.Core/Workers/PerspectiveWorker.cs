@@ -1604,7 +1604,7 @@ public partial class PerspectiveWorker(
   /// <docs>operations/workers/perspective-worker#security-context</docs>
   /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
   private static async ValueTask _establishSecurityContextAsync(
-      MessageEnvelope<IEvent> envelope,
+      IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
 
