@@ -1038,6 +1038,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
   private sealed class AdditionalCoverageTransport : ITransport {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<AdditionalCoverageSubscription> _subscriptions = [];
 
     public int SubscribeCallCount { get; private set; }
@@ -1064,6 +1065,18 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       return Task.FromResult<ISubscription>(subscription);
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _batchHandler = batchHandler;
+      var subscription = new AdditionalCoverageSubscription();
+      _subscriptions.Add(subscription);
+      return Task.FromResult<ISubscription>(subscription);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope,
         TransportDestination destination,
@@ -1073,7 +1086,9 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       throw new NotSupportedException();
 
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-      if (_handler != null) {
+      if (_batchHandler != null) {
+        await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+      } else if (_handler != null) {
         await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
@@ -1130,6 +1145,17 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       return Task.FromResult<ISubscription>(subscription);
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      var subscription = new AdditionalCoverageSubscription();
+      _subscriptions.Add(subscription);
+      return Task.FromResult<ISubscription>(subscription);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope,
         TransportDestination destination,
@@ -1157,6 +1183,18 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     public Task<ISubscription> SubscribeAsync(
         Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
         TransportDestination destination,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      if (_failingTopics.Contains(destination.Address)) {
+        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
+      }
+      return Task.FromResult<ISubscription>(new AdditionalCoverageSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
       if (_failingTopics.Contains(destination.Address)) {

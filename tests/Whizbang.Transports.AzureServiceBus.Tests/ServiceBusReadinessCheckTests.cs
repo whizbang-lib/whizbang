@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
@@ -141,6 +142,13 @@ internal sealed class TestTransport(bool isInitialized) : ITransport {
   public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
+
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default)
     where TRequest : notnull where TResponse : notnull {

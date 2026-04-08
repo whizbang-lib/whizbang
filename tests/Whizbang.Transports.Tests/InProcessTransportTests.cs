@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.Tests;
 
@@ -87,12 +88,14 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     IMessageEnvelope? receivedEnvelope = null;
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        receivedEnvelope = env;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -116,12 +119,14 @@ public class InProcessTransportTests {
     var invocations = new ConcurrentBag<int>();
     for (int i = 0; i < subscriberCount; i++) {
       var index = i;
-      await transport.SubscribeAsync(
-        handler: (env, envelopeType, ct) => {
-          invocations.Add(index);
-          return Task.CompletedTask;
+      await transport.SubscribeBatchAsync(
+        async (batch, ct) => {
+          foreach (var msg in batch) {
+            invocations.Add(index);
+          }
         },
-        destination: destination
+        destination,
+        new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
       );
     }
 
@@ -159,20 +164,24 @@ public class InProcessTransportTests {
     var topic1Invoked = false;
     var topic2Invoked = false;
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        topic1Invoked = true;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          topic1Invoked = true;
+        }
       },
-      destination: destination1
+      destination1,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        topic2Invoked = true;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          topic2Invoked = true;
+        }
       },
-      destination: destination2
+      destination2,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -184,19 +193,20 @@ public class InProcessTransportTests {
   }
 
   // ============================================================================
-  // SubscribeAsync Tests
+  // SubscribeBatchAsync Tests
   // ============================================================================
 
   [Test]
-  public async Task SubscribeAsync_ReturnsActiveSubscriptionAsync() {
+  public async Task SubscribeBatchAsync_ReturnsActiveSubscriptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
 
     // Act
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Assert
@@ -205,7 +215,7 @@ public class InProcessTransportTests {
   }
 
   [Test]
-  public async Task SubscribeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SubscribeBatchAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
@@ -213,10 +223,11 @@ public class InProcessTransportTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(async () => await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination,
-      cancellationToken: cts.Token
+    await Assert.That(async () => await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
+      cts.Token
     )).Throws<OperationCanceledException>();
   }
 
@@ -247,12 +258,14 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handlerInvoked = true;
-        return Task.CompletedTask;
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          handlerInvoked = true;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Set subscription state
@@ -277,9 +290,10 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -294,9 +308,10 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     await subscription.PauseAsync();
@@ -316,12 +331,14 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handlerInvoked = true;
-        return Task.CompletedTask;
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          handlerInvoked = true;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -338,9 +355,10 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act & Assert - Should not throw
@@ -364,13 +382,16 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     // Setup responder
-    await transport.SubscribeAsync(
-      handler: async (env, envelopeType, ct) => {
-        // Simulate responder sending response
-        var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          // Simulate responder sending response
+          var responseDestination = new TransportDestination($"response-{msg.Envelope.MessageId.Value}");
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -427,12 +448,14 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
     var invocations = new ConcurrentBag<MessageId>();
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        invocations.Add(env.MessageId);
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          invocations.Add(msg.Envelope.MessageId);
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act - Publish concurrently
@@ -452,7 +475,7 @@ public class InProcessTransportTests {
   [Test]
   [Arguments(10)]
   [Arguments(25)]
-  public async Task SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync(int concurrentSubscriptions) {
+  public async Task SubscribeBatchAsync_ConcurrentSubscriptions_AllRegisteredAsync(int concurrentSubscriptions) {
     // Arrange
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
@@ -461,12 +484,14 @@ public class InProcessTransportTests {
 
     // Act - Subscribe concurrently
     var subscribeTasks = Enumerable.Range(0, concurrentSubscriptions)
-      .Select(index => transport.SubscribeAsync(
-        handler: (env, envelopeType, ct) => {
-          invocations.Add(index);
-          return Task.CompletedTask;
+      .Select(index => transport.SubscribeBatchAsync(
+        async (batch, ct) => {
+          foreach (var msg in batch) {
+            invocations.Add(index);
+          }
         },
-        destination: destination
+        destination,
+        new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
       ))
       .ToArray();
 
@@ -490,9 +515,10 @@ public class InProcessTransportTests {
     // Act - Subscribe and dispose concurrently
     var tasks = Enumerable.Range(0, 50)
       .Select(async _ => {
-        var subscription = await transport.SubscribeAsync(
-          handler: (env, envelopeType, ct) => Task.CompletedTask,
-          destination: destination
+        var subscription = await transport.SubscribeBatchAsync(
+          async (batch, ct) => { },
+          destination,
+          new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
         );
         subscriptions.Add(subscription);
 
@@ -523,17 +549,21 @@ public class InProcessTransportTests {
 
     var handler1Invoked = false;
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handler1Invoked = true;
-        throw new InvalidOperationException("Handler 1 failed");
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          handler1Invoked = true;
+          throw new InvalidOperationException("Handler 1 failed");
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act & Assert - Should throw from first handler

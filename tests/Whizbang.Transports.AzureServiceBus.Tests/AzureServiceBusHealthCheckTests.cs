@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Transports.AzureServiceBus.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -76,6 +77,13 @@ public class AzureServiceBusHealthCheckTests(ServiceBusEmulatorFixtureSource fix
       TransportDestination destination,
       CancellationToken cancellationToken = default
     ) => throw new NotImplementedException();
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,

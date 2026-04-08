@@ -97,9 +97,14 @@ public partial class ServiceBusConsumerWorker(
           metadata
         );
 
-        var subscription = await _transport.SubscribeAsync(
-          async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
+        var subscription = await _transport.SubscribeBatchAsync(
+          async (batch, ct) => {
+            foreach (var msg in batch) {
+              await _handleMessageAsync(msg.Envelope, msg.EnvelopeType, ct);
+            }
+          },
           destination,
+          new TransportBatchOptions(),
           cancellationToken
         );
 

@@ -154,6 +154,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
   private sealed class StubTransport : ITransport, IDisposable {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
     public bool IsInitialized => true;
@@ -167,7 +168,9 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-      if (_handler != null) {
+      if (_batchHandler != null) {
+        await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+      } else if (_handler != null) {
         await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
@@ -179,6 +182,15 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination, CancellationToken cancellationToken = default) {
       _handler = handler;
+      _subscribeSignal.Release();
+      return Task.FromResult<ISubscription>(new StubSubscription());
+    }
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      _batchHandler = batchHandler;
       _subscribeSignal.Release();
       return Task.FromResult<ISubscription>(new StubSubscription());
     }

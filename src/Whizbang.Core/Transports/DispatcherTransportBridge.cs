@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Transports;
 
@@ -155,17 +156,20 @@ public class DispatcherTransportBridge(
     TransportDestination destination
   ) where TMessage : notnull {
     // Subscribe to transport and route to dispatcher
-    return await _transport.SubscribeAsync(
-      handler: async (envelope, envelopeType, ct) => {
-        // Extract message from envelope
-        var typedEnvelope = (MessageEnvelope<TMessage>)envelope;
-        var message = typedEnvelope.Payload;
+    return await _transport.SubscribeBatchAsync(
+      batchHandler: async (batch, ct) => {
+        foreach (var msg in batch) {
+          // Extract message from envelope
+          var typedEnvelope = (MessageEnvelope<TMessage>)msg.Envelope;
+          var message = typedEnvelope.Payload;
 
-        // Route to local dispatcher
-        // We await to ensure the message is fully processed before acknowledging
-        await _dispatcher.SendAsync(message);
+          // Route to local dispatcher
+          // We await to ensure the message is fully processed before acknowledging
+          await _dispatcher.SendAsync(message);
+        }
       },
       destination: destination,
+      batchOptions: new TransportBatchOptions(),
       cancellationToken: CancellationToken.None
     );
   }

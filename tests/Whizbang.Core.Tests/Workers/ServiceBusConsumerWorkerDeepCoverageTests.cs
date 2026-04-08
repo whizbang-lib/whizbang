@@ -1277,6 +1277,18 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      LastDestination = destination;
+      var sub = new DeepCoverageSubscription();
+      CreatedSubscriptions.Add(sub);
+      return Task.FromResult<ISubscription>(sub);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
       TransportDestination destination, CancellationToken cancellationToken = default)
       where TRequest : notnull where TResponse : notnull =>
@@ -1308,6 +1320,13 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       CapturedHandler = handler;
       return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
     }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
 
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;

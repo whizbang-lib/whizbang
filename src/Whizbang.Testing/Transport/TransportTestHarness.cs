@@ -69,9 +69,14 @@ public sealed class TransportTestHarness<TPayload>(
       );
 
     // Subscribe
-    var subscription = await _transport.SubscribeAsync(
-      handler,
+    var subscription = await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await handler(msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       subscribeDestination,
+      new Whizbang.Core.Workers.TransportBatchOptions(),
       cancellationToken
     );
     _subscriptions.Add(subscription);

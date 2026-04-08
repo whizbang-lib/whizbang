@@ -434,6 +434,13 @@ public class TestTransport : Whizbang.Core.Transports.ITransport {
     throw new NotImplementedException("SubscribeAsync not needed for outbox tests");
   }
 
+  public Task<Whizbang.Core.Transports.ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<Whizbang.Core.Transports.TransportMessage>, CancellationToken, Task> batchHandler,
+    Whizbang.Core.Transports.TransportDestination destination,
+    Whizbang.Core.Workers.TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
+
   public Task<Whizbang.Core.Observability.IMessageEnvelope> SendAsync<TRequest, TResponse>(
     Whizbang.Core.Observability.IMessageEnvelope envelope,
     Whizbang.Core.Transports.TransportDestination destination,
