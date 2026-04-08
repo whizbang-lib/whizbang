@@ -79,6 +79,14 @@ public static class PostgresDriverExtensions {
         // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
         PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
 
+        // TURNKEY: Register perspective snapshot store for efficient rewind
+        // Uses NpgsqlDataSource for connection management (same as readiness check)
+        selector.Services.TryAddSingleton<IPerspectiveSnapshotStore>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          var snapshotLogger = sp.GetService<ILogger<EFCorePerspectiveSnapshotStore>>();
+          return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
+        });
+
         // Register IDatabaseReadinessCheck - CRITICAL for resilient worker startup
         // Uses NpgsqlDataSource directly to create connections (avoids password stripping bug)
         // This ensures workers wait for database schema to be ready before processing
