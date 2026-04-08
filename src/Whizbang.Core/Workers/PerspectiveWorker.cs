@@ -2205,6 +2205,14 @@ public class PerspectiveWorkerOptions {
   public int PerspectiveBatchSize { get; set; } = 100;
 
   /// <summary>
+  /// Maximum number of perspective groups to process concurrently within a single batch.
+  /// Higher values improve throughput when multiple perspectives/streams have pending work.
+  /// Different (streamId, perspectiveName) pairs are independent and can safely run in parallel.
+  /// Default: 10
+  /// </summary>
+  public int MaxConcurrentPerspectives { get; set; } = 10;
+
+  /// <summary>
   /// Retry configuration for completion acknowledgement.
   /// Controls exponential backoff when ProcessWorkBatchAsync fails.
   /// </summary>
