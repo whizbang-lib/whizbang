@@ -396,7 +396,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
   /// <inheritdoc />
   /// <inheritdoc />
-  /// <remarks>Temporary: wraps per-message SubscribeAsync with batch collector. Will be replaced with native batch implementation.</remarks>
+  /// <docs>messaging/transports/rabbitmq#batch-subscribe</docs>
   public Task<ISubscription> SubscribeBatchAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
@@ -412,31 +412,172 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
     }
 
-    // Temporary: wrap per-message subscribe with batch collector
-    return _subscribeBatchViaDelegateAsync(batchHandler, destination, batchOptions, cancellationToken);
+    return _subscribeBatchCoreAsync(batchHandler, destination, batchOptions, cancellationToken);
   }
 
-  private async Task<ISubscription> _subscribeBatchViaDelegateAsync(
+  private readonly record struct PendingRabbitMessage(IChannel Channel, BasicDeliverEventArgs Args, string QueueName);
+
+  private async Task<ISubscription> _subscribeBatchCoreAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
     TransportBatchOptions batchOptions,
     CancellationToken cancellationToken
   ) {
-    var collector = new TransportBatchCollector<TransportMessage>(
+    var exchangeName = destination.Address;
+    var queueName = _resolveQueueName(destination, exchangeName);
+    var routingPatterns = _getRoutingPatterns(destination);
+
+    _logSubscriptionCreation(exchangeName, queueName, routingPatterns);
+
+    try {
+      return await _createBatchSubscriptionAsync(batchHandler, exchangeName, queueName, routingPatterns, batchOptions, cancellationToken);
+    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
+      return _throwTimeoutException(exchangeName, queueName, ex);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      return _throwSubscriptionException(exchangeName, queueName, ex);
+    }
+  }
+
+  /// <summary>
+  /// Creates a batch subscription: channel + infrastructure + batch collector + consumer.
+  /// ReceivedAsync enqueues raw args and returns immediately (non-blocking).
+  /// Flush callback: deserialize → handler → per-message ACK/NACK.
+  /// </summary>
+  private async Task<ISubscription> _createBatchSubscriptionAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    string exchangeName,
+    string queueName,
+    List<string> routingPatterns,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken
+  ) {
+    var channel = await _setupChannelAndInfrastructureAsync(
+      exchangeName, queueName, routingPatterns, cancellationToken);
+
+    RabbitMQSubscription? subscription = null;
+
+    var collector = new TransportBatchCollector<PendingRabbitMessage>(
       batchOptions,
-      batch => batchHandler(batch, CancellationToken.None)
+      batch => _flushBatchAsync(batch, batchHandler, subscription, queueName)
     );
 
-    var subscription = await _subscribeCoreAsync(
-      (envelope, envelopeType, _) => {
-        collector.Enqueue(new TransportMessage(envelope, envelopeType));
-        return Task.CompletedTask;
-      },
-      destination,
-      cancellationToken
+    var consumer = new AsyncEventingBasicConsumer(channel);
+
+    consumer.ReceivedAsync += (_, args) => {
+      if (subscription is { IsActive: false }) {
+        return _nackPausedMessageAsync(channel, args, queueName);
+      }
+
+      collector.Enqueue(new PendingRabbitMessage(channel, args, queueName));
+      return Task.CompletedTask; // Non-blocking — lets ConsumerDispatchConcurrency=1 dispatch next immediately
+    };
+
+    var consumerTag = await channel.BasicConsumeAsync(
+      queue: queueName,
+      autoAck: false,
+      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
+      noLocal: false,
+      exclusive: false,
+      arguments: null,
+      consumer: consumer,
+      cancellationToken: cancellationToken
     );
+
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      _logger.LogDebug(
+        "Created batch subscription for exchange {ExchangeName}, queue {QueueName} (BatchSize={BatchSize}, SlideMs={SlideMs}, MaxWaitMs={MaxWaitMs})",
+        exchangeName, queueName, batchOptions.BatchSize, batchOptions.SlideMs, batchOptions.MaxWaitMs);
+    }
 
     return subscription;
+  }
+
+  /// <summary>
+  /// Flush callback for batch collector. Deserializes all messages, calls handler,
+  /// then ACKs each message individually (multiple=false to avoid PRECONDITION_FAILED
+  /// with AutorecoveringChannel).
+  /// </summary>
+  private async Task _flushBatchAsync(
+    IReadOnlyList<PendingRabbitMessage> pendingMessages,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    RabbitMQSubscription? subscription,
+    string queueName
+  ) {
+    if (pendingMessages.Count == 0) {
+      return;
+    }
+
+    // If subscription paused, NACK all with requeue
+    if (subscription is { IsActive: false }) {
+      foreach (var pending in pendingMessages) {
+        try {
+          await _nackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
+        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+          // Channel closed — message will be redelivered automatically
+        }
+      }
+      return;
+    }
+
+    var deserialized = new List<TransportMessage>(pendingMessages.Count);
+    var successfulPending = new List<PendingRabbitMessage>(pendingMessages.Count);
+
+    foreach (var pending in pendingMessages) {
+      try {
+        var envelope = _deserializeMessage(pending.Args, out var envelopeTypeName);
+        if (envelope == null) {
+          await _nackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
+          continue;
+        }
+
+        deserialized.Add(new TransportMessage(envelope, envelopeTypeName));
+        successfulPending.Add(pending);
+      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+        _logger?.LogWarning(ex,
+          "RabbitMQ channel closed while deserializing message {MessageId} from queue {QueueName}",
+          pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
+      }
+    }
+
+    if (deserialized.Count == 0) {
+      return;
+    }
+
+    try {
+      await batchHandler(deserialized, CancellationToken.None);
+
+      // Per-message ACK (multiple=false) — safe with AutorecoveringChannel
+      foreach (var pending in successfulPending) {
+        try {
+          await pending.Channel.BasicAckAsync(pending.Args.DeliveryTag, multiple: false, CancellationToken.None);
+        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+          _logger?.LogWarning(ex,
+            "RabbitMQ channel closed while ACKing message {MessageId} from queue {QueueName} — will be redelivered",
+            pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
+        }
+      }
+
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        _logger.LogDebug("Processed batch of {BatchSize} messages from queue {QueueName}", deserialized.Count, queueName);
+      }
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(ex,
+        "RabbitMQ channel closed while processing batch from queue {QueueName} — messages will be redelivered", queueName);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger?.LogError(ex,
+        "Error processing batch of {BatchSize} messages from queue {QueueName} — NACKing for redelivery", deserialized.Count, queueName);
+
+      // Per-message NACK with requeue
+      foreach (var pending in successfulPending) {
+        try {
+          await pending.Channel.BasicNackAsync(pending.Args.DeliveryTag, multiple: false, requeue: true, CancellationToken.None);
+        } catch (Exception nackEx) when (nackEx is AlreadyClosedException or ObjectDisposedException) {
+          // Channel closed — message will be redelivered automatically
+        }
+      }
+    }
   }
 
   // Keep SubscribeAsync as internal for backward compat during migration
