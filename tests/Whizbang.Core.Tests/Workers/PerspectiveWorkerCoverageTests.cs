@@ -1721,6 +1721,8 @@ public class PerspectiveWorkerCoverageTests {
       => Task.FromResult(true);
 
     public void UnregisterAwaiter(Guid awaiterId) { }
+
+    public int CleanupStaleEntries(TimeSpan maxAge) => 0;
   }
 
   private sealed class FakeEventStore : IEventStore {
