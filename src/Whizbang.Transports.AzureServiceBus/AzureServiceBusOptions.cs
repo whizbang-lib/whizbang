@@ -30,10 +30,11 @@ public class AzureServiceBusOptions {
   ///   <item><see cref="MaxConcurrentSessions"/> — how many <em>sessions/streams</em> are processed in parallel (session mode only)</item>
   /// </list>
   /// </para>
-  /// Default: 10
+  /// Default: 200. The transport consumer uses batch receive (SubscribeBatchAsync) so higher
+  /// values are safe and improve throughput by filling the batch collector faster.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#concurrency</docs>
-  public int MaxConcurrentCalls { get; set; } = 10;
+  public int MaxConcurrentCalls { get; set; } = 200;
 
   /// <summary>
   /// How long the client automatically renews the lock on a message while it is being processed.
