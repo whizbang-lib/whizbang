@@ -388,16 +388,47 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     if (queued > 0) {
-      // ONE process_work_batch for all N messages
-      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cancellationToken);
+      // ONE process_work_batch for all N messages — bulk insert into inbox
+      var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cancellationToken);
       _metrics?.InboxMessagesProcessed.Add(queued);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Batch of {BatchCount} messages inserted into inbox — ACKing transport", queued);
+        _logger.LogDebug("Batch of {BatchCount} messages inserted into inbox — ACKing transport, firing PostInbox", queued);
+      }
+
+      // Fire-and-forget PostInbox lifecycle + completion flush
+      // Runs AFTER handler returns (ACK), concurrently with next batch collection.
+      // Command receptors fire here. If PostInbox fails, messages stay in inbox
+      // and WorkCoordinatorPublisherWorker retries.
+      var workItems = workBatch.InboxWork.ToList();
+      if (workItems.Count > 0) {
+        var scopeFactory = _scopeFactory;
+        var logger = _logger;
+        _ = Task.Run(async () => {
+          try {
+            await using var postScope = scopeFactory.CreateAsyncScope();
+            var postStrategy = postScope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+            var receptorInvoker = postScope.ServiceProvider.GetService<IReceptorInvoker>();
+
+            // Queue completions for each work item
+            foreach (var work in workItems) {
+              postStrategy.QueueInboxCompletion(work.MessageId, MessageProcessingStatus.EventStored);
+            }
+
+            // Fire PostInbox lifecycle (command receptors fire here)
+            await _invokePostInboxLifecycleAsync(workItems, receptorInvoker, postScope.ServiceProvider, cancellationToken);
+
+            // Completion flush — marks inbox messages as processed (prevents double-fire)
+            await postStrategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
+          } catch (OperationCanceledException) {
+            // Shutdown — suppress
+          } catch (Exception ex) {
+            logger.LogError(ex, "PostInbox lifecycle failed for {BatchCount} messages — publisher worker will retry from inbox", workItems.Count);
+          }
+        }, cancellationToken);
       }
     }
-    // Handler returns → transport ACKs all N messages
-    // Processing deferred to WorkCoordinatorPublisherWorker via claim_orphaned_inbox
+    // Handler returns → transport ACKs all N messages → next batch starts collecting
   }
 
   private async Task _handleMessageAsync(
