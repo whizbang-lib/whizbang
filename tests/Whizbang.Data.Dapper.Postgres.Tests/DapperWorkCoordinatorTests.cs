@@ -20,6 +20,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(MessageEnvelope<DapperWorkCoordinatorTests.TestEvent>))]
 [JsonSerializable(typeof(DapperWorkCoordinatorTests.TestEvent))]
+[JsonSerializable(typeof(MessageEnvelope<JsonElement>))]
+[JsonSerializable(typeof(JsonElement))]
 internal sealed partial class TestEnvelopeJsonContext : JsonSerializerContext;
 
 /// <summary>
