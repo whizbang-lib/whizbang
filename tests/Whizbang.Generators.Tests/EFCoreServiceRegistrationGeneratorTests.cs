@@ -1007,6 +1007,307 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Test that physical fields using C# keyword type aliases (string, int, bool, etc.)
+  /// map to the correct PostgreSQL column types instead of falling through to TEXT.
+  /// Roslyn's FullyQualifiedFormat with UseSpecialTypes outputs keyword aliases for
+  /// predefined types, so the type mapper must handle both forms.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsKeywordTypeAliasesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with physical fields using types that Roslyn outputs as keyword aliases
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record TypeMappingModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [PhysicalField]
+        public int Count { get; init; }
+
+        [PhysicalField]
+        public long BigCount { get; init; }
+
+        [PhysicalField]
+        public short SmallCount { get; init; }
+
+        [PhysicalField]
+        public bool IsActive { get; init; }
+
+        [PhysicalField]
+        public string Label { get; init; } = "";
+
+        [PhysicalField]
+        public decimal Price { get; init; }
+
+        [PhysicalField]
+        public double Score { get; init; }
+
+        [PhysicalField]
+        public float Rating { get; init; }
+      }
+
+      public class TypeMappingPerspective : IPerspectiveFor<TypeMappingModel, TestEvent> {
+        public TypeMappingModel Apply(TypeMappingModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Each keyword alias type must map to its correct PostgreSQL type, NOT fall through to TEXT
+    await Assert.That(sourceText).Contains("count INTEGER")
+      .Because("int should map to INTEGER, not TEXT");
+    await Assert.That(sourceText).Contains("big_count BIGINT")
+      .Because("long should map to BIGINT, not TEXT");
+    await Assert.That(sourceText).Contains("small_count SMALLINT")
+      .Because("short should map to SMALLINT, not TEXT");
+    await Assert.That(sourceText).Contains("is_active BOOLEAN")
+      .Because("bool should map to BOOLEAN, not TEXT");
+    await Assert.That(sourceText).Contains("label TEXT")
+      .Because("string should map to TEXT");
+    await Assert.That(sourceText).Contains("price NUMERIC")
+      .Because("decimal should map to NUMERIC, not TEXT");
+    await Assert.That(sourceText).Contains("score DOUBLE PRECISION")
+      .Because("double should map to DOUBLE PRECISION, not TEXT");
+    await Assert.That(sourceText).Contains("rating REAL")
+      .Because("float should map to REAL, not TEXT");
+  }
+
+  /// <summary>
+  /// Test that physical fields using fully-qualified .NET type names (System.Guid, System.DateTime, etc.)
+  /// continue to map correctly. These are non-keyword types that Roslyn outputs with the global:: prefix.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsFullyQualifiedTypesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with physical fields using types that Roslyn outputs as global::System.X
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record DateTimeModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [PhysicalField]
+        public Guid CorrelationId { get; init; }
+
+        [PhysicalField]
+        public DateTime CreatedAt { get; init; }
+
+        [PhysicalField]
+        public DateTimeOffset UpdatedAt { get; init; }
+
+        [PhysicalField]
+        public DateOnly BirthDate { get; init; }
+
+        [PhysicalField]
+        public TimeOnly StartTime { get; init; }
+      }
+
+      public class DateTimePerspective : IPerspectiveFor<DateTimeModel, TestEvent> {
+        public DateTimeModel Apply(DateTimeModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("correlation_id UUID")
+      .Because("Guid should map to UUID");
+    await Assert.That(sourceText).Contains("created_at TIMESTAMPTZ")
+      .Because("DateTime should map to TIMESTAMPTZ");
+    await Assert.That(sourceText).Contains("updated_at TIMESTAMPTZ")
+      .Because("DateTimeOffset should map to TIMESTAMPTZ");
+    await Assert.That(sourceText).Contains("birth_date DATE")
+      .Because("DateOnly should map to DATE");
+    await Assert.That(sourceText).Contains("start_time TIME")
+      .Because("TimeOnly should map to TIME");
+  }
+
+  /// <summary>
+  /// Test that physical fields using explicit global:: qualified types map correctly.
+  /// Users may write global::System.Guid or global::System.DateTime directly in their models.
+  /// The generator strips the global:: prefix before mapping, so these should work identically.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsGlobalQualifiedTypesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with explicit global:: qualified type names
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record GlobalQualifiedModel {
+        [StreamId]
+        public global::System.Guid Id { get; init; }
+
+        [PhysicalField]
+        public global::System.Guid CorrelationId { get; init; }
+
+        [PhysicalField]
+        public global::System.DateTime CreatedAt { get; init; }
+
+        [PhysicalField]
+        public global::System.Boolean IsActive { get; init; }
+
+        [PhysicalField]
+        public global::System.Int32 Count { get; init; }
+      }
+
+      public class GlobalQualifiedPerspective : IPerspectiveFor<GlobalQualifiedModel, TestEvent> {
+        public GlobalQualifiedModel Apply(GlobalQualifiedModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("correlation_id UUID")
+      .Because("global::System.Guid should map to UUID");
+    await Assert.That(sourceText).Contains("created_at TIMESTAMPTZ")
+      .Because("global::System.DateTime should map to TIMESTAMPTZ");
+    await Assert.That(sourceText).Contains("is_active BOOLEAN")
+      .Because("global::System.Boolean should map to BOOLEAN");
+    await Assert.That(sourceText).Contains("count INTEGER")
+      .Because("global::System.Int32 should map to INTEGER");
+  }
+
+  /// <summary>
+  /// Test that nullable physical fields with keyword type aliases map correctly.
+  /// The nullable suffix (?) is stripped before type mapping, so int? should map the same as int.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_MapsNullableKeywordTypesToCorrectPostgresTypesAsync() {
+    // Arrange - Model with nullable keyword-aliased types
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record NullableModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [PhysicalField]
+        public int? Count { get; init; }
+
+        [PhysicalField]
+        public bool? IsActive { get; init; }
+
+        [PhysicalField]
+        public long? BigCount { get; init; }
+
+        [PhysicalField]
+        public decimal? Price { get; init; }
+
+        [PhysicalField]
+        public DateTime? CreatedAt { get; init; }
+      }
+
+      public class NullablePerspective : IPerspectiveFor<NullableModel, TestEvent> {
+        public NullableModel Apply(NullableModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("count INTEGER")
+      .Because("int? should map to INTEGER after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("is_active BOOLEAN")
+      .Because("bool? should map to BOOLEAN after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("big_count BIGINT")
+      .Because("long? should map to BIGINT after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("price NUMERIC")
+      .Because("decimal? should map to NUMERIC after stripping nullable suffix");
+    await Assert.That(sourceText).Contains("created_at TIMESTAMPTZ")
+      .Because("DateTime? should map to TIMESTAMPTZ after stripping nullable suffix");
+  }
+
+  /// <summary>
   /// Test that perspective DDL includes vector fields marked with [VectorField] attribute.
   /// Vector fields should use pgvector's vector type with specified dimensions.
   /// </summary>

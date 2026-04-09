@@ -365,7 +365,7 @@ public interface IWorkCoordinator {
 /// <param name="StreamId">The stream the event belongs to.</param>
 /// <param name="Envelope">The deserialized message envelope for receptor invocation.</param>
 /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
-public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, MessageEnvelope<IEvent> Envelope);
+public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, IMessageEnvelope Envelope);
 
 /// <summary>
 /// Information about a perspective cursor.
