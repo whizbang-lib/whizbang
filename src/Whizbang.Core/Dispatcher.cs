@@ -3006,6 +3006,16 @@ public abstract partial class Dispatcher(
       // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
       var messageId = MessageId.New();
 
+      // Extract stream ID early — needed for both sync tracking and delivery receipt
+      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
+
+      // Track in singleton tracker for cross-scope sync (mirrors cascade path behavior).
+      // Without this, events published via PublishAsync are invisible to IPerspectiveSyncAwaiter,
+      // causing WaitForStreamAsync to return NoPendingEvents immediately.
+      if (streamId.HasValue) {
+        _trackInSingletonTracker(streamId.Value, eventType, messageId.Value);
+      }
+
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
@@ -3022,9 +3032,6 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
         new KeyValuePair<string, object?>(METRIC_PATTERN, "publish"));
-
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
 
       // Return delivery receipt with stream ID
       var destination = eventType.Name;

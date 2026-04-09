@@ -532,13 +532,21 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       ILifecycleContext? context,
       CancellationToken cancellationToken) {
     var eventTypes = syncAttr.EventTypes?.ToArray();
-    // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
+
+    // When EventTypes is explicitly specified, the events being waited for may differ
+    // from the current message (cross-scope sync). In that case, we must NOT pass
+    // context.EventId as eventIdToAwait — it would be the current message's ID (e.g.,
+    // a command ID), not the ID of the tracked event. This would cause Priority 1 in
+    // _resolveExpectedEventIds to return the wrong ID, bypassing the correct
+    // stream-based lookup (Priority 2) and returning immediately without waiting.
+    var eventIdToAwait = eventTypes is { Length: > 0 } ? null : context?.EventId;
+
     var syncResult = await _syncAwaiter!.WaitForStreamAsync(
         syncAttr.PerspectiveType,
         streamId,
         eventTypes,
         timeout,
-        eventIdToAwait: context?.EventId,
+        eventIdToAwait: eventIdToAwait,
         cancellationToken).ConfigureAwait(false);
 
     // Create SyncContext - caller sets it on AsyncLocal to ensure it flows to receptor
