@@ -60,9 +60,16 @@ public enum WorkBatchOptions {
   /// Indicates retry path vs. first-time processing.
   /// </summary>
   /// <tests>No tests found</tests>
-  RetryAfterFailure = 1 << 5
+  RetryAfterFailure = 1 << 5,
 
-  // Bits 6-31 reserved for future use
+  /// <summary>
+  /// Skip claiming orphaned inbox messages during process_work_batch.
+  /// Used by IntervalWorkCoordinatorStrategy (dispatcher) which only handles
+  /// outbox work — inbox claiming should be left to WorkCoordinatorPublisherWorker.
+  /// </summary>
+  SkipInboxClaiming = 1 << 6
+
+  // Bits 7-31 reserved for future use
 }
 
 /// <summary>

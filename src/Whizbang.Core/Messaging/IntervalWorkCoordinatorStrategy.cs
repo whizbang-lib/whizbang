@@ -214,7 +214,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    return _flushCoreAsync(flags, mode, skipLifecycle: false, ct);
+    // IntervalWorkCoordinatorStrategy handles outbox work only — skip inbox claiming
+    // to prevent stealing inbox messages from WorkCoordinatorPublisherWorker
+    return _flushCoreAsync(flags | WorkBatchOptions.SkipInboxClaiming, mode, skipLifecycle: false, ct);
   }
 
   private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
