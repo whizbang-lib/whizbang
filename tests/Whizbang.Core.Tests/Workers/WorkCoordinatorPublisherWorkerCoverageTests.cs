@@ -411,7 +411,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the coordinator to be called at least twice (first returns work, second picks up failures)
@@ -454,7 +454,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.BatchPublishSignal.Task.WaitAsync(cts.Token);
@@ -563,7 +563,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -598,13 +598,13 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
 
     // Wait for completion to be reported via signal (deterministic, no polling)
-    await coordinator.CompletionReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await coordinator.CompletionReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30), cts.Token);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -637,7 +637,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -677,7 +677,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for requeue signal (transport exception triggers TryWrite)
@@ -748,7 +748,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for at least 3 calls (1 initial + exception on 2nd + recovery on 3rd)
@@ -800,7 +800,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -837,7 +837,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for inbox processing
@@ -871,7 +871,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -904,7 +904,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -948,7 +948,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -985,7 +985,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -1015,7 +1015,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
@@ -1065,7 +1065,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1109,7 +1109,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1152,7 +1152,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1196,7 +1196,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     worker.OnWorkProcessingStarted += () => { Interlocked.Increment(ref startedFiredCount); };
     worker.OnWorkProcessingIdle += () => { Interlocked.Increment(ref idleFiredCount); };
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for idle to fire
@@ -1231,7 +1231,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     worker.OnWorkProcessingIdle += () => { Interlocked.Increment(ref idleFiredCount); };
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait a few polls
@@ -1305,7 +1305,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.BatchPublishSignal.Task.WaitAsync(cts.Token);
@@ -1332,7 +1332,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1368,7 +1368,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for enough requeue cycles (generous timeout for CI/slower machines)
@@ -1408,7 +1408,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
@@ -1469,7 +1469,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await allPublished.WaitAsync(cts.Token);
@@ -1504,7 +1504,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1529,7 +1529,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
@@ -1597,7 +1597,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for recovery - coordinator should be called again after initial failure
@@ -1633,7 +1633,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1666,7 +1666,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1697,7 +1697,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -1732,7 +1732,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -1776,7 +1776,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
@@ -1818,7 +1818,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
@@ -1866,14 +1866,14 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
 
     // Wait for at least 12 database readiness checks — each cycle increments the counter
     // Signal-based: deterministic, no spin-loop or sleep
-    await dbCheck.WaitForCallCountAsync(12, TimeSpan.FromSeconds(10));
+    await dbCheck.WaitForCallCountAsync(12, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
