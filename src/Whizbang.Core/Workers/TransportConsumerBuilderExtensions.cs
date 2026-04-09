@@ -203,6 +203,9 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportBatchOptions (consumer can override by registering before this)
     builder.Services.TryAddSingleton(new TransportBatchOptions());
 
+    // Register inbox channel for routing claimed inbox work to publisher worker
+    builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
+
 
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
@@ -329,6 +332,9 @@ public static class TransportConsumerBuilderExtensions {
 
     // Register TransportBatchOptions (consumer can override by registering before this)
     builder.Services.TryAddSingleton(new TransportBatchOptions());
+
+    // Register inbox channel for routing claimed inbox work to publisher worker
+    builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
 
 
     // Register TransportConsumerWorker as hosted service (always with resilience)

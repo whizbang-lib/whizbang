@@ -88,7 +88,8 @@ public partial class WorkCoordinatorPublisherWorker(
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   TransportMetrics? transportMetrics = null,
   WorkCoordinatorMetrics? workCoordinatorMetrics = null,
-  ILogger<WorkCoordinatorPublisherWorker>? logger = null
+  ILogger<WorkCoordinatorPublisherWorker>? logger = null,
+  IInboxChannelWriter? inboxChannelWriter = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -299,6 +300,11 @@ public partial class WorkCoordinatorPublisherWorker(
 
     // Subscribe to new work signals so the coordinator polls immediately when outbox entries are flushed
     _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
+
+    // Subscribe to inbox channel signals so commands are processed immediately
+    if (inboxChannelWriter is not null) {
+      inboxChannelWriter.OnNewInboxWorkAvailable += RequestImmediatePoll;
+    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -891,9 +897,8 @@ public partial class WorkCoordinatorPublisherWorker(
       }
     }
 
-    // Process inbox work (orphaned messages recovered via claim_orphaned_inbox)
+    // Process inbox work from process_work_batch (orphaned messages)
     if (workBatch.InboxWork.Count > 0) {
-      // Filter out messages already being processed from a previous tick
       List<InboxWork> newInboxWork = [];
       foreach (var work in workBatch.InboxWork) {
         if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
@@ -904,6 +909,21 @@ public partial class WorkCoordinatorPublisherWorker(
       }
       if (newInboxWork.Count > 0) {
         await _processInboxWorkAsync(newInboxWork, cancellationToken);
+      }
+    }
+
+    // Drain inbox channel (work routed from ANY caller of process_work_batch)
+    if (inboxChannelWriter is not null) {
+      List<InboxWork> channelInboxWork = [];
+      while (inboxChannelWriter.Reader.TryRead(out var work)) {
+        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+          channelInboxWork.Add(work);
+        } else {
+          _inboxLeaseRenewals.Add(work.MessageId);
+        }
+      }
+      if (channelInboxWork.Count > 0) {
+        await _processInboxWorkAsync(channelInboxWork, cancellationToken);
       }
     }
 
