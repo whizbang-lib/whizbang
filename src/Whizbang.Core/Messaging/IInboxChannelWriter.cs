@@ -11,6 +11,7 @@ namespace Whizbang.Core.Messaging;
 /// RemoveInFlight after completion is acknowledged by DB.
 /// </summary>
 /// <docs>messaging/inbox-channel</docs>
+/// <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs</tests>
 public interface IInboxChannelWriter {
   /// <summary>Gets the channel reader for consumers (WorkCoordinatorPublisherWorker).</summary>
   ChannelReader<InboxWork> Reader { get; }

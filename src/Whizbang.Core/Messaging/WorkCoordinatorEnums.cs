@@ -67,6 +67,8 @@ public enum WorkBatchOptions {
   /// Used by IntervalWorkCoordinatorStrategy (dispatcher) which only handles
   /// outbox work — inbox claiming should be left to WorkCoordinatorPublisherWorker.
   /// </summary>
+  /// <docs>messaging/work-coordinator#skip-inbox-claiming</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/InboxNullLeaseTests.cs</tests>
   SkipInboxClaiming = 1 << 6
 
   // Bits 7-31 reserved for future use
