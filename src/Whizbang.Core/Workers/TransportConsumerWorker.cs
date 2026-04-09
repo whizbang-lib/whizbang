@@ -402,18 +402,9 @@ public partial class TransportConsumerWorker : BackgroundService {
       // and WorkCoordinatorPublisherWorker retries.
       var workItems = workBatch.InboxWork.ToList();
       if (workItems.Count > 0) {
-        // Queue completions on the BATCH scope's strategy — they'll be flushed
-        // by the publisher worker on its next poll (no new DB connection needed)
-        foreach (var work in workItems) {
-          strategy.QueueInboxCompletion(work.MessageId, MessageProcessingStatus.EventStored);
-        }
-
-        // Flush completions in the same scope (reuses the batch's DB connection)
-        await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
-
         // Fire-and-forget PostInbox lifecycle — command receptors fire here.
-        // No DB connection needed — just receptor invocation.
-        // If PostInbox fails, message is already marked complete (won't double-fire).
+        // No DB connection — just receptor invocation on thread pool.
+        // Completions handled by publisher worker (claims + marks processed).
         var scopeFactory = _scopeFactory;
         var logger = _logger;
         _ = Task.Run(async () => {
