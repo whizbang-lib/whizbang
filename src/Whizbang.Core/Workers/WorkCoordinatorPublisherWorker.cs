@@ -1412,31 +1412,24 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 29,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Processing {Count} inbox items from channel (message IDs: {MessageIds})"
   )]
   static partial void LogChannelInboxProcessing(ILogger logger, int count, string messageIds);
 
   [LoggerMessage(
     EventId = 31,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Inbox completion queued: {MessageId} status={Status}"
   )]
   static partial void LogInboxCompletionQueued(ILogger logger, Guid messageId, MessageProcessingStatus status);
 
   [LoggerMessage(
     EventId = 32,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Sending {Count} inbox completions to DB"
   )]
   static partial void LogInboxCompletionsSending(ILogger logger, int count);
-
-  [LoggerMessage(
-    EventId = 30,
-    Level = LogLevel.Information,
-    Message = "Channel inbox completion queued for {Count} items — will flush on next poll"
-  )]
-  static partial void LogChannelInboxCompletionQueued(ILogger logger, int count);
 
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.

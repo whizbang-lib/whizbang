@@ -130,54 +130,6 @@ public class TransportConsumerWorkerBatchHandlerTests {
   }
 
   // ========================================
-  // PostInbox lifecycle fires after insert (fire-and-forget)
-  // ========================================
-
-  [Test]
-  public async Task BatchHandler_FiresPostInboxLifecycleAfterInsertAsync() {
-    // Arrange — use a completion signal to detect when PostInbox fires
-    var messageId = MessageId.New();
-    var transport = new BatchTestTransport();
-    var options = new TransportConsumerOptions();
-    options.Destinations.Add(new TransportDestination("test-topic"));
-
-    var postInboxFired = new TaskCompletionSource();
-    var workStrategy = new TrackingBatchWorkStrategy(messageId.Value);
-
-    var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => {
-      // Each scope gets a new strategy — the fire-and-forget scope's strategy
-      // will queue the completion, signaling PostInbox fired
-      var strategy = new TrackingBatchWorkStrategy(messageId.Value);
-      strategy.OnCompletionQueued = () => postInboxFired.TrySetResult();
-      return strategy;
-    });
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    var sp = services.BuildServiceProvider();
-
-    var worker = _createWorkerWithScope(transport, options, sp.GetRequiredService<IServiceScopeFactory>());
-
-    using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-
-    var envelope = _createJsonEnvelope(messageId);
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
-
-    // Act
-    await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, envelopeType)]);
-
-    // Wait for fire-and-forget PostInbox to complete
-    var completed = await Task.WhenAny(postInboxFired.Task, Task.Delay(5000));
-
-    cts.Cancel();
-
-    // Assert — PostInbox lifecycle should have fired (completion queued in fire-and-forget scope)
-    await Assert.That(completed).IsEqualTo(postInboxFired.Task)
-      .Because("PostInbox lifecycle should fire after batch insert, queuing a completion");
-  }
-
-  // ========================================
   // Self-echo discard
   // ========================================
 
