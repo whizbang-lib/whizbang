@@ -46,4 +46,11 @@ public interface IInboxChannelWriter {
   /// Fires <see cref="OnNewInboxWorkAvailable"/> to wake the publisher worker.
   /// </summary>
   void SignalNewInboxWorkAvailable();
+
+  /// <summary>
+  /// Removes a message ID from the dedup set after processing.
+  /// Called by the publisher worker after inbox work is processed.
+  /// </summary>
+  /// <param name="messageId">The message ID to remove from dedup tracking</param>
+  void MarkProcessed(Guid messageId);
 }

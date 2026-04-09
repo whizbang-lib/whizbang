@@ -924,6 +924,10 @@ public partial class WorkCoordinatorPublisherWorker(
       }
       if (channelInboxWork.Count > 0) {
         await _processInboxWorkAsync(channelInboxWork, cancellationToken);
+        // Clear dedup after processing so future claims can be written
+        foreach (var work in channelInboxWork) {
+          inboxChannelWriter.MarkProcessed(work.MessageId);
+        }
       }
     }
 

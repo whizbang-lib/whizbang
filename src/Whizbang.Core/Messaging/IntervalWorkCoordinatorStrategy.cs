@@ -31,6 +31,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IWorkChannelWriter? _workChannelWriter;
+  private readonly IInboxChannelWriter? _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _flushTimer;
@@ -68,7 +69,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null,
-    IWorkChannelWriter? workChannelWriter = null
+    IWorkChannelWriter? workChannelWriter = null,
+    IInboxChannelWriter? inboxChannelWriter = null
   ) {
 #pragma warning restore S107
     if (coordinator == null && scopeFactory == null) {
@@ -82,6 +84,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _workChannelWriter = workChannelWriter;
+    _inboxChannelWriter = inboxChannelWriter;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -312,6 +315,13 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
       if (_logger != null) {
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
+      }
+
+      // Route claimed inbox work to publisher worker via channel
+      if (_inboxChannelWriter is not null && workBatch.InboxWork.Count > 0) {
+        foreach (var inboxWork in workBatch.InboxWork) {
+          _inboxChannelWriter.TryWrite(inboxWork);
+        }
       }
 
       return workBatch;
