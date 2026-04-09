@@ -192,10 +192,12 @@ public partial class ScopedWorkCoordinatorStrategy(
       }
     }
 
-    // Route claimed inbox work to publisher worker via channel
+    // Route claimed inbox work to publisher worker via channel (dedup by IsInFlight)
     if (_inboxChannelWriter is not null && workBatch.InboxWork.Count > 0) {
       foreach (var inboxWork in workBatch.InboxWork) {
-        _inboxChannelWriter.TryWrite(inboxWork);
+        if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
+          _inboxChannelWriter.TryWrite(inboxWork);
+        }
       }
     }
 
