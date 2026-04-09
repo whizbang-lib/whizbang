@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -15,7 +16,11 @@ namespace Whizbang.Core.Messaging;
 /// <docs>messaging/inbox-channel</docs>
 public class InboxChannelWriter : IInboxChannelWriter {
   private readonly Channel<InboxWork> _channel;
-  private readonly ConcurrentDictionary<Guid, byte> _seen = new();
+  // Track seen message IDs with timestamp for cooldown-based dedup.
+  // Messages stay in the set for a cooldown period after processing
+  // to prevent re-queuing while the completion flush is in transit.
+  private readonly ConcurrentDictionary<Guid, long> _seen = new();
+  private static readonly long _cooldownTicks = TimeSpan.FromSeconds(30).Ticks;
 
   /// <summary>
   /// Initializes a new instance with an unbounded channel and deduplication.
@@ -33,8 +38,8 @@ public class InboxChannelWriter : IInboxChannelWriter {
 
   /// <inheritdoc />
   public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
-    if (!_seen.TryAdd(work.MessageId, 0)) {
-      return ValueTask.CompletedTask; // Already seen — debounce
+    if (!_tryAddOrExpired(work.MessageId)) {
+      return ValueTask.CompletedTask; // Debounced — already seen or in cooldown
     }
 
     var result = _channel.Writer.WriteAsync(work, ct);
@@ -44,8 +49,8 @@ public class InboxChannelWriter : IInboxChannelWriter {
 
   /// <inheritdoc />
   public bool TryWrite(InboxWork work) {
-    if (!_seen.TryAdd(work.MessageId, 0)) {
-      return true; // Already seen — debounce (return true = "handled")
+    if (!_tryAddOrExpired(work.MessageId)) {
+      return true; // Debounced (return true = "handled")
     }
 
     var written = _channel.Writer.TryWrite(work);
@@ -55,13 +60,34 @@ public class InboxChannelWriter : IInboxChannelWriter {
     return written;
   }
 
-  /// <summary>
-  /// Removes a message ID from the dedup set after processing.
-  /// Called by the publisher worker after processing inbox work.
-  /// </summary>
-  /// <param name="messageId">The message ID to remove from dedup tracking</param>
+  /// <inheritdoc />
   public void MarkProcessed(Guid messageId) {
-    _seen.TryRemove(messageId, out _);
+    // Don't remove — set cooldown timestamp. The message stays debounced
+    // for _cooldownTicks after processing to prevent re-queuing while
+    // the completion flush is in transit to the DB.
+    _seen[messageId] = Stopwatch.GetTimestamp();
+  }
+
+  /// <summary>
+  /// Returns true if the message should be queued (new or cooldown expired).
+  /// Returns false if the message is already queued or in cooldown.
+  /// </summary>
+  private bool _tryAddOrExpired(Guid messageId) {
+    if (_seen.TryAdd(messageId, Stopwatch.GetTimestamp())) {
+      return true; // New message — queue it
+    }
+
+    // Already seen — check if cooldown expired
+    if (_seen.TryGetValue(messageId, out var timestamp)) {
+      var elapsed = Stopwatch.GetTimestamp() - timestamp;
+      if (elapsed > _cooldownTicks) {
+        // Cooldown expired — allow re-queue (update timestamp)
+        _seen[messageId] = Stopwatch.GetTimestamp();
+        return true;
+      }
+    }
+
+    return false; // Still in cooldown — debounce
   }
 
   /// <inheritdoc />
