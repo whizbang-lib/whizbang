@@ -47,6 +47,27 @@ public class PerspectiveSyncAwaiterTests {
   }
 
   [Test]
+  public async Task SyncResult_StoresEnrichedPropertiesAsync() {
+    var result = new SyncResult(
+        SyncOutcome.NoPendingEvents, 0, TimeSpan.FromMilliseconds(50),
+        EventsEmitted: 5, EventsTracked: 0, PerspectiveName: "Test.Perspective");
+
+    await Assert.That(result.EventsEmitted).IsEqualTo(5);
+    await Assert.That(result.EventsTracked).IsEqualTo(0);
+    await Assert.That(result.PerspectiveName).IsEqualTo("Test.Perspective");
+  }
+
+  [Test]
+  public async Task SyncResult_EnrichedFields_DefaultToZeroAndNullAsync() {
+    // Existing 3-param construction should still work with defaults
+    var result = new SyncResult(SyncOutcome.Synced, 3, TimeSpan.FromMilliseconds(100));
+
+    await Assert.That(result.EventsEmitted).IsEqualTo(0);
+    await Assert.That(result.EventsTracked).IsEqualTo(0);
+    await Assert.That(result.PerspectiveName).IsNull();
+  }
+
+  [Test]
   public async Task SyncResult_IsValueTypeAsync() {
     var result = new SyncResult(SyncOutcome.Synced, 0, TimeSpan.Zero);
 
