@@ -57,8 +57,6 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly SemaphoreSlim? _concurrencySemaphore;
-  // Limits concurrent fire-and-forget PostInbox tasks to prevent DB connection pool exhaustion
-  private readonly SemaphoreSlim _postInboxConcurrency = new(4);
   private readonly TransportBatchOptions _transportBatchOptions;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
@@ -404,32 +402,29 @@ public partial class TransportConsumerWorker : BackgroundService {
       // and WorkCoordinatorPublisherWorker retries.
       var workItems = workBatch.InboxWork.ToList();
       if (workItems.Count > 0) {
+        // Queue completions on the BATCH scope's strategy — they'll be flushed
+        // by the publisher worker on its next poll (no new DB connection needed)
+        foreach (var work in workItems) {
+          strategy.QueueInboxCompletion(work.MessageId, MessageProcessingStatus.EventStored);
+        }
+
+        // Flush completions in the same scope (reuses the batch's DB connection)
+        await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
+
+        // Fire-and-forget PostInbox lifecycle — command receptors fire here.
+        // No DB connection needed — just receptor invocation.
+        // If PostInbox fails, message is already marked complete (won't double-fire).
         var scopeFactory = _scopeFactory;
         var logger = _logger;
-        var semaphore = _postInboxConcurrency;
         _ = Task.Run(async () => {
-          await semaphore.WaitAsync(cancellationToken);
           try {
             await using var postScope = scopeFactory.CreateAsyncScope();
-            var postStrategy = postScope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
             var receptorInvoker = postScope.ServiceProvider.GetService<IReceptorInvoker>();
-
-            // Queue completions for each work item
-            foreach (var work in workItems) {
-              postStrategy.QueueInboxCompletion(work.MessageId, MessageProcessingStatus.EventStored);
-            }
-
-            // Fire PostInbox lifecycle (command receptors fire here)
             await _invokePostInboxLifecycleAsync(workItems, receptorInvoker, postScope.ServiceProvider, cancellationToken);
-
-            // Completion flush — marks inbox messages as processed (prevents double-fire)
-            await postStrategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
           } catch (OperationCanceledException) {
             // Shutdown — suppress
           } catch (Exception ex) {
-            logger.LogError(ex, "PostInbox lifecycle failed for {BatchCount} messages — publisher worker will retry from inbox", workItems.Count);
-          } finally {
-            semaphore.Release();
+            logger.LogError(ex, "PostInbox lifecycle failed for {BatchCount} messages", workItems.Count);
           }
         }, cancellationToken);
       }
