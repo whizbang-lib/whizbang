@@ -92,9 +92,9 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync() {
     // Arrange
-    var workProcessingStartedFired = false;
+    var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var (worker, coordinator, _) = _createWorker();
-    worker.OnWorkProcessingStarted += () => { workProcessingStartedFired = true; };
+    worker.OnWorkProcessingStarted += () => { startedSignal.TrySetResult(); };
 
     // Return work on first call
     var streamId = Guid.NewGuid();
@@ -110,11 +110,15 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+
+    // Wait for OnWorkProcessingStarted (fires after batch completes, AFTER completion is reported)
+    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await startedSignal.Task.WaitAsync(timeoutCts.Token);
+
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert
-    await Assert.That(workProcessingStartedFired).IsTrue()
+    await Assert.That(startedSignal.Task.IsCompleted).IsTrue()
       .Because("OnWorkProcessingStarted should fire when work appears");
     await Assert.That(worker.IsIdle).IsFalse()
       .Because("Worker should be active after processing work");

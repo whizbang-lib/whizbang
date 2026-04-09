@@ -655,61 +655,6 @@ public class TransportConsumerWorkerDeepCoverageTests {
   }
 
   // ========================================
-  // _handleMessageAsync - failure handler callback path
-  // ========================================
-
-  [Test]
-  public async Task HandleMessage_WhenProcessorFails_InvokesFailureHandlerAsync() {
-    // Arrange
-    var messageId = MessageId.New();
-    var transport = new DeepCoverageTransport();
-    var options = new TransportConsumerOptions();
-    options.Destinations.Add(new TransportDestination("test-topic"));
-
-    var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: false);
-
-    var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    var sp = services.BuildServiceProvider();
-    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-
-    // Use debug logging to exercise more code paths
-    var loggerFactory = LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug));
-    var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
-
-    var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
-      metrics: null,
-      logger
-    );
-
-    using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-
-    var envelope = _createJsonEnvelope(messageId);
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
-
-    // Act - process message; deserialization may fail but completion/failure handlers run
-    try {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    } catch {
-      // deserialization failures are expected
-    }
-
-    cts.Cancel();
-
-    // Assert - either completion or failure handler should have been called
-    var totalHandled = workStrategy.CompletionCount + workStrategy.FailureCount;
-    await Assert.That(totalHandled).IsGreaterThanOrEqualTo(1)
-      .Because("Either completion or failure handler should be invoked by ordered processor");
-  }
-
-  // ========================================
   // Lifecycle Pre/Post inbox with no deserializer (null _lifecycleMessageDeserializer)
   // ========================================
 

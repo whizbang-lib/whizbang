@@ -1389,7 +1389,8 @@ public class TransportConsumerWorkerCoverageTests {
   }
 
   private sealed class ThrowingWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) { }
+    public void QueueInboxMessage(InboxMessage message) =>
+      throw new InvalidOperationException("Simulated flush failure");
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
     public void QueueOutboxMessage(OutboxMessage message) { }
@@ -1397,7 +1398,7 @@ public class TransportConsumerWorkerCoverageTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
     public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-      throw new InvalidOperationException("Simulated flush failure");
+      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     }
   }
 

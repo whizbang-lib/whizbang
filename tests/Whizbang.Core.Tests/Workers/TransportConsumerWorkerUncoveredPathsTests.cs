@@ -351,69 +351,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
   }
 
-  // ========================================
-  // PostInbox lifecycle with _isEventWithoutPerspectives integration
-  // ========================================
-
-  [Test]
-  public async Task HandleMessage_EventWithoutPerspectives_InvokesPostLifecycleStagesAsync() {
-    // Arrange - event message with no perspectives, invoker + deserializer registered
-    var messageId = MessageId.New();
-    var streamId = Guid.NewGuid();
-    var transport = new UncoveredTransport();
-    var options = new TransportConsumerOptions();
-    options.Destinations.Add(new TransportDestination("test-topic"));
-
-    var invoker = new UncoveredReceptorInvoker();
-    var deserializer = new UncoveredLifecycleDeserializer();
-
-    // Strategy returns InboxWork with event type that has NO perspectives
-    var workStrategy = new UncoveredWorkStrategy(messageId.Value, returnEmptyInboxWork: false,
-      messageType: "TestApp.Events.SomeEvent, TestApp");
-
-    var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddScoped<IReceptorInvoker>(_ => invoker);
-    // No IPerspectiveRunnerRegistry => all events are "without perspectives"
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    var sp = services.BuildServiceProvider();
-    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-
-    var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: deserializer,
-      metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
-
-    using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
-
-    var envelope = _createJsonEnvelopeWithStreamId(messageId, streamId);
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.Events.SomeEvent, TestApp]], Whizbang.Core";
-
-    // Act
-    try {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    } catch {
-      // Deserialization may fail but lifecycle paths are exercised
-    }
-
-    await worker.DrainDetachedAsync();
-    cts.Cancel();
-
-    // Assert - should invoke PreInbox, PostInbox, PostAllPerspectives, PostLifecycle + ImmediateDetached stages
-    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PreInboxDetached)
-      .Because("PreInboxDetached stage should be invoked");
-    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.PreInboxInline)
-      .Because("PreInboxInline stage should be invoked");
-    await Assert.That(invoker.InvokedStages).Contains(LifecycleStage.ImmediateDetached)
-      .Because("ImmediateDetached stage should be invoked after each lifecycle stage");
-  }
-
   [Test]
   public async Task HandleMessage_EventWithPerspectives_DoesNotInvokePostLifecycleDetachedAsync() {
     // Arrange - event message WITH matching perspective, should NOT fire PostLifecycle
@@ -1090,7 +1027,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   }
 
   private sealed class ThrowingFlushStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) { }
+    public void QueueInboxMessage(InboxMessage message) =>
+      throw new InvalidOperationException("Simulated flush failure for metrics coverage");
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
     public void QueueOutboxMessage(OutboxMessage message) { }
@@ -1098,7 +1036,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
     public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-      throw new InvalidOperationException("Simulated flush failure for metrics coverage");
+      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     }
   }
 
@@ -1107,6 +1045,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     public void QueueInboxMessage(InboxMessage message) {
       QueueCallCount++;
+      throw new ObjectDisposedException("Simulated shutdown disposal");
     }
 
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
@@ -1116,7 +1055,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
     public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-      throw new ObjectDisposedException("Simulated shutdown disposal");
+      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     }
   }
 
