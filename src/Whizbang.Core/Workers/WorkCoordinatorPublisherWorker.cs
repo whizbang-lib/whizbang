@@ -1124,7 +1124,7 @@ public partial class WorkCoordinatorPublisherWorker(
   /// </summary>
   private async Task _invokeInboxLifecycleStagesAsync(
     List<InboxWork> workToProcess, IReceptorInvoker? receptorInvoker,
-    LifecycleStage asyncStage, LifecycleStage inlineStage,
+    LifecycleStage detachedStage, LifecycleStage inlineStage,
     string stageName, CancellationToken cancellationToken) {
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
       return;
@@ -1135,7 +1135,7 @@ public partial class WorkCoordinatorPublisherWorker(
         var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
         var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
         var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = asyncStage,
+          CurrentStage = detachedStage,
           EventId = null,
           StreamId = null,
           LastProcessedEventId = null,
@@ -1143,10 +1143,27 @@ public partial class WorkCoordinatorPublisherWorker(
           AttemptNumber = work.Attempts
         };
 
-        await receptorInvoker.InvokeAsync(typedEnvelope, asyncStage, lifecycleContext, cancellationToken);
-        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+        // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern)
+        _ = Task.Run(async () => {
+          try {
+            await using var detachedScope = _scopeFactory.CreateAsyncScope();
+            await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
+            var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+            if (detachedInvoker is null) {
+              return;
+            }
+            var ctx = lifecycleContext with { CurrentStage = detachedStage };
+            await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, cancellationToken);
+            await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+              ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+          } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            // Graceful shutdown
+          } catch (Exception ex) {
+            LogInboxLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
+          }
+        }, cancellationToken);
 
+        // Inline: blocks until complete
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
         await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
