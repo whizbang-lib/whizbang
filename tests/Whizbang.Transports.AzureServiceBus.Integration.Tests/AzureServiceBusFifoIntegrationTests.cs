@@ -9,11 +9,11 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 #pragma warning disable CA1707 // Test method names use underscores by convention
 
-namespace Whizbang.Transports.AzureServiceBus.Tests;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
 /// Integration tests proving FIFO ordering guarantees through Azure Service Bus sessions.

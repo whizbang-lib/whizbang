@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Azure.Messaging.ServiceBus;
 
-namespace Whizbang.Transports.AzureServiceBus.Tests.Containers;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 /// <summary>
 /// Manages Azure Service Bus Emulator for integration tests.

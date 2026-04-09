@@ -11,17 +11,18 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Transport;
-using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
-namespace Whizbang.Transports.AzureServiceBus.Tests;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
 /// Integration tests for AzureServiceBusTransport.
 /// Azure Service Bus SDK uses sealed classes, so these tests use the real emulator.
 /// Tests verify transport initialization, publish/subscribe, and lifecycle management.
 /// </summary>
+[Category("Integration")]
 [Timeout(240_000)] // 240s timeout for integration tests (emulator initialization ~72s + test execution)
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtureSource) {

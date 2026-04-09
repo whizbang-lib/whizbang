@@ -16,7 +16,7 @@ using Whizbang.Testing.Containers;
 #pragma warning disable CA1001 // Types that own disposable fields should be disposable
 #pragma warning disable TUnit0023 // Disposable field should be disposed in cleanup method
 
-namespace Whizbang.Transports.RabbitMQ.Tests;
+namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 
 /// <summary>
 /// Integration tests proving FIFO ordering guarantees through RabbitMQ Single Active Consumer.

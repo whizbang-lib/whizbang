@@ -12,7 +12,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
-namespace Whizbang.Core.Tests.Observability;
+namespace Whizbang.Core.Integration.Tests.Observability;
 
 /// <summary>
 /// Integration tests for ScopeDelta with MessageEnvelope and MessageHop.
