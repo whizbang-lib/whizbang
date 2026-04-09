@@ -923,10 +923,48 @@ public partial class WorkCoordinatorPublisherWorker(
         }
       }
       if (channelInboxWork.Count > 0) {
-        var ids = string.Join(", ", channelInboxWork.Select(w => w.MessageId.ToString()[..8]));
-        LogChannelInboxProcessing(_logger, channelInboxWork.Count, ids);
         await _processInboxWorkAsync(channelInboxWork, cancellationToken);
-        LogChannelInboxCompletionQueued(_logger, channelInboxWork.Count);
+
+        // Flush completions to DB immediately — don't wait for next poll.
+        // _processInboxWorkAsync queued completions in _inboxCompletions.
+        // Send them now so the inbox messages are marked processed right away.
+        var immediateCompletions = _inboxCompletions.GetPending();
+        if (immediateCompletions.Length > 0) {
+          var immediateSentAt = DateTimeOffset.UtcNow;
+          _inboxCompletions.MarkAsSent(immediateCompletions, immediateSentAt);
+          try {
+            await using var flushScope = _scopeFactory.CreateAsyncScope();
+            var flushCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+            await flushCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchRequest {
+              InstanceId = _instanceProvider.InstanceId,
+              ServiceName = _instanceProvider.ServiceName,
+              HostName = _instanceProvider.HostName,
+              ProcessId = _instanceProvider.ProcessId,
+              InboxCompletions = [.. immediateCompletions.Select(c => c.Completion)],
+              OutboxCompletions = [],
+              OutboxFailures = [],
+              InboxFailures = [],
+              ReceptorCompletions = [],
+              ReceptorFailures = [],
+              PerspectiveCompletions = [],
+              PerspectiveEventCompletions = [],
+              PerspectiveFailures = [],
+              NewOutboxMessages = [],
+              NewInboxMessages = [],
+              RenewOutboxLeaseIds = [],
+              RenewInboxLeaseIds = [],
+              Flags = WorkBatchOptions.SkipInboxClaiming,
+              PartitionCount = _options.PartitionCount,
+              LeaseSeconds = _options.LeaseSeconds,
+              StaleThresholdSeconds = _options.StaleThresholdSeconds
+            }, cancellationToken);
+            _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
+          } catch (Exception ex) {
+            LogErrorProcessingWorkBatch(_logger, ex);
+            // Completions stay in Sent status, will be retried via ResetStale
+          }
+        }
+
         foreach (var work in channelInboxWork) {
           inboxChannelWriter.RemoveInFlight(work.MessageId);
         }
