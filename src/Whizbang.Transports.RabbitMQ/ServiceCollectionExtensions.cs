@@ -55,7 +55,8 @@ public static class ServiceCollectionExtensions {
         var factory = new ConnectionFactory {
           Uri = new Uri(connectionString),
           AutomaticRecoveryEnabled = true,
-          NetworkRecoveryInterval = options.InitialRetryDelay
+          NetworkRecoveryInterval = options.InitialRetryDelay,
+          ConsumerDispatchConcurrency = 200 // Allow concurrent ReceivedAsync dispatch for batch collection
         };
 
         var connection = connectionRetry.CreateConnectionWithRetryAsync(factory).GetAwaiter().GetResult();
