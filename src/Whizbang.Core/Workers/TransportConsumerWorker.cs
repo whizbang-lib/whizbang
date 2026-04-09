@@ -57,6 +57,8 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly SemaphoreSlim? _concurrencySemaphore;
+  // Limits concurrent fire-and-forget PostInbox tasks to prevent DB connection pool exhaustion
+  private readonly SemaphoreSlim _postInboxConcurrency = new(4);
   private readonly TransportBatchOptions _transportBatchOptions;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
@@ -404,7 +406,9 @@ public partial class TransportConsumerWorker : BackgroundService {
       if (workItems.Count > 0) {
         var scopeFactory = _scopeFactory;
         var logger = _logger;
+        var semaphore = _postInboxConcurrency;
         _ = Task.Run(async () => {
+          await semaphore.WaitAsync(cancellationToken);
           try {
             await using var postScope = scopeFactory.CreateAsyncScope();
             var postStrategy = postScope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
@@ -424,6 +428,8 @@ public partial class TransportConsumerWorker : BackgroundService {
             // Shutdown — suppress
           } catch (Exception ex) {
             logger.LogError(ex, "PostInbox lifecycle failed for {BatchCount} messages — publisher worker will retry from inbox", workItems.Count);
+          } finally {
+            semaphore.Release();
           }
         }, cancellationToken);
       }
