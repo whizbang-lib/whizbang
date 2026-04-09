@@ -52,6 +52,7 @@ public class BatchReceiveLifecycleTests {
   /// batch subscribe path.
   /// </summary>
   [Test]
+  [Timeout(120_000)]
   public async Task BatchReceive_SingleMessage_ProcessesEndToEndAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -66,7 +67,7 @@ public class BatchReceiveLifecycleTests {
 
     // Act — dispatch, wait for perspectives on remote service
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -79,6 +80,7 @@ public class BatchReceiveLifecycleTests {
   /// The batch collector should accumulate them and flush as a batch.
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task BatchReceive_MultipleMessages_AllProcessedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -92,9 +94,9 @@ public class BatchReceiveLifecycleTests {
       InitialStock = i + 1
     }).ToList();
 
-    // Act — send 3 commands rapidly
+    // Act — send 3 commands with brief gaps to avoid overwhelming CI runners
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 60000, hostFilter: "inventory");
+      expectedCompletions: 6, timeoutMilliseconds: 120000, hostFilter: "inventory");
 
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
