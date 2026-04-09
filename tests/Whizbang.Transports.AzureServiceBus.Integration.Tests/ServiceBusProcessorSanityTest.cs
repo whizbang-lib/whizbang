@@ -2,11 +2,11 @@ using Azure.Messaging.ServiceBus;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
-namespace Whizbang.Transports.AzureServiceBus.Tests;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
 /// CRITICAL: Tests that ServiceBusProcessor (background listener) works with Azure Service Bus Emulator.

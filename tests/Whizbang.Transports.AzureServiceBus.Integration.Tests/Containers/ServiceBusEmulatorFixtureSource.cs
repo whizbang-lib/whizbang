@@ -1,4 +1,4 @@
-namespace Whizbang.Transports.AzureServiceBus.Tests.Containers;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 /// <summary>
 /// TUnit ClassDataSource for ServiceBus emulator fixture.

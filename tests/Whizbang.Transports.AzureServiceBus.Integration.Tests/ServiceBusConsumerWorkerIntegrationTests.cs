@@ -16,10 +16,10 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Transport;
-using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 using EnvelopeSerializer = Whizbang.Core.Messaging.EnvelopeSerializer;
 
-namespace Whizbang.Transports.AzureServiceBus.Tests;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
 /// Integration tests for ServiceBusConsumerWorker using the real Azure Service Bus emulator.

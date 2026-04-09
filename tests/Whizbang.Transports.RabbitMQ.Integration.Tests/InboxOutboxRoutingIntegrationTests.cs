@@ -17,7 +17,7 @@ using Whizbang.Transports.RabbitMQ;
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable TUnit0023 // Disposable field should be disposed in cleanup method
 
-namespace Whizbang.Transports.RabbitMQ.Tests;
+namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 
 /// <summary>
 /// Integration tests for IInboxRoutingStrategy and IOutboxRoutingStrategy implementations

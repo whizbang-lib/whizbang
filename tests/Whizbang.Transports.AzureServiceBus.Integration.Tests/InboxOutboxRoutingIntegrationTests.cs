@@ -10,11 +10,11 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Transport;
-using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
-namespace Whizbang.Transports.AzureServiceBus.Tests;
+namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
 /// Integration tests for IInboxRoutingStrategy and IOutboxRoutingStrategy implementations
