@@ -57,7 +57,8 @@ public static class WorkCoordinatorStrategyFactory {
       channelWriter,
       options,
       logger,
-      dependencies
+      dependencies,
+      inboxChannelWriter: sp.GetService<IInboxChannelWriter>()
     );
   }
 
@@ -97,7 +98,8 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-      workChannelWriter: channelWriter
+      workChannelWriter: channelWriter,
+      inboxChannelWriter: sp.GetService<IInboxChannelWriter>()
     );
   }
 
