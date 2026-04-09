@@ -16,6 +16,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#batch-options</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs</tests>
 public sealed class TransportBatchOptions {
   /// <summary>
   /// Maximum number of messages to collect before flushing the batch.
