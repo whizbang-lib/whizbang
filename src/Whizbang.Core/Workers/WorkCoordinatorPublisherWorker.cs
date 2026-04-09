@@ -809,6 +809,10 @@ public partial class WorkCoordinatorPublisherWorker(
     var inboxFailuresToSend = pendingInboxFailures.Select(tc => tc.Completion).ToArray();
     var inboxLeaseRenewalsToSend = pendingInboxLeaseRenewals.Select(tc => tc.Completion).ToArray();
 
+    if (inboxCompletionsToSend.Length > 0) {
+      LogInboxCompletionsSending(_logger, inboxCompletionsToSend.Length);
+    }
+
     // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
     var sentAt = DateTimeOffset.UtcNow;
     _completions.MarkAsSent(pendingCompletions, sentAt);
@@ -1097,6 +1101,7 @@ public partial class WorkCoordinatorPublisherWorker(
       completionHandler: (msgId, status) => {
         _inFlightInbox.TryRemove(msgId, out _);
         _inboxCompletions.Add(new MessageCompletion { MessageId = msgId, Status = status });
+        LogInboxCompletionQueued(_logger, msgId, status);
       },
       failureHandler: (msgId, status, error) => {
         _inFlightInbox.TryRemove(msgId, out _);
@@ -1394,6 +1399,20 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "Processing {Count} inbox items from channel (message IDs: {MessageIds})"
   )]
   static partial void LogChannelInboxProcessing(ILogger logger, int count, string messageIds);
+
+  [LoggerMessage(
+    EventId = 31,
+    Level = LogLevel.Information,
+    Message = "Inbox completion queued: {MessageId} status={Status}"
+  )]
+  static partial void LogInboxCompletionQueued(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 32,
+    Level = LogLevel.Information,
+    Message = "Sending {Count} inbox completions to DB"
+  )]
+  static partial void LogInboxCompletionsSending(ILogger logger, int count);
 
   [LoggerMessage(
     EventId = 30,
