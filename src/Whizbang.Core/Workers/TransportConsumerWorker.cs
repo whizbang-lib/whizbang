@@ -58,6 +58,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly string? _serviceName;
   private readonly SemaphoreSlim? _concurrencySemaphore;
   private readonly TransportBatchOptions _transportBatchOptions;
+  private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -94,7 +95,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
     IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
-    TransportBatchOptions? transportBatchOptions = null
+    TransportBatchOptions? transportBatchOptions = null,
+    IWorkChannelWriter? workChannelWriter = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -117,6 +119,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
+    _workChannelWriter = workChannelWriter;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
@@ -400,25 +403,10 @@ public partial class TransportConsumerWorker : BackgroundService {
       // Runs AFTER handler returns (ACK), concurrently with next batch collection.
       // Command receptors fire here. If PostInbox fails, messages stay in inbox
       // and WorkCoordinatorPublisherWorker retries.
-      var workItems = workBatch.InboxWork.ToList();
-      if (workItems.Count > 0) {
-        // Fire-and-forget PostInbox lifecycle — command receptors fire here.
-        // No DB connection — just receptor invocation on thread pool.
-        // Completions handled by publisher worker (claims + marks processed).
-        var scopeFactory = _scopeFactory;
-        var logger = _logger;
-        _ = Task.Run(async () => {
-          try {
-            await using var postScope = scopeFactory.CreateAsyncScope();
-            var receptorInvoker = postScope.ServiceProvider.GetService<IReceptorInvoker>();
-            await _invokePostInboxLifecycleAsync(workItems, receptorInvoker, postScope.ServiceProvider, cancellationToken);
-          } catch (OperationCanceledException) {
-            // Shutdown — suppress
-          } catch (Exception ex) {
-            logger.LogError(ex, "PostInbox lifecycle failed for {BatchCount} messages", workItems.Count);
-          }
-        }, cancellationToken);
-      }
+      // PostInbox lifecycle (command receptors, perspective triggers) is handled by
+      // the WorkCoordinatorPublisherWorker when it claims inbox messages.
+      // Signal the publisher worker to poll immediately so commands are processed promptly.
+      _workChannelWriter?.SignalNewWorkAvailable();
     }
     // Handler returns → transport ACKs all N messages → next batch starts collecting
   }
