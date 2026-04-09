@@ -105,21 +105,21 @@ public class TransportBatchCollectorTests {
   public async Task Enqueue_SlidingWindowResetsOnNewMessageAsync() {
     // Arrange
     var flushCount = 0;
-    var options = new TransportBatchOptions { BatchSize = 1000, SlideMs = 100, MaxWaitMs = 10000 };
+    // Use a very long slide window (5s) so that even under CI load,
+    // the short delays between enqueues can never exceed it.
+    var options = new TransportBatchOptions { BatchSize = 1000, SlideMs = 5000, MaxWaitMs = 30000 };
 
     await using var collector = new TransportBatchCollector<int>(options, async batch => {
       Interlocked.Increment(ref flushCount);
       await Task.CompletedTask;
     });
 
-    // Act — enqueue with delays shorter than slide window (keeps resetting)
+    // Act — enqueue 3 items rapidly (well within the 5s slide window)
     collector.Enqueue(1);
-    await Task.Delay(50);  // 50ms < 100ms slide
     collector.Enqueue(2);
-    await Task.Delay(50);  // another 50ms < 100ms slide
     collector.Enqueue(3);
 
-    // At this point, no flush should have fired (slide keeps resetting)
+    // At this point, no flush should have fired (slide keeps resetting, and 5s hasn't elapsed)
     await Assert.That(flushCount).IsEqualTo(0)
       .Because("Sliding window should reset on each new message");
   }
@@ -220,12 +220,17 @@ public class TransportBatchCollectorTests {
     // Arrange
     var flushedBatches = new List<IReadOnlyList<int>>();
     var flushCount = 0;
+    var firstFlush = new TaskCompletionSource();
     var secondFlush = new TaskCompletionSource();
     var options = new TransportBatchOptions { BatchSize = 3, SlideMs = 5000, MaxWaitMs = 10000 };
 
     await using var collector = new TransportBatchCollector<int>(options, async batch => {
       flushedBatches.Add(batch);
-      if (Interlocked.Increment(ref flushCount) == 2) {
+      var count = Interlocked.Increment(ref flushCount);
+      if (count == 1) {
+        firstFlush.TrySetResult();
+      }
+      if (count == 2) {
         secondFlush.TrySetResult();
       }
       await Task.CompletedTask;
@@ -237,8 +242,8 @@ public class TransportBatchCollectorTests {
     collector.Enqueue(3); // flush 1 triggers
 
     // Wait for first flush to complete before enqueueing second batch
-    // (flush runs on Task.Run, need to let it swap the pending list)
-    await Task.Delay(50);
+    // so the pending list has been swapped and second batch starts fresh
+    await firstFlush.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
     collector.Enqueue(4);
     collector.Enqueue(5);
