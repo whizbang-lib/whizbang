@@ -538,6 +538,12 @@ public record InboxMessage {
   public PerspectiveScope? Scope { get; init; }
 
   /// <summary>
+  /// Envelope metadata including MessageId, Hops, and DispatchContext.
+  /// Stored in the inbox metadata JSONB column for query filtering and observability.
+  /// </summary>
+  public EnvelopeMetadata? Metadata { get; init; }
+
+  /// <summary>
   /// Assembly-qualified name of the message payload type (e.g., "MyApp.Events.ProductCreatedEvent, MyApp").
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>

@@ -522,6 +522,11 @@ public partial class ServiceBusConsumerWorker(
       StreamId = streamId,
       IsEvent = isEvent,
       Scope = envelope.GetCurrentScope()?.Scope,
+      Metadata = new EnvelopeMetadata {
+        MessageId = envelope.MessageId,
+        Hops = envelope.Hops?.ToList() ?? [],
+        DispatchContext = envelope.DispatchContext
+      },
       MessageType = messageTypeName
     };
 
