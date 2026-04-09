@@ -119,24 +119,22 @@ public class InboxNullLeaseTests : PostgresTestBase {
 
   [Test]
   public async Task NullLeaseInboxMessage_ClaimedByPublisherWorkerAsync() {
-    // Arrange — insert a message, then simulate publisher worker claiming
+    // Arrange — insert a message with SkipInboxClaiming (transport consumer),
+    // then the SAME instance claims it via process_work_batch (publisher worker).
+    // In production, the publisher worker runs on the same instance as the transport consumer.
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var inboxMessage = _createInboxMessage(messageId, streamId);
 
     await _sut.ProcessWorkBatchAsync(_createRequest(inboxMessage));
 
-    // Act — publisher worker calls process_work_batch with no new messages (just claiming)
-    var publisherInstanceId = _idProvider.NewGuid();
-    await _insertServiceInstanceAsync(publisherInstanceId, "TestService", "test-host", 12346);
-    var publisherSut = new DapperWorkCoordinator(ConnectionString, _jsonOptions);
-
-    var claimResult = await publisherSut.ProcessWorkBatchAsync(
+    // Act — same instance calls process_work_batch without SkipInboxClaiming (publisher worker path)
+    var claimResult = await _sut.ProcessWorkBatchAsync(
       new ProcessWorkBatchRequest {
-        InstanceId = publisherInstanceId,
+        InstanceId = _instanceId,
         ServiceName = "TestService",
         HostName = "test-host",
-        ProcessId = 12346,
+        ProcessId = 12345,
         OutboxCompletions = [],
         OutboxFailures = [],
         InboxCompletions = [],
@@ -179,6 +177,7 @@ public class InboxNullLeaseTests : PostgresTestBase {
       ServiceName = "TestService",
       HostName = "test-host",
       ProcessId = 12345,
+      Flags = WorkBatchOptions.SkipInboxClaiming, // Transport consumer skips claiming — publisher worker claims separately
       OutboxCompletions = [],
       OutboxFailures = [],
       InboxCompletions = [],
