@@ -1,0 +1,31 @@
+name: Mutation Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Source project to mutate'
+        required: true
+        default: 'Whizbang.Core'
+        type: choice
+        options:
+          - Whizbang.Core
+      mutate-filter:
+        description: 'File glob filter (e.g., **/MessageEnvelope.cs). Empty = all files'
+        required: false
+        default: ''
+        type: string
+      since-target:
+        description: 'Diff target (empty = full run, "main" = only changes since main)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  mutate:
+    name: Mutation Testing
+    uses: ./.github/workflows/reusable-mutation.yml
+    with:
+      project: ${{ inputs.project }}
+      mutate-filter: ${{ inputs.mutate-filter }}
+      since-target: ${{ inputs.since-target }}

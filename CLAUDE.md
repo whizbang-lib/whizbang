@@ -186,6 +186,13 @@ Navigation hub with scenario-based guidance. **Read this first** when unsure whi
 - Need compiled model guidance
 - Working on NativeAOT compatibility
 
+### 📖 **[mutation-testing.md](ai-docs/mutation-testing.md)**
+**Read when**:
+- Running or interpreting mutation test results
+- Adding mutation testing to a new project
+- Investigating surviving mutants
+- Evaluating whether tests are catching actual bugs
+
 ---
 
 ## When to Read Source Generator Docs
@@ -231,6 +238,7 @@ Quick workflows via `/command-name`:
 **Testing**:
 - `/test` - Run all tests
 - `/coverage` - Run tests with coverage
+- `/mutate` - Run Stryker.NET mutation testing
 
 **Code Quality**:
 - `/format` - Run dotnet format (MANDATORY before commit)
