@@ -1022,4 +1022,62 @@ public class SyncEventTrackerTests {
     var result = await task;
     await Assert.That(result).IsFalse();
   }
+
+  // ==========================================================================
+  // TTL Cleanup tests
+  // ==========================================================================
+
+  [Test]
+  public async Task CleanupStaleEntries_RemovesEntriesOlderThanMaxAgeAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Entry was just added — cleanup with 1-hour TTL should NOT remove it
+    var removedCount = tracker.CleanupStaleEntries(TimeSpan.FromHours(1));
+    await Assert.That(removedCount).IsEqualTo(0);
+
+    var pending = tracker.GetPendingEvents(streamId, "P1");
+    await Assert.That(pending).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CleanupStaleEntries_WithZeroTTL_RemovesAllEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId1 = Guid.NewGuid();
+    var eventId2 = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventB), eventId2, streamId, "P1");
+
+    // Zero TTL means everything is "stale"
+    var removedCount = tracker.CleanupStaleEntries(TimeSpan.Zero);
+    await Assert.That(removedCount).IsGreaterThanOrEqualTo(2);
+
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CleanupStaleEntries_SignalsWaitersForRemovedEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Start waiting on the event
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "P1", TimeSpan.FromSeconds(30));
+
+    // Cleanup with zero TTL — should remove the entry AND signal the waiter
+    tracker.CleanupStaleEntries(TimeSpan.Zero);
+
+    // The waiter should complete (signaled by cleanup) rather than waiting 30 seconds
+    var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));
+    await Assert.That(waitTask.IsCompleted).IsTrue()
+      .Because("Cleanup should signal waiters so they don't hang");
+  }
 }
