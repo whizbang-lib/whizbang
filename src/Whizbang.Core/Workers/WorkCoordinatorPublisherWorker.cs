@@ -924,9 +924,10 @@ public partial class WorkCoordinatorPublisherWorker(
       }
       if (channelInboxWork.Count > 0) {
         await _processInboxWorkAsync(channelInboxWork, cancellationToken);
-        // Clear dedup after processing so future claims can be written
+        // Remove from in-flight after processing — completion queued in _inboxCompletions,
+        // will be flushed to DB on next poll. Same pattern as outbox RemoveInFlight.
         foreach (var work in channelInboxWork) {
-          inboxChannelWriter.MarkProcessed(work.MessageId);
+          inboxChannelWriter.RemoveInFlight(work.MessageId);
         }
       }
     }

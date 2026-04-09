@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -6,51 +7,35 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Interface for writing inbox work to a processing channel.
-/// Enables any caller of process_work_batch to route claimed inbox work
-/// to the WorkCoordinatorPublisherWorker for processing.
-/// Implementations are typically singleton and shared between WorkBatchCoordinator and publisher worker.
+/// Mirrors IWorkChannelWriter pattern — callers check IsInFlight before writing,
+/// RemoveInFlight after completion is acknowledged by DB.
 /// </summary>
 /// <docs>messaging/inbox-channel</docs>
 public interface IInboxChannelWriter {
-  /// <summary>
-  /// Gets the channel reader for consumers (WorkCoordinatorPublisherWorker).
-  /// </summary>
+  /// <summary>Gets the channel reader for consumers (WorkCoordinatorPublisherWorker).</summary>
   ChannelReader<InboxWork> Reader { get; }
 
-  /// <summary>
-  /// Asynchronously writes inbox work to the channel for processing.
-  /// </summary>
-  /// <param name="work">The inbox work to queue for processing</param>
-  /// <param name="ct">Cancellation token</param>
+  /// <summary>Asynchronously writes inbox work to the channel.</summary>
   ValueTask WriteAsync(InboxWork work, CancellationToken ct = default);
 
-  /// <summary>
-  /// Attempts to write inbox work to the channel synchronously.
-  /// </summary>
-  /// <param name="work">The inbox work to queue for processing</param>
-  /// <returns>True if the work was written; false if the channel is full or complete</returns>
+  /// <summary>Attempts to write inbox work to the channel synchronously.</summary>
   bool TryWrite(InboxWork work);
 
-  /// <summary>
-  /// Signals that no more work will be written to the channel.
-  /// </summary>
+  /// <summary>Returns true if the message is currently in-flight (queued or being processed).</summary>
+  bool IsInFlight(Guid messageId);
+
+  /// <summary>Removes a message from in-flight tracking after completion is acknowledged by DB.</summary>
+  void RemoveInFlight(Guid messageId);
+
+  /// <summary>Returns true if the message has been in-flight long enough to need a lease renewal.</summary>
+  bool ShouldRenewLease(Guid messageId);
+
+  /// <summary>Signals that no more work will be written.</summary>
   void Complete();
 
-  /// <summary>
-  /// Event raised when new inbox work has been written to the channel.
-  /// The publisher worker subscribes to wake immediately.
-  /// </summary>
+  /// <summary>Event raised when new inbox work is available.</summary>
   event Action? OnNewInboxWorkAvailable;
 
-  /// <summary>
-  /// Fires <see cref="OnNewInboxWorkAvailable"/> to wake the publisher worker.
-  /// </summary>
+  /// <summary>Fires OnNewInboxWorkAvailable to wake the publisher worker.</summary>
   void SignalNewInboxWorkAvailable();
-
-  /// <summary>
-  /// Removes a message ID from the dedup set after processing.
-  /// Called by the publisher worker after inbox work is processed.
-  /// </summary>
-  /// <param name="messageId">The message ID to remove from dedup tracking</param>
-  void MarkProcessed(Guid messageId);
 }
