@@ -375,13 +375,11 @@ public sealed partial class PerspectiveSyncAwaiter(
 
   /// <summary>
   /// Gets the perspective name from the perspective type.
-  /// Uses CLR type name format to match database storage and source generator output.
+  /// Delegates to <see cref="TypeNameFormatter.GetPerspectiveName"/> for consistent
+  /// CLR-format naming across runtime code, generators, and database storage.
   /// </summary>
   private static string _getPerspectiveName(Type perspectiveType) {
-    // Use Type.FullName directly - CLR format with '+' for nested types
-    // This matches TypeNameUtilities.BuildClrTypeName() used in generators
-    // and the format stored in wh_perspective_events
-    return perspectiveType.FullName ?? perspectiveType.Name;
+    return TypeNameFormatter.GetPerspectiveName(perspectiveType);
   }
 
   // ==========================================================================
