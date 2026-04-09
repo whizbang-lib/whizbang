@@ -923,8 +923,10 @@ public partial class WorkCoordinatorPublisherWorker(
         }
       }
       if (channelInboxWork.Count > 0) {
-        LogProcessingInboxWork(_logger, channelInboxWork.Count);
+        var ids = string.Join(", ", channelInboxWork.Select(w => w.MessageId.ToString()[..8]));
+        LogChannelInboxProcessing(_logger, channelInboxWork.Count, ids);
         await _processInboxWorkAsync(channelInboxWork, cancellationToken);
+        LogChannelInboxCompletionQueued(_logger, channelInboxWork.Count);
         foreach (var work in channelInboxWork) {
           inboxChannelWriter.RemoveInFlight(work.MessageId);
         }
@@ -1347,6 +1349,20 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId} ({MessageType}): event-store-only (no transport destination)"
   )]
   static partial void LogSkippedPreOutboxNoDestination(ILogger logger, Guid messageId, string messageType);
+
+  [LoggerMessage(
+    EventId = 29,
+    Level = LogLevel.Information,
+    Message = "Processing {Count} inbox items from channel (message IDs: {MessageIds})"
+  )]
+  static partial void LogChannelInboxProcessing(ILogger logger, int count, string messageIds);
+
+  [LoggerMessage(
+    EventId = 30,
+    Level = LogLevel.Information,
+    Message = "Channel inbox completion queued for {Count} items — will flush on next poll"
+  )]
+  static partial void LogChannelInboxCompletionQueued(ILogger logger, int count);
 
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.
