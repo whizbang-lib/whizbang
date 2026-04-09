@@ -864,17 +864,19 @@ BEGIN
     p_partition_count
   ) AS coo;
 
-  -- Claim orphaned inbox and track
-  INSERT INTO temp_orphaned_inbox (message_id, stream_id)
-  SELECT coi.message_id, coi.stream_id
-  FROM __SCHEMA__.claim_orphaned_inbox(
-    p_instance_id,
-    v_rank,
-    v_count,
-    v_lease_expiry,
-    p_now,
-    p_partition_count
-  ) AS coi;
+  -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
+  IF (p_flags & 64) = 0 THEN
+    INSERT INTO temp_orphaned_inbox (message_id, stream_id)
+    SELECT coi.message_id, coi.stream_id
+    FROM __SCHEMA__.claim_orphaned_inbox(
+      p_instance_id,
+      v_rank,
+      v_count,
+      v_lease_expiry,
+      p_now,
+      p_partition_count
+    ) AS coi;
+  END IF;
 
   -- Claim orphaned receptor work and track
   INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
