@@ -784,6 +784,38 @@ BEGIN
   ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;  -- Idempotency
 
   -- ========================================
+  -- Phase 4.6B: Out-of-order detection for auto-created perspective events
+  -- ========================================
+  -- Mirrors store_perspective_events (migration 022) rewind detection.
+  -- If a newly-inserted perspective event has event_id < cursor's last_event_id,
+  -- the runner already read past this event from wh_event_store and needs a rewind.
+  -- UUID7 comparison works because UUID7 encodes timestamp in the most significant bits.
+  UPDATE wh_perspective_cursors pc
+  SET status = pc.status | 32,  -- RewindRequired flag (1 << 5)
+      rewind_trigger_event_id = CASE
+        WHEN pc.rewind_trigger_event_id IS NULL THEN ooo.min_event_id
+        WHEN ooo.min_event_id < pc.rewind_trigger_event_id THEN ooo.min_event_id
+        ELSE pc.rewind_trigger_event_id
+      END
+  FROM (
+    SELECT DISTINCT ON (pe.stream_id, pe.perspective_name)
+      pe.stream_id,
+      pe.perspective_name,
+      pe.event_id as min_event_id
+    FROM wh_perspective_events pe
+    INNER JOIN wh_perspective_cursors pc2
+      ON pc2.stream_id = pe.stream_id
+      AND pc2.perspective_name = pe.perspective_name
+      AND pc2.last_event_id IS NOT NULL
+      AND pe.event_id < pc2.last_event_id
+    WHERE pe.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
+      AND pe.processed_at IS NULL
+    ORDER BY pe.stream_id, pe.perspective_name, pe.event_id
+  ) ooo
+  WHERE pc.stream_id = ooo.stream_id
+    AND pc.perspective_name = ooo.perspective_name;
+
+  -- ========================================
   -- Phase 4.7: Auto-Create Perspective Checkpoints
   -- ========================================
   -- When events are stored, automatically create checkpoint rows for any streams

@@ -769,6 +769,297 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       .Because("Without completion report, checkpoint should not be updated");
   }
 
+  // Phase 4.6B: Out-of-order detection for auto-created perspective events
+
+  [Test]
+  public async Task ProcessWorkBatch_WithOutOfOrderEvent_SetsRewindRequiredOnCursorAsync() {
+    // Arrange - Register perspective association
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    // UUID7 IDs are time-ordered: eventId1 < eventId2 < eventId3
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    // Pre-create cursor that has already advanced to eventId3
+    // (simulates runner having read ahead from wh_event_store)
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId3, status: 2);  // Completed status
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Act - Store an event with eventId1, which is OLDER than cursor's last_event_id (eventId3)
+    var outboxMessages = _createOutboxEventJson(
+      streamId: streamId,
+      eventId: eventId1,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert - Cursor should have RewindRequired flag set (bit 5 = 32)
+    var cursor = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.status & 32).IsEqualTo(32)
+      .Because("Phase 4.6B should detect out-of-order event and set RewindRequired flag");
+    await Assert.That(cursor.rewind_trigger_event_id).IsEqualTo(eventId1)
+      .Because("rewind_trigger_event_id should be set to the out-of-order event");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithMultipleOutOfOrderEvents_SetsRewindToEarliestAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();  // Earliest
+    var eventId2 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();  // Cursor position
+
+    // Cursor already at eventId3
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Act - Store TWO out-of-order events in one batch
+    var event1Json = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+    var event2Json = _createOutboxEventJson(streamId, eventId2,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":2}");
+
+    var event1Array = JsonSerializer.Deserialize<JsonElement[]>(event1Json)!;
+    var event2Array = JsonSerializer.Deserialize<JsonElement[]>(event2Json)!;
+    var outboxMessages = JsonSerializer.Serialize(new[] { event1Array[0], event2Array[0] });
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert - rewind_trigger_event_id should be the EARLIEST out-of-order event
+    var cursor = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursor!.status & 32).IsEqualTo(32)
+      .Because("RewindRequired should be set");
+    await Assert.That(cursor.rewind_trigger_event_id).IsEqualTo(eventId1)
+      .Because("rewind_trigger_event_id should be the earliest out-of-order event, not eventId2");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithExistingRewindTrigger_OnlyUpdatesIfEarlierAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+    var eventId4 = _idProvider.NewGuid();
+
+    // Cursor at eventId4, already has rewind trigger at eventId2
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId4, status: 34,  // Completed (2) | RewindRequired (32)
+      rewindTriggerEventId: eventId2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Act 1 - Store eventId3 (out of order but LATER than existing trigger eventId2)
+    var outboxMessages = _createOutboxEventJson(streamId, eventId3,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":3}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert 1 - Trigger should NOT be overwritten (eventId2 is still earlier)
+    var cursor = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursor!.rewind_trigger_event_id).IsEqualTo(eventId2)
+      .Because("Existing rewind trigger (eventId2) is earlier than new event (eventId3), should not be overwritten");
+
+    // Act 2 - Store eventId1 (earlier than existing trigger eventId2)
+    outboxMessages = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert 2 - Trigger should now be updated to eventId1
+    cursor = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursor!.rewind_trigger_event_id).IsEqualTo(eventId1)
+      .Because("eventId1 is earlier than previous trigger eventId2, should be updated");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithInOrderEvent_DoesNotSetRewindRequiredAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+
+    // Cursor at eventId1
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId1, status: 2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Act - Store eventId2 (> eventId1, in order — normal forward processing)
+    var outboxMessages = _createOutboxEventJson(streamId, eventId2,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":2}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert - No rewind needed for in-order events
+    var cursor = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursor!.status & 32).IsEqualTo(0)
+      .Because("In-order events should NOT set RewindRequired flag");
+    await Assert.That(cursor.rewind_trigger_event_id).IsNull()
+      .Because("rewind_trigger_event_id should remain NULL for in-order events");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithMultiplePerspectives_SetsRewindIndependentlyAsync() {
+    // Arrange - Two perspectives for same event type
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductDetailsPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+
+    // Cursor A advanced to eventId2, Cursor B never processed (NULL)
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId2, status: 2);
+    await _insertPerspectiveCursorAsync(streamId, "ProductDetailsPerspective");  // NULL cursor
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Act - Store eventId1 (out of order for cursor A, but fine for cursor B)
+    var outboxMessages = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert - Cursor A should have RewindRequired, Cursor B should not
+    var cursorA = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursorA!.status & 32).IsEqualTo(32)
+      .Because("Cursor A has last_event_id > eventId1, needs rewind");
+    await Assert.That(cursorA.rewind_trigger_event_id).IsEqualTo(eventId1);
+
+    var cursorB = await _getPerspectiveCursorAsync(streamId, "ProductDetailsPerspective");
+    await Assert.That(cursorB!.status & 32).IsEqualTo(0)
+      .Because("Cursor B has NULL last_event_id, no rewind needed");
+    await Assert.That(cursorB.rewind_trigger_event_id).IsNull();
+  }
+
   // Helper methods
 
   private async Task _registerMessageAssociationAsync(
@@ -835,18 +1126,21 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { eventId, streamId, eventType, eventData, version });
   }
 
-  private async Task _insertPerspectiveCursorAsync(Guid streamId, string perspectiveName) {
+  private async Task _insertPerspectiveCursorAsync(
+      Guid streamId, string perspectiveName,
+      Guid? lastEventId = null, short status = 0,
+      Guid? rewindTriggerEventId = null) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status)
-      VALUES (@streamId, @perspectiveName, NULL, 0)",
-      new { streamId, perspectiveName });
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id)
+      VALUES (@streamId, @perspectiveName, @lastEventId, @status, @rewindTriggerEventId)",
+      new { streamId, perspectiveName, lastEventId, status, rewindTriggerEventId });
   }
 
   private async Task<PerspectiveCursor?> _getPerspectiveCursorAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<PerspectiveCursor>(@"
-      SELECT stream_id, perspective_name, last_event_id, status, error
+      SELECT stream_id, perspective_name, last_event_id, status, error, rewind_trigger_event_id
       FROM wh_perspective_cursors
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
       new { streamId, perspectiveName });
@@ -855,7 +1149,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task<List<PerspectiveCursor>> _getAllPerspectiveCursorsAsync(Guid streamId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var results = await connection.QueryAsync<PerspectiveCursor>(@"
-      SELECT stream_id, perspective_name, last_event_id, status, error
+      SELECT stream_id, perspective_name, last_event_id, status, error, rewind_trigger_event_id
       FROM wh_perspective_cursors
       WHERE stream_id = @streamId",
       new { streamId });
@@ -868,7 +1162,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     string perspective_name,
     Guid? last_event_id,
     short status,
-    string? error);
+    string? error,
+    Guid? rewind_trigger_event_id);
 
   private sealed record PerspectiveEventRow(
     Guid event_work_id,

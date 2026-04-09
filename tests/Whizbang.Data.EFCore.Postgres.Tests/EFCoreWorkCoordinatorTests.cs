@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -2750,6 +2752,217 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       connection);
     command.Parameters.AddWithValue("streamId", streamId);
     return (int)(await command.ExecuteScalarAsync() ?? 0);
+  }
+
+  // ===== ORPHANED LIFECYCLE EVENT DESERIALIZATION TESTS =====
+
+  /// <summary>
+  /// Happy path: orphaned events are deserialized as JsonElement when type resolver works correctly.
+  /// </summary>
+  [Test]
+  [Category("Integration")]
+  public async Task GetOrphanedLifecycleEventsAsync_DeserializesOrphanedEvent_AsJsonElementAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var eventId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    const string eventType = "TestApp.Events.OrderCreated, TestApp";
+    const string eventData = """{"OrderId":"abc-123","Total":99.99}""";
+    const string perspectiveName = "OrderSummary";
+
+    await InsertEventStoreRowAsync(eventId, streamId, eventType, eventData);
+    await InsertPerspectiveCursorAsync(streamId, perspectiveName, eventId);
+
+    var perspectivesPerEventType = new Dictionary<string, IReadOnlyList<string>> {
+      [eventType] = [perspectiveName]
+    };
+
+    // Act
+    var result = await _sut.GetOrphanedLifecycleEventsAsync(
+      perspectivesPerEventType,
+      TimeSpan.FromHours(1));
+
+    // Assert
+    await Assert.That(result).Count().IsEqualTo(1);
+    await Assert.That(result[0].EventId).IsEqualTo(eventId);
+    await Assert.That(result[0].StreamId).IsEqualTo(streamId);
+
+    var payload = ((MessageEnvelope<JsonElement>)result[0].Envelope).Payload;
+    await Assert.That(payload.GetProperty("OrderId").GetString()).IsEqualTo("abc-123");
+    await Assert.That(payload.GetProperty("Total").GetDecimal()).IsEqualTo(99.99m);
+  }
+
+  /// <summary>
+  /// When the chained type resolver returns IEvent type info for JsonElement (production bug),
+  /// the fallback should use JsonDocument.Parse to successfully deserialize.
+  /// </summary>
+  [Test]
+  [Category("Integration")]
+  public async Task GetOrphanedLifecycleEventsAsync_FallsBackToJsonDocumentParse_WhenTypeResolverFailsAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var eventId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    const string eventType = "TestApp.Events.OrderCreated, TestApp";
+    const string eventData = """{"OrderId":"fallback-test","Total":42.00}""";
+    const string perspectiveName = "OrderSummary";
+
+    await InsertEventStoreRowAsync(eventId, streamId, eventType, eventData);
+    await InsertPerspectiveCursorAsync(streamId, perspectiveName, eventId);
+
+    // Create broken JsonSerializerOptions that reproduces the production bug:
+    // GetTypeInfo(typeof(JsonElement)) returns IEvent type info instead
+    var realOptions = JsonContextRegistry.CreateCombinedOptions();
+    var brokenOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new BrokenJsonElementResolver(realOptions.TypeInfoResolver!, realOptions)
+    };
+
+    var logger = new CapturingLogger();
+    var brokenSut = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      CreateDbContext(), brokenOptions, logger);
+
+    var perspectivesPerEventType = new Dictionary<string, IReadOnlyList<string>> {
+      [eventType] = [perspectiveName]
+    };
+
+    // Act
+    var result = await brokenSut.GetOrphanedLifecycleEventsAsync(
+      perspectivesPerEventType,
+      TimeSpan.FromHours(1));
+
+    // Assert — with fallback, the event should be returned (not skipped)
+    await Assert.That(result).Count().IsEqualTo(1);
+    await Assert.That(result[0].EventId).IsEqualTo(eventId);
+
+    var payload = ((MessageEnvelope<JsonElement>)result[0].Envelope).Payload;
+    await Assert.That(payload.GetProperty("OrderId").GetString()).IsEqualTo("fallback-test");
+
+    // The fallback should succeed silently — no warnings logged
+    await Assert.That(logger.WarningCount).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// When event_data contains a $type discriminator property, it should still be
+  /// deserialized successfully as a JsonElement (the $type is just a JSON property).
+  /// </summary>
+  [Test]
+  [Category("Integration")]
+  public async Task GetOrphanedLifecycleEventsAsync_DeserializesEventData_WithTypeDiscriminatorAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var eventId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    const string eventType = "TestApp.Events.OrderCreated, TestApp";
+    const string eventData = """{"$type":"OrderCreated","OrderId":"poly-test","Total":10.00}""";
+    const string perspectiveName = "OrderSummary";
+
+    await InsertEventStoreRowAsync(eventId, streamId, eventType, eventData);
+    await InsertPerspectiveCursorAsync(streamId, perspectiveName, eventId);
+
+    var perspectivesPerEventType = new Dictionary<string, IReadOnlyList<string>> {
+      [eventType] = [perspectiveName]
+    };
+
+    // Act
+    var result = await _sut.GetOrphanedLifecycleEventsAsync(
+      perspectivesPerEventType,
+      TimeSpan.FromHours(1));
+
+    // Assert
+    await Assert.That(result).Count().IsEqualTo(1);
+
+    var payload = ((MessageEnvelope<JsonElement>)result[0].Envelope).Payload;
+    await Assert.That(payload.GetProperty("$type").GetString()).IsEqualTo("OrderCreated");
+    await Assert.That(payload.GetProperty("OrderId").GetString()).IsEqualTo("poly-test");
+  }
+
+  // ===== ORPHANED LIFECYCLE EVENT HELPERS =====
+
+  private async Task InsertEventStoreRowAsync(
+    Guid eventId, Guid streamId, string eventType, string eventData,
+    string? scope = null) {
+    await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    var metadata = $$"""{"messageId":"{{eventId}}","hops":[]}""";
+
+    await using var command = new Npgsql.NpgsqlCommand("""
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'TestAggregate', @eventType, @eventData::jsonb, @metadata::jsonb, @scope::jsonb, 1, NOW())
+      """, connection);
+
+    command.Parameters.AddWithValue("eventId", eventId);
+    command.Parameters.AddWithValue("streamId", streamId);
+    command.Parameters.AddWithValue("eventType", eventType);
+    command.Parameters.AddWithValue("eventData", eventData);
+    command.Parameters.AddWithValue("metadata", metadata);
+    command.Parameters.AddWithValue("scope", (object?)scope ?? DBNull.Value);
+
+    await command.ExecuteNonQueryAsync();
+  }
+
+  private async Task InsertPerspectiveCursorAsync(
+    Guid streamId, string perspectiveName, Guid lastEventId) {
+    await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var command = new Npgsql.NpgsqlCommand("""
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at)
+      VALUES (@streamId, @perspectiveName, @lastEventId, 0, NOW())
+      """, connection);
+
+    command.Parameters.AddWithValue("streamId", streamId);
+    command.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    command.Parameters.AddWithValue("lastEventId", lastEventId);
+
+    await command.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Reproduces the production bug where the chained type resolver returns
+  /// IEvent polymorphic type info when asked for JsonElement type info.
+  /// </summary>
+  private sealed class BrokenJsonElementResolver(
+    IJsonTypeInfoResolver inner,
+    JsonSerializerOptions realOptions) : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
+      if (type == typeof(JsonElement)) {
+        // Return IEvent type info instead — reproduces the production bug
+        // where the chained resolver maps JsonElement to the polymorphic IEvent.
+        // Use realOptions to get the IEvent type info (it has the full resolver chain).
+        return realOptions.GetTypeInfo(typeof(IEvent));
+      }
+
+      return inner.GetTypeInfo(type, options);
+    }
+  }
+
+  /// <summary>
+  /// Simple logger that captures log messages for test verification.
+  /// </summary>
+  private sealed class CapturingLogger : ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
+    public int WarningCount { get; private set; }
+    public string? LastWarningMessage { get; private set; }
+    public Exception? LastException { get; private set; }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+      LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Warning) {
+        WarningCount++;
+        LastWarningMessage = formatter(state, exception);
+        LastException = exception;
+      }
+    }
   }
 
   /// <summary>
