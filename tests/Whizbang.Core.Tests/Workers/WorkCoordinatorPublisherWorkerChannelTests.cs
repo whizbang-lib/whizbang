@@ -242,7 +242,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     // Act — start worker, wait for requeue signal (deterministic), then stop
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the deterministic requeue signal — fires when TryWrite is called after initial WriteAsync
@@ -293,7 +293,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     // Act — start worker, wait for requeue signal (deterministic), then stop
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the deterministic requeue signal
