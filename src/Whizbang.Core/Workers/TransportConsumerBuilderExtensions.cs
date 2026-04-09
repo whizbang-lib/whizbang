@@ -200,13 +200,12 @@ public static class TransportConsumerBuilderExtensions {
     // Register MessageProcessingOptions (consumer can override by registering before this)
     builder.Services.TryAddSingleton(new MessageProcessingOptions());
 
-    // Register default IInboxBatchStrategy (consumer can override by registering before this)
-    builder.Services.TryAddSingleton<IInboxBatchStrategy>(sp => {
-      var options = sp.GetRequiredService<MessageProcessingOptions>();
-      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-      var metrics = sp.GetService<TransportMetrics>();
-      return new SlidingWindowInboxBatchStrategy(options, scopeFactory, metrics);
-    });
+    // Register TransportBatchOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new TransportBatchOptions());
+
+    // Register inbox channel for routing claimed inbox work to publisher worker
+    builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
+
 
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
@@ -331,13 +330,12 @@ public static class TransportConsumerBuilderExtensions {
     // Register MessageProcessingOptions (consumer can override by registering before this)
     builder.Services.TryAddSingleton(new MessageProcessingOptions());
 
-    // Register default IInboxBatchStrategy (consumer can override by registering before this)
-    builder.Services.TryAddSingleton<IInboxBatchStrategy>(sp => {
-      var options = sp.GetRequiredService<MessageProcessingOptions>();
-      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-      var metrics = sp.GetService<TransportMetrics>();
-      return new SlidingWindowInboxBatchStrategy(options, scopeFactory, metrics);
-    });
+    // Register TransportBatchOptions (consumer can override by registering before this)
+    builder.Services.TryAddSingleton(new TransportBatchOptions());
+
+    // Register inbox channel for routing claimed inbox work to publisher worker
+    builder.Services.TryAddSingleton<IInboxChannelWriter, InboxChannelWriter>();
+
 
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();

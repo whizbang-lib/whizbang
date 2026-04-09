@@ -360,6 +360,18 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       return Task.FromResult<ISubscription>(subscription);
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default
+    ) {
+      SubscribeCallCount++;
+      var subscription = new SimpleSubscription();
+      _subscriptions.Add(subscription);
+      return Task.FromResult<ISubscription>(subscription);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,
       TransportDestination destination,
@@ -395,6 +407,16 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination,
+      CancellationToken cancellationToken = default
+    ) {
+      SubscribeCallCount++;
+      return Task.FromResult<ISubscription>(new SimpleSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
       CancellationToken cancellationToken = default
     ) {
       SubscribeCallCount++;

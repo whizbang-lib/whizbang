@@ -161,6 +161,24 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
+  /// Gets the CLR-format perspective name for a type.
+  /// This produces the same format as TypeNameUtilities.BuildClrTypeName() in generators,
+  /// ensuring consistency between compile-time registration and runtime lookup.
+  /// Uses '+' for nested types and '.' for namespaces (standard CLR format).
+  /// </summary>
+  /// <example>
+  /// typeof(MyApp.OrderPerspective) → "MyApp.OrderPerspective"
+  /// typeof(MyApp.Container.Nested) → "MyApp.Container+Nested"
+  /// </example>
+  /// <param name="perspectiveType">The perspective type.</param>
+  /// <returns>CLR-format type name suitable for database storage and sync tracking.</returns>
+  public static string GetPerspectiveName(Type perspectiveType) {
+    ArgumentNullException.ThrowIfNull(perspectiveType);
+    return perspectiveType.FullName
+        ?? throw new InvalidOperationException($"Type {perspectiveType.Name} does not have a FullName");
+  }
+
+  /// <summary>
   /// Extracts the payload namespace from a generic envelope type string.
   /// The transport delivers types like "MessageEnvelope`1[[Payload.Type, Assembly]], Whizbang.Core".
   /// This extracts the namespace of the inner payload type, not the envelope wrapper.

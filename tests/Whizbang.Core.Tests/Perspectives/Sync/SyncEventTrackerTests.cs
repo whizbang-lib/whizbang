@@ -1022,4 +1022,135 @@ public class SyncEventTrackerTests {
     var result = await task;
     await Assert.That(result).IsFalse();
   }
+
+  // ==========================================================================
+  // TTL Cleanup tests
+  // ==========================================================================
+
+  [Test]
+  public async Task CleanupStaleEntries_RemovesEntriesOlderThanMaxAgeAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Entry was just added — cleanup with 1-hour TTL should NOT remove it
+    var removedCount = tracker.CleanupStaleEntries(TimeSpan.FromHours(1));
+    await Assert.That(removedCount).IsEqualTo(0);
+
+    var pending = tracker.GetPendingEvents(streamId, "P1");
+    await Assert.That(pending).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CleanupStaleEntries_WithZeroTTL_RemovesAllEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId1 = Guid.NewGuid();
+    var eventId2 = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventB), eventId2, streamId, "P1");
+
+    // Zero TTL means everything is "stale"
+    var removedCount = tracker.CleanupStaleEntries(TimeSpan.Zero);
+    await Assert.That(removedCount).IsGreaterThanOrEqualTo(2);
+
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CleanupStaleEntries_SignalsWaitersForRemovedEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Start waiting on the event
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "P1", TimeSpan.FromSeconds(30));
+
+    // Cleanup with zero TTL — should remove the entry AND signal the waiter
+    tracker.CleanupStaleEntries(TimeSpan.Zero);
+
+    // The waiter should complete (signaled by cleanup) rather than waiting 30 seconds
+    var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));
+    await Assert.That(waitTask.IsCompleted).IsTrue()
+      .Because("Cleanup should signal waiters so they don't hang");
+  }
+
+  // ==========================================================================
+  // Multi-perspective partial completion tests
+  // ==========================================================================
+
+  [Test]
+  public async Task MarkProcessedByPerspective_ThreePerspectives_MarkOne_OtherTwoStillPendingAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P2");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P3");
+
+    // Mark only P1 as processed
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    // P1 should be gone, P2 and P3 still pending
+    var pendingP1 = tracker.GetPendingEvents(streamId, "P1");
+    var pendingP2 = tracker.GetPendingEvents(streamId, "P2");
+    var pendingP3 = tracker.GetPendingEvents(streamId, "P3");
+
+    await Assert.That(pendingP1).Count().IsEqualTo(0);
+    await Assert.That(pendingP2).Count().IsEqualTo(1);
+    await Assert.That(pendingP3).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_NeverTrackedPerspective_NoOpAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // Mark a perspective that was never tracked — should be a no-op
+    tracker.MarkProcessedByPerspective([eventId], "NeverTracked");
+
+    // P1 should still be pending
+    var pendingP1 = tracker.GetPendingEvents(streamId, "P1");
+    await Assert.That(pendingP1).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_ConcurrentLastTwoPerspectives_AllWaitersSignaledOnceAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P2");
+
+    // Start waiting for all perspectives
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(10));
+
+    // Mark both perspectives concurrently
+    var barrier = new Barrier(2);
+    var t1 = Task.Run(() => {
+      barrier.SignalAndWait();
+      tracker.MarkProcessedByPerspective([eventId], "P1");
+    });
+    var t2 = Task.Run(() => {
+      barrier.SignalAndWait();
+      tracker.MarkProcessedByPerspective([eventId], "P2");
+    });
+
+    await Task.WhenAll(t1, t2);
+
+    // The all-perspectives waiter should complete
+    var result = await waitTask;
+    await Assert.That(result).IsTrue();
+  }
 }

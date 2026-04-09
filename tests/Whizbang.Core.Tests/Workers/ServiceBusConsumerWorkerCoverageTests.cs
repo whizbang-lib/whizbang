@@ -121,6 +121,14 @@ public class ServiceBusConsumerWorkerCoverageTests {
       CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      throw new InvalidOperationException("Simulated subscription failure");
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope envelope,
       TransportDestination destination,

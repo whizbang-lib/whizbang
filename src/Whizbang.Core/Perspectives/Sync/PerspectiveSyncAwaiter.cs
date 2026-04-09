@@ -145,21 +145,24 @@ public sealed partial class PerspectiveSyncAwaiter(
     var stopwatch = _clock.StartNew();
     var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
 
+    var perspectiveName = _getPerspectiveName(perspectiveType);
+
     // If no events match the filter, return immediately
     if (pendingEvents.Count == 0) {
       syncActivity?.SetTag(TAG_SYNC_OUTCOME, "NoPendingEvents");
       syncActivity?.SetTag(TAG_SYNC_EVENT_COUNT, 0);
-      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
+      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed,
+          EventsEmitted: 0, PerspectiveName: perspectiveName);
     }
 
     var eventsToWait = pendingEvents.Count;
-    var perspectiveName = _getPerspectiveName(perspectiveType);
     var inquiries = _buildSyncInquiries(pendingEvents, perspectiveName);
 
     if (inquiries.Length == 0) {
       syncActivity?.SetTag(TAG_SYNC_OUTCOME, "NoPendingEvents");
       syncActivity?.SetTag(TAG_SYNC_EVENT_COUNT, 0);
-      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
+      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed,
+          EventsEmitted: pendingEvents.Count, PerspectiveName: perspectiveName);
     }
 
     // Set event count on activity now that we know the count
@@ -187,13 +190,15 @@ public sealed partial class PerspectiveSyncAwaiter(
       syncActivity?.SetTag(TAG_SYNC_OUTCOME, "Synced");
       syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
       LogSyncWaitCompleted(_logger, perspectiveName, eventsToWait, stopwatch.ActiveElapsed.TotalMilliseconds);
-      return new SyncResult(SyncOutcome.Synced, eventsToWait, stopwatch.ActiveElapsed);
+      return new SyncResult(SyncOutcome.Synced, eventsToWait, stopwatch.ActiveElapsed,
+          EventsEmitted: pendingEvents.Count, EventsTracked: eventsToWait, PerspectiveName: perspectiveName);
     }
 
     syncActivity?.SetTag(TAG_SYNC_OUTCOME, "TimedOut");
     syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
     LogSyncWaitTimedOut(_logger, perspectiveName, eventsToWait, stopwatch.ActiveElapsed.TotalMilliseconds);
-    return new SyncResult(SyncOutcome.TimedOut, eventsToWait, stopwatch.ActiveElapsed);
+    return new SyncResult(SyncOutcome.TimedOut, eventsToWait, stopwatch.ActiveElapsed,
+        EventsEmitted: pendingEvents.Count, EventsTracked: eventsToWait, PerspectiveName: perspectiveName);
   }
 
   /// <inheritdoc />
@@ -237,7 +242,8 @@ public sealed partial class PerspectiveSyncAwaiter(
     stopwatch.Halt();
     _setSyncActivityOutcome(syncActivity, "NoPendingEvents", 0, stopwatch.ActiveElapsed);
     LogSyncDebugNoEventsFound(_logger, streamId);
-    return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
+    return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed,
+        EventsTracked: 0, PerspectiveName: perspectiveName);
   }
 
   private static void _setStreamSyncActivityTags(
@@ -295,7 +301,8 @@ public sealed partial class PerspectiveSyncAwaiter(
     if (success) {
       _setSyncActivityOutcome(syncActivity, "Synced", expectedEventIds.Length, stopwatch.ActiveElapsed);
       LogStreamSyncWaitCompleted(_logger, perspectiveName, streamId, expectedEventIds.Length, stopwatch.ActiveElapsed.TotalMilliseconds);
-      return new SyncResult(SyncOutcome.Synced, expectedEventIds.Length, stopwatch.ActiveElapsed);
+      return new SyncResult(SyncOutcome.Synced, expectedEventIds.Length, stopwatch.ActiveElapsed,
+          EventsTracked: expectedEventIds.Length, PerspectiveName: perspectiveName);
     }
 
 #pragma warning disable CA1848
@@ -306,7 +313,8 @@ public sealed partial class PerspectiveSyncAwaiter(
 #pragma warning restore CA1848
     _setSyncActivityOutcome(syncActivity, "TimedOut", expectedEventIds.Length, stopwatch.ActiveElapsed);
     LogStreamSyncWaitTimedOut(_logger, perspectiveName, streamId, stopwatch.ActiveElapsed.TotalMilliseconds);
-    return new SyncResult(SyncOutcome.TimedOut, expectedEventIds.Length, stopwatch.ActiveElapsed);
+    return new SyncResult(SyncOutcome.TimedOut, expectedEventIds.Length, stopwatch.ActiveElapsed,
+        EventsTracked: expectedEventIds.Length, PerspectiveName: perspectiveName);
   }
 
   private static void _setSyncActivityOutcome(Activity? syncActivity, string outcome, int eventCount, TimeSpan elapsed) {
@@ -367,13 +375,11 @@ public sealed partial class PerspectiveSyncAwaiter(
 
   /// <summary>
   /// Gets the perspective name from the perspective type.
-  /// Uses CLR type name format to match database storage and source generator output.
+  /// Delegates to <see cref="TypeNameFormatter.GetPerspectiveName"/> for consistent
+  /// CLR-format naming across runtime code, generators, and database storage.
   /// </summary>
   private static string _getPerspectiveName(Type perspectiveType) {
-    // Use Type.FullName directly - CLR format with '+' for nested types
-    // This matches TypeNameUtilities.BuildClrTypeName() used in generators
-    // and the format stored in wh_perspective_events
-    return perspectiveType.FullName ?? perspectiveType.Name;
+    return TypeNameFormatter.GetPerspectiveName(perspectiveType);
   }
 
   // ==========================================================================

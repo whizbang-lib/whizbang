@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Transports;
 
@@ -35,7 +36,7 @@ namespace Whizbang.Core.Transports;
 /// Useful for testing and single-process scenarios.
 /// </summary>
 public class InProcessTransport : ITransport {
-  private readonly ConcurrentDictionary<string, List<(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, InProcessSubscription subscription)>> _subscriptions = new();
+  private readonly ConcurrentDictionary<string, List<(TransportBatchCollector<TransportMessage> collector, InProcessSubscription subscription)>> _batchSubscriptions = new();
   private bool _isInitialized;
 
   /// <inheritdoc />
@@ -78,40 +79,47 @@ public class InProcessTransport : ITransport {
   ) {
     cancellationToken.ThrowIfCancellationRequested();
 
-    if (_subscriptions.TryGetValue(destination.Address, out var subscriptionHandlers)) {
-      foreach (var (handler, subscription) in subscriptionHandlers.ToArray()) {
-        // Only invoke handler if subscription is active and not disposed
+    if (_batchSubscriptions.TryGetValue(destination.Address, out var batchHandlers)) {
+      foreach (var (collector, subscription) in batchHandlers.ToArray()) {
+        // Only enqueue if subscription is active
         if (subscription.IsActive) {
-          await handler(envelope, envelopeType, cancellationToken);
+          collector.Enqueue(new TransportMessage(envelope, envelopeType));
         }
       }
     }
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ReturnsActiveSubscriptionAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync</tests>
-  public Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+  /// <tests>tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs</tests>
+  /// <docs>messaging/transports/transports#batch-subscribe</docs>
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
+    TransportBatchOptions batchOptions,
     CancellationToken cancellationToken = default
   ) {
     cancellationToken.ThrowIfCancellationRequested();
 
-    var subscription = new InProcessSubscription(
+    var collector = new TransportBatchCollector<TransportMessage>(
+      batchOptions,
+      batch => batchHandler(batch, CancellationToken.None)
+    );
+
+    InProcessSubscription? subscription = null;
+    subscription = new InProcessSubscription(
       onDispose: () => {
-        if (_subscriptions.TryGetValue(destination.Address, out var subscriptionHandlers)) {
-          lock (subscriptionHandlers) {
-            subscriptionHandlers.RemoveAll(sh => sh.handler == handler);
+        if (_batchSubscriptions.TryGetValue(destination.Address, out var handlers)) {
+          lock (handlers) {
+            handlers.RemoveAll(sh => sh.subscription == subscription);
           }
         }
+        collector.DisposeAsync().AsTask().GetAwaiter().GetResult();
       }
     );
 
-    var subscriptionHandlers = _subscriptions.GetOrAdd(destination.Address, _ => []);
-    lock (subscriptionHandlers) {
-      subscriptionHandlers.Add((handler, subscription));
+    var handlers = _batchSubscriptions.GetOrAdd(destination.Address, _ => []);
+    lock (handlers) {
+      handlers.Add((collector, subscription));
     }
 
     return Task.FromResult<ISubscription>(subscription);
@@ -133,13 +141,16 @@ public class InProcessTransport : ITransport {
     var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
     var tcs = new TaskCompletionSource<IMessageEnvelope>();
 
-    // Subscribe to response destination before publishing request
-    var responseSubscription = await SubscribeAsync(
-      handler: (envelope, envelopeType, ct) => {
-        tcs.TrySetResult(envelope);
+    // Subscribe to response destination before publishing request (batch of 1, immediate flush)
+    var responseSubscription = await SubscribeBatchAsync(
+      batchHandler: (batch, ct) => {
+        if (batch.Count > 0) {
+          tcs.TrySetResult(batch[0].Envelope);
+        }
         return Task.CompletedTask;
       },
       destination: responseDestination,
+      batchOptions: new TransportBatchOptions { BatchSize = 1, SlideMs = 100, MaxWaitMs = 1000 },
       cancellationToken: cancellationToken
     );
 

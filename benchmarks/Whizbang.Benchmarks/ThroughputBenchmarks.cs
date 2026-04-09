@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Benchmarks;
 
@@ -69,13 +70,14 @@ public class ThroughputBenchmarks {
     var topic = "throughput-test";
 
     // Subscribe
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      Interlocked.Increment(ref receivedCount);
-      if (receivedCount >= messageCount) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        Interlocked.Increment(ref receivedCount);
+        if (receivedCount >= messageCount) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     // Publish messages
     for (int i = 0; i < messageCount; i++) {
@@ -99,13 +101,14 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-medium";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      Interlocked.Increment(ref receivedCount);
-      if (receivedCount >= messageCount) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        Interlocked.Increment(ref receivedCount);
+        if (receivedCount >= messageCount) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     for (int i = 0; i < messageCount; i++) {
       var envelope = _createEnvelope(_mediumMessages[i]);
@@ -126,13 +129,14 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-large";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      Interlocked.Increment(ref receivedCount);
-      if (receivedCount >= messageCount) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        Interlocked.Increment(ref receivedCount);
+        if (receivedCount >= messageCount) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     for (int i = 0; i < messageCount; i++) {
       var envelope = _createEnvelope(_largeMessages[i]);
@@ -155,12 +159,13 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-concurrent";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
-        tcs.TrySetResult(true);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     // Start multiple publishers concurrently
     var publishTasks = Enumerable.Range(0, publisherCount)
@@ -195,12 +200,13 @@ public class ThroughputBenchmarks {
 
     var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-        if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
-          tcs.TrySetResult(true);
+      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+        foreach (var msg in batch) {
+          if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
+            tcs.TrySetResult(true);
+          }
         }
-        await Task.CompletedTask;
-      }, new TransportDestination(topic));
+      }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
       subscriptions.Add(subscription);
     }
 
@@ -233,20 +239,20 @@ public class ThroughputBenchmarks {
     var topic = "throughput-request-response";
 
     // Setup response handler
-    var subscription = await _transport.SubscribeAsync(async (requestEnvelope, envelopeType, ct) => {
-      // Simulate processing and send response
-      var typedEnvelope = (MessageEnvelope<SmallCommand>)requestEnvelope;
-      var response = new SmallCommand($"response-{typedEnvelope.Payload.Id}", typedEnvelope.Payload.Value * 2);
-      var responseEnvelope = _createEnvelope(response);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        // Simulate processing and send response
+        var typedEnvelope = (MessageEnvelope<SmallCommand>)msg.Envelope;
+        var response = new SmallCommand($"response-{typedEnvelope.Payload.Id}", typedEnvelope.Payload.Value * 2);
+        var responseEnvelope = _createEnvelope(response);
 
-      // Get correlation ID from request
-      var correlationId = requestEnvelope.Hops[^1].CorrelationId;
-      if (correlationId.HasValue) {
-        await store.SaveResponseAsync(correlationId.Value, responseEnvelope, CancellationToken.None);
+        // Get correlation ID from request
+        var correlationId = msg.Envelope.Hops[^1].CorrelationId;
+        if (correlationId.HasValue) {
+          await store.SaveResponseAsync(correlationId.Value, responseEnvelope, CancellationToken.None);
+        }
       }
-
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     // Send requests and wait for responses
     var requestTasks = Enumerable.Range(0, requestCount).Select(async i => {
@@ -279,15 +285,16 @@ public class ThroughputBenchmarks {
     var topic = "throughput-tracing";
     var traceStore = new InMemoryTraceStore();
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
-      // Simulate tracing overhead
-      await traceStore.StoreAsync(envelope, ct);
+    var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
+      foreach (var msg in batch) {
+        // Simulate tracing overhead
+        await traceStore.StoreAsync(msg.Envelope, ct);
 
-      if (Interlocked.Increment(ref receivedCount) >= messageCount) {
-        tcs.TrySetResult(true);
+        if (Interlocked.Increment(ref receivedCount) >= messageCount) {
+          tcs.TrySetResult(true);
+        }
       }
-      await Task.CompletedTask;
-    }, new TransportDestination(topic));
+    }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
     for (int i = 0; i < messageCount; i++) {
       var envelope = _createEnvelopeWithTracing(_smallMessages[i]);

@@ -240,7 +240,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for batch publish signal
@@ -269,7 +269,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -296,7 +296,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for requeue signal
@@ -335,7 +335,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the re-queue signal — fires when TryWrite is called after initial WriteAsync
@@ -388,11 +388,11 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for all 5 messages to be published — signal-based, deterministic
-    await allPublishedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await allPublishedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

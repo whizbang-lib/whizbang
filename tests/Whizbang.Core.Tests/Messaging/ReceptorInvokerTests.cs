@@ -1567,7 +1567,7 @@ public class ReceptorInvokerTests {
     private readonly TimeSpan _elapsedTime = elapsedTime ?? TimeSpan.FromMilliseconds(100);
 
     public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitAsyncCalls { get; } = [];
-    public List<(Type PerspectiveType, Guid StreamId, Type[]? EventTypes, TimeSpan Timeout)> WaitForStreamCalls { get; } = [];
+    public List<(Type PerspectiveType, Guid StreamId, Type[]? EventTypes, TimeSpan Timeout, Guid? EventIdToAwait)> WaitForStreamCalls { get; } = [];
 
     public Task<SyncResult> WaitAsync(
         Type perspectiveType,
@@ -1592,7 +1592,7 @@ public class ReceptorInvokerTests {
         TimeSpan timeout,
         Guid? eventIdToAwait = null,
         CancellationToken ct = default) {
-      WaitForStreamCalls.Add((perspectiveType, streamId, eventTypes, timeout));
+      WaitForStreamCalls.Add((perspectiveType, streamId, eventTypes, timeout, eventIdToAwait));
       var outcome = _simulateTimeout ? SyncOutcome.TimedOut : SyncOutcome.Synced;
       return Task.FromResult(new SyncResult(outcome, 1, _elapsedTime));
     }
@@ -1909,6 +1909,208 @@ public class ReceptorInvokerTests {
     await Assert.That(accessor.WasSet).IsTrue();
     await Assert.That(accessor.LastSetContext).IsNotNull();
     await Assert.That(accessor.LastSetContext!.CallerInfo).IsNull();
+  }
+
+  #endregion
+
+  // ========================================
+  // CROSS-SCOPE SYNC eventIdToAwait TESTS
+  // ========================================
+
+  #region Cross-Scope Sync eventIdToAwait Tests
+
+  /// <summary>
+  /// Verifies that when EventTypes IS specified (cross-scope sync), the invoker does NOT pass
+  /// context.EventId as eventIdToAwait. The context.EventId is the COMMAND's message ID,
+  /// not the event being waited for. Passing it causes Priority 1 in _resolveExpectedEventIds
+  /// to short-circuit with an untracked ID, returning Synced immediately without actually waiting.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_CrossScopeSync_WithEventTypes_DoesNotPassContextEventIdAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var streamId = Guid.NewGuid();
+    var commandEventId = Guid.NewGuid(); // The command's own message ID — NOT an event ID
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    // Cross-scope sync: EventTypes is specified — we're waiting for specific event types
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: [typeof(TestMessage)], // ← EventTypes specified = cross-scope sync
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessageWithStreamId>(
+        "CrossScopeReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Create a lifecycle context with an EventId (simulating a command being processed)
+    var lifecycleContext = new LifecycleExecutionContext {
+      CurrentStage = LifecycleStage.PostInboxInline,
+      EventId = commandEventId, // ← This is the command's ID, NOT the event we want to wait for
+      StreamId = streamId
+    };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline, lifecycleContext);
+
+    // Assert — eventIdToAwait should be null (NOT the command's EventId)
+    // because with EventTypes specified, Priority 2 (stream-based lookup) should be used
+    await Assert.That(syncAwaiter.WaitForStreamCalls).Count().IsGreaterThan(0);
+    var call = syncAwaiter.WaitForStreamCalls[0];
+    await Assert.That(call.EventIdToAwait).IsNull();
+  }
+
+  /// <summary>
+  /// Verifies that when EventTypes is NOT specified (same-event sync), the invoker DOES pass
+  /// context.EventId as eventIdToAwait. In this case, the receptor IS processing the event
+  /// it wants to sync, so context.EventId is the correct event ID to wait for.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SameEventSync_WithoutEventTypes_PassesContextEventIdAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid(); // The event's own message ID
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    // Same-event sync: EventTypes is null — we're waiting for the current event's projection
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null, // ← No EventTypes = same-event sync
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessageWithStreamId>(
+        "SameEventReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Create a lifecycle context with an EventId (the event being processed)
+    var lifecycleContext = new LifecycleExecutionContext {
+      CurrentStage = LifecycleStage.PostInboxInline,
+      EventId = eventId,
+      StreamId = streamId
+    };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline, lifecycleContext);
+
+    // Assert — eventIdToAwait SHOULD be the event's ID (same-event sync uses Priority 1)
+    await Assert.That(syncAwaiter.WaitForStreamCalls).Count().IsGreaterThan(0);
+    var call = syncAwaiter.WaitForStreamCalls[0];
+    await Assert.That(call.EventIdToAwait).IsEqualTo(eventId);
+  }
+
+  /// <summary>
+  /// Verifies that when EventTypes is an empty list (same as null — same-event sync),
+  /// the invoker passes context.EventId as eventIdToAwait.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_EmptyEventTypes_TreatedAsSameEventSyncAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    // Empty EventTypes should behave the same as null — same-event sync
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: [], // ← Empty list = same-event sync
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessageWithStreamId>(
+        "EmptyEventTypesReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    var lifecycleContext = new LifecycleExecutionContext {
+      CurrentStage = LifecycleStage.PostInboxInline,
+      EventId = eventId,
+      StreamId = streamId
+    };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline, lifecycleContext);
+
+    // Assert — empty EventTypes = same-event sync, should pass eventId
+    await Assert.That(syncAwaiter.WaitForStreamCalls).Count().IsGreaterThan(0);
+    var call = syncAwaiter.WaitForStreamCalls[0];
+    await Assert.That(call.EventIdToAwait).IsEqualTo(eventId);
+  }
+
+  /// <summary>
+  /// Verifies that when no lifecycle context is provided (context is null),
+  /// eventIdToAwait is null regardless of EventTypes configuration.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_NullContext_EventIdToAwaitIsNullAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessageWithStreamId>(
+        "NullContextReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Act — no lifecycle context passed
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert — no context means no EventId, so eventIdToAwait should be null
+    await Assert.That(syncAwaiter.WaitForStreamCalls).Count().IsGreaterThan(0);
+    var call = syncAwaiter.WaitForStreamCalls[0];
+    await Assert.That(call.EventIdToAwait).IsNull();
   }
 
   #endregion

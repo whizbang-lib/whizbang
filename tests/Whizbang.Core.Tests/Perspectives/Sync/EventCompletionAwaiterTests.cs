@@ -247,4 +247,49 @@ public class EventCompletionAwaiterTests {
         .Throws<ArgumentNullException>()
         .WithMessageContaining("syncEventTracker");
   }
+
+  // ==========================================================================
+  // Partial completion tests
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForEventsAsync_FivePerspectives_FourComplete_TimesOutAsync() {
+    // Arrange — track event for 5 perspectives, only mark 4
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+
+    for (var i = 1; i <= 5; i++) {
+      tracker.TrackEvent(typeof(object), eventId, streamId, $"Perspective{i}");
+    }
+
+    var awaiter = new EventCompletionAwaiter(tracker);
+
+    // Mark 4 of 5 perspectives
+    for (var i = 1; i <= 4; i++) {
+      tracker.MarkProcessedByPerspective([eventId], $"Perspective{i}");
+    }
+
+    // Act — should timeout because Perspective5 never completes
+    var result = await awaiter.WaitForEventsAsync([eventId], TimeSpan.FromMilliseconds(100));
+
+    // Assert
+    await Assert.That(result).IsFalse()
+      .Because("Should timeout when one perspective hasn't completed");
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_NeverTrackedEvent_ReturnsTrueImmediatelyAsync() {
+    // Arrange — event was never tracked (not in registry, or never emitted)
+    var tracker = new SyncEventTracker();
+    var awaiter = new EventCompletionAwaiter(tracker);
+    var untrackedEventId = Guid.NewGuid();
+
+    // Act — should return true immediately (nothing to wait for)
+    var result = await awaiter.WaitForEventsAsync([untrackedEventId], TimeSpan.FromSeconds(5));
+
+    // Assert — this is documented behavior: "never tracked" = "completed"
+    await Assert.That(result).IsTrue()
+      .Because("Events that were never tracked are considered completed");
+  }
 }

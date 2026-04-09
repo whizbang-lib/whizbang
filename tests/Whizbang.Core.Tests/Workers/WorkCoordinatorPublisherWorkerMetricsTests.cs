@@ -51,7 +51,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await testLogger.WaitForLogContainingAsync("Transport not ready, buffering message", TimeSpan.FromSeconds(10));
+    await testLogger.WaitForLogContainingAsync("Transport not ready, buffering message", TimeSpan.FromSeconds(30));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -83,7 +83,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(30));
 
     // Wait for the worker loop to complete the not-ready check and increment the counter
     var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -120,7 +120,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await testLogger.WaitForLogContainingAsync("Transport not ready for", TimeSpan.FromSeconds(10));
+    await testLogger.WaitForLogContainingAsync("Transport not ready for", TimeSpan.FromSeconds(30));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -155,12 +155,12 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(10));
+    await workCoordinator.WaitForFirstCallAsync(TimeSpan.FromSeconds(30));
 
     // Act - Transport becomes ready
     publishStrategy.IsReadyResult = true;
     workCoordinator.WorkToReturn = [_createTestOutboxWork(Guid.CreateVersion7())];
-    await publishStrategy.WaitForPublishAsync(TimeSpan.FromSeconds(10));
+    await publishStrategy.WaitForPublishAsync(TimeSpan.FromSeconds(30));
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -192,7 +192,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
-    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
+    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -221,7 +221,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
-    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
+    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 

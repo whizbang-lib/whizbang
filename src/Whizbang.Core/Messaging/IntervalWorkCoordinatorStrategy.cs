@@ -31,6 +31,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IWorkChannelWriter? _workChannelWriter;
+  private readonly IInboxChannelWriter? _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _flushTimer;
@@ -68,7 +69,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null,
-    IWorkChannelWriter? workChannelWriter = null
+    IWorkChannelWriter? workChannelWriter = null,
+    IInboxChannelWriter? inboxChannelWriter = null
   ) {
 #pragma warning restore S107
     if (coordinator == null && scopeFactory == null) {
@@ -82,6 +84,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _workChannelWriter = workChannelWriter;
+    _inboxChannelWriter = inboxChannelWriter;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -214,7 +217,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    return _flushCoreAsync(flags, mode, skipLifecycle: false, ct);
+    // IntervalWorkCoordinatorStrategy handles outbox work only — skip inbox claiming
+    // to prevent stealing inbox messages from WorkCoordinatorPublisherWorker
+    return _flushCoreAsync(flags | WorkBatchOptions.SkipInboxClaiming, mode, skipLifecycle: false, ct);
   }
 
   private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
@@ -312,6 +317,15 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
       }
 
+      // Route claimed inbox work to publisher worker via channel (dedup by IsInFlight)
+      if (_inboxChannelWriter is not null && workBatch.InboxWork.Count > 0) {
+        foreach (var inboxWork in workBatch.InboxWork) {
+          if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
+            _inboxChannelWriter.TryWrite(inboxWork);
+          }
+        }
+      }
+
       return workBatch;
     } finally {
       lock (_lock) {
@@ -337,7 +351,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // Fire and forget flush on timer — skip lifecycle (background thread, no ambient context)
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringIntervalFlush(_logger, ex);

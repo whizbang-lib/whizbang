@@ -54,7 +54,8 @@ public sealed partial class RabbitMQConnectionRetry {
 
     var factory = new ConnectionFactory {
       Uri = new Uri(connectionString),
-      AutomaticRecoveryEnabled = true
+      AutomaticRecoveryEnabled = true,
+      ConsumerDispatchConcurrency = 200 // Allow concurrent ReceivedAsync dispatch for batch collection
     };
 
     return await CreateConnectionWithRetryAsync(factory, cancellationToken).ConfigureAwait(false);

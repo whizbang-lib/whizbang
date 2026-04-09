@@ -253,6 +253,48 @@ public sealed class SyncEventTracker : ISyncEventTracker {
     }
   }
 
+  /// <inheritdoc />
+  public int CleanupStaleEntries(TimeSpan maxAge) {
+    var cutoff = DateTime.UtcNow - maxAge;
+    var removedCount = 0;
+
+    // Find entries older than maxAge
+    var staleKeys = _trackedEvents
+        .Where(kvp => kvp.Value.TrackedAt <= cutoff)
+        .Select(kvp => kvp.Key)
+        .ToList();
+
+    foreach (var key in staleKeys) {
+      if (_trackedEvents.TryRemove(key, out _)) {
+        removedCount++;
+
+        // Signal perspective-specific waiters
+        if (_perspectiveWaiters.TryRemove(key, out var perspectiveWaiters)) {
+          foreach (var kvp in perspectiveWaiters) {
+            kvp.Value.TrySetResult(true);
+          }
+        }
+
+        // Check if ALL perspectives for this event are now processed
+        var hasRemainingPerspectives = _trackedEvents.Keys.Any(k => k.EventId == key.EventId);
+        if (!hasRemainingPerspectives && _allPerspectivesWaiters.TryRemove(key.EventId, out var allWaiters)) {
+          foreach (var kvp in allWaiters) {
+            kvp.Value.TrySetResult(true);
+          }
+        }
+
+        // Signal event-specific waiters
+        if (_eventWaiters.TryRemove(key.EventId, out var eventWaiters)) {
+          foreach (var kvp in eventWaiters) {
+            kvp.Value.TrySetResult(true);
+          }
+        }
+      }
+    }
+
+    return removedCount;
+  }
+
   /// <summary>
   /// Removes all entries for a specific awaiter from a waiter dictionary and cancels their TCS.
   /// </summary>

@@ -5,6 +5,7 @@ using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus;
 
@@ -453,8 +454,154 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <inheritdoc />
-  /// <tests>No tests found</tests>
-  public Task<ISubscription> SubscribeAsync(
+  /// <docs>messaging/transports/azure-service-bus#batch-subscribe</docs>
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(batchHandler);
+    ArgumentNullException.ThrowIfNull(destination);
+    ArgumentNullException.ThrowIfNull(batchOptions);
+
+    return _subscribeBatchCoreAsync(batchHandler, destination, batchOptions, cancellationToken);
+  }
+
+  private readonly record struct PendingServiceBusMessage(ProcessMessageEventArgs Args);
+
+  private async Task<ISubscription> _subscribeBatchCoreAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken
+  ) {
+    try {
+      var topicName = destination.Address;
+      var subscriptionName = _deriveSubscriptionName(destination, topicName);
+
+      await _ensureInfrastructureExistsAsync(topicName, subscriptionName, cancellationToken);
+      await _applySubscriptionFiltersAsync(destination, topicName, subscriptionName, cancellationToken);
+
+      // Batch collector — flush callback deserializes, calls handler, then completes each message
+      var collector = new TransportBatchCollector<PendingServiceBusMessage>(
+        batchOptions,
+        async batch => {
+          var transportMessages = new List<TransportMessage>(batch.Count);
+          var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
+
+          foreach (var pending in batch) {
+            var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
+            if (envelope is not null) {
+              transportMessages.Add(new TransportMessage(envelope, envelopeTypeName));
+              successfulArgs.Add(pending.Args);
+            }
+            // Messages that failed deserialization are already dead-lettered by _deserializeReceivedMessageAsync
+          }
+
+          if (transportMessages.Count > 0) {
+            await batchHandler(transportMessages, CancellationToken.None);
+
+            // Per-message CompleteMessageAsync (ASB has no multi-ACK)
+            foreach (var args in successfulArgs) {
+              try {
+                await args.CompleteMessageAsync(args.Message, cancellationToken: CancellationToken.None);
+              } catch (ServiceBusException ex) {
+                _logger.LogWarning(ex,
+                  "Failed to complete message {MessageId} — will be redelivered after lock expiry",
+                  args.Message.MessageId);
+              }
+            }
+          }
+        }
+      );
+
+      AzureServiceBusSubscription subscription;
+
+      if (_options.EnableSessions) {
+        var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
+          MaxConcurrentSessions = _options.MaxConcurrentSessions,
+          MaxConcurrentCallsPerSession = 1,
+          AutoCompleteMessages = false,
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+        };
+
+        var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
+        subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
+
+        // Session mode: ProcessSessionMessageEventArgs is a different type from ProcessMessageEventArgs.
+        // Fall back to per-message processing with single-item batch.
+        sessionProcessor.ProcessMessageAsync += async args => {
+          if (!subscription.IsActive) {
+            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            return;
+          }
+
+          try {
+            var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+            if (envelope is null) {
+              return;
+            }
+
+            await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
+            await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+          } catch (Exception ex) {
+            await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
+          }
+        };
+
+        sessionProcessor.ProcessErrorAsync += async args => {
+          await _handleProcessorErrorAsync(args, destination);
+        };
+
+        await sessionProcessor.StartProcessingAsync(cancellationToken);
+      } else {
+        var processorOptions = new ServiceBusProcessorOptions {
+          MaxConcurrentCalls = _options.MaxConcurrentCalls,
+          AutoCompleteMessages = false,
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+        };
+
+        var processor = _client.CreateProcessor(topicName, subscriptionName, processorOptions);
+        subscription = new AzureServiceBusSubscription(processor, _logger);
+
+        // Non-blocking: enqueue to collector, return immediately
+        processor.ProcessMessageAsync += args => {
+          if (!subscription.IsActive) {
+            return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+          }
+
+          collector.Enqueue(new PendingServiceBusMessage(args));
+          return Task.CompletedTask;
+        };
+
+        processor.ProcessErrorAsync += async args => {
+          await _handleProcessorErrorAsync(args, destination);
+        };
+
+        await processor.StartProcessingAsync(cancellationToken);
+      }
+
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation(
+          "Started batch subscription to {TopicName}/{SubscriptionName} (BatchSize={BatchSize}, SlideMs={SlideMs}, MaxWaitMs={MaxWaitMs})",
+          topicName, subscriptionName, batchOptions.BatchSize, batchOptions.SlideMs, batchOptions.MaxWaitMs);
+      }
+
+      return subscription;
+#pragma warning disable S2139
+    } catch (Exception ex) {
+      _logger.LogError(ex,
+        "Failed to create batch subscription to {TopicName}/{SubscriptionName}",
+        destination.Address, destination.RoutingKey ?? _options.DefaultSubscriptionName);
+      throw;
+#pragma warning restore S2139
+    }
+  }
+
+  // Keep SubscribeAsync as internal for backward compat during migration
+  internal Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default

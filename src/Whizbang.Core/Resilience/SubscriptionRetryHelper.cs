@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Resilience;
 
@@ -22,7 +23,8 @@ public static partial class SubscriptionRetryHelper {
   private readonly record struct SubscriptionContext(
     ITransport Transport,
     TransportDestination Destination,
-    Func<IMessageEnvelope, string?, CancellationToken, Task> Handler,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> BatchHandler,
+    TransportBatchOptions BatchOptions,
     SubscriptionState State,
     SubscriptionResilienceOptions Options,
     ILogger Logger);
@@ -42,7 +44,7 @@ public static partial class SubscriptionRetryHelper {
   /// </summary>
   /// <param name="transport">The transport to subscribe through.</param>
   /// <param name="destination">The destination to subscribe to.</param>
-  /// <param name="handler">The message handler callback.</param>
+  /// <param name="batchHandler">The batch message handler callback.</param>
   /// <param name="state">The subscription state to update.</param>
   /// <param name="options">Resilience options.</param>
   /// <param name="logger">Logger for retry attempts.</param>
@@ -50,7 +52,8 @@ public static partial class SubscriptionRetryHelper {
   public static async Task SubscribeWithRetryAsync(
     ITransport transport,
     TransportDestination destination,
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportBatchOptions batchOptions,
     SubscriptionState state,
     SubscriptionResilienceOptions options,
     ILogger logger,
@@ -70,11 +73,16 @@ public static partial class SubscriptionRetryHelper {
       cancellationToken.ThrowIfCancellationRequested();
 
       try {
-        var subscription = await transport.SubscribeAsync(handler, destination, cancellationToken);
+        var subscription = await transport.SubscribeBatchAsync(
+          batchHandler,
+          destination,
+          batchOptions,
+          cancellationToken
+        );
         state.Subscription = subscription;
         state.Status = SubscriptionStatus.Healthy;
 
-        var subscriptionCtx = new SubscriptionContext(transport, destination, handler, state, options, logger);
+        var subscriptionCtx = new SubscriptionContext(transport, destination, batchHandler, batchOptions, state, options, logger);
         _hookDisconnectionReconnect(subscription, subscriptionCtx, cancellationToken);
         _logSubscriptionSuccess(logger, destination, attempt);
 
@@ -112,7 +120,7 @@ public static partial class SubscriptionRetryHelper {
       _ = Task.Run(async () => {
         try {
           await Task.Delay(ctx.Options.InitialRetryDelay, cancellationToken);
-          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.Handler, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
+          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.BatchOptions, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
         } catch (OperationCanceledException) {
           // Shutdown - ignore
         } catch (Exception ex) {

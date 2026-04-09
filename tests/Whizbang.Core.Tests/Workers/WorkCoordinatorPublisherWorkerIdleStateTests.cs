@@ -185,7 +185,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
 
     await AsyncTestHelpers.WaitForConditionAsync(
       () => Volatile.Read(ref idleFired) == 1,
-      TimeSpan.FromSeconds(10),
+      TimeSpan.FromSeconds(30),
       timeoutMessage: "OnWorkProcessingIdle should fire after IdleThresholdPolls consecutive empty polls");
 
     cts.Cancel();

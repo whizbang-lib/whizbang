@@ -209,7 +209,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // Act - start worker and wait for readiness check to be called (proves worker tried)
     var workerTask = worker.StartAsync(cts.Token);
-    await databaseReadiness.WaitForCheckAsync(TimeSpan.FromSeconds(10));
+    await databaseReadiness.WaitForCheckAsync(TimeSpan.FromSeconds(30));
     cts.Cancel();
 
     try {

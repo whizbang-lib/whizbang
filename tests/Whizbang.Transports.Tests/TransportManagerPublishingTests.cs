@@ -4,6 +4,7 @@ using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 using Whizbang.Transports.Tests.Generated;
 
 namespace Whizbang.Transports.Tests;
@@ -31,12 +32,14 @@ public class TransportManagerPublishingTests {
 
     // Track published messages
     var publishedEnvelopes = new List<IMessageEnvelope>();
-    await transport.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
-        publishedEnvelopes.Add(envelope);
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          publishedEnvelopes.Add(msg.Envelope);
+        }
       },
       new TransportDestination("test-destination"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
     );
 
@@ -77,21 +80,25 @@ public class TransportManagerPublishingTests {
     var publishedToDest1 = new List<IMessageEnvelope>();
     var publishedToDest2 = new List<IMessageEnvelope>();
 
-    await transport1.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
-        publishedToDest1.Add(envelope);
-        return Task.CompletedTask;
+    await transport1.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          publishedToDest1.Add(msg.Envelope);
+        }
       },
       new TransportDestination("dest1"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
     );
 
-    await transport2.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
-        publishedToDest2.Add(envelope);
-        return Task.CompletedTask;
+    await transport2.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          publishedToDest2.Add(msg.Envelope);
+        }
       },
       new TransportDestination("dest2"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
     );
 
@@ -122,9 +129,10 @@ public class TransportManagerPublishingTests {
 
     // Track published destinations
     var capturedDestinations = new List<TransportDestination>();
-    await transport.SubscribeAsync(
-      (envelope, envelopeType, ct) => Task.CompletedTask,
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
       new TransportDestination("dest"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
     );
 
@@ -162,12 +170,14 @@ public class TransportManagerPublishingTests {
 
     // Track published messages
     var publishedEnvelopes = new List<IMessageEnvelope>();
-    await transport.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
-        publishedEnvelopes.Add(envelope);
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          publishedEnvelopes.Add(msg.Envelope);
+        }
       },
       new TransportDestination("dest"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
     );
 
@@ -197,12 +207,14 @@ public class TransportManagerPublishingTests {
 
     // Track published messages
     var publishedEnvelopes = new List<IMessageEnvelope>();
-    await transport.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
-        publishedEnvelopes.Add(envelope);
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          publishedEnvelopes.Add(msg.Envelope);
+        }
       },
       new TransportDestination("dest"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
     );
 

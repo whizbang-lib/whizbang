@@ -201,6 +201,16 @@ public class TransportConsumerWorkerProvisioningTests {
       return Task.CompletedTask;
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      SubscribeCalledAt ??= DateTimeOffset.UtcNow;
+      return Task.FromResult<ISubscription>(new NoOpSubscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope envelope,
         TransportDestination destination,
