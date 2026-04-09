@@ -1867,4 +1867,95 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   #endregion
+
+  // ========================================
+  // FAILED PERSPECTIVE SYNC SIGNAL TESTS
+  // ========================================
+
+  #region Failed Perspective Sync Signal Tests
+
+  /// <summary>
+  /// Verifies that when a perspective runner throws, the sync event tracker is still
+  /// signaled with MarkProcessedByPerspective. Without this, any awaiter waiting on
+  /// those events will hang until timeout with no explanation.
+  /// </summary>
+  [Test]
+  public async Task Worker_PerspectiveRunThrows_StillSignalsSyncEventTrackerAsync() {
+    // Arrange - suppress unobserved task exceptions from intentional test throw
+    void handler(object? s, UnobservedTaskExceptionEventArgs e) {
+      if (e.Exception.InnerException is InvalidOperationException ioe &&
+          ioe.Message == "Perspective run failed") {
+        e.SetObserved();
+      }
+    }
+    TaskScheduler.UnobservedTaskException += handler;
+
+    try {
+      var coordinator = new FakeWorkCoordinator();
+      var instanceProvider = new FakeServiceInstanceProvider();
+      var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+      var registry = new ThrowingPerspectiveRunnerRegistry();
+      var syncEventTracker = new FakeSyncEventTracker();
+
+      var streamId = Guid.NewGuid();
+      var eventId = Guid.NewGuid();
+
+      coordinator.PerspectiveWorkToReturn = [
+        new PerspectiveWork {
+          StreamId = streamId,
+          PerspectiveName = "Test.ThrowingPerspective",
+          LastProcessedEventId = null,
+          PartitionNumber = 1
+        }
+      ];
+
+      // Provide event store and type provider so upcomingEvents is populated
+      var eventStore = new FakeEventStore();
+      eventStore.AddEvent(streamId, eventId, new TestCoverageEvent("will-fail"));
+      var eventTypeProvider = new FakeEventTypeProvider([typeof(TestCoverageEvent)]);
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+      services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+      services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+      services.AddSingleton<IEventStore>(eventStore);
+      services.AddLogging();
+
+      var serviceProvider = services.BuildServiceProvider();
+
+      var worker = new PerspectiveWorker(
+        instanceProvider,
+        serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+        Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        tracingOptions: null,
+        new InstantCompletionStrategy(),
+        databaseReadiness,
+        eventTypeProvider: eventTypeProvider,
+        syncEventTracker: syncEventTracker
+      );
+
+      // Act
+      using var cts = new CancellationTokenSource();
+      var workerTask = worker.StartAsync(cts.Token);
+      await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(10));
+      cts.Cancel();
+
+      try {
+        await workerTask;
+      } catch (OperationCanceledException) {
+        // Expected
+      } catch (InvalidOperationException) {
+        // Expected - the runner throws
+      }
+
+      // Assert — sync tracker should have been signaled even though perspective failed.
+      // Without this fix, awaiters hang until timeout when perspectives fail.
+      await Assert.That(syncEventTracker.MarkProcessedByPerspectiveCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Failed perspectives should signal sync tracker so awaiters don't hang");
+    } finally {
+      TaskScheduler.UnobservedTaskException -= handler;
+    }
+  }
+
+  #endregion
 }
