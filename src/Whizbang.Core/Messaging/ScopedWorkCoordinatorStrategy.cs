@@ -49,7 +49,8 @@ public partial class ScopedWorkCoordinatorStrategy(
   ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
   ScopedWorkCoordinatorDependencies? dependencies = null,
   WorkCoordinatorMetrics? metrics = null,
-  LifecycleMetrics? lifecycleMetrics = null
+  LifecycleMetrics? lifecycleMetrics = null,
+  IInboxChannelWriter? inboxChannelWriter = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
 #pragma warning restore S107
   private const string STRATEGY_NAME = "scoped";
@@ -57,6 +58,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
+  private readonly IInboxChannelWriter? _inboxChannelWriter = inboxChannelWriter;
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger = logger;
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
@@ -187,6 +189,15 @@ public partial class ScopedWorkCoordinatorStrategy(
         }
       } else if (outboxMessages.Length > 0) {
         LogNoWorkReturned(_logger, outboxMessages.Length, _instanceProvider.InstanceId);
+      }
+    }
+
+    // Route claimed inbox work to publisher worker via channel (dedup by IsInFlight)
+    if (_inboxChannelWriter is not null && workBatch.InboxWork.Count > 0) {
+      foreach (var inboxWork in workBatch.InboxWork) {
+        if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
+          _inboxChannelWriter.TryWrite(inboxWork);
+        }
       }
     }
 

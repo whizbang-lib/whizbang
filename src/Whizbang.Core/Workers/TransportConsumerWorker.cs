@@ -57,7 +57,8 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly SemaphoreSlim? _concurrencySemaphore;
-  private readonly IInboxBatchStrategy? _inboxBatchStrategy;
+  private readonly TransportBatchOptions _transportBatchOptions;
+  private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
 
@@ -94,7 +95,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
     IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
-    IInboxBatchStrategy? inboxBatchStrategy = null
+    TransportBatchOptions? transportBatchOptions = null,
+    IWorkChannelWriter? workChannelWriter = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -116,7 +118,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
-    _inboxBatchStrategy = inboxBatchStrategy;
+    _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
+    _workChannelWriter = workChannelWriter;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
@@ -262,7 +265,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
+      async (batch, ct) => await _handleMessageBatchAsync(batch, ct),
+      _transportBatchOptions,
       state,
       _resilienceOptions,
       _logger,
@@ -331,6 +335,82 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// Messages are stored in the inbox via process_work_batch for atomic deduplication.
   /// Perspectives are processed asynchronously by PerspectiveWorker.
   /// </summary>
+  /// <summary>
+  /// Batch handler: ONE scope, serialize all N, ONE process_work_batch, return → transport ACKs.
+  /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
+  /// </summary>
+  /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
+  private async Task _handleMessageBatchAsync(
+      IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
+    if (messages.Count == 0) {
+      return;
+    }
+
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      _logger.LogInformation("Processing batch of {BatchCount} messages from transport", messages.Count);
+    }
+
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+
+    var queued = 0;
+    foreach (var msg in messages) {
+      var envelopeType = msg.EnvelopeType;
+      var envelope = msg.Envelope;
+      var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
+      var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
+      _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
+
+      // Skip self-echo
+      if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null) {
+        var isSelfEcho = _isSelfEcho(envelope);
+        var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
+        var isOwned = _isOwnedNamespace(ns);
+        if (isSelfEcho && isOwned) {
+          LogSelfEchoDiscarded(_logger, messageType, _serviceName);
+          _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+          continue;
+        }
+      }
+
+      // Per-message: OTEL activity, serialize, queue for batch flush
+      var inboxActivity = _startInboxActivity(envelope, messageType);
+      try {
+        _populateDeliveredAtTimestamp(envelope, envelopeType);
+        var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
+        strategy.QueueInboxMessage(inboxMessage);
+        queued++;
+        inboxActivity?.SetStatus(ActivityStatusCode.Ok);
+      } catch (Exception ex) {
+        _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — skipping", envelope.MessageId);
+        _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
+        inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      } finally {
+        inboxActivity?.Dispose();
+      }
+    }
+
+    if (queued > 0) {
+      // ONE process_work_batch for all N messages — bulk insert into inbox
+      var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, cancellationToken);
+      _metrics?.InboxMessagesProcessed.Add(queued);
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Batch of {BatchCount} messages inserted into inbox — ACKing transport, firing PostInbox", queued);
+      }
+
+      // Fire-and-forget PostInbox lifecycle + completion flush
+      // Runs AFTER handler returns (ACK), concurrently with next batch collection.
+      // Command receptors fire here. If PostInbox fails, messages stay in inbox
+      // and WorkCoordinatorPublisherWorker retries.
+      // PostInbox lifecycle (command receptors, perspective triggers) is handled by
+      // the WorkCoordinatorPublisherWorker when it claims inbox messages.
+      // Signal the publisher worker to poll immediately so commands are processed promptly.
+      _workChannelWriter?.SignalNewWorkAvailable();
+    }
+    // Handler returns → transport ACKs all N messages → next batch starts collecting
+  }
+
   private async Task _handleMessageAsync(
     IMessageEnvelope envelope,
     string? envelopeType,
@@ -392,15 +472,8 @@ public partial class TransportConsumerWorker : BackgroundService {
 
       _populateDeliveredAtTimestamp(envelope, envelopeType);
 
-      // 1. Serialize and deduplicate — use batch strategy if available, otherwise per-message flush
-      List<InboxWork> myWork;
-      if (_inboxBatchStrategy is not null) {
-        var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
-        var workBatch = await _inboxBatchStrategy.EnqueueAndWaitAsync(newInboxMessage, cancellationToken);
-        myWork = [.. workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value)];
-      } else {
-        myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
-      }
+      // Serialize and deduplicate via per-message flush
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
 
       if (myWork.Count == 0) {
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
@@ -411,33 +484,12 @@ public partial class TransportConsumerWorker : BackgroundService {
       }
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Message {MessageId} accepted for processing ({WorkCount} inbox work items)", envelope.MessageId, myWork.Count);
+        _logger.LogDebug("Message {MessageId} accepted into inbox ({WorkCount} work items) — processing deferred to WorkCoordinatorPublisherWorker", envelope.MessageId, myWork.Count);
       }
 
-      // 2. PreInbox lifecycle
-      await _invokePreInboxLifecycleAsync(myWork, receptorInvoker, cancellationToken);
-
-      // 3. Process via OrderedStreamProcessor
-      var processingSw = Stopwatch.StartNew();
-      await _processInboxWorkItemsAsync(myWork, strategy, cancellationToken);
-      processingSw.Stop();
-      _metrics?.InboxProcessingDuration.Record(processingSw.Elapsed.TotalMilliseconds, messageTypeTag);
-
-      // 4. PostInbox lifecycle
-      // The LifecycleStageTracker in ReceptorInvoker prevents double-fire if the
-      // WorkCoordinatorPublisherWorker also picks up the same message before completion flush.
-      await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scope.ServiceProvider, cancellationToken);
-
-      // 5. Report completions/failures
-      var completionSw = Stopwatch.StartNew();
-      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
-      completionSw.Stop();
-      _metrics?.InboxCompletionDuration.Record(completionSw.Elapsed.TotalMilliseconds, messageTypeTag);
-
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Successfully processed message {MessageId}", envelope.MessageId);
-      }
-
+      // Transport consumer's job is done — message is safely in the Postgres inbox.
+      // Processing (Process, PostInbox, completion) is deferred to WorkCoordinatorPublisherWorker
+      // which claims inbox messages via claim_orphaned_inbox.
       _metrics?.InboxMessagesProcessed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (ObjectDisposedException) {
@@ -489,7 +541,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     strategy.QueueInboxMessage(newInboxMessage);
 
     var dedupSw = Stopwatch.StartNew();
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, ct: cancellationToken);
     dedupSw.Stop();
     _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
@@ -780,6 +832,11 @@ public partial class TransportConsumerWorker : BackgroundService {
       StreamId = streamId,
       IsEvent = isEvent,
       Scope = envelope.GetCurrentScope()?.Scope,
+      Metadata = new EnvelopeMetadata {
+        MessageId = envelope.MessageId,
+        Hops = envelope.Hops?.ToList() ?? [],
+        DispatchContext = envelope.DispatchContext
+      },
       MessageType = messageTypeName
     };
   }

@@ -178,17 +178,21 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordExists_RemovesRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
   public async Task PurgeAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    // Find the row to delete
-    var row = await _context.Set<PerspectiveRow<TModel>>()
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
-
-    // If row exists, remove it
-    if (row != null) {
-      _context.Set<PerspectiveRow<TModel>>().Remove(row);
-      await _context.SaveChangesAsync(cancellationToken);
+    // Use ExecuteDeleteAsync to bypass change tracker JSON serialization,
+    // which fails on entities with complex collections in deleted state (EF Core bug with Npgsql JSON columns)
+    if (_context.Database.IsRelational()) {
+      await _context.Set<PerspectiveRow<TModel>>()
+          .Where(r => r.Id == streamId)
+          .ExecuteDeleteAsync(cancellationToken);
+    } else {
+      var row = await _context.Set<PerspectiveRow<TModel>>()
+          .OrderBy(r => r.Id)
+          .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
+      if (row != null) {
+        _context.Set<PerspectiveRow<TModel>>().Remove(row);
+        await _context.SaveChangesAsync(cancellationToken);
+      }
     }
-    // If row doesn't exist, idempotent no-op (don't throw)
   }
 
   /// <inheritdoc/>
@@ -203,16 +207,20 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     // Convert partition key to Guid for storage
     var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
 
-    // Find the row to delete
-    var row = await _context.Set<PerspectiveRow<TModel>>()
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
-
-    // If row exists, remove it
-    if (row != null) {
-      _context.Set<PerspectiveRow<TModel>>().Remove(row);
-      await _context.SaveChangesAsync(cancellationToken);
+    // Use ExecuteDeleteAsync to bypass change tracker JSON serialization,
+    // which fails on entities with complex collections in deleted state (EF Core bug with Npgsql JSON columns)
+    if (_context.Database.IsRelational()) {
+      await _context.Set<PerspectiveRow<TModel>>()
+          .Where(r => r.Id == partitionGuid)
+          .ExecuteDeleteAsync(cancellationToken);
+    } else {
+      var row = await _context.Set<PerspectiveRow<TModel>>()
+          .OrderBy(r => r.Id)
+          .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
+      if (row != null) {
+        _context.Set<PerspectiveRow<TModel>>().Remove(row);
+        await _context.SaveChangesAsync(cancellationToken);
+      }
     }
-    // If row doesn't exist, idempotent no-op (don't throw)
   }
 }

@@ -1,0 +1,641 @@
+using System.Text.Json;
+using RabbitMQ.Client;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
+using Whizbang.Core.Serialization;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Containers;
+using Whizbang.Testing.Transport;
+using Whizbang.Transports.RabbitMQ;
+
+#pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
+#pragma warning disable TUnit0023 // Disposable field should be disposed in cleanup method
+
+namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
+
+/// <summary>
+/// Integration tests for IInboxRoutingStrategy and IOutboxRoutingStrategy implementations
+/// with real RabbitMQ transport. Verifies that inbox/outbox strategies correctly route
+/// messages through RabbitMQ exchanges and queues.
+/// Uses Testcontainers for a real RabbitMQ instance.
+/// </summary>
+[Category("Integration")]
+[NotInParallel("RabbitMQ")]
+public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
+  private IConnection? _connection;
+  private RabbitMQChannelPool? _channelPool;
+  private RabbitMQTransport? _transport;
+
+  [Before(Test)]
+  public async Task SetupAsync() {
+    // Initialize shared container once for all tests
+    await SharedRabbitMqContainer.InitializeOrSkipAsync();
+
+    // Create connection for this test
+    var factory = new ConnectionFactory {
+      Uri = new Uri(SharedRabbitMqContainer.ConnectionString)
+    };
+    _connection = await factory.CreateConnectionAsync();
+    _channelPool = new RabbitMQChannelPool(_connection, maxChannels: 5);
+
+    // Use JsonContextRegistry to get combined options with all registered types
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    var options = new RabbitMQOptions();
+
+    _transport = new RabbitMQTransport(
+      _connection,
+      jsonOptions,
+      _channelPool,
+      options,
+      logger: null
+    );
+
+    await _transport.InitializeAsync();
+  }
+
+  [After(Test)]
+  public Task CleanupAsync() {
+    // Fire-and-forget cleanup to avoid test hanging on connection close
+    var transport = _transport;
+    var channelPool = _channelPool;
+    var connection = _connection;
+
+    _transport = null;
+    _channelPool = null;
+    _connection = null;
+
+    _ = Task.Run(async () => {
+      try {
+        if (transport != null) {
+          await transport.DisposeAsync();
+        }
+
+        channelPool?.Dispose();
+
+        if (connection != null) {
+          await connection.CloseAsync();
+          connection.Dispose();
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    }, CancellationToken.None);
+
+    return Task.CompletedTask;
+  }
+
+  // ========================================
+  // DOMAIN TOPIC OUTBOX STRATEGY TESTS
+  // ========================================
+
+  [Test]
+  [Timeout(90000)]
+  public async Task DomainTopicOutboxStrategy_PublishesToDomainExchangeAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange
+    var outboxStrategy = new DomainTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    // Get destination from strategy
+    var destination = outboxStrategy.GetDestination(
+      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    // Verify destination is correct - now uses full namespace
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
+    await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
+
+    // Set up consumer to verify message arrival at domain exchange
+    var awaiter = new MessageIdAwaiter();
+    var subscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(destination.Address),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      // Publish message using strategy destination
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
+
+      // Assert - Message should arrive at "orders" exchange
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail($"Message should arrive at exchange '{destination.Address}' within timeout");
+      }
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
+  [Timeout(90000)]
+  public async Task DomainTopicOutboxStrategy_WithCustomResolver_RoutesCorrectlyAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange - Custom topic resolver returns "custom-orders"
+    var outboxStrategy = new DomainTopicOutboxStrategy(
+      new NamespaceRoutingStrategy(type => "custom-orders")
+    );
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    var destination = outboxStrategy.GetDestination(
+      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    await Assert.That(destination.Address).IsEqualTo("custom-orders");
+
+    // Set up consumer
+    var awaiter = new MessageIdAwaiter();
+    var subscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(destination.Address),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail($"Message should arrive at custom exchange '{destination.Address}' within timeout");
+      }
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  // ========================================
+  // SHARED TOPIC OUTBOX STRATEGY TESTS
+  // ========================================
+
+  [Test]
+  [Timeout(90000)]
+  public async Task SharedTopicOutboxStrategy_PublishesToSharedExchangeAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange
+    var outboxStrategy = new SharedTopicOutboxStrategy("shared.events");
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    var destination = outboxStrategy.GetDestination(
+      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    // Verify destination uses shared topic with namespace routing
+    // For events: topic = namespace, routing key = type name
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
+    await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
+    await Assert.That(destination.Metadata is not null).IsTrue();
+
+    // Set up consumer on shared exchange with routing key
+    var awaiter = new MessageIdAwaiter();
+    var subscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(destination.Address),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail($"Message should arrive at shared exchange '{destination.Address}' within timeout");
+      }
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
+  [Timeout(90000)]
+  public async Task SharedTopicOutboxStrategy_UsesDefaultTopicAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange - Use default topic
+    var outboxStrategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    var destination = outboxStrategy.GetDestination(
+      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    // For events, address is the full namespace (not the shared topic)
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
+
+    // Set up consumer
+    var awaiter = new MessageIdAwaiter();
+    var subscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(destination.Address),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail("Message should arrive at default shared exchange within timeout");
+      }
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  // ========================================
+  // DOMAIN TOPIC INBOX STRATEGY TESTS
+  // ========================================
+
+  [Test]
+  [Timeout(90000)]
+  public async Task DomainTopicInboxStrategy_SubscribesToDomainExchangeAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange
+    var inboxStrategy = new DomainTopicInboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    var subscription = inboxStrategy.GetSubscription(
+      ownedDomains,
+      "order-service",
+      MessageKind.Command
+    );
+
+    // Verify subscription is correct
+    await Assert.That(subscription.Topic).IsEqualTo("orders.inbox");
+    await Assert.That(subscription.FilterExpression).IsNull(); // No filter for domain topics
+
+    // Set up consumer on domain inbox
+    var awaiter = new MessageIdAwaiter();
+    var transportSubscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(subscription.Topic),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      // Publish command to domain inbox
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(
+        envelope,
+        new TransportDestination(subscription.Topic),
+        cancellationToken: cancellationToken
+      );
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail($"Message should arrive at domain inbox '{subscription.Topic}' within timeout");
+      }
+    } finally {
+      transportSubscription.Dispose();
+    }
+  }
+
+  [Test]
+  [Timeout(90000)]
+  public async Task DomainTopicInboxStrategy_WithCustomSuffix_SubscribesCorrectlyAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange - Custom suffix ".in"
+    var inboxStrategy = new DomainTopicInboxStrategy(".in");
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    var subscription = inboxStrategy.GetSubscription(
+      ownedDomains,
+      "order-service",
+      MessageKind.Command
+    );
+
+    await Assert.That(subscription.Topic).IsEqualTo("orders.in");
+
+    // Set up consumer
+    var awaiter = new MessageIdAwaiter();
+    var transportSubscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(subscription.Topic),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(
+        envelope,
+        new TransportDestination(subscription.Topic),
+        cancellationToken: cancellationToken
+      );
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail($"Message should arrive at custom inbox '{subscription.Topic}' within timeout");
+      }
+    } finally {
+      transportSubscription.Dispose();
+    }
+  }
+
+  // ========================================
+  // SHARED TOPIC INBOX STRATEGY TESTS
+  // ========================================
+
+  [Test]
+  [Timeout(90000)]
+  public async Task SharedTopicInboxStrategy_SubscribesToSharedExchangeAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange
+    var inboxStrategy = new SharedTopicInboxStrategy("shared.inbox");
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands", "myapp.inventory.commands" };
+
+    var subscription = inboxStrategy.GetSubscription(
+      ownedDomains,
+      "order-service",
+      MessageKind.Command
+    );
+
+    // Verify subscription is correct - now includes system commands and # wildcards
+    await Assert.That(subscription.Topic).IsEqualTo("shared.inbox");
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.commands.system.#");
+    await Assert.That(subscription.FilterExpression).Contains("myapp.orders.commands.#");
+    await Assert.That(subscription.FilterExpression).Contains("myapp.inventory.commands.#");
+    await Assert.That(subscription.Metadata is not null).IsTrue();
+
+    // Set up consumer on shared inbox
+    var awaiter = new MessageIdAwaiter();
+    var transportSubscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(subscription.Topic),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(
+        envelope,
+        new TransportDestination(subscription.Topic),
+        cancellationToken: cancellationToken
+      );
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail($"Message should arrive at shared inbox '{subscription.Topic}' within timeout");
+      }
+    } finally {
+      transportSubscription.Dispose();
+    }
+  }
+
+  [Test]
+  [Timeout(90000)]
+  public async Task SharedTopicInboxStrategy_UsesDefaultTopicAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange - Use default topic
+    var inboxStrategy = new SharedTopicInboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+
+    var subscription = inboxStrategy.GetSubscription(
+      ownedDomains,
+      "order-service",
+      MessageKind.Command
+    );
+
+    // Default topic is "inbox"
+    await Assert.That(subscription.Topic).IsEqualTo("inbox");
+
+    // Set up consumer
+    var awaiter = new MessageIdAwaiter();
+    var transportSubscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(subscription.Topic),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(
+        envelope,
+        new TransportDestination(subscription.Topic),
+        cancellationToken: cancellationToken
+      );
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsNotNull();
+      } catch (TimeoutException) {
+        Assert.Fail("Message should arrive at default shared inbox within timeout");
+      }
+    } finally {
+      transportSubscription.Dispose();
+    }
+  }
+
+  // ========================================
+  // END-TO-END STRATEGY COMBINATION TESTS
+  // ========================================
+
+  [Test]
+  [Timeout(90000)]
+  public async Task DomainOutbox_ToDomainInbox_EndToEndAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange - Publisher uses DomainTopicOutboxStrategy, Subscriber uses DomainTopicInboxStrategy
+    var outboxStrategy = new DomainTopicOutboxStrategy();
+    var inboxStrategy = new DomainTopicInboxStrategy(".outbox"); // Subscribe to outbox topic
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+
+    // Get destination from outbox strategy
+    var destination = outboxStrategy.GetDestination(
+      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    // Set up consumer using inbox strategy (subscribing to domain topic)
+    var awaiter = new MessageIdAwaiter();
+    var transportSubscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(destination.Address),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      // Publish using outbox strategy destination
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
+      } catch (TimeoutException) {
+        Assert.Fail("End-to-end domain routing should work within timeout");
+      }
+    } finally {
+      transportSubscription.Dispose();
+    }
+  }
+
+  [Test]
+  [Retry(2)]
+  [Timeout(90000)]
+  public async Task SharedOutbox_ToSharedInbox_EndToEndAsync(
+    CancellationToken cancellationToken
+  ) {
+    // Arrange - Both use shared topic strategy
+    // Commands go to shared topic; Events go to namespace topics
+    const string sharedTopic = "test.shared";
+    var outboxStrategy = new SharedTopicOutboxStrategy(sharedTopic);
+    var inboxStrategy = new SharedTopicInboxStrategy(sharedTopic);
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };
+
+    var destination = outboxStrategy.GetDestination(
+      typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder),
+      ownedDomains,
+      MessageKind.Command
+    );
+
+    var subscription = inboxStrategy.GetSubscription(
+      ownedDomains,
+      "order-service",
+      MessageKind.Command
+    );
+
+    // Verify both strategies use the same shared topic for commands
+    await Assert.That(destination.Address).IsEqualTo(subscription.Topic);
+
+    // Set up consumer
+    var awaiter = new MessageIdAwaiter();
+    var transportSubscription = await _transport!.SubscribeAsync(
+      awaiter.Handler,
+      _createTestDestination(subscription.Topic),
+      cancellationToken
+    );
+
+    try {
+      await Task.Delay(500, cancellationToken);
+
+      var envelope = _createTestEnvelope();
+      await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
+
+      try {
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
+      } catch (TimeoutException) {
+        Assert.Fail("End-to-end shared topic routing should work within timeout");
+      }
+    } finally {
+      transportSubscription.Dispose();
+    }
+  }
+
+  // ========================================
+  // HELPER METHODS
+  // ========================================
+
+  /// <summary>
+  /// Creates a TransportDestination with deterministic SubscriberName metadata for testing.
+  /// Each call generates a unique subscriber name to ensure test isolation.
+  /// </summary>
+  private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+    };
+    return new TransportDestination(address, routingKey, metadata);
+  }
+
+  private static MessageEnvelope<TestMessage> _createTestEnvelope() {
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test-inbox-outbox-content"),
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Topic = "test-topic",
+          ServiceInstance = ServiceInstanceInfo.Unknown
+        }
+      ]
+    };
+  }
+
+  public ValueTask DisposeAsync() {
+    var transport = _transport;
+    var channelPool = _channelPool;
+    var connection = _connection;
+
+    _transport = null;
+    _channelPool = null;
+    _connection = null;
+
+    _ = Task.Run(async () => {
+      try {
+        if (transport != null) {
+          await transport.DisposeAsync();
+        }
+
+        channelPool?.Dispose();
+
+        if (connection != null) {
+          await connection.CloseAsync();
+          connection.Dispose();
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    }, CancellationToken.None);
+
+    return ValueTask.CompletedTask;
+  }
+}

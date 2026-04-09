@@ -137,4 +137,13 @@ public interface ISyncEventTracker {
   /// </summary>
   /// <param name="awaiterId">The awaiter ID whose entries should be removed and cancelled.</param>
   void UnregisterAwaiter(Guid awaiterId);
+
+  /// <summary>
+  /// Removes tracked events older than <paramref name="maxAge"/> and signals any waiters
+  /// registered for the removed entries. Prevents unbounded memory growth when events are
+  /// never processed (e.g., perspective failures, unregistered types).
+  /// </summary>
+  /// <param name="maxAge">Maximum age for tracked events. Entries older than this are removed.</param>
+  /// <returns>The number of entries removed.</returns>
+  int CleanupStaleEntries(TimeSpan maxAge);
 }

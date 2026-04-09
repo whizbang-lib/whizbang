@@ -12,14 +12,16 @@ namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests verifying that singleton strategies (Interval/Batch)
-/// correctly pass outbox work to the WorkChannelWriter when resolved via the
-/// DI registration pattern used by the generator template.
+/// correctly signal the WorkChannelWriter and route inbox work to the InboxChannelWriter
+/// when resolved via the DI registration pattern used by the generator template.
 /// </summary>
+/// <docs>messaging/work-coordinator#channel-routing</docs>
+/// <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs</tests>
 [Category("Integration")]
 public class WorkCoordinatorStrategyChannelIntegrationTests {
 
   [Test]
-  public async Task IntervalStrategy_EndToEnd_OutboxWorkReachesChannelAsync() {
+  public async Task IntervalStrategy_FlushWithOutboxWork_SignalsWorkAvailableAsync() {
     // Arrange - Full DI container with real WorkChannelWriter
     var options = new WorkCoordinatorOptions {
       Strategy = WorkCoordinatorStrategy.Interval,
@@ -29,34 +31,68 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     services.AddSingleton(options);
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
     services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
+    services.AddSingleton<IInboxChannelWriter, InboxChannelWriter>();
     services.AddScoped<IWorkCoordinator, ChannelTestWorkCoordinator>();
 
     _addGeneratorStrategyRegistrations(services);
 
     await using var sp = services.BuildServiceProvider();
 
-    // Act - Resolve via scoped pattern (as generator does), queue + flush
-    await using var scope = sp.CreateAsyncScope();
-    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+    var writer = sp.GetRequiredService<IWorkChannelWriter>();
+    var signalFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    writer.OnNewWorkAvailable += () => signalFired.TrySetResult();
 
-    // Unwrap NonDisposingStrategyAdapter to queue on the actual strategy
+    // Act - Queue outbox message and flush
     var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
     intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
     await intervalStrategy.FlushAsync(WorkBatchOptions.None);
 
-    // Assert - Read from the channel reader
-    var writer = sp.GetRequiredService<IWorkChannelWriter>();
+    // Assert - Signal was raised (publisher worker would wake and claim from DB)
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var work = await writer.Reader.ReadAsync(cts.Token);
-
-    await Assert.That(work.Destination).IsEqualTo("test-topic");
+    cts.Token.Register(() => signalFired.TrySetCanceled());
+    await signalFired.Task;
 
     // Cleanup
     await intervalStrategy.DisposeAsync();
   }
 
   [Test]
-  public async Task BatchStrategy_EndToEnd_OutboxWorkReachesChannelAsync() {
+  public async Task IntervalStrategy_FlushWithInboxWork_RoutesToInboxChannelAsync() {
+    // Arrange
+    var options = new WorkCoordinatorOptions {
+      Strategy = WorkCoordinatorStrategy.Interval,
+      IntervalMilliseconds = 60_000
+    };
+    var services = new ServiceCollection();
+    services.AddSingleton(options);
+    services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
+    services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
+    services.AddSingleton<IInboxChannelWriter, InboxChannelWriter>();
+    services.AddScoped<IWorkCoordinator, InboxReturningWorkCoordinator>();
+
+    _addGeneratorStrategyRegistrations(services);
+
+    await using var sp = services.BuildServiceProvider();
+
+    var inboxWriter = sp.GetRequiredService<IInboxChannelWriter>();
+
+    // Act - Queue something so flush executes, coordinator returns inbox work
+    var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
+    intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
+    await intervalStrategy.FlushAsync(WorkBatchOptions.None);
+
+    // Assert - Inbox work was routed to the inbox channel
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var inboxWork = await inboxWriter.Reader.ReadAsync(cts.Token);
+
+    await Assert.That(inboxWork.MessageId).IsNotEqualTo(Guid.Empty);
+
+    // Cleanup
+    await intervalStrategy.DisposeAsync();
+  }
+
+  [Test]
+  public async Task BatchStrategy_FlushWithOutboxWork_SignalsWorkAvailableAsync() {
     // Arrange
     var options = new WorkCoordinatorOptions {
       Strategy = WorkCoordinatorStrategy.Batch,
@@ -73,17 +109,19 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
 
     await using var sp = services.BuildServiceProvider();
 
+    var writer = sp.GetRequiredService<IWorkChannelWriter>();
+    var signalFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    writer.OnNewWorkAvailable += () => signalFired.TrySetResult();
+
     // Act
     var batchStrategy = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
     batchStrategy.QueueOutboxMessage(_createTestOutboxMessage());
     await batchStrategy.FlushAsync(WorkBatchOptions.None);
 
-    // Assert
-    var writer = sp.GetRequiredService<IWorkChannelWriter>();
+    // Assert - Signal was raised
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var work = await writer.Reader.ReadAsync(cts.Token);
-
-    await Assert.That(work.Destination).IsEqualTo("test-topic");
+    cts.Token.Register(() => signalFired.TrySetCanceled());
+    await signalFired.Task;
 
     // Cleanup
     await batchStrategy.DisposeAsync();
@@ -105,9 +143,9 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         opts,
         scopeFactory: scopeFactory,
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
-,
-        workChannelWriter: sp.GetService<IWorkChannelWriter>());
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
+        workChannelWriter: sp.GetService<IWorkChannelWriter>(),
+        inboxChannelWriter: sp.GetService<IInboxChannelWriter>());
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -119,8 +157,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         opts,
         scopeFactory: scopeFactory,
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
-,
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
         workChannelWriter: sp.GetService<IWorkChannelWriter>());
     });
 
@@ -163,6 +200,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
   // Test Fakes
   // ========================================
 
+  /// <summary>Returns outbox work (no inbox work) from ProcessWorkBatchAsync.</summary>
   private sealed class ChannelTestWorkCoordinator : IWorkCoordinator {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -186,6 +224,48 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
           }
         ],
         InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCursorCompletion completion,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCursorFailure failure,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>Returns inbox work from ProcessWorkBatchAsync (for inbox channel routing tests).</summary>
+  private sealed class InboxReturningWorkCoordinator : IWorkCoordinator {
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      var messageId = Guid.CreateVersion7();
+      var envelope = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From(messageId),
+        Payload = JsonDocument.Parse("{}").RootElement,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      };
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [
+          new InboxWork {
+            MessageId = messageId,
+            Envelope = envelope,
+            MessageType = "TestMessage",
+            StreamId = Guid.CreateVersion7(),
+            Status = MessageProcessingStatus.None
+          }
+        ],
         PerspectiveWork = []
       });
     }

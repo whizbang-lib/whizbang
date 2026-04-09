@@ -23,12 +23,14 @@ public class WorkBatchCoordinator(
   IWorkCoordinator workCoordinator,
   IServiceInstanceProvider instanceProvider,
   IWorkChannelWriter outboxChannel,
-  IPerspectiveChannelWriter perspectiveChannel
+  IPerspectiveChannelWriter perspectiveChannel,
+  IInboxChannelWriter? inboxChannel = null
   ) : IWorkBatchCoordinator {
   private readonly IWorkCoordinator _workCoordinator = workCoordinator ?? throw new ArgumentNullException(nameof(workCoordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IWorkChannelWriter _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
   private readonly IPerspectiveChannelWriter _perspectiveChannel = perspectiveChannel ?? throw new ArgumentNullException(nameof(perspectiveChannel));
+  private readonly IInboxChannelWriter? _inboxChannel = inboxChannel;
 
   /// <inheritdoc />
   public async Task ProcessAndDistributeDetached(
@@ -72,6 +74,11 @@ public class WorkBatchCoordinator(
       await _perspectiveChannel.WriteAsync(perspectiveWork, ct);
     }
 
-    // FUTURE: Distribute inbox work to IInboxChannelWriter when implemented (similar to perspective work distribution above)
+    // Distribute inbox work to inbox channel for publisher worker processing
+    if (_inboxChannel is not null) {
+      foreach (var inboxWork in workBatch.InboxWork) {
+        await _inboxChannel.WriteAsync(inboxWork, ct);
+      }
+    }
   }
 }

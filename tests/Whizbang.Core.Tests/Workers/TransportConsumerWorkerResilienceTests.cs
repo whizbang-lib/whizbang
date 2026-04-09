@@ -127,7 +127,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -152,7 +153,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -178,7 +180,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -210,7 +213,8 @@ public class TransportConsumerWorkerResilienceTests {
       await SubscriptionRetryHelper.SubscribeWithRetryAsync(
         transport,
         state.Destination,
-        async (_, _, _) => await Task.CompletedTask,
+        (_, _) => Task.CompletedTask,
+        new TransportBatchOptions(),
         state,
         options,
         NullLogger.Instance,
@@ -239,7 +243,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -263,7 +268,8 @@ public class TransportConsumerWorkerResilienceTests {
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport,
       state.Destination,
-      async (_, _, _) => await Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
+      new TransportBatchOptions(),
       state,
       options,
       NullLogger.Instance,
@@ -451,6 +457,23 @@ public class TransportConsumerWorkerResilienceTests {
       return Task.FromResult<ISubscription>(new FakeSubscription());
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default
+    ) {
+      SubscribeCallCount++;
+      OnSubscribeAttempt?.Invoke();
+
+      if (_currentFailureCount < _failureCount) {
+        _currentFailureCount++;
+        throw _exceptionToThrow;
+      }
+
+      return Task.FromResult<ISubscription>(new FakeSubscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,
       TransportDestination destination,
@@ -495,6 +518,16 @@ public class TransportConsumerWorkerResilienceTests {
       return Task.FromResult<ISubscription>(new FakeSubscription());
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default
+    ) {
+      SubscribeCallCount++;
+      return Task.FromResult<ISubscription>(new FakeSubscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,
       TransportDestination destination,
@@ -523,6 +556,20 @@ public class TransportConsumerWorkerResilienceTests {
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination,
+      CancellationToken cancellationToken = default
+    ) {
+      if (_failingTopics.Contains(destination.Address)) {
+        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
+      }
+
+      _successfulSubscriptions.Add(destination);
+      return Task.FromResult<ISubscription>(new FakeSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
       CancellationToken cancellationToken = default
     ) {
       if (_failingTopics.Contains(destination.Address)) {

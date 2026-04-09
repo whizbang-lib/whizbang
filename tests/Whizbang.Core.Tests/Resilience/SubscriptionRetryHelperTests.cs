@@ -4,6 +4,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Resilience;
 
@@ -126,7 +127,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert
@@ -149,7 +150,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert
@@ -172,7 +173,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert
@@ -196,7 +197,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act & Assert - TaskCanceledException is a subclass of OperationCanceledException
     await Assert.That(() => SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, cts.Token))
       .Throws<OperationCanceledException>();
   }
@@ -215,7 +216,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should end up Healthy but IncrementAttempt should have been called
@@ -236,7 +237,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - subscribe successfully
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -266,7 +267,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - subscribe successfully
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -277,8 +278,8 @@ public class SubscriptionRetryHelperTests {
     var disconnectException = new InvalidOperationException("Connection lost");
     subscription.TriggerDisconnect("Connection lost", exception: disconnectException, applicationInitiated: false);
 
-    // Wait for reconnection to happen
-    await Task.Delay(100);
+    // Wait for reconnection (signal-based, not timing-based)
+    await transport.WaitForSubscribeCallCountAsync(2, TimeSpan.FromSeconds(10));
 
     // Assert - should have attempted reconnection
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -298,7 +299,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - subscribe successfully
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Trigger disconnect with exception
@@ -306,8 +307,11 @@ public class SubscriptionRetryHelperTests {
     var disconnectException = new InvalidOperationException("Network error");
     subscription.TriggerDisconnect("Network error", exception: disconnectException, applicationInitiated: false);
 
-    // Give a small delay for the event handler to run (but not enough for full reconnect)
-    await Task.Delay(20);
+    // Wait for status to change to Recovering (signal-based spin)
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+    while (state.Status != SubscriptionStatus.Recovering && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
 
     // Assert intermediate state - should be recovering with last error set
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Recovering);
@@ -333,7 +337,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act - this will go through attempts 1-16, succeeding on 16
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should succeed after 16 attempts
@@ -352,7 +356,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should succeed (logs would use "#" as default routing key)
@@ -374,7 +378,7 @@ public class SubscriptionRetryHelperTests {
 
     // Act
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
-      transport, destination, handler, state, options,
+      transport, destination, handler, new TransportBatchOptions(), state, options,
       NullLogger.Instance, CancellationToken.None);
 
     // Assert - should log "established after N attempts" since attempt > 1
@@ -386,8 +390,8 @@ public class SubscriptionRetryHelperTests {
   // Helper Methods
   // ==========================================================================
 
-  private static Func<IMessageEnvelope, string?, CancellationToken, Task> _createNoOpHandler() {
-    return (_, _, _) => Task.CompletedTask;
+  private static Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> _createNoOpHandler() {
+    return (_, _) => Task.CompletedTask;
   }
 
   // ==========================================================================
@@ -399,8 +403,32 @@ public class SubscriptionRetryHelperTests {
     private readonly int _failFirstNAttempts = failFirstNAttempts;
     private readonly bool _returnDisconnectableSubscription = returnDisconnectableSubscription;
     private int _attemptCount;
+    private readonly Lock _lock = new();
+    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _waiters = [];
 
     public int SubscribeCallCount { get; private set; }
+
+    public Task WaitForSubscribeCallCountAsync(int count, TimeSpan timeout) {
+      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_lock) {
+        if (SubscribeCallCount >= count) {
+          tcs.TrySetResult();
+        } else {
+          _waiters.Add((count, tcs));
+        }
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
+    private void _notifyWaiters() {
+      lock (_lock) {
+        foreach (var (target, signal) in _waiters) {
+          if (SubscribeCallCount >= target) {
+            signal.TrySetResult();
+          }
+        }
+      }
+    }
 
     public bool IsInitialized => true;
 
@@ -414,6 +442,7 @@ public class SubscriptionRetryHelperTests {
       CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
       _attemptCount++;
+      _notifyWaiters();
 
       if (_alwaysFail) {
         throw new InvalidOperationException("Mock transport always fails");
@@ -435,6 +464,30 @@ public class SubscriptionRetryHelperTests {
       TransportDestination destination,
       string? envelopeType = null,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _attemptCount++;
+      _notifyWaiters();
+
+      if (_alwaysFail) {
+        throw new InvalidOperationException("Mock transport always fails");
+      }
+
+      if (_attemptCount <= _failFirstNAttempts) {
+        throw new InvalidOperationException($"Mock transport fails on attempt {_attemptCount}");
+      }
+
+      ISubscription subscription = _returnDisconnectableSubscription
+        ? new DisconnectableMockSubscription()
+        : new MockSubscription();
+
+      return Task.FromResult(subscription);
+    }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,

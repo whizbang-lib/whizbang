@@ -8,6 +8,7 @@ using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.RabbitMQ;
 
@@ -394,7 +395,200 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   }
 
   /// <inheritdoc />
-  public Task<ISubscription> SubscribeAsync(
+  /// <inheritdoc />
+  /// <docs>messaging/transports/rabbitmq#batch-subscribe</docs>
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(batchHandler);
+    ArgumentNullException.ThrowIfNull(destination);
+    ArgumentNullException.ThrowIfNull(batchOptions);
+
+    if (!_isInitialized) {
+      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+    }
+
+    return _subscribeBatchCoreAsync(batchHandler, destination, batchOptions, cancellationToken);
+  }
+
+  /// <summary>
+  /// Pending message with a COPIED body. BasicDeliverEventArgs.Body is a ReadOnlyMemory&lt;byte&gt;
+  /// backed by a shared buffer that RabbitMQ recycles after ReceivedAsync returns Task.CompletedTask.
+  /// We must copy the body before the buffer is recycled.
+  /// </summary>
+  private readonly record struct PendingRabbitMessage(IChannel Channel, BasicDeliverEventArgs Args, byte[] BodyCopy, string QueueName);
+
+  private async Task<ISubscription> _subscribeBatchCoreAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken
+  ) {
+    var exchangeName = destination.Address;
+    var queueName = _resolveQueueName(destination, exchangeName);
+    var routingPatterns = _getRoutingPatterns(destination);
+
+    _logSubscriptionCreation(exchangeName, queueName, routingPatterns);
+
+    try {
+      return await _createBatchSubscriptionAsync(batchHandler, exchangeName, queueName, routingPatterns, batchOptions, cancellationToken);
+    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
+      return _throwTimeoutException(exchangeName, queueName, ex);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      return _throwSubscriptionException(exchangeName, queueName, ex);
+    }
+  }
+
+  /// <summary>
+  /// Creates a batch subscription: channel + infrastructure + batch collector + consumer.
+  /// ReceivedAsync enqueues raw args and returns immediately (non-blocking).
+  /// Flush callback: deserialize → handler → per-message ACK/NACK.
+  /// </summary>
+  private async Task<ISubscription> _createBatchSubscriptionAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    string exchangeName,
+    string queueName,
+    List<string> routingPatterns,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken
+  ) {
+    var channel = await _setupChannelAndInfrastructureAsync(
+      exchangeName, queueName, routingPatterns, cancellationToken);
+
+    RabbitMQSubscription? subscription = null;
+
+    var collector = new TransportBatchCollector<PendingRabbitMessage>(
+      batchOptions,
+      batch => _flushBatchAsync(batch, batchHandler, subscription, queueName)
+    );
+
+    var consumer = new AsyncEventingBasicConsumer(channel);
+
+    consumer.ReceivedAsync += (_, args) => {
+      if (subscription is { IsActive: false }) {
+        return _nackPausedMessageAsync(channel, args, queueName);
+      }
+
+      // Copy body BEFORE returning — RabbitMQ recycles the buffer after this handler returns
+      var bodyCopy = args.Body.ToArray();
+      collector.Enqueue(new PendingRabbitMessage(channel, args, bodyCopy, queueName));
+      return Task.CompletedTask; // Non-blocking — lets ConsumerDispatchConcurrency=1 dispatch next immediately
+    };
+
+    var consumerTag = await channel.BasicConsumeAsync(
+      queue: queueName,
+      autoAck: false,
+      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
+      noLocal: false,
+      exclusive: false,
+      arguments: null,
+      consumer: consumer,
+      cancellationToken: cancellationToken
+    );
+
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      _logger.LogDebug(
+        "Created batch subscription for exchange {ExchangeName}, queue {QueueName} (BatchSize={BatchSize}, SlideMs={SlideMs}, MaxWaitMs={MaxWaitMs})",
+        exchangeName, queueName, batchOptions.BatchSize, batchOptions.SlideMs, batchOptions.MaxWaitMs);
+    }
+
+    return subscription;
+  }
+
+  /// <summary>
+  /// Flush callback for batch collector. Deserializes all messages, calls handler,
+  /// then ACKs each message individually (multiple=false to avoid PRECONDITION_FAILED
+  /// with AutorecoveringChannel).
+  /// </summary>
+  private async Task _flushBatchAsync(
+    IReadOnlyList<PendingRabbitMessage> pendingMessages,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    RabbitMQSubscription? subscription,
+    string queueName
+  ) {
+    if (pendingMessages.Count == 0) {
+      return;
+    }
+
+    // If subscription paused, NACK all with requeue
+    if (subscription is { IsActive: false }) {
+      foreach (var pending in pendingMessages) {
+        try {
+          await _nackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
+        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+          // Channel closed — message will be redelivered automatically
+        }
+      }
+      return;
+    }
+
+    var deserialized = new List<TransportMessage>(pendingMessages.Count);
+    var successfulPending = new List<PendingRabbitMessage>(pendingMessages.Count);
+
+    foreach (var pending in pendingMessages) {
+      try {
+        var envelope = _deserializeMessageFromBody(pending.Args, pending.BodyCopy, out var envelopeTypeName);
+        if (envelope == null) {
+          await _nackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
+          continue;
+        }
+
+        deserialized.Add(new TransportMessage(envelope, envelopeTypeName));
+        successfulPending.Add(pending);
+      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+        _logger?.LogWarning(ex,
+          "RabbitMQ channel closed while deserializing message {MessageId} from queue {QueueName}",
+          pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
+      }
+    }
+
+    if (deserialized.Count == 0) {
+      return;
+    }
+
+    try {
+      await batchHandler(deserialized, CancellationToken.None);
+
+      // Per-message ACK (multiple=false) — safe with AutorecoveringChannel
+      foreach (var pending in successfulPending) {
+        try {
+          await pending.Channel.BasicAckAsync(pending.Args.DeliveryTag, multiple: false, CancellationToken.None);
+        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+          _logger?.LogWarning(ex,
+            "RabbitMQ channel closed while ACKing message {MessageId} from queue {QueueName} — will be redelivered",
+            pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
+        }
+      }
+
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        _logger.LogDebug("Processed batch of {BatchSize} messages from queue {QueueName}", deserialized.Count, queueName);
+      }
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(ex,
+        "RabbitMQ channel closed while processing batch from queue {QueueName} — messages will be redelivered", queueName);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger?.LogError(ex,
+        "Error processing batch of {BatchSize} messages from queue {QueueName} — NACKing for redelivery", deserialized.Count, queueName);
+
+      // Per-message NACK with requeue
+      foreach (var pending in successfulPending) {
+        try {
+          await pending.Channel.BasicNackAsync(pending.Args.DeliveryTag, multiple: false, requeue: true, CancellationToken.None);
+        } catch (Exception nackEx) when (nackEx is AlreadyClosedException or ObjectDisposedException) {
+          // Channel closed — message will be redelivered automatically
+        }
+      }
+    }
+  }
+
+  // Keep SubscribeAsync as internal for backward compat during migration
+  internal Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
@@ -811,6 +1005,50 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <summary>
   /// Deserializes a message from RabbitMQ delivery args.
   /// </summary>
+  /// <summary>
+  /// Deserializes from a copied body (batch path — original buffer may have been recycled).
+  /// </summary>
+  private IMessageEnvelope? _deserializeMessageFromBody(BasicDeliverEventArgs args, byte[] body, out string? envelopeTypeName) {
+    envelopeTypeName = null;
+
+    if (body.Length == 0) {
+      _logger?.LogError("Message {MessageId} has an empty body; skipping",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID);
+      return null;
+    }
+
+    // Get envelope type from headers
+    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+        envelopeTypeObj is not byte[] envelopeTypeBytes) {
+      _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
+      return null;
+    }
+
+    envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
+    var json = Encoding.UTF8.GetString(body);
+
+    if (string.IsNullOrWhiteSpace(json) || json[0] == '\0') {
+      var hex = Convert.ToHexString(body.AsSpan(0, Math.Min(8, body.Length)));
+      _logger?.LogError("Message {MessageId} body is not valid JSON (starts with 0x{Hex}); skipping",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, hex);
+      return null;
+    }
+
+    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    if (typeInfo == null) {
+      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+      return null;
+    }
+
+    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
+      _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
+        args.BasicProperties.MessageId, envelopeTypeName);
+      return null;
+    }
+
+    return envelope;
+  }
+
   private IMessageEnvelope? _deserializeMessage(BasicDeliverEventArgs args, out string? envelopeTypeName) {
     envelopeTypeName = null;
 

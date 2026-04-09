@@ -340,7 +340,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelope = _createJsonEnvelope(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - strategy received flush calls
     await Assert.That(strategy.FlushCallCount).IsGreaterThanOrEqualTo(2);
@@ -380,7 +380,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelope = _createJsonEnvelope(messageId, Guid.NewGuid());
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - only one flush (the initial dedup flush), no second flush for completions
     await Assert.That(strategy.FlushCallCount).IsEqualTo(1);
@@ -427,7 +427,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act & Assert - the exception from the final flush is propagated
     await Assert.That(async () =>
-      await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None)
+      await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None)
     ).Throws<InvalidOperationException>();
 
     await worker.StopAsync(CancellationToken.None);
@@ -479,7 +479,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
     // Act - should complete without errors (lifecycle skipped)
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - completed without throwing
     await Assert.That(strategy.FlushCallCount).IsGreaterThanOrEqualTo(2);
@@ -552,7 +552,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
     // Act
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
     await worker.DrainDetachedAsync();
 
     // Assert - PreInbox and PostInbox stages invoked
@@ -632,7 +632,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
     // Act
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
     await worker.DrainDetachedAsync();
 
     // Assert - PostLifecycle stages invoked via coordinator
@@ -665,7 +665,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       }
     );
 
-    var invokedStages = new List<LifecycleStage>();
+    var invokedStages = new System.Collections.Concurrent.ConcurrentBag<LifecycleStage>();
     var registry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
@@ -709,7 +709,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
     // Act
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
     await worker.DrainDetachedAsync();
 
     // Assert - PostLifecycle stages invoked via fallback (direct invoker)
@@ -795,7 +795,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
     // Act
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - PostLifecycle stages NOT invoked (perspective handles it)
     await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostLifecycleDetached);
@@ -836,7 +836,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act & Assert - null envelopeType should throw
     await Assert.That(async () =>
-      await handlerCapturingTransport.CapturedHandler!(envelope, null, CancellationToken.None)
+      await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, null)], CancellationToken.None)
     ).Throws<InvalidOperationException>();
 
     await worker.StopAsync(CancellationToken.None);
@@ -870,7 +870,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act & Assert - empty envelopeType should throw
     await Assert.That(async () =>
-      await handlerCapturingTransport.CapturedHandler!(envelope, "  ", CancellationToken.None)
+      await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, "  ")], CancellationToken.None)
     ).Throws<InvalidOperationException>();
 
     await worker.StopAsync(CancellationToken.None);
@@ -904,7 +904,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act & Assert - invalid format should throw
     await Assert.That(async () =>
-      await handlerCapturingTransport.CapturedHandler!(envelope, "InvalidEnvelopeType", CancellationToken.None)
+      await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, "InvalidEnvelopeType")], CancellationToken.None)
     ).Throws<InvalidOperationException>();
 
     await worker.StopAsync(CancellationToken.None);
@@ -945,7 +945,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelope = _createJsonEnvelopeWithAggregateId(messageId, expectedStreamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - StreamId should be the AggregateId from metadata
     await Assert.That(capturedInboxMessage).IsNotNull();
@@ -984,7 +984,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelope = _createJsonEnvelopeWithoutMetadata(messageId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestCommand, Whizbang.Core.Tests]], Whizbang.Core";
 
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - StreamId should fall back to MessageId
     await Assert.That(capturedInboxMessage).IsNotNull();
@@ -1076,7 +1076,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
     // Act - should not throw; activity creation is best-effort
-    await handlerCapturingTransport.CapturedHandler!(envelope, envelopeType, CancellationToken.None);
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
     // Assert - completed without error
     // No assertion needed — test verifies no exception is thrown
@@ -1115,7 +1115,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     // Act & Assert - null envelopeType still throws, but _startInboxActivity ran first
     await Assert.That(async () =>
-      await handlerCapturingTransport.CapturedHandler!(envelope, null, CancellationToken.None)
+      await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, null)], CancellationToken.None)
     ).Throws<InvalidOperationException>();
 
     await worker.StopAsync(CancellationToken.None);
@@ -1277,6 +1277,18 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      LastDestination = destination;
+      var sub = new DeepCoverageSubscription();
+      CreatedSubscriptions.Add(sub);
+      return Task.FromResult<ISubscription>(sub);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
       TransportDestination destination, CancellationToken cancellationToken = default)
       where TRequest : notnull where TResponse : notnull =>
@@ -1295,7 +1307,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   /// Transport that captures the handler callback so tests can invoke it directly.
   /// </summary>
   private sealed class HandlerCapturingTransport : ITransport {
-    public Func<IMessageEnvelope, string?, CancellationToken, Task>? CapturedHandler { get; private set; }
+    public Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? CapturedBatchHandler { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
@@ -1305,7 +1317,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
       TransportDestination destination,
       CancellationToken cancellationToken = default) {
-      CapturedHandler = handler;
+      return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) {
+      CapturedBatchHandler = batchHandler;
       return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
     }
 

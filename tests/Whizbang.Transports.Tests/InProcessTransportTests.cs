@@ -7,12 +7,14 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.Tests;
 
 /// <summary>
 /// Comprehensive tests for InProcessTransport implementation.
 /// Tests cover pub/sub, request-response, subscription lifecycle, and thread safety.
+/// All tests use completion signals (TaskCompletionSource/SemaphoreSlim) — never Task.Delay.
 /// </summary>
 [Category("Transport")]
 public class InProcessTransportTests {
@@ -87,16 +89,24 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     IMessageEnvelope? receivedEnvelope = null;
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        receivedEnvelope = env;
-        return Task.CompletedTask;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
+        batchHandled.TrySetResult();
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
     await transport.PublishAsync(envelope, destination);
+
+    // Wait for batch handler (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(receivedEnvelope).IsNotNull();
@@ -114,19 +124,27 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     var invocations = new ConcurrentBag<int>();
+    var allHandled = new CountdownEvent(subscriberCount);
+
     for (int i = 0; i < subscriberCount; i++) {
       var index = i;
-      await transport.SubscribeAsync(
-        handler: (env, envelopeType, ct) => {
-          invocations.Add(index);
-          return Task.CompletedTask;
+      await transport.SubscribeBatchAsync(
+        async (batch, ct) => {
+          foreach (var msg in batch) {
+            invocations.Add(index);
+          }
+          allHandled.Signal();
         },
-        destination: destination
+        destination,
+        new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
       );
     }
 
     // Act
     await transport.PublishAsync(envelope, destination);
+
+    // Wait for all handlers (signal-based)
+    allHandled.Wait(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(invocations.Count).IsEqualTo(subscriberCount);
@@ -152,31 +170,39 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var envelope1 = _createTestEnvelope("message-1");
-    var envelope2 = _createTestEnvelope("message-2");
     var destination1 = new TransportDestination("topic-1");
     var destination2 = new TransportDestination("topic-2");
 
     var topic1Invoked = false;
     var topic2Invoked = false;
+    var topic1Handled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        topic1Invoked = true;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          topic1Invoked = true;
+        }
+        topic1Handled.TrySetResult();
       },
-      destination: destination1
+      destination1,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        topic2Invoked = true;
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          topic2Invoked = true;
+        }
       },
-      destination: destination2
+      destination2,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
     await transport.PublishAsync(envelope1, destination1);
+
+    // Wait for topic-1 handler (signal-based)
+    await topic1Handled.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(topic1Invoked).IsTrue();
@@ -184,19 +210,20 @@ public class InProcessTransportTests {
   }
 
   // ============================================================================
-  // SubscribeAsync Tests
+  // SubscribeBatchAsync Tests
   // ============================================================================
 
   [Test]
-  public async Task SubscribeAsync_ReturnsActiveSubscriptionAsync() {
+  public async Task SubscribeBatchAsync_ReturnsActiveSubscriptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
 
     // Act
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Assert
@@ -205,7 +232,7 @@ public class InProcessTransportTests {
   }
 
   [Test]
-  public async Task SubscribeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SubscribeBatchAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
@@ -213,10 +240,11 @@ public class InProcessTransportTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(async () => await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination,
-      cancellationToken: cts.Token
+    await Assert.That(async () => await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
+      cts.Token
     )).Throws<OperationCanceledException>();
   }
 
@@ -247,12 +275,17 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handlerInvoked = true;
-        return Task.CompletedTask;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          handlerInvoked = true;
+        }
+        batchHandled.TrySetResult();
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Set subscription state
@@ -268,6 +301,16 @@ public class InProcessTransportTests {
     // Act
     await transport.PublishAsync(envelope, destination);
 
+    if (shouldInvokeHandler) {
+      // Wait for handler to fire (signal-based)
+      await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    } else {
+      // For paused/disposed, the message goes to the collector but subscription is inactive.
+      // Give a brief moment to confirm handler does NOT fire, then assert.
+      var completed = batchHandled.Task.Wait(TimeSpan.FromMilliseconds(200));
+      // If it completed, handlerInvoked may be set — but for paused/disposed it shouldn't enqueue.
+    }
+
     // Assert
     await Assert.That(handlerInvoked).IsEqualTo(shouldInvokeHandler);
   }
@@ -277,9 +320,10 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -294,9 +338,10 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     await subscription.PauseAsync();
@@ -316,19 +361,21 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handlerInvoked = true;
-        return Task.CompletedTask;
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          handlerInvoked = true;
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
     subscription.Dispose();
     await transport.PublishAsync(envelope, destination);
 
-    // Assert
+    // Assert - handler not invoked because subscription was disposed before publish
     await Assert.That(handlerInvoked).IsFalse();
     await Assert.That(subscription.IsActive).IsFalse();
   }
@@ -338,9 +385,10 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var subscription = await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
+    var subscription = await transport.SubscribeBatchAsync(
+      async (batch, ct) => { },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act & Assert - Should not throw
@@ -364,13 +412,16 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     // Setup responder
-    await transport.SubscribeAsync(
-      handler: async (env, envelopeType, ct) => {
-        // Simulate responder sending response
-        var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          // Simulate responder sending response
+          var responseDestination = new TransportDestination($"response-{msg.Envelope.MessageId.Value}");
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
+        }
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
 
     // Act
@@ -426,13 +477,21 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
     var invocations = new ConcurrentBag<MessageId>();
+    var allHandled = new SemaphoreSlim(0, concurrentPublishes);
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        invocations.Add(env.MessageId);
-        return Task.CompletedTask;
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          invocations.Add(msg.Envelope.MessageId);
+        }
+        // Signal once per batch (batch may contain multiple messages)
+        for (int i = 0; i < batch.Count; i++) {
+          allHandled.Release();
+        }
       },
-      destination: destination
+      destination,
+      // Use large batch size so messages flush via slide timer
+      new TransportBatchOptions { BatchSize = concurrentPublishes + 1, SlideMs = 50, MaxWaitMs = 1000 }
     );
 
     // Act - Publish concurrently
@@ -445,6 +504,11 @@ public class InProcessTransportTests {
 
     await Task.WhenAll(tasks);
 
+    // Wait for all messages to be handled (signal-based)
+    for (int i = 0; i < concurrentPublishes; i++) {
+      await allHandled.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     // Assert
     await Assert.That(invocations.Count).IsEqualTo(concurrentPublishes);
   }
@@ -452,21 +516,25 @@ public class InProcessTransportTests {
   [Test]
   [Arguments(10)]
   [Arguments(25)]
-  public async Task SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync(int concurrentSubscriptions) {
+  public async Task SubscribeBatchAsync_ConcurrentSubscriptions_AllRegisteredAsync(int concurrentSubscriptions) {
     // Arrange
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
     var invocations = new ConcurrentBag<int>();
+    var allHandled = new CountdownEvent(concurrentSubscriptions);
 
     // Act - Subscribe concurrently
     var subscribeTasks = Enumerable.Range(0, concurrentSubscriptions)
-      .Select(index => transport.SubscribeAsync(
-        handler: (env, envelopeType, ct) => {
-          invocations.Add(index);
-          return Task.CompletedTask;
+      .Select(index => transport.SubscribeBatchAsync(
+        async (batch, ct) => {
+          foreach (var msg in batch) {
+            invocations.Add(index);
+          }
+          allHandled.Signal();
         },
-        destination: destination
+        destination,
+        new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
       ))
       .ToArray();
 
@@ -474,6 +542,9 @@ public class InProcessTransportTests {
 
     // Publish message
     await transport.PublishAsync(envelope, destination);
+
+    // Wait for all handlers (signal-based)
+    allHandled.Wait(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(invocations.Count).IsEqualTo(concurrentSubscriptions);
@@ -490,9 +561,10 @@ public class InProcessTransportTests {
     // Act - Subscribe and dispose concurrently
     var tasks = Enumerable.Range(0, 50)
       .Select(async _ => {
-        var subscription = await transport.SubscribeAsync(
-          handler: (env, envelopeType, ct) => Task.CompletedTask,
-          destination: destination
+        var subscription = await transport.SubscribeBatchAsync(
+          async (batch, ct) => { },
+          destination,
+          new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
         );
         subscriptions.Add(subscription);
 
@@ -515,34 +587,35 @@ public class InProcessTransportTests {
   // ============================================================================
 
   [Test]
-  public async Task PublishAsync_HandlerThrowsException_ContinuesWithOtherHandlersAsync() {
+  public async Task PublishAsync_HandlerThrowsException_BatchCollectorRequeuesForRetryAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
 
-    var handler1Invoked = false;
+    var handlerCallCount = 0;
+    var handlerSucceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handler1Invoked = true;
-        throw new InvalidOperationException("Handler 1 failed");
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        var attempt = Interlocked.Increment(ref handlerCallCount);
+        if (attempt == 1) {
+          // First attempt fails — batch collector re-queues for retry
+          throw new InvalidOperationException("Handler failed on first attempt");
+        }
+        // Second attempt succeeds
+        handlerSucceeded.TrySetResult();
       },
-      destination: destination
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 50, MaxWaitMs = 1000 }
     );
 
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => Task.CompletedTask,
-      destination: destination
-    );
+    // Act - PublishAsync enqueues into batch collector (non-blocking)
+    await transport.PublishAsync(envelope, destination);
 
-    // Act & Assert - Should throw from first handler
-    await Assert.That(() => transport.PublishAsync(envelope, destination))
-      .Throws<InvalidOperationException>();
-
-    // First handler was invoked before throwing
-    await Assert.That(handler1Invoked).IsTrue();
-    // Second handler may or may not be invoked depending on exception handling
+    // Assert - Handler is retried after failure (batch collector re-queues failed batches)
+    await handlerSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(handlerCallCount).IsGreaterThanOrEqualTo(2);
   }
 
   [Test]

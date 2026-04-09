@@ -88,7 +88,8 @@ public partial class WorkCoordinatorPublisherWorker(
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   TransportMetrics? transportMetrics = null,
   WorkCoordinatorMetrics? workCoordinatorMetrics = null,
-  ILogger<WorkCoordinatorPublisherWorker>? logger = null
+  ILogger<WorkCoordinatorPublisherWorker>? logger = null,
+  IInboxChannelWriter? inboxChannelWriter = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -299,6 +300,11 @@ public partial class WorkCoordinatorPublisherWorker(
 
     // Subscribe to new work signals so the coordinator polls immediately when outbox entries are flushed
     _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
+
+    // Subscribe to inbox channel signals so commands are processed immediately
+    if (inboxChannelWriter is not null) {
+      inboxChannelWriter.OnNewInboxWorkAvailable += RequestImmediatePoll;
+    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -803,6 +809,10 @@ public partial class WorkCoordinatorPublisherWorker(
     var inboxFailuresToSend = pendingInboxFailures.Select(tc => tc.Completion).ToArray();
     var inboxLeaseRenewalsToSend = pendingInboxLeaseRenewals.Select(tc => tc.Completion).ToArray();
 
+    if (inboxCompletionsToSend.Length > 0) {
+      LogInboxCompletionsSending(_logger, inboxCompletionsToSend.Length);
+    }
+
     // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
     var sentAt = DateTimeOffset.UtcNow;
     _completions.MarkAsSent(pendingCompletions, sentAt);
@@ -891,9 +901,8 @@ public partial class WorkCoordinatorPublisherWorker(
       }
     }
 
-    // Process inbox work (orphaned messages recovered via claim_orphaned_inbox)
+    // Process inbox work from process_work_batch (orphaned messages)
     if (workBatch.InboxWork.Count > 0) {
-      // Filter out messages already being processed from a previous tick
       List<InboxWork> newInboxWork = [];
       foreach (var work in workBatch.InboxWork) {
         if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
@@ -904,6 +913,65 @@ public partial class WorkCoordinatorPublisherWorker(
       }
       if (newInboxWork.Count > 0) {
         await _processInboxWorkAsync(newInboxWork, cancellationToken);
+      }
+    }
+
+    // Drain inbox channel (work routed from ANY caller of process_work_batch)
+    if (inboxChannelWriter is not null) {
+      List<InboxWork> channelInboxWork = [];
+      while (inboxChannelWriter.Reader.TryRead(out var work)) {
+        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+          channelInboxWork.Add(work);
+        } else {
+          _inboxLeaseRenewals.Add(work.MessageId);
+        }
+      }
+      if (channelInboxWork.Count > 0) {
+        await _processInboxWorkAsync(channelInboxWork, cancellationToken);
+
+        // Flush completions to DB immediately — don't wait for next poll.
+        // _processInboxWorkAsync queued completions in _inboxCompletions.
+        // Send them now so the inbox messages are marked processed right away.
+        var immediateCompletions = _inboxCompletions.GetPending();
+        if (immediateCompletions.Length > 0) {
+          var immediateSentAt = DateTimeOffset.UtcNow;
+          _inboxCompletions.MarkAsSent(immediateCompletions, immediateSentAt);
+          try {
+            await using var flushScope = _scopeFactory.CreateAsyncScope();
+            var flushCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+            await flushCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchRequest {
+              InstanceId = _instanceProvider.InstanceId,
+              ServiceName = _instanceProvider.ServiceName,
+              HostName = _instanceProvider.HostName,
+              ProcessId = _instanceProvider.ProcessId,
+              InboxCompletions = [.. immediateCompletions.Select(c => c.Completion)],
+              OutboxCompletions = [],
+              OutboxFailures = [],
+              InboxFailures = [],
+              ReceptorCompletions = [],
+              ReceptorFailures = [],
+              PerspectiveCompletions = [],
+              PerspectiveEventCompletions = [],
+              PerspectiveFailures = [],
+              NewOutboxMessages = [],
+              NewInboxMessages = [],
+              RenewOutboxLeaseIds = [],
+              RenewInboxLeaseIds = [],
+              Flags = WorkBatchOptions.SkipInboxClaiming,
+              PartitionCount = _options.PartitionCount,
+              LeaseSeconds = _options.LeaseSeconds,
+              StaleThresholdSeconds = _options.StaleThresholdSeconds
+            }, cancellationToken);
+            _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
+          } catch (Exception ex) {
+            LogErrorProcessingWorkBatch(_logger, ex);
+            // Completions stay in Sent status, will be retried via ResetStale
+          }
+        }
+
+        foreach (var work in channelInboxWork) {
+          inboxChannelWriter.RemoveInFlight(work.MessageId);
+        }
       }
     }
 
@@ -1033,6 +1101,7 @@ public partial class WorkCoordinatorPublisherWorker(
       completionHandler: (msgId, status) => {
         _inFlightInbox.TryRemove(msgId, out _);
         _inboxCompletions.Add(new MessageCompletion { MessageId = msgId, Status = status });
+        LogInboxCompletionQueued(_logger, msgId, status);
       },
       failureHandler: (msgId, status, error) => {
         _inFlightInbox.TryRemove(msgId, out _);
@@ -1055,7 +1124,7 @@ public partial class WorkCoordinatorPublisherWorker(
   /// </summary>
   private async Task _invokeInboxLifecycleStagesAsync(
     List<InboxWork> workToProcess, IReceptorInvoker? receptorInvoker,
-    LifecycleStage asyncStage, LifecycleStage inlineStage,
+    LifecycleStage detachedStage, LifecycleStage inlineStage,
     string stageName, CancellationToken cancellationToken) {
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
       return;
@@ -1066,7 +1135,7 @@ public partial class WorkCoordinatorPublisherWorker(
         var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
         var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
         var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = asyncStage,
+          CurrentStage = detachedStage,
           EventId = null,
           StreamId = null,
           LastProcessedEventId = null,
@@ -1074,10 +1143,27 @@ public partial class WorkCoordinatorPublisherWorker(
           AttemptNumber = work.Attempts
         };
 
-        await receptorInvoker.InvokeAsync(typedEnvelope, asyncStage, lifecycleContext, cancellationToken);
-        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+        // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern)
+        _ = Task.Run(async () => {
+          try {
+            await using var detachedScope = _scopeFactory.CreateAsyncScope();
+            await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
+            var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+            if (detachedInvoker is null) {
+              return;
+            }
+            var ctx = lifecycleContext with { CurrentStage = detachedStage };
+            await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, cancellationToken);
+            await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+              ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+          } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            // Graceful shutdown
+          } catch (Exception ex) {
+            LogInboxLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
+          }
+        }, cancellationToken);
 
+        // Inline: blocks until complete
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
         await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
@@ -1323,6 +1409,27 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId} ({MessageType}): event-store-only (no transport destination)"
   )]
   static partial void LogSkippedPreOutboxNoDestination(ILogger logger, Guid messageId, string messageType);
+
+  [LoggerMessage(
+    EventId = 29,
+    Level = LogLevel.Debug,
+    Message = "Processing {Count} inbox items from channel (message IDs: {MessageIds})"
+  )]
+  static partial void LogChannelInboxProcessing(ILogger logger, int count, string messageIds);
+
+  [LoggerMessage(
+    EventId = 31,
+    Level = LogLevel.Debug,
+    Message = "Inbox completion queued: {MessageId} status={Status}"
+  )]
+  static partial void LogInboxCompletionQueued(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 32,
+    Level = LogLevel.Debug,
+    Message = "Sending {Count} inbox completions to DB"
+  )]
+  static partial void LogInboxCompletionsSending(ILogger logger, int count);
 
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.

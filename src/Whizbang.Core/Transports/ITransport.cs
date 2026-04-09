@@ -4,8 +4,21 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Transports;
+
+/// <summary>
+/// A deserialized transport message ready for batch processing.
+/// Value type to avoid heap allocations when batching many messages.
+/// </summary>
+/// <param name="Envelope">The deserialized message envelope.</param>
+/// <param name="EnvelopeType">The assembly-qualified envelope type name, or null if not available.</param>
+/// <docs>messaging/transports/transports#transport-message</docs>
+public readonly record struct TransportMessage(
+  IMessageEnvelope Envelope,
+  string? EnvelopeType
+);
 
 /// <summary>
 /// Defines a transport abstraction for sending and receiving messages.
@@ -55,17 +68,21 @@ public interface ITransport {
   );
 
   /// <summary>
-  /// Subscribes to messages from a destination.
-  /// The handler will be invoked for each message received.
+  /// Subscribes to messages from a destination with transport-level batch collection.
+  /// The transport collects incoming messages into batches and calls the batch handler
+  /// when a batch is ready (size reached, sliding window timeout, or hard max timeout).
   /// </summary>
-  /// <param name="handler">The handler to invoke for each message. Parameters: (envelope, envelopeType, cancellationToken). The envelopeType is the original assembly-qualified type name before serialization, or null if not available.</param>
+  /// <param name="batchHandler">Handler invoked with a batch of deserialized messages. Called once per batch, not per message.</param>
   /// <param name="destination">The destination to subscribe to</param>
+  /// <param name="batchOptions">Configuration for batch size, sliding window, and hard max timers</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>A subscription that can be used to control or cancel the subscription</returns>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SubscribeAsync_RegistersHandler_ReturnsSubscriptionAsync</tests>
-  Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+  /// <tests>tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs</tests>
+  /// <docs>messaging/transports/transports#batch-subscribe</docs>
+  Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
+    TransportBatchOptions batchOptions,
     CancellationToken cancellationToken = default
   );
 
