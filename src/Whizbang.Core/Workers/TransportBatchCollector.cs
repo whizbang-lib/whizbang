@@ -33,6 +33,13 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
   private bool _disposed;
 
   /// <summary>
+  /// Event fired after a batch has been successfully flushed via the callback.
+  /// Useful for synchronization in tests and production monitoring.
+  /// </summary>
+  /// <docs>messaging/transports/transport-consumer#batch-collector</docs>
+  public event Action<int>? OnBatchFlushed;
+
+  /// <summary>
   /// Initializes a new <see cref="TransportBatchCollector{T}"/>.
   /// </summary>
   /// <param name="options">Batch size, sliding window, and hard max configuration.</param>
@@ -136,6 +143,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
     try {
       await _flushCallback(batch);
+      OnBatchFlushed?.Invoke(batch.Count);
     } catch (Exception) {
       // Re-add failed batch to pending for retry on next flush
       lock (_lock) {

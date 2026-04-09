@@ -37,16 +37,16 @@ public class DispatcherTransportBridgeTests {
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
-    var messageReceived = false;
     IMessageEnvelope? receivedEnvelope = null;
+    var messageReceivedSignal = new TaskCompletionSource();
 
     // Subscribe to the destination to simulate remote service
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
-          messageReceived = true;
           receivedEnvelope = msg.Envelope;
         }
+        messageReceivedSignal.TrySetResult();
       },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
@@ -57,11 +57,10 @@ public class DispatcherTransportBridgeTests {
     // Act - Publish message to transport via bridge
     await bridge.PublishToTransportAsync(message, destination);
 
-    // Allow batch collector to flush (BatchSize=1 triggers Task.Run on thread pool)
-    await Task.Delay(500);
+    // Wait for batch handler to fire (signal-based, not timing-based)
+    await messageReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert - Message was delivered to transport destination
-    await Assert.That(messageReceived).IsTrue();
     await Assert.That(receivedEnvelope).IsNotNull();
 
     // Verify payload was preserved
