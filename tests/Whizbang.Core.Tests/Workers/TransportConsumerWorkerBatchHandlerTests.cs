@@ -92,12 +92,12 @@ public class TransportConsumerWorkerBatchHandlerTests {
     // Assert — both messages queued, ONE flush
     await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(2)
       .Because("Both messages should be queued for inbox insert");
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1)
-      .Because("At least one flush should occur for the batch");
+    await Assert.That(workStrategy.FlushCount).IsEqualTo(1)
+      .Because("Exactly one flush for inbox insert — no completion flush (processing deferred)");
   }
 
   [Test]
-  public async Task BatchHandler_ProcessesInboxWorkAfterInsertAsync() {
+  public async Task BatchHandler_DoesNotProcessInline_DefersToPublisherWorkerAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new BatchTestTransport();
@@ -124,9 +124,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
     await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, envelopeType)]);
     cts.Cancel();
 
-    // Assert — message should be processed (completion queued)
-    await Assert.That(workStrategy.InboxCompletionCount).IsGreaterThanOrEqualTo(1)
-      .Because("Batch handler should process inbox work and queue completions");
+    // Assert — NO inline processing. Processing deferred to WorkCoordinatorPublisherWorker.
+    await Assert.That(workStrategy.InboxCompletionCount).IsEqualTo(0)
+      .Because("Batch handler should NOT process inline — processing is deferred to WorkCoordinatorPublisherWorker");
   }
 
   // ========================================
