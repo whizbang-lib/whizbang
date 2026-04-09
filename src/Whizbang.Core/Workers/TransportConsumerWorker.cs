@@ -392,7 +392,7 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     if (queued > 0) {
       // ONE process_work_batch for all N messages — bulk insert into inbox
-      var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cancellationToken);
+      var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, cancellationToken);
       _metrics?.InboxMessagesProcessed.Add(queued);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -541,7 +541,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     strategy.QueueInboxMessage(newInboxMessage);
 
     var dedupSw = Stopwatch.StartNew();
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, ct: cancellationToken);
     dedupSw.Stop();
     _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
