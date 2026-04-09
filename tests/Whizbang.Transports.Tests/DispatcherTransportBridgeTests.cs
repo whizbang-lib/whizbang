@@ -82,6 +82,7 @@ public class DispatcherTransportBridgeTests {
     var destination = new TransportDestination("remote-service");
 
     byte[]? serializedBytes = null;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
@@ -91,6 +92,7 @@ public class DispatcherTransportBridgeTests {
           var deserialized = await serializer.DeserializeAsync<TestCommand>(serializedBytes);
           await Assert.That(deserialized).IsNotNull();
         }
+        batchHandled.TrySetResult();
       },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
@@ -100,6 +102,9 @@ public class DispatcherTransportBridgeTests {
 
     // Act
     await bridge.PublishToTransportAsync(message, destination);
+
+    // Wait for batch handler to fire (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert - Serialization occurred
     await Assert.That(serializedBytes).IsNotNull();
@@ -173,11 +178,11 @@ public class DispatcherTransportBridgeTests {
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("local-commands");
 
-    var dispatcherInvoked = false;
+    var dispatcherInvokedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Configure test dispatcher to track invocations
     dispatcher.OnSendAsync = (msg) => {
-      dispatcherInvoked = true;
+      dispatcherInvokedSignal.TrySetResult();
       return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(
         MessageId.New(),
         "test",
@@ -211,11 +216,11 @@ public class DispatcherTransportBridgeTests {
     // Act - Publish to transport (simulates remote send)
     await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
 
-    // Wait a bit for async processing
-    await Task.Delay(100);
+    // Wait for dispatcher to be invoked (signal-based)
+    await dispatcherInvokedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-    // Assert - Dispatcher was invoked with the message
-    await Assert.That(dispatcherInvoked).IsTrue();
+    // Assert - Dispatcher was invoked with the message (signal completed = true)
+    await Assert.That(dispatcherInvokedSignal.Task.IsCompletedSuccessfully).IsTrue();
   }
 
   [Test]
@@ -230,10 +235,12 @@ public class DispatcherTransportBridgeTests {
     var destination = new TransportDestination("local-commands");
 
     TestCommand? receivedMessage = null;
+    var messageReceivedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Configure test dispatcher to capture the message
     dispatcher.OnSendAsync = (msg) => {
       receivedMessage = msg as TestCommand;
+      messageReceivedSignal.TrySetResult();
       return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(
         MessageId.New(),
         "test",
@@ -266,14 +273,14 @@ public class DispatcherTransportBridgeTests {
 
     // Act - Publish serialized envelope to transport
     await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
-    await Task.Delay(100);
+
+    // Wait for dispatcher to process (signal-based)
+    await messageReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert - Message was deserialized and passed to dispatcher
     await Assert.That(receivedMessage).IsNotNull();
-    if (receivedMessage != null) {
-      await Assert.That(receivedMessage.Value).IsEqualTo(123);
-      await Assert.That(receivedMessage.Name).IsEqualTo("TestMessage");
-    }
+    await Assert.That(receivedMessage!.Value).IsEqualTo(123);
+    await Assert.That(receivedMessage.Name).IsEqualTo("TestMessage");
   }
 
   [Test]
@@ -289,11 +296,13 @@ public class DispatcherTransportBridgeTests {
     var correlationId = CorrelationId.New();
 
     IMessageEnvelope? receivedEnvelope = null;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
           receivedEnvelope = msg.Envelope;
         }
+        batchHandled.TrySetResult();
       },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
@@ -308,11 +317,12 @@ public class DispatcherTransportBridgeTests {
     // Act - Publish with explicit context
     await bridge.PublishToTransportAsync(message, destination, context);
 
+    // Wait for batch handler (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
     // Assert - CorrelationId was preserved
     await Assert.That(receivedEnvelope).IsNotNull();
-    if (receivedEnvelope != null) {
-      await Assert.That(receivedEnvelope.GetCorrelationId()).IsEqualTo(correlationId);
-    }
+    await Assert.That(receivedEnvelope!.GetCorrelationId()).IsEqualTo(correlationId);
   }
 
   [Test]
@@ -327,11 +337,13 @@ public class DispatcherTransportBridgeTests {
     var destination = new TransportDestination("remote-service");
 
     IMessageEnvelope? receivedEnvelope = null;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
           receivedEnvelope = msg.Envelope;
         }
+        batchHandled.TrySetResult();
       },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
@@ -342,12 +354,13 @@ public class DispatcherTransportBridgeTests {
     // Act
     await bridge.PublishToTransportAsync(message, destination);
 
+    // Wait for batch handler (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
     // Assert - Envelope has at least one hop
     await Assert.That(receivedEnvelope).IsNotNull();
-    if (receivedEnvelope != null) {
-      await Assert.That(receivedEnvelope.Hops).Count().IsGreaterThanOrEqualTo(1);
-      await Assert.That(receivedEnvelope.Hops[0].ServiceInstance.ServiceName).IsNotNull();
-    }
+    await Assert.That(receivedEnvelope!.Hops).Count().IsGreaterThanOrEqualTo(1);
+    await Assert.That(receivedEnvelope.Hops[0].ServiceInstance.ServiceName).IsNotNull();
   }
 
   [Test]
