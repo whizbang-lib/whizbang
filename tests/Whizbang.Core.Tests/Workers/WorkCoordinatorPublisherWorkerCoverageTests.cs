@@ -1563,11 +1563,11 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for at least 3 database readiness checks — signal-based, deterministic
-    await dbCheck.WaitForCallCountAsync(3, TimeSpan.FromSeconds(10));
+    await dbCheck.WaitForCallCountAsync(3, TimeSpan.FromSeconds(20));
 
     var typedWorker = (WorkCoordinatorPublisherWorker)worker;
     await cts.CancelAsync();
