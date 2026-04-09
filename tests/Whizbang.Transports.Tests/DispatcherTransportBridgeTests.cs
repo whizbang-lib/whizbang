@@ -57,8 +57,8 @@ public class DispatcherTransportBridgeTests {
     // Act - Publish message to transport via bridge
     await bridge.PublishToTransportAsync(message, destination);
 
-    // Allow batch collector to flush (BatchSize=1 triggers Task.Run)
-    await Task.Delay(100);
+    // Allow batch collector to flush (BatchSize=1 triggers Task.Run on thread pool)
+    await Task.Delay(500);
 
     // Assert - Message was delivered to transport destination
     await Assert.That(messageReceived).IsTrue();
