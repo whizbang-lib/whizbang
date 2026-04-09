@@ -524,6 +524,13 @@ public partial class PerspectiveWorker(
           LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
           _metrics?.Errors.Add(1);
 
+          // Signal sync tracker so awaiters don't hang indefinitely waiting for
+          // events that will never be processed by this perspective.
+          if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
+            var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
+            _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
+          }
+
           var failure = new PerspectiveCursorFailure {
             StreamId = streamId,
             PerspectiveName = perspectiveName,
