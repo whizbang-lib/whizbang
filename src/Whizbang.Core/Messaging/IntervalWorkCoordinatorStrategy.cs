@@ -351,7 +351,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // Fire and forget flush on timer — skip lifecycle (background thread, no ambient context)
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringIntervalFlush(_logger, ex);
