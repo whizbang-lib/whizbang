@@ -923,9 +923,8 @@ public partial class WorkCoordinatorPublisherWorker(
         }
       }
       if (channelInboxWork.Count > 0) {
+        LogProcessingInboxWork(_logger, channelInboxWork.Count);
         await _processInboxWorkAsync(channelInboxWork, cancellationToken);
-        // Remove from in-flight after processing — completion queued in _inboxCompletions,
-        // will be flushed to DB on next poll. Same pattern as outbox RemoveInFlight.
         foreach (var work in channelInboxWork) {
           inboxChannelWriter.RemoveInFlight(work.MessageId);
         }
