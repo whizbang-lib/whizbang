@@ -12,6 +12,7 @@ using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
@@ -1117,6 +1118,20 @@ public partial class WorkCoordinatorPublisherWorker(
 
     await _invokeInboxLifecycleStagesAsync(workToProcess, receptorInvoker,
       LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline, "PostInbox", cancellationToken);
+
+    // Fire PostAllPerspectives and PostLifecycle for commands and events with no perspectives.
+    // For events WITH perspectives, PerspectiveWorker fires these stages after perspective processing completes.
+    var workWithoutPerspectives = workToProcess
+      .Where(w => _hasNoPerspectives(w.MessageType, inboxScope.ServiceProvider))
+      .ToList();
+    if (workWithoutPerspectives.Count > 0) {
+      await _invokeInboxLifecycleStagesAsync(workWithoutPerspectives, receptorInvoker,
+        LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
+        "PostAllPerspectives", cancellationToken);
+      await _invokeInboxLifecycleStagesAsync(workWithoutPerspectives, receptorInvoker,
+        LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
+        "PostLifecycle", cancellationToken);
+    }
   }
 
   /// <summary>
@@ -1172,6 +1187,29 @@ public partial class WorkCoordinatorPublisherWorker(
         LogInboxLifecycleError(_logger, work.MessageId, stageName, ex);
       }
     }
+  }
+
+  /// <summary>
+  /// Returns true if no registered perspective handles this message type.
+  /// Commands always qualify (no perspective handles commands).
+  /// Events qualify only if no perspective is subscribed to them.
+  /// </summary>
+  private static bool _hasNoPerspectives(string messageType, IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      return true; // No perspectives registered — treat all messages as having no perspectives
+    }
+    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+    foreach (var perspective in registry.GetRegisteredPerspectives()) {
+      foreach (var eventType in perspective.EventTypes) {
+        if (string.Equals(normalizedMessageType,
+          EventTypeMatchingHelper.NormalizeTypeName(eventType),
+          StringComparison.Ordinal)) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   // ========================================
