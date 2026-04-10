@@ -13,6 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// Thread-safe for concurrent writers and readers.
 /// </summary>
 /// <docs>messaging/inbox-channel</docs>
+/// <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs</tests>
 public class InboxChannelWriter : IInboxChannelWriter {
   private readonly Channel<InboxWork> _channel;
   private readonly ConcurrentDictionary<Guid, DateTimeOffset> _inFlight = new();
