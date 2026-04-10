@@ -15,6 +15,7 @@ namespace Whizbang.Core.Transports;
 /// <param name="Envelope">The deserialized message envelope.</param>
 /// <param name="EnvelopeType">The assembly-qualified envelope type name, or null if not available.</param>
 /// <docs>messaging/transports/transports#transport-message</docs>
+/// <tests>tests/Whizbang.Transports.Tests/SubscribeBatchTests.cs</tests>
 public readonly record struct TransportMessage(
   IMessageEnvelope Envelope,
   string? EnvelopeType
