@@ -531,11 +531,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           perspectiveName, streamId, triggeringEventId);
     }
 
-    // Fire PerspectiveRewindStarted system event as System user (preserving tenant from stream context)
+    // Fire PerspectiveRewindStarted system event as System user (cross-tenant — no ambient tenant during rewind)
+    // Uses try/catch to handle cases where transport/DB aren't ready yet (e.g., during startup rewind).
+    // The event is best-effort observability — failure to publish must not block the rewind itself.
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
-      await dispatcher.AsSystem().KeepTenant().PublishAsync(new PerspectiveRewindStarted(
-          streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+      try {
+        await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindStarted(
+            streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId} — transport may not be ready",
+          perspectiveName, streamId);
+      }
     }
 
     // In-memory replay: apply all events without intermediate DB writes
@@ -543,12 +550,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var result = await RunFromModelAsync(
         streamId, perspectiveName, snapshotModel, replayFromEventId, cancellationToken);
 
-    // Fire PerspectiveRewindCompleted system event as System user (preserving tenant from stream context)
+    // Fire PerspectiveRewindCompleted system event
     if (dispatcher is not null) {
-      await dispatcher.AsSystem().KeepTenant().PublishAsync(new PerspectiveRewindCompleted(
-          streamId, perspectiveName, triggeringEventId, result.LastEventId,
-          result.EventsProcessed,
-          startedAt, DateTimeOffset.UtcNow));
+      try {
+        await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindCompleted(
+            streamId, perspectiveName, triggeringEventId, result.LastEventId,
+            result.EventsProcessed,
+            startedAt, DateTimeOffset.UtcNow));
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindCompleted for {PerspectiveName} stream {StreamId} — transport may not be ready",
+          perspectiveName, streamId);
+      }
     }
 
     return result;
