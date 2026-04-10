@@ -384,9 +384,11 @@ public partial class PerspectiveWorker(
       }
 
       var streamCount = rewindCursors.Select(c => c.StreamId).Distinct().Count();
-      PerspectiveStartupScanLog.LogStartupRewindScanFound(_startupScanLogger, streamCount, rewindCursors.Count);
+      var perspectiveCount = rewindCursors.Count;
+      PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLogger, streamCount, perspectiveCount);
 
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         // Keep processing work batches until all rewinds are done
         var maxIterations = 100;  // Safety limit
         for (var i = 0; i < maxIterations; i++) {
@@ -398,8 +400,9 @@ public partial class PerspectiveWorker(
             break;
           }
         }
+        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLogger, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
       }
-      // Background mode: normal polling loop will pick them up
+      // Background mode: normal polling loop will pick them up — individual rewinds log via PerspectiveWorker
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLogger, ex);
     }
@@ -2276,12 +2279,19 @@ internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,
     Level = LogLevel.Information,
-    Message = "Startup rewind scan: {StreamCount} streams require rewind across {PerspectiveCount} perspectives"
+    Message = "Startup rewind scan started: {StreamCount} streams require rewind across {PerspectiveCount} perspectives"
   )]
-  internal static partial void LogStartupRewindScanFound(ILogger logger, int streamCount, int perspectiveCount);
+  internal static partial void LogStartupRewindScanStarted(ILogger logger, int streamCount, int perspectiveCount);
 
   [LoggerMessage(
     EventId = 55,
+    Level = LogLevel.Information,
+    Message = "Startup rewind scan completed: {StreamCount} streams, {PerspectiveCount} perspectives rewound in {DurationMs}ms"
+  )]
+  internal static partial void LogStartupRewindScanCompleted(ILogger logger, int streamCount, int perspectiveCount, long durationMs);
+
+  [LoggerMessage(
+    EventId = 57,
     Level = LogLevel.Information,
     Message = "Startup rewind scan: no streams require rewind"
   )]

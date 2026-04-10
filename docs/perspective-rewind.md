@@ -71,9 +71,12 @@ Two separate logger categories allow independent log level configuration:
 
 | Level | EventId | Message | When |
 |-------|---------|---------|------|
-| **Information** | 54 | `Startup rewind scan: {StreamCount} streams require rewind across {PerspectiveCount} perspectives` | Startup scan finds work |
-| **Information** | 55 | `Startup rewind scan: no streams require rewind` | Clean startup |
+| **Information** | 54 | `Startup rewind scan started: {StreamCount} streams require rewind across {PerspectiveCount} perspectives` | Scan begins |
+| **Information** | 55 | `Startup rewind scan completed: {StreamCount} streams, {PerspectiveCount} perspectives rewound in {DurationMs}ms` | Scan finished |
+| **Information** | 57 | `Startup rewind scan: no streams require rewind` | Clean startup |
 | **Warning** | 56 | `Error during startup rewind scan — rewinds will be processed during normal polling` | Scan error |
+
+Note: Individual perspective rewinds during startup go through the same code path as runtime rewinds and emit the same per-perspective Warning logs (EventId 52/53) from the `PerspectiveWorker` category.
 
 Example configuration to see all startup scan messages:
 ```json
