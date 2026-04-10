@@ -10,6 +10,23 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
+  <!-- Generate compile-time version constant from MSBuild $(Version) — no reflection needed -->
+  <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_VersionInfoFile>$(IntermediateOutputPath)WhizbangVersionInfo.Generated.cs</_VersionInfoFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_VersionInfoFile)" Overwrite="true" Lines="// &lt;auto-generated/&gt;
+namespace Whizbang.Core.Diagnostics%3B
+
+/// &lt;summary&gt;Compile-time version info stamped by MSBuild from $(Version).&lt;/summary&gt;
+internal static class WhizbangVersionInfo
+{
+    internal const string Version = &quot;$(Version)&quot;%3B
+}" />
+    <ItemGroup>
+      <Compile Include="$(_VersionInfoFile)" />
+    </ItemGroup>
+  </Target>
   <!-- Regenerate banner data if the generated file is missing (requires Python 3 + Pillow) -->
   <Target Name="GenerateBannerData" BeforeTargets="CoreCompile"
           Condition="!Exists('$(MSBuildProjectDirectory)/Diagnostics/WhizbangBanner.Generated.cs')">
