@@ -940,9 +940,15 @@ public partial class PerspectiveWorker(
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
     if (needsRewind && rewindTriggerEventId.HasValue) {
+      var eventsBehind = group.Count();
+      LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
+        checkpoint?.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
+      _metrics?.RewindEventsBehind.Record(eventsBehind,
+        new KeyValuePair<string, object?>("perspective_name", streamCtx.PerspectiveName));
+
       var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
-        enablePerspectiveSpans, cancellationToken);
+        eventsBehind, enablePerspectiveSpans, cancellationToken);
       return (result, ProcessingMode.Replay, lockSkipped);
     }
 
@@ -965,6 +971,7 @@ public partial class PerspectiveWorker(
       Guid streamId,
       string perspectiveName,
       Guid rewindTriggerEventId,
+      int eventsBehind,
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
 
@@ -999,10 +1006,30 @@ public partial class PerspectiveWorker(
         var runnerSw = System.Diagnostics.Stopwatch.StartNew();
         result = await runner.RewindAndRunAsync(
           streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
-        _metrics?.RunnerDuration.Record(runnerSw.Elapsed.TotalMilliseconds);
+        var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
+        _metrics?.RunnerDuration.Record(rewindDurationMs);
 
+        // Rewind-specific meters
+        var hasSnapshot = _snapshotStore is not null;
+        _metrics?.Rewinds.Add(1,
+          new KeyValuePair<string, object?>("perspective_name", perspectiveName),
+          new KeyValuePair<string, object?>("has_snapshot", hasSnapshot));
+        _metrics?.RewindDuration.Record(rewindDurationMs,
+          new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+        _metrics?.RewindEventsReplayed.Record(result.EventsProcessed,
+          new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+
+        // Span enrichment
         activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
         activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+        activity?.SetTag("whizbang.perspective.rewind.events_behind", eventsBehind);
+        activity?.SetTag("whizbang.perspective.rewind.events_replayed", result.EventsProcessed);
+        activity?.SetTag("whizbang.perspective.rewind.has_snapshot", hasSnapshot);
+        activity?.SetTag("whizbang.perspective.rewind.replay_source", hasSnapshot ? "snapshot" : "full");
+
+        // Completion log
+        LogRewindCompleted(_logger, perspectiveName, streamId, result.EventsProcessed,
+          (long)rewindDurationMs, hasSnapshot ? "snapshot" : "beginning");
       }
 
       // Stop keepalive
@@ -2166,6 +2193,34 @@ public partial class PerspectiveWorker(
     Message = "Lifecycle reconciliation scan failed. Will retry on next startup."
   )]
   static partial void LogReconciliationFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(
+    EventId = 52,
+    Level = LogLevel.Warning,
+    Message = "Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)"
+  )]
+  static partial void LogRewindRequired(ILogger logger, string perspectiveName, Guid streamId, Guid cursorEventId, Guid triggerEventId, int eventsBehind);
+
+  [LoggerMessage(
+    EventId = 53,
+    Level = LogLevel.Information,
+    Message = "Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})"
+  )]
+  static partial void LogRewindCompleted(ILogger logger, string perspectiveName, Guid streamId, int eventsReplayed, long durationMs, string replaySource);
+
+  [LoggerMessage(
+    EventId = 54,
+    Level = LogLevel.Warning,
+    Message = "Startup rewind scan: {StreamCount} streams require rewind across {PerspectiveCount} perspectives"
+  )]
+  static partial void LogStartupRewindScanFound(ILogger logger, int streamCount, int perspectiveCount);
+
+  [LoggerMessage(
+    EventId = 55,
+    Level = LogLevel.Information,
+    Message = "Startup rewind scan: no streams require rewind"
+  )]
+  static partial void LogStartupRewindScanClean(ILogger logger);
 }
 
 /// <summary>
