@@ -1169,6 +1169,46 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // which resolves IServiceInstanceProvider from DI
     return Guid.NewGuid();
   }
+
+  /// <summary>
+  /// Queries wh_perspective_cursors for cursors with the RewindRequired flag (bit 5 = 32).
+  /// Used by PerspectiveWorker startup scan to identify streams needing rewind repair.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  public async Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
+      CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+
+    var sql = $@"
+      SELECT stream_id, perspective_name, last_event_id, rewind_trigger_event_id
+      FROM {cursorsTable}
+      WHERE (status & 32) = 32
+      ORDER BY stream_id, perspective_name";
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    var results = new List<RewindCursorInfo>();
+    await using var cmd = dbConnection.CreateCommand();
+    cmd.CommandText = sql;
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new RewindCursorInfo(
+        reader.GetGuid(0),
+        reader.GetString(1),
+        reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        reader.IsDBNull(3) ? null : reader.GetGuid(3)));
+    }
+
+    return results;
+  }
 }
 
 /// <summary>

@@ -355,7 +355,29 @@ public interface IWorkCoordinator {
   Task<int> CleanupLifecycleCompletionsAsync(
     TimeSpan retentionPeriod,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Gets all perspective cursors that have the RewindRequired flag set.
+  /// Used by startup scan to identify streams needing rewind repair.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>List of cursors requiring rewind.</returns>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RewindCursorInfo>>([]);
 }
+
+/// <summary>
+/// <summary>
+/// Information about a perspective cursor that requires rewind.
+/// Returned by <see cref="IWorkCoordinator.GetCursorsRequiringRewindAsync"/>.
+/// </summary>
+/// <param name="StreamId">The stream requiring rewind.</param>
+/// <param name="PerspectiveName">The perspective that needs rewind on this stream.</param>
+/// <param name="LastEventId">Current cursor position.</param>
+/// <param name="RewindTriggerEventId">The late-arriving event that triggered the rewind.</param>
+/// <docs>fundamentals/perspectives/rewind</docs>
+public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>
 /// An event where all perspectives completed but PostLifecycle was never fired.
