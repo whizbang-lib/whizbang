@@ -994,9 +994,9 @@ public partial class PerspectiveWorker(
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
 
-    // Check if any work item in the group has RewindRequired flag
-    var groupStatus = group.Aggregate(PerspectiveProcessingStatus.None, (acc, w) => acc | w.Status);
-    var needsRewind = groupStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
+    // Check if cursor has RewindRequired flag (set by Phase 4.6B when out-of-order events detected)
+    var cursorStatus = checkpoint?.Status ?? PerspectiveProcessingStatus.None;
+    var needsRewind = cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
     if (needsRewind && rewindTriggerEventId.HasValue) {
