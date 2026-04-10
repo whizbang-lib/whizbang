@@ -530,10 +530,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           perspectiveName, streamId, triggeringEventId);
     }
 
-    // Fire PerspectiveRewindStarted system event
+    // Fire PerspectiveRewindStarted system event as System user (preserving tenant from stream context)
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
-      await dispatcher.PublishAsync(new PerspectiveRewindStarted(
+      await dispatcher.AsSystem().KeepTenant().PublishAsync(new PerspectiveRewindStarted(
           streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
     }
 
@@ -542,9 +542,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var result = await RunFromModelAsync(
         streamId, perspectiveName, snapshotModel, replayFromEventId, cancellationToken);
 
-    // Fire PerspectiveRewindCompleted system event
+    // Fire PerspectiveRewindCompleted system event as System user (preserving tenant from stream context)
     if (dispatcher is not null) {
-      await dispatcher.PublishAsync(new PerspectiveRewindCompleted(
+      await dispatcher.AsSystem().KeepTenant().PublishAsync(new PerspectiveRewindCompleted(
           streamId, perspectiveName, triggeringEventId, result.LastEventId,
           result.EventsProcessed,
           startedAt, DateTimeOffset.UtcNow));
