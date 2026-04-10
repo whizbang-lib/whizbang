@@ -65,6 +65,7 @@ Two separate logger categories allow independent log level configuration:
 |-------|---------|---------|------|
 | **Warning** | 52 | `Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)` | Rewind detected |
 | **Warning** | 53 | `Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})` | Rewind finished |
+| **Error** | 58 | `Perspective rewind failed for {PerspectiveName} stream {StreamId} — trigger event {TriggerEventId}. Stream will retry on next cycle.` | Rewind exception (isolated) |
 | **Warning** | 43 | `Failed to acquire stream lock for rewind on {PerspectiveName} stream {StreamId}, deferring` | Lock contention |
 
 **`Whizbang.Core.Workers.PerspectiveStartupScan`** — startup scan (configure independently):
@@ -120,6 +121,27 @@ On service startup, the PerspectiveWorker scans `wh_perspective_cursors` for row
 
 - **Blocking mode** (default): Keeps processing work batches until all rewinds clear. Guarantees projections are repaired before serving reads.
 - **Background mode**: Logs the summary and lets normal polling handle them. Faster startup but projections may be stale briefly.
+
+## Error Handling
+
+Rewind failures are **isolated per stream** — a single stream's rewind failing does NOT crash the perspective worker. The worker logs the error and continues processing other streams. The failed stream will retry on the next polling cycle.
+
+- `_executeRewindPathAsync` catches non-cancellation exceptions from `runner.RewindAndRunAsync`
+- Logs at **Error** level (EventId 58) with perspective name, stream ID, trigger event ID, and full exception
+- Records `whizbang.perspective.errors` metric
+- Sets error status on the OTel span
+- Returns a failure completion (Status = None) — the cursor's RewindRequired flag remains set for retry
+
+## Security Context
+
+Rewind system events (`PerspectiveRewindStarted`, `PerspectiveRewindCompleted`) fire as the **System user** with the stream's tenant context preserved:
+
+```csharp
+await dispatcher.AsSystem().KeepTenant().PublishAsync(new PerspectiveRewindStarted(...));
+```
+
+- `AsSystem()` sets `EffectivePrincipal = "SYSTEM"` and `SecurityContextType = System`
+- `KeepTenant()` preserves the tenant from the event envelope's security context (already established by the perspective worker)
 
 ## Related Files
 

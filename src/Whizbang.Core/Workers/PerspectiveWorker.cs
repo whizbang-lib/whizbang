@@ -1064,8 +1064,25 @@ public partial class PerspectiveWorker(
         activity?.SetTag("whizbang.perspective.rewind_trigger_event_id", rewindTriggerEventId.ToString());
 
         var runnerSw = System.Diagnostics.Stopwatch.StartNew();
-        result = await runner.RewindAndRunAsync(
-          streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
+        try {
+          result = await runner.RewindAndRunAsync(
+            streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          // Isolate rewind failures — a single stream's failure must not crash the worker.
+          // The stream will retry on the next polling cycle.
+          LogRewindFailed(_logger, ex, perspectiveName, streamId, rewindTriggerEventId);
+          _metrics?.Errors.Add(1);
+          activity?.SetTag("whizbang.perspective.rewind.error", ex.Message);
+          activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+
+          return (new PerspectiveCursorCompletion {
+            StreamId = streamId,
+            PerspectiveName = perspectiveName,
+            LastEventId = Guid.Empty,
+            Status = PerspectiveProcessingStatus.None
+          }, LockSkipped: false);
+        }
+
         var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
         _metrics?.RunnerDuration.Record(rewindDurationMs);
 
@@ -2267,6 +2284,13 @@ public partial class PerspectiveWorker(
     Message = "Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})"
   )]
   static partial void LogRewindCompleted(ILogger logger, string perspectiveName, Guid streamId, int eventsReplayed, long durationMs, string replaySource);
+
+  [LoggerMessage(
+    EventId = 58,
+    Level = LogLevel.Error,
+    Message = "Perspective rewind failed for {PerspectiveName} stream {StreamId} — trigger event {TriggerEventId}. Stream will retry on next cycle."
+  )]
+  static partial void LogRewindFailed(ILogger logger, Exception exception, string perspectiveName, Guid streamId, Guid triggerEventId);
 }
 
 /// <summary>
