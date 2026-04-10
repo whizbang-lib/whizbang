@@ -57,7 +57,7 @@ public class WorkBatchCoordinator(
       NewInboxMessages = [],
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
-      Flags = WorkBatchOptions.None,
+      Flags = WorkBatchOptions.SkipInboxClaiming,
       PartitionCount = 16,  // FUTURE: Make configurable
       LeaseSeconds = 30,    // FUTURE: Make configurable
       StaleThresholdSeconds = 300  // FUTURE: Make configurable

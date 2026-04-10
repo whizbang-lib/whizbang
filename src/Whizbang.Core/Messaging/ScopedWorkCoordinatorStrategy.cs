@@ -206,7 +206,7 @@ public partial class ScopedWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
 
   /// <inheritdoc />
   public async ValueTask DisposeAsync() {
@@ -246,7 +246,7 @@ public partial class ScopedWorkCoordinatorStrategy(
           new FlushContext(
             _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options, STRATEGY_NAME,
             outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-            outboxFailures, inboxFailures, WorkBatchOptions.None, _dependencies.LifecycleMessageDeserializer,
+            outboxFailures, inboxFailures, WorkBatchOptions.SkipInboxClaiming, _dependencies.LifecycleMessageDeserializer,
             _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
             WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
             SkipLifecycle: true),

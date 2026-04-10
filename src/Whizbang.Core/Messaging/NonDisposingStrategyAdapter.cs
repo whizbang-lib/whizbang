@@ -34,7 +34,7 @@ public sealed class NonDisposingStrategyAdapter(IWorkCoordinatorStrategy inner) 
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    _inner.FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
+    _inner.FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
 
   /// <summary>
   /// No-op: the singleton is owned by the DI container, not by scopes.

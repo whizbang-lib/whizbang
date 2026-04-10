@@ -173,9 +173,9 @@ public static partial class WhizbangBanner {
       return;
     }
 
-    // Auto-detect versions if not provided
-    version ??= System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
-    whizbangVersion ??= typeof(WhizbangBanner).Assembly.GetName().Version?.ToString(3);
+    // Auto-detect versions if not provided (compile-time constant, no reflection)
+    version ??= "0.0.0";
+    whizbangVersion ??= WhizbangVersionInfo.Version;
 
     // Print the ASCII art banner (auto-detects color support)
     Print();
