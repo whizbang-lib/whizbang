@@ -44,7 +44,8 @@ public partial class PerspectiveWorker(
   IProcessedEventCacheObserver? processedEventCacheObserver = null,
   TimeProvider? timeProvider = null,
   LifecycleCoordinatorMetrics? coordinatorMetrics = null,
-  IWorkChannelWriter? workChannelWriter = null
+  IWorkChannelWriter? workChannelWriter = null,
+  IOptions<PerspectiveRewindOptions>? rewindOptions = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly ConcurrentBag<Task> _detachedTasks = [];
@@ -67,6 +68,7 @@ public partial class PerspectiveWorker(
   );
 
   private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
+  private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions?.Value ?? new PerspectiveRewindOptions();
   private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
 
@@ -176,6 +178,7 @@ public partial class PerspectiveWorker(
     await _initializePerspectiveRegistryAsync();
     await _processInitialCheckpointsAsync(stoppingToken);
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
+    await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     if (workChannelWriter is not null) {
@@ -345,6 +348,57 @@ public partial class PerspectiveWorker(
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogReconciliationFailed(_logger, ex);
+    }
+  }
+
+  /// <summary>
+  /// Scans for streams needing rewind on startup and processes them.
+  /// In Blocking mode, keeps processing work batches until no RewindRequired cursors remain.
+  /// In Background mode, logs the summary and lets normal polling handle them.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
+    if (!_rewindOptions.StartupScanEnabled) {
+      return;
+    }
+
+    try {
+      if (!await _databaseReadinessCheck.IsReadyAsync(ct)) {
+        return;
+      }
+
+      // Query cursors with RewindRequired flag
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var workCoordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (workCoordinator is null) {
+        return;
+      }
+
+      var rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
+      if (rewindCursors.Count == 0) {
+        LogStartupRewindScanClean(_logger);
+        return;
+      }
+
+      var streamCount = rewindCursors.Select(c => c.StreamId).Distinct().Count();
+      LogStartupRewindScanFound(_logger, streamCount, rewindCursors.Count);
+
+      if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
+        // Keep processing work batches until all rewinds are done
+        var maxIterations = 100;  // Safety limit
+        for (var i = 0; i < maxIterations; i++) {
+          await _processWorkBatchAsync(ct);
+
+          // Re-check
+          rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
+          if (rewindCursors.Count == 0) {
+            break;
+          }
+        }
+      }
+      // Background mode: normal polling loop will pick them up
+    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
+      LogStartupRewindScanError(_logger, ex);
     }
   }
 
@@ -2221,6 +2275,13 @@ public partial class PerspectiveWorker(
     Message = "Startup rewind scan: no streams require rewind"
   )]
   static partial void LogStartupRewindScanClean(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 56,
+    Level = LogLevel.Warning,
+    Message = "Error during startup rewind scan — rewinds will be processed during normal polling"
+  )]
+  static partial void LogStartupRewindScanError(ILogger logger, Exception exception);
 }
 
 /// <summary>
