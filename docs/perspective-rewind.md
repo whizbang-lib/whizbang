@@ -57,13 +57,29 @@ Snapshots are created automatically during normal processing every N events (def
 
 ### Log Entries
 
+Two separate logger categories allow independent log level configuration:
+
+**`Whizbang.Core.Workers.PerspectiveWorker`** — runtime rewind operations:
+
 | Level | EventId | Message | When |
 |-------|---------|---------|------|
 | **Warning** | 52 | `Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)` | Rewind detected |
-| **Information** | 53 | `Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})` | Rewind finished |
-| **Warning** | 54 | `Startup rewind scan: {StreamCount} streams require rewind across {PerspectiveCount} perspectives` | Startup scan finds work |
-| **Information** | 55 | `Startup rewind scan: no streams require rewind` | Clean startup |
+| **Warning** | 53 | `Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})` | Rewind finished |
 | **Warning** | 43 | `Failed to acquire stream lock for rewind on {PerspectiveName} stream {StreamId}, deferring` | Lock contention |
+
+**`Whizbang.Core.Workers.PerspectiveStartupScan`** — startup scan (configure independently):
+
+| Level | EventId | Message | When |
+|-------|---------|---------|------|
+| **Information** | 54 | `Startup rewind scan: {StreamCount} streams require rewind across {PerspectiveCount} perspectives` | Startup scan finds work |
+| **Information** | 55 | `Startup rewind scan: no streams require rewind` | Clean startup |
+| **Warning** | 56 | `Error during startup rewind scan — rewinds will be processed during normal polling` | Scan error |
+
+Example configuration to see all startup scan messages:
+```json
+"Whizbang.Core.Workers.PerspectiveWorker": "Warning",
+"Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
+```
 
 ### OTel Meters (Meter: `Whizbang.Perspectives`)
 

@@ -69,6 +69,9 @@ public partial class PerspectiveWorker(
 
   private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
   private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions?.Value ?? new PerspectiveRewindOptions();
+  private readonly ILogger _startupScanLogger = scopeFactory.CreateScope().ServiceProvider
+    .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
+    ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
 
@@ -376,12 +379,12 @@ public partial class PerspectiveWorker(
 
       var rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
       if (rewindCursors.Count == 0) {
-        LogStartupRewindScanClean(_logger);
+        PerspectiveStartupScanLog.LogStartupRewindScanClean(_startupScanLogger);
         return;
       }
 
       var streamCount = rewindCursors.Select(c => c.StreamId).Distinct().Count();
-      LogStartupRewindScanFound(_logger, streamCount, rewindCursors.Count);
+      PerspectiveStartupScanLog.LogStartupRewindScanFound(_startupScanLogger, streamCount, rewindCursors.Count);
 
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
         // Keep processing work batches until all rewinds are done
@@ -398,7 +401,7 @@ public partial class PerspectiveWorker(
       }
       // Background mode: normal polling loop will pick them up
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
-      LogStartupRewindScanError(_logger, ex);
+      PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLogger, ex);
     }
   }
 
@@ -2257,31 +2260,39 @@ public partial class PerspectiveWorker(
 
   [LoggerMessage(
     EventId = 53,
-    Level = LogLevel.Information,
+    Level = LogLevel.Warning,
     Message = "Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})"
   )]
   static partial void LogRewindCompleted(ILogger logger, string perspectiveName, Guid streamId, int eventsReplayed, long durationMs, string replaySource);
+}
 
+/// <summary>
+/// Log messages for perspective startup rewind scan.
+/// Separate category from PerspectiveWorker so log level can be configured independently.
+/// Configure via: "Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
+/// </summary>
+/// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,
-    Level = LogLevel.Warning,
+    Level = LogLevel.Information,
     Message = "Startup rewind scan: {StreamCount} streams require rewind across {PerspectiveCount} perspectives"
   )]
-  static partial void LogStartupRewindScanFound(ILogger logger, int streamCount, int perspectiveCount);
+  internal static partial void LogStartupRewindScanFound(ILogger logger, int streamCount, int perspectiveCount);
 
   [LoggerMessage(
     EventId = 55,
     Level = LogLevel.Information,
     Message = "Startup rewind scan: no streams require rewind"
   )]
-  static partial void LogStartupRewindScanClean(ILogger logger);
+  internal static partial void LogStartupRewindScanClean(ILogger logger);
 
   [LoggerMessage(
     EventId = 56,
     Level = LogLevel.Warning,
     Message = "Error during startup rewind scan — rewinds will be processed during normal polling"
   )]
-  static partial void LogStartupRewindScanError(ILogger logger, Exception exception);
+  internal static partial void LogStartupRewindScanError(ILogger logger, Exception exception);
 }
 
 /// <summary>
