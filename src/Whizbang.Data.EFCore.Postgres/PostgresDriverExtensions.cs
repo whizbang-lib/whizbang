@@ -79,8 +79,9 @@ public static class PostgresDriverExtensions {
         // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
         PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
 
-        // TURNKEY: Register perspective snapshot options (defaults: every 100 events, keep 5, enabled)
+        // TURNKEY: Register perspective snapshot and rewind options
         selector.Services.AddOptions<PerspectiveSnapshotOptions>();
+        selector.Services.AddOptions<PerspectiveRewindOptions>();
 
         // TURNKEY: Register perspective snapshot store for efficient rewind
         // Uses NpgsqlDataSource for connection management (same as readiness check)
