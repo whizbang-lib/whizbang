@@ -843,6 +843,13 @@ public record PerspectiveCursorCompletion {
   /// Processing status (e.g., Completed, CatchingUp).
   /// </summary>
   public required PerspectiveProcessingStatus Status { get; init; }
+
+  /// <summary>
+  /// Number of events processed in this run.
+  /// Used by rewind observability to populate PerspectiveRewindCompleted.EventsReplayed.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  public int EventsProcessed { get; init; }
 }
 
 /// <summary>

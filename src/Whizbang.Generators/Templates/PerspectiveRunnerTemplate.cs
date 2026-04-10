@@ -363,7 +363,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         PerspectiveName = perspectiveName,
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
-        Status = resultStatus
+        Status = resultStatus,
+        EventsProcessed = eventsProcessed
       };
 
     } catch (Exception ex) {
@@ -545,7 +546,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     if (dispatcher is not null) {
       await dispatcher.PublishAsync(new PerspectiveRewindCompleted(
           streamId, perspectiveName, triggeringEventId, result.LastEventId,
-          0, // EventsReplayed count not available from result
+          result.EventsProcessed,
           startedAt, DateTimeOffset.UtcNow));
     }
 
@@ -681,7 +682,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       PerspectiveName = perspectiveName,
       PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
       LastEventId = lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
-      Status = resultStatus
+      Status = resultStatus,
+      EventsProcessed = eventsProcessed
     };
   }
 
