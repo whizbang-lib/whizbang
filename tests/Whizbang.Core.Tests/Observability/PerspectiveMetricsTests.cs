@@ -33,6 +33,10 @@ public class PerspectiveMetricsTests {
     await Assert.That(metrics.BatchWorkItems).IsNotNull();
     await Assert.That(metrics.BatchEventCount).IsNotNull();
     await Assert.That(metrics.BatchStreamGroups).IsNotNull();
+    await Assert.That(metrics.Rewinds).IsNotNull();
+    await Assert.That(metrics.RewindDuration).IsNotNull();
+    await Assert.That(metrics.RewindEventsReplayed).IsNotNull();
+    await Assert.That(metrics.RewindEventsBehind).IsNotNull();
   }
 
   [Test]
