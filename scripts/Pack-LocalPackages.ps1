@@ -31,6 +31,9 @@
     compiler directive set to true. Appends '-debug' to the version suffix so debug packages
     are distinguishable from standard packages.
 
+.PARAMETER CleanBuild
+    Run dotnet clean before building to prevent stale DLLs. Off by default for faster iteration.
+
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
     Packs all packages in Debug configuration.
@@ -62,7 +65,9 @@ param(
 
     [string]$Version,
 
-    [switch]$EnableFrameworkDebugging
+    [switch]$EnableFrameworkDebugging,
+
+    [switch]$CleanBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -216,11 +221,14 @@ if ($skippedProjects.Count -gt 0) {
 }
 Write-Host ""
 
-# Clean before building to prevent stale DLLs from being packed
-Write-Host "Cleaning build output to prevent stale artifacts..." -ForegroundColor Cyan
 $slnFile = Get-ChildItem -Path $repoRoot -Include "*.sln","*.slnx" -Depth 0 | Select-Object -First 1
-if ($slnFile) {
-    dotnet clean $slnFile.FullName -c $Configuration --verbosity quiet 2>&1 | Out-Null
+
+# Clean before building to prevent stale DLLs from being packed (opt-in)
+if ($CleanBuild) {
+    Write-Host "Cleaning build output to prevent stale artifacts..." -ForegroundColor Cyan
+    if ($slnFile) {
+        dotnet clean $slnFile.FullName -c $Configuration --verbosity quiet 2>&1 | Out-Null
+    }
 }
 
 # Build solution to ensure all projects have the new version
