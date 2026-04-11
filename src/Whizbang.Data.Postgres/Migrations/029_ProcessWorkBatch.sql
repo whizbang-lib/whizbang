@@ -1175,12 +1175,31 @@ BEGIN
              OR pc.rewind_first_flagged_at + (v_rewind_max_debounce_seconds || ' seconds')::INTERVAL > p_now)
       )
   ),
+  -- Two-tier fair scheduling: small streams complete in one tick,
+  -- large streams fill remaining budget. Prevents small streams
+  -- from being starved by a few busy streams consuming all work item slots.
+  -- docs: fundamentals/perspectives/work-scheduling#two-tier
+  stream_sizes AS (
+    SELECT ep.stream_id, ep.perspective_name, COUNT(*) as pending_count
+    FROM eligible_perspective ep
+    GROUP BY ep.stream_id, ep.perspective_name
+  ),
   ordered_perspective AS (
     SELECT e.*,
-      ROW_NUMBER() OVER (ORDER BY e.stream_id, e.perspective_name, e.event_id) as row_num
+      ROW_NUMBER() OVER (
+        ORDER BY
+          -- Tier 1 (small streams) before Tier 2 (large streams)
+          CASE WHEN ss.pending_count <= v_max_work_items_per_stream THEN 0 ELSE 1 END,
+          -- Within each tier, order by stream then event
+          e.stream_id, e.perspective_name, e.event_id
+      ) as row_num
     FROM eligible_perspective e
-    WHERE e.stream_rank <= v_max_work_items_per_stream
-    LIMIT v_max_work_items
+    INNER JOIN stream_sizes ss
+      ON ss.stream_id = e.stream_id AND ss.perspective_name = e.perspective_name
+    WHERE
+      -- Small streams: serve ALL events (no per-stream cap)
+      -- Large streams: cap at max_work_items_per_stream
+      (ss.pending_count <= v_max_work_items_per_stream OR e.stream_rank <= v_max_work_items_per_stream)
   )
   SELECT
     v_rank as instance_rank,
@@ -1205,7 +1224,8 @@ BEGIN
     NULL::INTEGER as failure_reason,
     pe.perspective_name
   FROM ordered_perspective pe
-  ORDER BY pe.stream_id, pe.perspective_name, pe.event_id;
+  WHERE pe.row_num <= v_max_work_items
+  ORDER BY pe.row_num;
 
   -- Return sync inquiry results
   RETURN QUERY

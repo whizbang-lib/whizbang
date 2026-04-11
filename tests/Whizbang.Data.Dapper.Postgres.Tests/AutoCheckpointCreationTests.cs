@@ -1298,6 +1298,91 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       .Because("Completion should clear rewind_flagged_at to reset the debounce window");
   }
 
+  // Two-tier fair scheduling tests
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_SmallStreamServedBeforeLargeStreamAsync() {
+    // Arrange — register association
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    // Create a LARGE stream (30 events — exceeds max_work_items_per_stream=25)
+    var largeStreamId = _idProvider.NewGuid();
+    var largeEvents = new List<string>();
+    for (var i = 0; i < 30; i++) {
+      var eventId = _idProvider.NewGuid();
+      largeEvents.Add(_createOutboxEventJson(largeStreamId, eventId,
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}"""));
+    }
+
+    // Create a SMALL stream (2 events — well under threshold)
+    var smallStreamId = _idProvider.NewGuid();
+    var smallEvent1 = _idProvider.NewGuid();
+    var smallEvent2 = _idProvider.NewGuid();
+    var smallEvents = new List<string> {
+      _createOutboxEventJson(smallStreamId, smallEvent1,
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", """{"v": 1}"""),
+      _createOutboxEventJson(smallStreamId, smallEvent2,
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", """{"v": 2}""")
+    };
+
+    // Combine all events into one batch — large stream first in array (would normally sort first by stream_id)
+    var allEventArrays = largeEvents.Concat(smallEvents)
+      .Select(json => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0])
+      .ToArray();
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(allEventArrays);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Act — store all events
+    var results = await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Filter perspective work items
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+
+    // Find positions of small vs large stream items
+    var smallStreamPositions = new List<int>();
+    var largeStreamPositions = new List<int>();
+    for (var i = 0; i < perspectiveWork.Count; i++) {
+      dynamic item = perspectiveWork[i];
+      Guid workStreamId = item.work_stream_id;
+      if (workStreamId == smallStreamId) {
+        smallStreamPositions.Add(i);
+      } else if (workStreamId == largeStreamId) {
+        largeStreamPositions.Add(i);
+      }
+    }
+
+    // Assert — small stream items should appear BEFORE large stream items (Tier 1 before Tier 2)
+    await Assert.That(smallStreamPositions.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Small stream should have work items returned");
+    await Assert.That(largeStreamPositions.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Large stream should also have work items returned");
+
+    var maxSmallPosition = smallStreamPositions.Max();
+    var minLargePosition = largeStreamPositions.Min();
+    await Assert.That(maxSmallPosition).IsLessThan(minLargePosition)
+      .Because("All small stream items (Tier 1) should appear before any large stream items (Tier 2)");
+  }
+
   // Helper methods
 
   private async Task _registerMessageAssociationAsync(
