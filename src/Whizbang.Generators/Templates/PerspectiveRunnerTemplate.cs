@@ -517,16 +517,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         replayFromEventId = snapshot.Value.SnapshotEventId;
         hasSnapshot = true;
 
-        _logger.LogInformation(
+        _logger.LogWarning(
             "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
             perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
       } else {
-        _logger.LogInformation(
+        _logger.LogWarning(
             "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
             perspectiveName, streamId, triggeringEventId);
       }
     } else {
-      _logger.LogInformation(
+      _logger.LogWarning(
           "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
           perspectiveName, streamId, triggeringEventId);
     }
