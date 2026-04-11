@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
