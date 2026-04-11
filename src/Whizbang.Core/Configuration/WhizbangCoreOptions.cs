@@ -112,6 +112,14 @@ public sealed class WhizbangCoreOptions {
   public QueryScope DefaultQueryScope { get; set; } = QueryScope.Tenant;
 
   /// <summary>
+  /// Gets or sets whether the Whizbang ASCII art banner is printed to console on startup.
+  /// The version log line ("Whizbang v{Version} initialized") always prints regardless.
+  /// Default: true.
+  /// </summary>
+  /// <docs>operations/configuration/whizbang-options#banner</docs>
+  public bool ShowBanner { get; set; } = true;
+
+  /// <summary>
   /// Warning threshold for ImmediateDetached chain depth. Logs a warning when exceeded.
   /// No hard limit — chains run until the queue is empty.
   /// Default: 10.
