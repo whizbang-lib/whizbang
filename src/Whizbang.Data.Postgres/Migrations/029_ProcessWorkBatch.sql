@@ -1142,11 +1142,9 @@ BEGIN
       pe.*,
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
-      es.event_type,  -- Get event_type from event_store for perspective worker
       ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank,
       COUNT(*) OVER (PARTITION BY pe.stream_id, pe.perspective_name) as stream_pending_count
     FROM wh_perspective_events pe
-    INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
     LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
     LEFT JOIN __SCHEMA__.wh_perspective_cursors pc
@@ -1204,7 +1202,7 @@ BEGIN
     pe.stream_id as work_stream_id,
     NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
     NULL::VARCHAR(200) as destination,
-    pe.event_type as message_type,  -- Event type from wh_event_store JOIN
+    es.event_type as message_type,  -- Event type from wh_event_store (late JOIN — only for returned rows)
     NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
     NULL::TEXT as message_data,          -- Event data comes from wh_event_store
     -- CRITICAL: First row includes ack counts if no outbox/inbox work
@@ -1219,6 +1217,7 @@ BEGIN
     NULL::INTEGER as failure_reason,
     pe.perspective_name
   FROM ordered_perspective pe
+  INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- Late JOIN: only for the ≤100 returned rows
   WHERE pe.row_num <= v_max_work_items
   ORDER BY pe.row_num;
 
