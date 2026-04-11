@@ -126,10 +126,10 @@ On service startup, the PerspectiveWorker scans `wh_perspective_cursors` for row
 
 When a high-throughput stream generates out-of-order events continuously, Phase 4.6B would flag RewindRequired on every batch, causing a rewind loop. The debounce mechanism prevents this:
 
-1. **Phase 4.6B** sets `rewind_flagged_at = p_now` on every late event (sliding window)
+1. **Phase 4.6B** sets `rewind_flagged_at = p_now` on first detection only (fixed window, preserved on re-flag)
 2. **Phase 7** holds back ALL perspective events for streams where `rewind_flagged_at + debounce_window > now`
-3. As long as late events keep arriving, the window keeps extending
-4. Once the window expires (no new late events for N seconds), events are released
+3. The window is fixed from first detection — subsequent late events do NOT extend it
+4. Once the window expires (5 seconds from first flag), events are released regardless of ongoing activity
 5. The worker sees the events + RewindRequired flag and executes **one** rewind with all accumulated events
 6. **Completion** clears `rewind_trigger_event_id` + `rewind_flagged_at`, resetting for the next cycle
 
