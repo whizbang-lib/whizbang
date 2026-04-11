@@ -113,6 +113,7 @@ DECLARE
 
   -- Rewind debounce: how long to hold back rewind-pending streams (seconds)
   v_rewind_debounce_seconds INTEGER;
+  v_rewind_max_debounce_seconds INTEGER;
 BEGIN
   -- Read settings from wh_settings (fall back to defaults if not configured)
   SELECT COALESCE(
@@ -129,6 +130,11 @@ BEGIN
     (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'rewind_debounce_seconds'),
     5  -- default: 5 seconds
   ) INTO v_rewind_debounce_seconds;
+
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'rewind_max_debounce_seconds'),
+    30  -- default: 30 seconds
+  ) INTO v_rewind_max_debounce_seconds;
 
   -- Stale threshold: override from wh_settings if configured, else use function parameter
   -- Default 30s (not 600s) — 30 missed 1-second heartbeats is more than enough to declare dead
@@ -805,7 +811,8 @@ BEGIN
         WHEN ooo.min_event_id < pc.rewind_trigger_event_id THEN ooo.min_event_id
         ELSE pc.rewind_trigger_event_id
       END,
-      rewind_flagged_at = COALESCE(pc.rewind_flagged_at, p_now)  -- Fixed window: only set on first flag, preserved on re-flag
+      rewind_flagged_at = p_now,  -- Sliding window: reset on every late event
+      rewind_first_flagged_at = COALESCE(pc.rewind_first_flagged_at, p_now)  -- Max cap anchor: set once, preserved on re-flag
   FROM (
     SELECT DISTINCT ON (pe.stream_id, pe.perspective_name)
       pe.stream_id,
@@ -1155,12 +1162,17 @@ BEGIN
       -- Note: pe.processed_at IS NULL already prevents re-processing individual events
       -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
       -- Filtering on checkpoint status would block all subsequent events in the stream
-      -- DEBOUNCE: Hold back streams with RewindRequired until the sliding window expires.
+      -- DEBOUNCE: Hold back streams with RewindRequired until the sliding window expires OR max cap is reached.
+      -- Sliding window: extends on each new late event. Max cap: forces rewind after absolute limit.
       -- This prevents rewind loops on high-throughput streams and frees work item slots for other streams.
       AND NOT (
         (pc.status & 32) = 32  -- RewindRequired flag set
         AND pc.rewind_flagged_at IS NOT NULL
+        -- Sliding window still active
         AND pc.rewind_flagged_at + (v_rewind_debounce_seconds || ' seconds')::INTERVAL > p_now
+        -- AND max cap not yet reached (if first_flagged_at is NULL, treat as not capped)
+        AND (pc.rewind_first_flagged_at IS NULL
+             OR pc.rewind_first_flagged_at + (v_rewind_max_debounce_seconds || ' seconds')::INTERVAL > p_now)
       )
   ),
   ordered_perspective AS (

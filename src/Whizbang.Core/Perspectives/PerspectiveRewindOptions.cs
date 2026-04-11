@@ -46,6 +46,15 @@ public class PerspectiveRewindOptions {
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#debounce</docs>
   public TimeSpan DebounceWindow { get; set; } = TimeSpan.FromSeconds(5);
+
+  /// <summary>
+  /// Hard cap on debounce duration. Forces rewind after this time even if
+  /// new late events keep arriving (sliding window still active).
+  /// Set equal to DebounceWindow for fixed-window behavior.
+  /// Default: 30 seconds.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#debounce</docs>
+  public TimeSpan MaxDebounceWindow { get; set; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>

@@ -35,7 +35,8 @@ BEGIN
       processed_at = NOW(),
       error = p_error_message,
       rewind_trigger_event_id = NULL,
-      rewind_flagged_at = NULL
+      rewind_flagged_at = NULL,
+      rewind_first_flagged_at = NULL
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name;
 
