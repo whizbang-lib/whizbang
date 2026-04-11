@@ -103,6 +103,7 @@ public partial class PerspectiveWorker(
   // Wake signal: allows external callers to interrupt the polling delay
   // so the worker processes new perspective events immediately.
   private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
+  private int _wakeSignaled;  // Guard to prevent SemaphoreFullException on redundant wake calls
 
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
@@ -145,7 +146,9 @@ public partial class PerspectiveWorker(
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
   public void RequestImmediatePoll() {
-    try { _pollWakeSignal.Release(); } catch (SemaphoreFullException) { /* already signaled */ }
+    if (Interlocked.CompareExchange(ref _wakeSignaled, 1, 0) == 0) {
+      _pollWakeSignal.Release();
+    }
   }
 
   /// <summary>
@@ -192,6 +195,7 @@ public partial class PerspectiveWorker(
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
           await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+          Interlocked.Exchange(ref _wakeSignaled, 0);
           continue;
         }
 
@@ -208,6 +212,7 @@ public partial class PerspectiveWorker(
         // Wait for either the polling interval OR an external wake signal (whichever comes first).
         // RequestImmediatePoll() releases the semaphore, waking this loop early.
         await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+        Interlocked.Exchange(ref _wakeSignaled, 0);
       } catch (OperationCanceledException) {
         break;
       }
