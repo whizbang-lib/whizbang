@@ -1143,7 +1143,8 @@ BEGIN
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
       es.event_type,  -- Get event_type from event_store for perspective worker
-      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank
+      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank,
+      COUNT(*) OVER (PARTITION BY pe.stream_id, pe.perspective_name) as stream_pending_count
     FROM wh_perspective_events pe
     INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
@@ -1178,28 +1179,22 @@ BEGIN
   -- Two-tier fair scheduling: small streams complete in one tick,
   -- large streams fill remaining budget. Prevents small streams
   -- from being starved by a few busy streams consuming all work item slots.
+  -- Uses stream_pending_count window function from eligible_perspective (no extra CTE/JOIN).
   -- docs: fundamentals/perspectives/work-scheduling#two-tier
-  stream_sizes AS (
-    SELECT ep.stream_id, ep.perspective_name, COUNT(*) as pending_count
-    FROM eligible_perspective ep
-    GROUP BY ep.stream_id, ep.perspective_name
-  ),
   ordered_perspective AS (
     SELECT e.*,
       ROW_NUMBER() OVER (
         ORDER BY
           -- Tier 1 (small streams) before Tier 2 (large streams)
-          CASE WHEN ss.pending_count <= v_max_work_items_per_stream THEN 0 ELSE 1 END,
+          CASE WHEN e.stream_pending_count <= v_max_work_items_per_stream THEN 0 ELSE 1 END,
           -- Within each tier, order by stream then event
           e.stream_id, e.perspective_name, e.event_id
       ) as row_num
     FROM eligible_perspective e
-    INNER JOIN stream_sizes ss
-      ON ss.stream_id = e.stream_id AND ss.perspective_name = e.perspective_name
     WHERE
       -- Small streams: serve ALL events (no per-stream cap)
       -- Large streams: cap at max_work_items_per_stream
-      (ss.pending_count <= v_max_work_items_per_stream OR e.stream_rank <= v_max_work_items_per_stream)
+      (e.stream_pending_count <= v_max_work_items_per_stream OR e.stream_rank <= v_max_work_items_per_stream)
   )
   SELECT
     v_rank as instance_rank,
