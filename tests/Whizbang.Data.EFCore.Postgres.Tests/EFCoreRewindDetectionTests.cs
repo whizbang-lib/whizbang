@@ -222,6 +222,127 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       .Because("rewind_trigger_event_id should be the earliest late event");
   }
 
+  [Test]
+  public async Task ProcessWorkBatch_Debounce_SlidingWindowHoldsBackEventsAsync() {
+    // Arrange
+    await RegisterMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp",
+      "perspective",
+      "OrderListPerspective",
+      "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await InsertEventStoreRowAsync(eventId3, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await InsertPerspectiveCursorAsync(streamId, "OrderListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    // Act 1 — Store late event (flags cursor with RewindRequired + sets flagged timestamps)
+    var result1 = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345,
+      Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [CreateEventOutboxMessage(eventId1, streamId,
+        "TestApp.Events.OrderCreatedEvent, TestApp")],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — cursor flagged with both timestamps
+    var cursor = await GetPerspectiveCursorAsync(streamId, "OrderListPerspective");
+    await Assert.That(cursor!.Status & 32).IsEqualTo(32)
+      .Because("RewindRequired should be set");
+    await Assert.That(cursor.RewindFlaggedAt).IsNotNull()
+      .Because("Sliding window edge should be set");
+    await Assert.That(cursor.RewindFirstFlaggedAt).IsNotNull()
+      .Because("Max cap anchor should be set");
+
+    // Act 2 — Next batch within debounce window: should return zero perspective work
+    var result2 = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345,
+      Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    await Assert.That(result2.PerspectiveWork).Count().IsEqualTo(0)
+      .Because("Debounce should hold back perspective events within the sliding window");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_Completion_ClearsAllRewindColumnsAsync() {
+    // Arrange
+    await RegisterMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp",
+      "perspective",
+      "OrderListPerspective",
+      "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await InsertEventStoreRowAsync(eventId3, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await InsertPerspectiveCursorAsync(streamId, "OrderListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    // Store late event to flag cursor
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345,
+      Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [CreateEventOutboxMessage(eventId1, streamId,
+        "TestApp.Events.OrderCreatedEvent, TestApp")],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Verify flags are set
+    var before = await GetPerspectiveCursorAsync(streamId, "OrderListPerspective");
+    await Assert.That(before!.RewindTriggerEventId).IsNotNull();
+    await Assert.That(before.RewindFlaggedAt).IsNotNull();
+    await Assert.That(before.RewindFirstFlaggedAt).IsNotNull();
+
+    // Act — Complete the cursor (simulating successful rewind)
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345,
+      Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "OrderListPerspective",
+        LastEventId = eventId3,
+        Status = PerspectiveProcessingStatus.Completed
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — all rewind columns cleared
+    var after = await GetPerspectiveCursorAsync(streamId, "OrderListPerspective");
+    await Assert.That(after!.RewindTriggerEventId).IsNull()
+      .Because("Completion should clear rewind_trigger_event_id");
+    await Assert.That(after.RewindFlaggedAt).IsNull()
+      .Because("Completion should clear rewind_flagged_at");
+    await Assert.That(after.RewindFirstFlaggedAt).IsNull()
+      .Because("Completion should clear rewind_first_flagged_at");
+  }
+
   // Helper methods
 
   private async Task InsertEventStoreRowAsync(
@@ -267,7 +388,8 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
     return await connection.QueryFirstOrDefaultAsync<PerspectiveCursorRow>(@"
       SELECT stream_id as StreamId, perspective_name as PerspectiveName,
              last_event_id as LastEventId, status as Status,
-             error as Error, rewind_trigger_event_id as RewindTriggerEventId
+             error as Error, rewind_trigger_event_id as RewindTriggerEventId,
+             rewind_flagged_at as RewindFlaggedAt, rewind_first_flagged_at as RewindFirstFlaggedAt
       FROM wh_perspective_cursors
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
       new { streamId, perspectiveName });
@@ -301,5 +423,7 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
     Guid? LastEventId,
     short Status,
     string? Error,
-    Guid? RewindTriggerEventId);
+    Guid? RewindTriggerEventId,
+    DateTime? RewindFlaggedAt,
+    DateTime? RewindFirstFlaggedAt);
 }
