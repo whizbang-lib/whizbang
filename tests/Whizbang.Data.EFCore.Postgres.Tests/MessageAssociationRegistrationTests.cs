@@ -1,6 +1,5 @@
 #pragma warning disable CA1707
 
-using Dapper;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;

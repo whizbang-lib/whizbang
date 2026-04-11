@@ -1,4 +1,3 @@
-using Dapper;
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Core.Generated;
