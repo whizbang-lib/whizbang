@@ -35,6 +35,17 @@ public class PerspectiveRewindOptions {
   /// Default: 3.
   /// </summary>
   public int MaxConcurrentRewinds { get; set; } = 3;
+
+  /// <summary>
+  /// Sliding window before executing a rewind. While new late events keep arriving
+  /// within this window, the rewind is deferred and the stream's perspective events
+  /// are held back from the work batch (preventing starvation of other streams).
+  /// Once the window expires with no new late events, the rewind executes once
+  /// with all accumulated events.
+  /// Default: 5 seconds.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#debounce</docs>
+  public TimeSpan DebounceWindow { get; set; } = TimeSpan.FromSeconds(5);
 }
 
 /// <summary>

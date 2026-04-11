@@ -28,11 +28,14 @@ BEGIN
 
   -- Update checkpoint with results from perspective runner
   -- Includes error message for failed runs, clears error for successful runs
+  -- Clears rewind columns after successful completion to prevent rewind loops
   UPDATE __SCHEMA__.wh_perspective_cursors
   SET last_event_id = p_last_event_id,
       status = p_status,
       processed_at = NOW(),
-      error = p_error_message
+      error = p_error_message,
+      rewind_trigger_event_id = NULL,
+      rewind_flagged_at = NULL
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name;
 

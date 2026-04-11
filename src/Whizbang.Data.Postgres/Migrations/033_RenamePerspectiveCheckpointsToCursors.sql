@@ -41,6 +41,7 @@ END $$;
 -- IF EXISTS handles the case where neither old nor new table exists yet (version mismatch)
 ALTER TABLE IF EXISTS __SCHEMA__.wh_perspective_cursors
   ADD COLUMN IF NOT EXISTS rewind_trigger_event_id UUID,
+  ADD COLUMN IF NOT EXISTS rewind_flagged_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS stream_lock_instance_id UUID,
   ADD COLUMN IF NOT EXISTS stream_lock_expiry TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS stream_lock_reason VARCHAR(50);

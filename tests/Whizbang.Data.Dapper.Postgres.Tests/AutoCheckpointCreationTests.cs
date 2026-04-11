@@ -1060,6 +1060,244 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     await Assert.That(cursorB.rewind_trigger_event_id).IsNull();
   }
 
+  // Phase 4.6B debounce + completion cleanup tests
+
+  [Test]
+  public async Task ProcessWorkBatch_Phase46B_SetsRewindFlaggedAtAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    var outboxMessages = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Assert — rewind_flagged_at should be set
+    var cursor = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(cursor!.rewind_flagged_at).IsNotNull()
+      .Because("Phase 4.6B should set rewind_flagged_at when flagging RewindRequired");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_Debounce_HoldsBackEventsWithinWindowAsync() {
+    // Arrange — cursor with RewindRequired + rewind_flagged_at = now (within window)
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // First call: store late event → flags cursor with RewindRequired + rewind_flagged_at
+    var outboxMessages = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Second call: within debounce window — should return zero perspective work
+    var nowWithin = now.AddSeconds(2);  // 2s later, still within 5s window
+    var results = await connection.QueryAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @nowWithin::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2
+      )",
+      new { instanceId, nowWithin });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    await Assert.That(perspectiveWork.Count).IsEqualTo(0)
+      .Because("Debounce should hold back perspective events for rewind-pending streams within the window");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_Debounce_ReleasesEventsAfterWindowAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store late event → flags cursor
+    var outboxMessages = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Call AFTER debounce window — should return perspective work
+    var nowAfter = now.AddSeconds(6);  // 6s later, past 5s window
+    var results = await connection.QueryAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @nowAfter::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2
+      )",
+      new { instanceId, nowAfter });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    await Assert.That(perspectiveWork.Count).IsGreaterThan(0)
+      .Because("After debounce window expires, perspective events should be released");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_Completion_ClearsRewindTriggerAndFlaggedAtAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await _insertPerspectiveCursorAsync(streamId, "ProductListPerspective",
+      lastEventId: eventId3, status: 2);
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store late event → flags cursor
+    var outboxMessages = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
+
+    // Verify flags are set
+    var beforeCompletion = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(beforeCompletion!.rewind_trigger_event_id).IsNotNull();
+    await Assert.That(beforeCompletion.rewind_flagged_at).IsNotNull();
+
+    // Complete the perspective cursor (simulating successful rewind)
+    var perspectiveCompletions = new[] {
+      new {
+        StreamId = (Guid)streamId,
+        PerspectiveName = "ProductListPerspective",
+        LastEventId = (Guid)eventId3,
+        Status = (short)2  // Completed
+      }
+    };
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_perspective_completions := @completions::jsonb
+      )",
+      new {
+        instanceId,
+        now,
+        completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
+      });
+
+    // Assert — both rewind columns should be cleared
+    var afterCompletion = await _getPerspectiveCursorAsync(streamId, "ProductListPerspective");
+    await Assert.That(afterCompletion!.rewind_trigger_event_id).IsNull()
+      .Because("Completion should clear rewind_trigger_event_id to prevent rewind loops");
+    await Assert.That(afterCompletion.rewind_flagged_at).IsNull()
+      .Because("Completion should clear rewind_flagged_at to reset the debounce window");
+  }
+
   // Helper methods
 
   private async Task _registerMessageAssociationAsync(
@@ -1140,7 +1378,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task<PerspectiveCursor?> _getPerspectiveCursorAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<PerspectiveCursor>(@"
-      SELECT stream_id, perspective_name, last_event_id, status, error, rewind_trigger_event_id
+      SELECT stream_id, perspective_name, last_event_id, status, error, rewind_trigger_event_id, rewind_flagged_at
       FROM wh_perspective_cursors
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
       new { streamId, perspectiveName });
@@ -1149,7 +1387,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task<List<PerspectiveCursor>> _getAllPerspectiveCursorsAsync(Guid streamId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var results = await connection.QueryAsync<PerspectiveCursor>(@"
-      SELECT stream_id, perspective_name, last_event_id, status, error, rewind_trigger_event_id
+      SELECT stream_id, perspective_name, last_event_id, status, error, rewind_trigger_event_id, rewind_flagged_at
       FROM wh_perspective_cursors
       WHERE stream_id = @streamId",
       new { streamId });
@@ -1163,7 +1401,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     Guid? last_event_id,
     short status,
     string? error,
-    Guid? rewind_trigger_event_id);
+    Guid? rewind_trigger_event_id,
+    DateTimeOffset? rewind_flagged_at);
 
   private sealed record PerspectiveEventRow(
     Guid event_work_id,
