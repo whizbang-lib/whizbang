@@ -1,3 +1,4 @@
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Events.System;
@@ -92,6 +93,7 @@ public record PerspectiveRebuildFailed(
 /// <param name="HasSnapshot">Whether a snapshot was available for the rewind.</param>
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 public record PerspectiveRewindStarted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -112,6 +114,7 @@ public record PerspectiveRewindStarted(
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <param name="CompletedAt">When the rewind operation completed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 public record PerspectiveRewindCompleted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -132,6 +135,7 @@ public record PerspectiveRewindCompleted(
 /// <param name="StartedAt">When the stream-level rewind operation started.</param>
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 public record StreamRewindStarted(
     [property: StreamId] Guid StreamId,
     string[] PerspectiveNames,
@@ -150,6 +154,7 @@ public record StreamRewindStarted(
 /// <param name="CompletedAt">When all perspective rewinds completed.</param>
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 public record StreamRewindCompleted(
     [property: StreamId] Guid StreamId,
     string[] PerspectiveNames,
