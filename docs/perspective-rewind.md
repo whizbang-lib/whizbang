@@ -163,6 +163,36 @@ await dispatcher.AsSystem().KeepTenant().PublishAsync(new PerspectiveRewindStart
 - `AsSystem()` sets `EffectivePrincipal = "SYSTEM"` and `SecurityContextType = System`
 - `KeepTenant()` preserves the tenant from the event envelope's security context (already established by the perspective worker)
 
+## Work Batch Scheduling — Two-Tier Fair Queuing
+
+When multiple streams have pending perspective events, the work batch (default 100 items) is filled using two-tier fair scheduling:
+
+**Tier 1 (small streams):** Streams with `pending_count <= max_work_items_per_stream` (default 25) are served first. ALL their events are included — they complete in one tick. These are cheap and fast to process.
+
+**Tier 2 (large streams):** Streams with more pending events fill the remaining budget, capped at `max_work_items_per_stream` per stream.
+
+### Example
+
+Budget: 100 items, per-stream cap: 25
+
+| Stream | Pending | Tier | Items Served |
+|--------|---------|------|-------------|
+| Chat session A | 3 | 1 | 3 (complete) |
+| Chat session B | 1 | 1 | 1 (complete) |
+| Notification | 7 | 1 | 7 (complete) |
+| Bulk import X | 500 | 2 | 25 (capped) |
+| Bulk import Y | 1000 | 2 | 25 (capped) |
+| **Total** | | | **61** |
+
+Without two-tier scheduling, the two bulk imports would consume 50 of the 100 slots every tick, and the three small streams might not be served for many ticks depending on stream ID ordering.
+
+### Configuration
+
+| Setting | Default | SQL key | Purpose |
+|---------|---------|---------|---------|
+| `max_work_items_per_tick` | 100 | `wh_settings.max_work_items_per_tick` | Total work item budget per batch |
+| `max_work_items_per_stream` | 25 | `wh_settings.max_work_items_per_stream` | Per-stream cap (also tier threshold) |
+
 ## Related Files
 
 | File | Purpose |

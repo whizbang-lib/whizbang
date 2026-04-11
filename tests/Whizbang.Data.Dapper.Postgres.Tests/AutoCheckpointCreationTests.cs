@@ -1383,6 +1383,265 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       .Because("All small stream items (Tier 1) should appear before any large stream items (Tier 2)");
   }
 
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_SmallStreamCompletesInOneTickAsync() {
+    // Arrange — small stream with 3 events should ALL be returned (not capped at per-stream limit)
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var streamId = _idProvider.NewGuid();
+
+    var events = new List<string>();
+    for (var i = 0; i < 3; i++) {
+      events.Add(_createOutboxEventJson(streamId, _idProvider.NewGuid(),
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}"""));
+    }
+
+    var allEvents = events
+      .Select(json => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0])
+      .ToArray();
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(allEvents);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var results = await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )", new { instanceId, now, outboxMessages });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var streamItems = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == streamId).ToList();
+
+    await Assert.That(streamItems.Count).IsEqualTo(3)
+      .Because("All 3 events from a small stream should be returned in one tick");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_LargeStreamStillServedAsync() {
+    // Arrange — only a large stream, should still get items (Tier 2)
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var streamId = _idProvider.NewGuid();
+
+    var events = new List<string>();
+    for (var i = 0; i < 40; i++) {
+      events.Add(_createOutboxEventJson(streamId, _idProvider.NewGuid(),
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}"""));
+    }
+
+    var allEvents = events
+      .Select(json => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0])
+      .ToArray();
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(allEvents);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var results = await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )", new { instanceId, now, outboxMessages });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var streamItems = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == streamId).ToList();
+
+    await Assert.That(streamItems.Count).IsGreaterThan(0)
+      .Because("Large stream should still be served even without small streams present");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_LargeStreamCappedAtPerStreamLimitAsync() {
+    // Arrange — large stream should be capped at max_work_items_per_stream (default 25)
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var streamId = _idProvider.NewGuid();
+
+    var events = new List<string>();
+    for (var i = 0; i < 50; i++) {
+      events.Add(_createOutboxEventJson(streamId, _idProvider.NewGuid(),
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}"""));
+    }
+
+    var allEvents = events
+      .Select(json => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0])
+      .ToArray();
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(allEvents);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var results = await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )", new { instanceId, now, outboxMessages });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var streamItems = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == streamId).ToList();
+
+    await Assert.That(streamItems.Count).IsLessThanOrEqualTo(25)
+      .Because("Large stream should be capped at max_work_items_per_stream (25)");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_MultipleSmallStreamsFillFirstAsync() {
+    // Arrange — 3 small streams + 1 large stream
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    var smallStream1 = _idProvider.NewGuid();
+    var smallStream2 = _idProvider.NewGuid();
+    var smallStream3 = _idProvider.NewGuid();
+    var largeStream = _idProvider.NewGuid();
+
+    var allJsonArrays = new List<System.Text.Json.JsonElement>();
+
+    // 3 small streams with 2 events each
+    foreach (var sid in new[] { smallStream1, smallStream2, smallStream3 }) {
+      for (var i = 0; i < 2; i++) {
+        var json = _createOutboxEventJson(sid, _idProvider.NewGuid(),
+          "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}""");
+        allJsonArrays.Add(System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0]);
+      }
+    }
+
+    // 1 large stream with 30 events
+    for (var i = 0; i < 30; i++) {
+      var json = _createOutboxEventJson(largeStream, _idProvider.NewGuid(),
+        "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}""");
+      allJsonArrays.Add(System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0]);
+    }
+
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(allJsonArrays);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var results = await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )", new { instanceId, now, outboxMessages });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+
+    // Find max position of any small stream item
+    var smallStreamIds = new HashSet<Guid> { smallStream1, smallStream2, smallStream3 };
+    var maxSmallPos = -1;
+    var minLargePos = int.MaxValue;
+    for (var i = 0; i < perspectiveWork.Count; i++) {
+      Guid sid = perspectiveWork[i].work_stream_id;
+      if (smallStreamIds.Contains(sid)) {
+        maxSmallPos = Math.Max(maxSmallPos, i);
+      } else if (sid == largeStream) {
+        minLargePos = Math.Min(minLargePos, i);
+      }
+    }
+
+    await Assert.That(maxSmallPos).IsGreaterThanOrEqualTo(0)
+      .Because("Small streams should have items");
+    await Assert.That(minLargePos).IsLessThan(int.MaxValue)
+      .Because("Large stream should also have items");
+    await Assert.That(maxSmallPos).IsLessThan(minLargePos)
+      .Because("All small stream items should appear before any large stream items");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_AllSmallStreams_NoTier2NeededAsync() {
+    // Arrange — only small streams, all should be served normally
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+
+    var allJsonArrays = new List<System.Text.Json.JsonElement>();
+    foreach (var sid in new[] { stream1, stream2 }) {
+      for (var i = 0; i < 5; i++) {
+        var json = _createOutboxEventJson(sid, _idProvider.NewGuid(),
+          "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", $$$"""{"v": {{{i}}}}""");
+        allJsonArrays.Add(System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json)![0]);
+      }
+    }
+
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(allJsonArrays);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var results = await connection.QueryAsync<dynamic>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )", new { instanceId, now, outboxMessages });
+
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var s1Items = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == stream1).Count();
+    var s2Items = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == stream2).Count();
+
+    await Assert.That(s1Items).IsEqualTo(5)
+      .Because("Small stream 1 should have all 5 events");
+    await Assert.That(s2Items).IsEqualTo(5)
+      .Because("Small stream 2 should have all 5 events");
+  }
+
   // Helper methods
 
   private async Task _registerMessageAssociationAsync(

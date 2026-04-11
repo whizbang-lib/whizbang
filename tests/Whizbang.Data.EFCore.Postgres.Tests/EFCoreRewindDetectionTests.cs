@@ -262,6 +262,220 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
 
   #endregion
 
+  #region Two-Tier Fair Scheduling
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_SmallStreamServedBeforeLargeStreamAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var smallStreamId = _idProvider.NewGuid();
+    var largeStreamId = _idProvider.NewGuid();
+
+    // Small stream: 2 events
+    var smallMessages = new[] {
+      _createEventOutboxMessage(_idProvider.NewGuid(), smallStreamId, "TestApp.Events.OrderCreatedEvent, TestApp"),
+      _createEventOutboxMessage(_idProvider.NewGuid(), smallStreamId, "TestApp.Events.OrderCreatedEvent, TestApp")
+    };
+
+    // Large stream: 30 events
+    var largeMessages = Enumerable.Range(0, 30)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), largeStreamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    // Act — send all in one batch
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [.. smallMessages, .. largeMessages],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — small stream items appear before large stream items
+    var maxSmallPos = -1;
+    var minLargePos = int.MaxValue;
+    for (var i = 0; i < result.PerspectiveWork.Count; i++) {
+      var sid = result.PerspectiveWork[i].StreamId;
+      if (sid == smallStreamId) {
+        maxSmallPos = Math.Max(maxSmallPos, i);
+      } else if (sid == largeStreamId) {
+        minLargePos = Math.Min(minLargePos, i);
+      }
+    }
+
+    await Assert.That(maxSmallPos).IsGreaterThanOrEqualTo(0)
+      .Because("Small stream should have work items");
+    await Assert.That(minLargePos).IsLessThan(int.MaxValue)
+      .Because("Large stream should also have work items");
+    await Assert.That(maxSmallPos).IsLessThan(minLargePos)
+      .Because("All small stream items (Tier 1) should appear before large stream items (Tier 2)");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_SmallStreamCompletesInOneTickAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var messages = Enumerable.Range(0, 3)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), streamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: messages,
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var streamItems = result.PerspectiveWork.Where(w => w.StreamId == streamId).Count();
+    await Assert.That(streamItems).IsEqualTo(3)
+      .Because("All events from a small stream should be returned in one tick");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_LargeStreamStillServedAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var messages = Enumerable.Range(0, 40)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), streamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: messages,
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var streamItems = result.PerspectiveWork.Where(w => w.StreamId == streamId).Count();
+    await Assert.That(streamItems).IsGreaterThan(0)
+      .Because("Large stream should still be served");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_LargeStreamCappedAtPerStreamLimitAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var messages = Enumerable.Range(0, 50)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), streamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: messages,
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var streamItems = result.PerspectiveWork.Where(w => w.StreamId == streamId).Count();
+    await Assert.That(streamItems).IsLessThanOrEqualTo(25)
+      .Because("Large stream should be capped at max_work_items_per_stream (25)");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_MultipleSmallStreamsFillFirstAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var small1 = _idProvider.NewGuid();
+    var small2 = _idProvider.NewGuid();
+    var small3 = _idProvider.NewGuid();
+    var large = _idProvider.NewGuid();
+
+    var messages = new List<OutboxMessage>();
+    foreach (var sid in new[] { small1, small2, small3 }) {
+      for (var i = 0; i < 2; i++) {
+        messages.Add(_createEventOutboxMessage(_idProvider.NewGuid(), sid, "TestApp.Events.OrderCreatedEvent, TestApp"));
+      }
+    }
+    for (var i = 0; i < 30; i++) {
+      messages.Add(_createEventOutboxMessage(_idProvider.NewGuid(), large, "TestApp.Events.OrderCreatedEvent, TestApp"));
+    }
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [.. messages],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var smallIds = new HashSet<Guid> { small1, small2, small3 };
+    var maxSmallPos = -1;
+    var minLargePos = int.MaxValue;
+    for (var i = 0; i < result.PerspectiveWork.Count; i++) {
+      var sid = result.PerspectiveWork[i].StreamId;
+      if (smallIds.Contains(sid)) {
+        maxSmallPos = Math.Max(maxSmallPos, i);
+      } else if (sid == large) {
+        minLargePos = Math.Min(minLargePos, i);
+      }
+    }
+
+    await Assert.That(maxSmallPos).IsLessThan(minLargePos)
+      .Because("All small stream items should appear before any large stream items");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_AllSmallStreams_NoTier2NeededAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+
+    var messages = new List<OutboxMessage>();
+    foreach (var sid in new[] { stream1, stream2 }) {
+      for (var i = 0; i < 5; i++) {
+        messages.Add(_createEventOutboxMessage(_idProvider.NewGuid(), sid, "TestApp.Events.OrderCreatedEvent, TestApp"));
+      }
+    }
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [.. messages],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var s1 = result.PerspectiveWork.Where(w => w.StreamId == stream1).Count();
+    var s2 = result.PerspectiveWork.Where(w => w.StreamId == stream2).Count();
+
+    await Assert.That(s1).IsEqualTo(5).Because("Stream 1 should have all 5 events");
+    await Assert.That(s2).IsEqualTo(5).Because("Stream 2 should have all 5 events");
+  }
+
+  #endregion
+
   #region Helpers (raw NpgsqlCommand — no Dapper)
 
   private async Task _insertEventStoreRowAsync(Guid eventId, Guid streamId, string eventType, string eventData) {
