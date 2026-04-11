@@ -531,16 +531,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           perspectiveName, streamId, triggeringEventId);
     }
 
-    // Fire PerspectiveRewindStarted system event as System user (cross-tenant — no ambient tenant during rewind)
-    // Uses try/catch to handle cases where transport/DB aren't ready yet (e.g., during startup rewind).
-    // The event is best-effort observability — failure to publish must not block the rewind itself.
+    // Fire PerspectiveRewindStarted system event as System user
+    // These events are marked [AuditEvent(Exclude = true)] to skip the audit pipeline
+    // which requires security context that doesn't exist during background rewind.
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
       try {
         await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindStarted(
             streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId} — transport may not be ready",
+        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId}",
           perspectiveName, streamId);
       }
     }
@@ -558,7 +558,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             result.EventsProcessed,
             startedAt, DateTimeOffset.UtcNow));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindCompleted for {PerspectiveName} stream {StreamId} — transport may not be ready",
+        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindCompleted for {PerspectiveName} stream {StreamId}",
           perspectiveName, streamId);
       }
     }
