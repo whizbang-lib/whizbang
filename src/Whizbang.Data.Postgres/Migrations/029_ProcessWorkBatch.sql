@@ -805,7 +805,7 @@ BEGIN
         WHEN ooo.min_event_id < pc.rewind_trigger_event_id THEN ooo.min_event_id
         ELSE pc.rewind_trigger_event_id
       END,
-      rewind_flagged_at = p_now  -- Sliding window: reset on every late event to extend debounce
+      rewind_flagged_at = COALESCE(pc.rewind_flagged_at, p_now)  -- Fixed window: only set on first flag, preserved on re-flag
   FROM (
     SELECT DISTINCT ON (pe.stream_id, pe.perspective_name)
       pe.stream_id,
