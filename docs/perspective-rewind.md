@@ -122,6 +122,26 @@ On service startup, the PerspectiveWorker scans `wh_perspective_cursors` for row
 - **Blocking mode** (default): Keeps processing work batches until all rewinds clear. Guarantees projections are repaired before serving reads.
 - **Background mode**: Logs the summary and lets normal polling handle them. Faster startup but projections may be stale briefly.
 
+## Debounce
+
+When a high-throughput stream generates out-of-order events continuously, Phase 4.6B would flag RewindRequired on every batch, causing a rewind loop. The debounce mechanism prevents this:
+
+1. **Phase 4.6B** sets `rewind_flagged_at = p_now` on every late event (sliding window)
+2. **Phase 7** holds back ALL perspective events for streams where `rewind_flagged_at + debounce_window > now`
+3. As long as late events keep arriving, the window keeps extending
+4. Once the window expires (no new late events for N seconds), events are released
+5. The worker sees the events + RewindRequired flag and executes **one** rewind with all accumulated events
+6. **Completion** clears `rewind_trigger_event_id` + `rewind_flagged_at`, resetting for the next cycle
+
+This also prevents starvation — debouncing streams don't consume work item slots, freeing capacity for other streams.
+
+### Configuration
+
+| Setting | Default | Location |
+|---------|---------|----------|
+| `PerspectiveRewindOptions.DebounceWindow` | 5 seconds | C# options |
+| `wh_settings.rewind_debounce_seconds` | 5 | SQL (overrides C#) |
+
 ## Error Handling
 
 Rewind failures are **isolated per stream** — a single stream's rewind failing does NOT crash the perspective worker. The worker logs the error and continues processing other streams. The failed stream will retry on the next polling cycle.

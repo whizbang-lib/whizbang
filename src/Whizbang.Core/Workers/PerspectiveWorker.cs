@@ -1104,9 +1104,10 @@ public partial class PerspectiveWorker(
         activity?.SetTag("whizbang.perspective.rewind.has_snapshot", hasSnapshot);
         activity?.SetTag("whizbang.perspective.rewind.replay_source", hasSnapshot ? "snapshot" : "full");
 
-        // Completion log
+        // Completion log — hasSnapshot indicates store availability, not actual usage.
+        // The runner logs the actual snapshot decision (restore from snapshot vs full replay).
         LogRewindCompleted(_logger, perspectiveName, streamId, result.EventsProcessed,
-          (long)rewindDurationMs, hasSnapshot ? "snapshot" : "beginning");
+          (long)rewindDurationMs, hasSnapshot ? "snapshot store available" : "no snapshot store");
       }
 
       // Stop keepalive
