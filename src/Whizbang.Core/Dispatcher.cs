@@ -3454,10 +3454,10 @@ public abstract partial class Dispatcher(
     };
     envelope.AddHop(hop);
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Destination={Destination}", destination);
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Queueing event {EventType} with destination '{Destination}'",
+        eventType.Name, destination);
       CascadeLogger.LogDebug("[TRACE] PublishToOutboxAsync: TraceParent={TraceParent}, HasActivity={HasActivity}",
         hop.TraceParent ?? "(null)", System.Diagnostics.Activity.Current is not null);
     }
@@ -3514,7 +3514,12 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Successfully queued event {EventType} via work coordinator",
+        eventType.Name);
+    }
+#pragma warning restore CA1848
   }
 
   /// <summary>
