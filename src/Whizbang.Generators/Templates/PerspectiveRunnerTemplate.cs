@@ -365,7 +365,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
         Status = resultStatus,
-        EventsProcessed = eventsProcessed
+        EventsProcessed = eventsProcessed,
+        ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
       };
 
     } catch (Exception ex) {

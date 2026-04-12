@@ -261,6 +261,37 @@ public interface IWorkCoordinator {
   );
 
   /// <summary>
+  /// Deregisters this instance on graceful shutdown.
+  /// Releases all leases (outbox, inbox, perspective events, receptors, active streams),
+  /// logs shutdown to wh_log, and removes the instance from wh_service_instances.
+  /// Called by WhizbangShutdownService.StopAsync on SIGTERM.
+  /// </summary>
+  Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gathers expensive statistics (COUNT queries) for observability gauges.
+  /// Called periodically (~every 60 ticks), NOT on every tick. Single source of truth
+  /// for queue depth metrics that are too expensive for the hot path.
+  /// </summary>
+  Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Stores inbox messages directly without running the full process_work_batch pipeline.
+  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication,
+  /// bypassing completions, failures, claiming, and return query phases.
+  /// Event storage and perspective creation happen on the next tick when the
+  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// </summary>
+  /// <param name="messages">Inbox messages to store</param>
+  /// <param name="partitionCount">Number of partitions for load balancing</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <docs>operations/workers/transport-consumer</docs>
+  Task StoreInboxMessagesAsync(
+    InboxMessage[] messages,
+    int partitionCount = 2,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Reports perspective cursor completion or failure directly (out-of-band).
   /// This lightweight method ONLY updates the perspective cursor without affecting
   /// heartbeats, work claiming, or other coordination operations.
@@ -424,6 +455,27 @@ public record PerspectiveCursorInfo {
 
 /// <summary>
 /// Result of ProcessWorkBatchAsync containing work that needs processing.
+/// </summary>
+/// <summary>
+/// Statistics gathered periodically for observability gauges.
+/// Contains expensive COUNT-based metrics that are too costly for every-tick measurement.
+/// </summary>
+public record WorkCoordinatorStatistics {
+  /// <summary>Unprocessed perspective events awaiting projection.</summary>
+  public long PendingPerspectiveEvents { get; init; }
+
+  /// <summary>Unprocessed outbox messages awaiting publishing.</summary>
+  public long PendingOutbox { get; init; }
+
+  /// <summary>Unprocessed inbox messages awaiting handling.</summary>
+  public long PendingInbox { get; init; }
+
+  /// <summary>Active streams tracked in wh_active_streams.</summary>
+  public long ActiveStreams { get; init; }
+}
+
+/// <summary>
+/// Contains the results of a work batch poll including work items for this instance to process.
 /// </summary>
 public record WorkBatch {
   /// <summary>
@@ -872,6 +924,14 @@ public record PerspectiveCursorCompletion {
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public int EventsProcessed { get; init; }
+
+  /// <summary>
+  /// Event IDs actually processed by the runner in this batch.
+  /// Used by complete_perspective_cursor_work to mark only these specific events
+  /// as processed, preventing concurrent late-arriving events from being
+  /// incorrectly marked as processed via range-based cursor advancement.
+  /// </summary>
+  public Guid[] ProcessedEventIds { get; init; } = [];
 }
 
 /// <summary>
@@ -904,6 +964,14 @@ public record PerspectiveCursorFailure {
   /// Error message or exception details.
   /// </summary>
   public required string Error { get; init; }
+
+  /// <summary>
+  /// Event IDs actually processed by the runner before the failure occurred.
+  /// Used by complete_perspective_cursor_work to mark only these specific events
+  /// as processed, preventing concurrent late-arriving events from being
+  /// incorrectly marked as processed via range-based cursor advancement.
+  /// </summary>
+  public Guid[] ProcessedEventIds { get; init; } = [];
 }
 
 /// <summary>

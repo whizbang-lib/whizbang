@@ -242,7 +242,8 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
         StreamId = streamId,
         PerspectiveName = "OrderListPerspective",
         LastEventId = eventId3,
-        Status = PerspectiveProcessingStatus.Completed
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = [eventId1, eventId3]
       }],
       PerspectiveFailures: [],
       NewOutboxMessages: [], NewInboxMessages: [],
@@ -258,6 +259,207 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       .Because("Completion should clear rewind_flagged_at");
     await Assert.That(afterFirst.HasValue).IsFalse()
       .Because("Completion should clear rewind_first_flagged_at");
+  }
+
+  #endregion
+
+  #region Completion ProcessedEventIds — Prevents Concurrent Event Over-Marking
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithProcessedEventIds_OnlyMarksSpecificEventsAsync() {
+    // Arrange — reproduces the bulk write concurrency bug:
+    // Events committed later can have UUIDv7 event_ids below the cursor.
+    // complete_perspective_cursor_work must only mark actually-processed events.
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.JobEvent, TestApp", "perspective",
+      "UberPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+
+    // IMPORTANT: Generate "low" IDs first (earlier UUIDv7 = lower values)
+    // These simulate events created by slow handlers that get stored AFTER the "high" events
+    var lowEventId1 = _idProvider.NewGuid();
+    var lowEventId2 = _idProvider.NewGuid();
+    var lowEventId3 = _idProvider.NewGuid();
+
+    // Generate "high" IDs after (later UUIDv7 = higher values)
+    // These simulate events from fast handlers that get stored first
+    var highEventId1 = _idProvider.NewGuid();
+    var highEventId2 = _idProvider.NewGuid();
+
+    // Store batch 1 events (high IDs) via outbox — Phase 4.5 stores to event_store, Phase 4.6A creates perspective_events
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [
+        _createEventOutboxMessage(highEventId1, streamId, "TestApp.Events.JobEvent, TestApp"),
+        _createEventOutboxMessage(highEventId2, streamId, "TestApp.Events.JobEvent, TestApp")
+      ],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Simulate runner having processed batch 1 — set cursor to highEventId2
+    await _updatePerspectiveCursorAsync(streamId, "UberPerspective", lastEventId: highEventId2, status: 2);
+
+    // Late-arriving events with LOW event_ids (created earlier, stored later)
+    // These have event_ids BELOW the cursor
+    await _insertEventStoreRowAsync(lowEventId1, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(lowEventId2, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(lowEventId3, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertPerspectiveEventAsync(streamId, "UberPerspective", lowEventId1);
+    await _insertPerspectiveEventAsync(streamId, "UberPerspective", lowEventId2);
+    await _insertPerspectiveEventAsync(streamId, "UberPerspective", lowEventId3);
+
+    // Act — Complete with ProcessedEventIds containing ONLY the actually-processed events
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "UberPerspective",
+        LastEventId = highEventId2,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = [highEventId1, highEventId2]
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — only the explicitly-listed events should be marked as processed
+    var high1Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", highEventId1);
+    var high2Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", highEventId2);
+    var low1Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", lowEventId1);
+    var low2Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", lowEventId2);
+    var low3Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", lowEventId3);
+
+    await Assert.That(high1Processed).IsTrue()
+      .Because("highEventId1 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(high2Processed).IsTrue()
+      .Because("highEventId2 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(low1Processed).IsFalse()
+      .Because("lowEventId1 was NOT in ProcessedEventIds and should remain unprocessed");
+    await Assert.That(low2Processed).IsFalse()
+      .Because("lowEventId2 was NOT in ProcessedEventIds and should remain unprocessed");
+    await Assert.That(low3Processed).IsFalse()
+      .Because("lowEventId3 was NOT in ProcessedEventIds and should remain unprocessed");
+
+    // Assert — belt-and-suspenders: straggler detection should flag rewind
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "UberPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
+      .Because("Straggler detection should set RewindRequired for unprocessed events below cursor");
+    await Assert.That(triggerEventId).IsNotNull()
+      .Because("rewind_trigger_event_id should point to earliest straggler");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithEmptyProcessedEventIds_MarksNothingAsync() {
+    // Arrange — completion with empty ProcessedEventIds (runner processed 0 events)
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.JobEvent, TestApp", "perspective",
+      "EmptyPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var cursorEventId = _idProvider.NewGuid();
+
+    // Create cursor and an unprocessed perspective_event below it
+    await _insertEventStoreRowAsync(cursorEventId, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(eventId1, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "EmptyPerspective", lastEventId: cursorEventId, status: 2);
+    await _insertPerspectiveEventAsync(streamId, "EmptyPerspective", eventId1);
+
+    // Act — Complete with empty ProcessedEventIds
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "EmptyPerspective",
+        LastEventId = cursorEventId,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = []
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — no events should be marked as processed
+    var event1Processed = await _isPerspectiveEventProcessedAsync(streamId, "EmptyPerspective", eventId1);
+    await Assert.That(event1Processed).IsFalse()
+      .Because("Empty ProcessedEventIds should not mark any events as processed");
+
+    // Assert — rewind should be flagged for the unprocessed event below cursor
+    var (status, _, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "EmptyPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
+      .Because("Straggler detection should flag rewind when unprocessed events exist below cursor");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithAllProcessedEventIds_NoStragglers_NoRewindAsync() {
+    // Arrange — happy path: all perspective_events below cursor are in ProcessedEventIds
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.JobEvent, TestApp", "perspective",
+      "HappyPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+
+    // Store events via outbox — Phase 4.5 stores to event_store, Phase 4.6A creates perspective_events
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [
+        _createEventOutboxMessage(eventId1, streamId, "TestApp.Events.JobEvent, TestApp"),
+        _createEventOutboxMessage(eventId2, streamId, "TestApp.Events.JobEvent, TestApp")
+      ],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Act — Complete with ALL event IDs in ProcessedEventIds
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "HappyPerspective",
+        LastEventId = eventId2,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = [eventId1, eventId2]
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — all events marked as processed
+    var event1Processed = await _isPerspectiveEventProcessedAsync(streamId, "HappyPerspective", eventId1);
+    var event2Processed = await _isPerspectiveEventProcessedAsync(streamId, "HappyPerspective", eventId2);
+    await Assert.That(event1Processed).IsTrue()
+      .Because("eventId1 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(event2Processed).IsTrue()
+      .Because("eventId2 was in ProcessedEventIds and should be marked processed");
+
+    // Assert — no rewind (no stragglers)
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "HappyPerspective");
+    await Assert.That(status & 32).IsEqualTo(0)
+      .Because("No stragglers means no RewindRequired flag");
+    await Assert.That(triggerEventId).IsNull()
+      .Because("No stragglers means no rewind_trigger_event_id");
   }
 
   #endregion
@@ -507,8 +709,8 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     await using var cmd = new NpgsqlCommand("""
-      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-      VALUES (@messageType, @associationType, @targetName, @serviceName, NOW(), NOW())
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (@messageType, @associationType, @targetName, @serviceName, normalize_event_type(@messageType), NOW(), NOW())
       """, connection);
 
     cmd.Parameters.AddWithValue("messageType", messageType);
@@ -561,6 +763,62 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       reader.IsDBNull(1) ? null : reader.GetGuid(1),
       reader.IsDBNull(2) ? null : reader.GetDateTime(2),
       reader.IsDBNull(3) ? null : reader.GetDateTime(3));
+  }
+
+  private async Task _updatePerspectiveCursorAsync(
+      Guid streamId, string perspectiveName, Guid lastEventId, short status) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("""
+      UPDATE wh_perspective_cursors
+      SET last_event_id = @lastEventId, status = @status
+      WHERE stream_id = @streamId AND perspective_name = @perspectiveName
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("lastEventId", lastEventId);
+    cmd.Parameters.AddWithValue("status", status);
+
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task _insertPerspectiveEventAsync(
+      Guid streamId, string perspectiveName, Guid eventId) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("""
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
+      VALUES (gen_random_uuid(), @streamId, @perspectiveName, @eventId, 1, 0, NOW())
+      ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("eventId", eventId);
+
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task<bool> _isPerspectiveEventProcessedAsync(
+      Guid streamId, string perspectiveName, Guid eventId) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("""
+      SELECT processed_at IS NOT NULL
+      FROM wh_perspective_events
+      WHERE stream_id = @streamId AND perspective_name = @perspectiveName AND event_id = @eventId
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("eventId", eventId);
+
+    var result = await cmd.ExecuteScalarAsync();
+    return result is true;
   }
 
   private static OutboxMessage _createEventOutboxMessage(Guid eventId, Guid streamId, string eventType) {
