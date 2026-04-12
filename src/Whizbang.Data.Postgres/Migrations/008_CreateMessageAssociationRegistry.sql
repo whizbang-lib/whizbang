@@ -8,6 +8,14 @@
 -- The reconciliation function is called during startup to sync associations from source generators
 -- with the database, enabling the work coordinator to auto-create checkpoints when events arrive.
 
+-- Ensure normalized_message_type column exists BEFORE function definition (idempotent)
+-- Must precede CREATE FUNCTION because PL/pgSQL validates column references at creation time
+ALTER TABLE wh_message_associations ADD COLUMN IF NOT EXISTS normalized_message_type VARCHAR(500);
+
+-- Index for JOIN performance in Phase 4.6/4.7 (uses normalized_message_type instead of function calls)
+CREATE INDEX IF NOT EXISTS idx_message_associations_normalized_type
+ON wh_message_associations (normalized_message_type, association_type);
+
 -- ============================================================================
 -- register_message_associations Function
 -- ============================================================================
@@ -72,19 +80,21 @@ BEGIN
     AND wma.target_name = ta.target_name
     AND wma.service_name = ta.service_name;
 
-  -- Now perform the upsert
-  INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+  -- Now perform the upsert (including pre-computed normalized_message_type for index-friendly JOINs)
+  INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
   SELECT
     message_type,
     association_type,
     target_name,
     service_name,
+    __SCHEMA__.normalize_event_type(message_type),
     NOW(),
     NOW()
   FROM temp_associations
   ON CONFLICT (message_type, association_type, target_name, service_name)
   DO UPDATE SET
-    updated_at = NOW();
+    updated_at = NOW(),
+    normalized_message_type = __SCHEMA__.normalize_event_type(EXCLUDED.message_type);
 
   -- Calculate inserted count (total - updated)
   SELECT COUNT(*) - v_updated_count INTO v_inserted_count FROM temp_associations;
@@ -111,3 +121,8 @@ $$ LANGUAGE plpgsql;
 
 -- Grant execute permission on function
 GRANT EXECUTE ON FUNCTION register_message_associations(JSONB) TO PUBLIC;
+
+-- Backfill normalized_message_type for existing rows (idempotent — safe to re-run)
+UPDATE wh_message_associations
+SET normalized_message_type = __SCHEMA__.normalize_event_type(message_type)
+WHERE normalized_message_type IS NULL;

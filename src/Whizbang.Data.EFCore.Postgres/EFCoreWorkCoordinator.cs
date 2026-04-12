@@ -722,6 +722,77 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// Creates its own database connection to allow calling after the scoped DbContext is disposed.
   /// </summary>
+  /// <inheritdoc />
+  public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "deregister_instance");
+
+#pragma warning disable S2077
+    var sql = $"SELECT {functionName}({{0}})";
+#pragma warning restore S2077
+
+    await _dbContext.Database.ExecuteSqlRawAsync(sql, [instanceId], cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+
+    var sql = $@"SELECT
+      (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as ""PendingPerspectiveEvents"",
+      (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as ""PendingOutbox"",
+      (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as ""PendingInbox"",
+      (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as ""ActiveStreams""";
+
+    var result = await _dbContext.Database
+      .SqlQueryRaw<WorkCoordinatorStatistics>(sql)
+      .ToListAsync(cancellationToken);
+
+    return result.FirstOrDefault() ?? new WorkCoordinatorStatistics();
+  }
+
+  /// <summary>
+  /// Stores inbox messages directly via store_inbox_messages SQL function.
+  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
+  /// Event storage and perspective creation happen on the next tick when
+  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// </summary>
+  public async Task StoreInboxMessagesAsync(
+    InboxMessage[] messages,
+    int partitionCount = 2,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    var json = _serializeNewInboxMessages(messages);
+    var jsonParam = PostgresJsonHelper.JsonStringToJsonb(json);
+    jsonParam.ParameterName = "p_messages";
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "store_inbox_messages");
+
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    var sql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
+#pragma warning restore S2077
+
+    var now = DateTime.UtcNow;
+
+    await _dbContext.Database.ExecuteSqlRawAsync(
+      sql,
+      [json, now, partitionCount],
+      cancellationToken);
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
@@ -744,7 +815,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await _executeCursorCompletionAsync(
       completion.StreamId, completion.PerspectiveName,
-      completion.LastEventId, (short)completion.Status, null,
+      completion.LastEventId, completion.ProcessedEventIds,
+      (short)completion.Status, null,
       cancellationToken);
 
     await _logCheckpointDiagnosticAsync(completion.StreamId, completion.PerspectiveName, cancellationToken);
@@ -756,6 +828,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   private async Task _executeCursorCompletionAsync(
     Guid streamId, string perspectiveName, Guid lastEventId,
+    Guid[] processedEventIds,
     short status, string? error,
     CancellationToken cancellationToken) {
     var transaction = _dbContext.Database.CurrentTransaction;
@@ -771,13 +844,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DEFAULT_SCHEMA,
         _logger);
       var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{4})
-      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{5})
+      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}::jsonb, {{4}}, {{5}}::text)";
 #pragma warning restore S2077
+
+      // Serialize ProcessedEventIds as JSON string for the JSONB parameter (AOT-safe)
+      var processedEventIdsJson = System.Text.Json.JsonSerializer.Serialize(
+        processedEventIds,
+        _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        [streamId, perspectiveName, lastEventId, status, error!],
+        [streamId, perspectiveName, lastEventId, processedEventIdsJson, status, error!],
         cancellationToken);
 
       if (needsCommit && transaction != null) {
@@ -876,19 +954,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return;
     }
 
-    // Get schema from DbContext configuration for schema-qualified function call
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
-    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{4})
-    var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
-#pragma warning restore S2077
-
-    await _dbContext.Database.ExecuteSqlRawAsync(
-      sql,
-      [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error],
+    await _executeCursorCompletionAsync(
+      failure.StreamId, failure.PerspectiveName,
+      failure.LastEventId, failure.ProcessedEventIds,
+      (short)failure.Status, failure.Error,
       cancellationToken);
   }
 

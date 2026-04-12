@@ -1270,7 +1270,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         StreamId = (Guid)streamId,
         PerspectiveName = "ProductListPerspective",
         LastEventId = (Guid)eventId3,
-        Status = (short)2  // Completed
+        Status = (short)2,  // Completed
+        ProcessedEventIds = new[] { (Guid)eventId1, (Guid)eventId3 }
       }
     };
 
@@ -1296,6 +1297,263 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       .Because("Completion should clear rewind_trigger_event_id to prevent rewind loops");
     await Assert.That(afterCompletion.rewind_flagged_at).IsNull()
       .Because("Completion should clear rewind_flagged_at to reset the debounce window");
+  }
+
+  // Completion ProcessedEventIds — Prevents Concurrent Event Over-Marking
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithProcessedEventIds_OnlyMarksSpecificEventsAsync() {
+    // Arrange — reproduces the bulk write concurrency bug
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "UberPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+
+    // IMPORTANT: Generate "low" IDs first (earlier UUIDv7 = lower values)
+    // These simulate events created by slow handlers that get stored AFTER the "high" events
+    var lowEventId1 = _idProvider.NewGuid();
+    var lowEventId2 = _idProvider.NewGuid();
+    var lowEventId3 = _idProvider.NewGuid();
+
+    // Generate "high" IDs after (later UUIDv7 = higher values)
+    // These simulate events from fast handlers that get stored first
+    var highEventId1 = _idProvider.NewGuid();
+    var highEventId2 = _idProvider.NewGuid();
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store batch 1 events (high IDs) — creates perspective_events
+    var event1Json = _createOutboxEventJson(streamId, highEventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+    var event2Json = _createOutboxEventJson(streamId, highEventId2,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":2}");
+    var event1Array = JsonSerializer.Deserialize<JsonElement[]>(event1Json)!;
+    var event2Array = JsonSerializer.Deserialize<JsonElement[]>(event2Json)!;
+    var batch1Messages = JsonSerializer.Serialize(new[] { event1Array[0], event2Array[0] });
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages = batch1Messages });
+
+    // Simulate runner having processed batch 1 — set cursor to highEventId2
+    await connection.ExecuteAsync(@"
+      UPDATE wh_perspective_cursors
+      SET last_event_id = @lastEventId, status = 2
+      WHERE stream_id = @streamId AND perspective_name = 'UberPerspective'",
+      new { streamId, lastEventId = (Guid)highEventId2 });
+
+    // Insert into event_store and perspective_events directly
+    await _insertEventStoreRowAsync(connection, lowEventId1, streamId,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":3}");
+    await _insertEventStoreRowAsync(connection, lowEventId2, streamId,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":4}");
+    await _insertEventStoreRowAsync(connection, lowEventId3, streamId,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":5}");
+    await _insertPerspectiveEventAsync(connection, streamId, "UberPerspective", lowEventId1);
+    await _insertPerspectiveEventAsync(connection, streamId, "UberPerspective", lowEventId2);
+    await _insertPerspectiveEventAsync(connection, streamId, "UberPerspective", lowEventId3);
+
+    // Act — Complete with ProcessedEventIds containing ONLY batch 1 events
+    var completions = JsonSerializer.Serialize(new[] {
+      new {
+        StreamId = (Guid)streamId,
+        PerspectiveName = "UberPerspective",
+        LastEventId = (Guid)highEventId2,
+        Status = (short)2,
+        ProcessedEventIds = new[] { (Guid)highEventId1, (Guid)highEventId2 }
+      }
+    });
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_perspective_completions := @completions::jsonb
+      )",
+      new { instanceId, now, completions });
+
+    // Assert — only explicitly-listed events should be marked processed
+    var high1Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "UberPerspective", highEventId1);
+    var high2Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "UberPerspective", highEventId2);
+    var low1Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "UberPerspective", lowEventId1);
+    var low2Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "UberPerspective", lowEventId2);
+    var low3Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "UberPerspective", lowEventId3);
+
+    await Assert.That(high1Processed).IsTrue()
+      .Because("highEventId1 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(high2Processed).IsTrue()
+      .Because("highEventId2 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(low1Processed).IsFalse()
+      .Because("lowEventId1 was NOT in ProcessedEventIds and should remain unprocessed");
+    await Assert.That(low2Processed).IsFalse()
+      .Because("lowEventId2 was NOT in ProcessedEventIds and should remain unprocessed");
+    await Assert.That(low3Processed).IsFalse()
+      .Because("lowEventId3 was NOT in ProcessedEventIds and should remain unprocessed");
+
+    // Assert — straggler detection should flag rewind
+    var cursor = await _getPerspectiveCursorAsync(streamId, "UberPerspective");
+    await Assert.That(cursor!.status & 32).IsEqualTo(32)
+      .Because("Straggler detection should set RewindRequired for unprocessed events below cursor");
+    await Assert.That(cursor.rewind_trigger_event_id).IsNotNull()
+      .Because("rewind_trigger_event_id should point to earliest straggler");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithEmptyProcessedEventIds_MarksNothingAsync() {
+    // Arrange — completion with empty ProcessedEventIds
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "EmptyPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var cursorEventId = _idProvider.NewGuid();
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create cursor and an unprocessed perspective_event below it
+    await _insertEventStoreRowAsync(connection, cursorEventId, streamId,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+    await _insertEventStoreRowAsync(connection, eventId1, streamId,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":2}");
+    await _insertPerspectiveCursorAsync(streamId, "EmptyPerspective",
+      lastEventId: cursorEventId, status: 2);
+    await _insertPerspectiveEventAsync(connection, streamId, "EmptyPerspective", eventId1);
+
+    // Act — Complete with empty ProcessedEventIds
+    var completions = JsonSerializer.Serialize(new[] {
+      new {
+        StreamId = (Guid)streamId,
+        PerspectiveName = "EmptyPerspective",
+        LastEventId = (Guid)cursorEventId,
+        Status = (short)2,
+        ProcessedEventIds = Array.Empty<Guid>()
+      }
+    });
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_perspective_completions := @completions::jsonb
+      )",
+      new { instanceId, now, completions });
+
+    // Assert — no events marked as processed
+    var event1Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "EmptyPerspective", eventId1);
+    await Assert.That(event1Processed).IsFalse()
+      .Because("Empty ProcessedEventIds should not mark any events as processed");
+
+    // Assert — rewind should be flagged
+    var cursor = await _getPerspectiveCursorAsync(streamId, "EmptyPerspective");
+    await Assert.That(cursor!.status & 32).IsEqualTo(32)
+      .Because("Straggler detection should flag rewind when unprocessed events exist below cursor");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithAllProcessedEventIds_NoStragglers_NoRewindAsync() {
+    // Arrange — happy path: all events in ProcessedEventIds
+    await _registerMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "HappyPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store events via process_work_batch
+    var event1Json = _createOutboxEventJson(streamId, eventId1,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":1}");
+    var event2Json = _createOutboxEventJson(streamId, eventId2,
+      "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"v\":2}");
+    var event1Array = JsonSerializer.Deserialize<JsonElement[]>(event1Json)!;
+    var event2Array = JsonSerializer.Deserialize<JsonElement[]>(event2Json)!;
+    var batch1Messages = JsonSerializer.Serialize(new[] { event1Array[0], event2Array[0] });
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages = batch1Messages });
+
+    // Act — Complete with ALL event IDs in ProcessedEventIds
+    var completions = JsonSerializer.Serialize(new[] {
+      new {
+        StreamId = (Guid)streamId,
+        PerspectiveName = "HappyPerspective",
+        LastEventId = (Guid)eventId2,
+        Status = (short)2,
+        ProcessedEventIds = new[] { (Guid)eventId1, (Guid)eventId2 }
+      }
+    });
+
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_perspective_completions := @completions::jsonb
+      )",
+      new { instanceId, now, completions });
+
+    // Assert — all events marked as processed
+    var event1Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "HappyPerspective", eventId1);
+    var event2Processed = await _isPerspectiveEventProcessedAsync(connection, streamId, "HappyPerspective", eventId2);
+    await Assert.That(event1Processed).IsTrue()
+      .Because("eventId1 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(event2Processed).IsTrue()
+      .Because("eventId2 was in ProcessedEventIds and should be marked processed");
+
+    // Assert — no rewind (no stragglers)
+    var cursor = await _getPerspectiveCursorAsync(streamId, "HappyPerspective");
+    await Assert.That(cursor!.status & 32).IsEqualTo(0)
+      .Because("No stragglers means no RewindRequired flag");
+    await Assert.That(cursor.rewind_trigger_event_id).IsNull()
+      .Because("No stragglers means no rewind_trigger_event_id");
   }
 
   // Two-tier fair scheduling tests
@@ -1651,8 +1909,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     string serviceName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-      VALUES (@messageType, @associationType, @targetName, @serviceName, NOW(), NOW())",
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (@messageType, @associationType, @targetName, @serviceName, normalize_event_type(@messageType), NOW(), NOW())",
       new { messageType, associationType, targetName, serviceName });
   }
 
@@ -1736,6 +1994,37 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       WHERE stream_id = @streamId",
       new { streamId });
     return [.. results];
+  }
+
+  private static async Task _insertEventStoreRowAsync(
+      System.Data.IDbConnection connection, Guid eventId, Guid streamId, string eventType, string eventData) {
+    var metadata = $$$"""{"MessageId":"{{{eventId}}}","Hops":[]}""";
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type,
+        event_data, metadata, scope, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'TestAggregate', @eventType,
+        @eventData::jsonb, @metadata::jsonb, NULL,
+        (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @streamId), NOW())",
+      new { eventId, streamId, eventType, eventData, metadata });
+  }
+
+  private static async Task _insertPerspectiveEventAsync(
+      System.Data.IDbConnection connection, Guid streamId, string perspectiveName, Guid eventId) {
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
+      VALUES (gen_random_uuid(), @streamId, @perspectiveName, @eventId, 1, 0, NOW())
+      ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING",
+      new { streamId, perspectiveName, eventId });
+  }
+
+  private static async Task<bool> _isPerspectiveEventProcessedAsync(
+      System.Data.IDbConnection connection, Guid streamId, string perspectiveName, Guid eventId) {
+    var result = await connection.QueryFirstOrDefaultAsync<bool?>(@"
+      SELECT processed_at IS NOT NULL
+      FROM wh_perspective_events
+      WHERE stream_id = @streamId AND perspective_name = @perspectiveName AND event_id = @eventId",
+      new { streamId, perspectiveName, eventId });
+    return result == true;
   }
 
   // Lowercase properties match PostgreSQL column names (Dapper maps case-insensitively to record constructor parameters)
