@@ -105,7 +105,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(expectedStreamId)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(expectedStreamId)
       .Because("Valid GUID AggregateId should be extracted from metadata");
   }
 
@@ -159,7 +159,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Empty hops should fall back to MessageId for StreamId");
   }
 
@@ -226,7 +226,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Missing AggregateId key should fall back to MessageId");
   }
 
@@ -553,7 +553,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert - JsonElement payload is not IEvent, so isEvent should be false
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
       .Because("JsonElement payload is not IEvent so runtime check should return false");
   }
 
@@ -827,7 +827,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedHandlerName).IsEqualTo("SimpleCommandHandler")
+    await Assert.That(noOpCoordinator.StoredMessages.Last().HandlerName).IsEqualTo("SimpleCommandHandler")
       .Because("Simple type name without namespace dots should work");
   }
 
@@ -963,7 +963,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert - should not be detected as event since SomeCommand is not in event list
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
       .Because("Message type not in IEventTypeProvider list should not be detected as event");
   }
 
@@ -1024,7 +1024,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Null metadata should fall back to MessageId");
   }
 

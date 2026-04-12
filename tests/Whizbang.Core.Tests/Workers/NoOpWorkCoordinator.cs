@@ -11,6 +11,9 @@ internal sealed class NoOpWorkCoordinator : IWorkCoordinator {
   /// <summary>Number of inbox messages stored via StoreInboxMessagesAsync.</summary>
   public int StoredInboxCount { get; private set; }
 
+  /// <summary>All inbox messages stored via StoreInboxMessagesAsync, for test inspection.</summary>
+  public List<InboxMessage> StoredMessages { get; } = [];
+
   public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) =>
     Task.FromResult(new WorkBatch {
       OutboxWork = [],
@@ -21,6 +24,7 @@ internal sealed class NoOpWorkCoordinator : IWorkCoordinator {
 
   public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
     StoredInboxCount += messages.Length;
+    StoredMessages.AddRange(messages);
     return Task.CompletedTask;
   }
 
