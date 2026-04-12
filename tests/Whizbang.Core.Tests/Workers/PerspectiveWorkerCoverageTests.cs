@@ -191,10 +191,12 @@ public class PerspectiveWorkerCoverageTests {
     var (worker, _, dbCheck) = _createWorker();
     dbCheck.IsReady = false;
 
-    // Act — wait for readiness check to be called (signal-based, not Task.Delay)
+    // Act — wait for enough readiness checks that the main loop has run multiple iterations.
+    // Startup calls IsReadyAsync 2x (processInitialCheckpoints + scanAndRepairRewinds) before
+    // entering the main loop. Wait for 6 total to ensure multiple main-loop increments.
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await dbCheck.WaitForChecksAsync(3, TimeSpan.FromSeconds(10));
+    await dbCheck.WaitForChecksAsync(6, TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
