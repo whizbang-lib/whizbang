@@ -315,6 +315,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -371,6 +372,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -422,6 +424,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -462,6 +465,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -506,6 +510,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -552,6 +557,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -604,6 +610,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -655,6 +662,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -779,6 +787,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -825,6 +834,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -956,6 +966,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();

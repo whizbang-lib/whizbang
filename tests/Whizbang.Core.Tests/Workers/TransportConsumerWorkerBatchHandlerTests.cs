@@ -68,6 +68,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -108,6 +109,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -147,6 +149,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.Configure<RoutingOptions>(opts => { opts.OwnDomains([ownedNamespace]); });
     var sp = services.BuildServiceProvider();
@@ -194,6 +197,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -234,6 +238,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
