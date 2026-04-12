@@ -8,6 +8,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// but where TransportConsumerWorker resolves IWorkCoordinator from DI.
 /// </summary>
 internal sealed class NoOpWorkCoordinator : IWorkCoordinator {
+  /// <summary>Number of inbox messages stored via StoreInboxMessagesAsync.</summary>
+  public int StoredInboxCount { get; private set; }
+
   public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) =>
     Task.FromResult(new WorkBatch {
       OutboxWork = [],
@@ -16,8 +19,10 @@ internal sealed class NoOpWorkCoordinator : IWorkCoordinator {
       SyncInquiryResults = null
     });
 
-  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
-    Task.CompletedTask;
+  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    StoredInboxCount += messages.Length;
+    return Task.CompletedTask;
+  }
 
   public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) =>
     Task.CompletedTask;
