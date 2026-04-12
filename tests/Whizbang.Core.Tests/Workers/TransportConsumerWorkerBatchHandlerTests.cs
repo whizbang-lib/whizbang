@@ -67,8 +67,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var workStrategy = new TrackingBatchWorkStrategy();
 
     var services = new ServiceCollection();
+    var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -91,7 +92,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     cts.Cancel();
 
     // Assert — both messages queued, ONE flush
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(2)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(2)
       .Because("Both messages should be queued for inbox insert");
     await Assert.That(workStrategy.FlushCount).IsEqualTo(1)
       .Because("Exactly one flush for inbox insert — no completion flush (processing deferred)");
@@ -108,8 +109,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var workStrategy = new TrackingBatchWorkStrategy(messageId.Value);
 
     var services = new ServiceCollection();
+    var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -148,8 +150,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var workStrategy = new TrackingBatchWorkStrategy();
 
     var services = new ServiceCollection();
+    var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.Configure<RoutingOptions>(opts => { opts.OwnDomains([ownedNamespace]); });
     var sp = services.BuildServiceProvider();
@@ -177,7 +180,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     cts.Cancel();
 
     // Assert — self-echo should be discarded before inbox insert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(0)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
       .Because("Self-echo messages should be discarded in batch handler");
   }
 
@@ -195,9 +198,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var workStrategy = new TrackingBatchWorkStrategy();
 
+    var noOpCoordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -218,7 +222,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     cts.Cancel();
 
     // Assert — good message should still be processed
-    await Assert.That(workStrategy.QueuedInboxCount).IsGreaterThanOrEqualTo(1)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
       .Because("Good messages should be processed even when another message in the batch fails");
   }
 
@@ -236,9 +240,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var workStrategy = new TrackingBatchWorkStrategy(returnEmptyInboxWork: true);
 
+    var noOpCoordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
 
@@ -256,7 +261,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     cts.Cancel();
 
     // Assert — message queued but no completions (duplicate detected, processing skipped)
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
     await Assert.That(workStrategy.InboxCompletionCount).IsEqualTo(0)
       .Because("Duplicate messages should not be processed");
   }
