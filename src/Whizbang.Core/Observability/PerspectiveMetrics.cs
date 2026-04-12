@@ -60,6 +60,14 @@ public sealed class PerspectiveMetrics {
   /// <summary>Distinct streams per batch.</summary>
   public Histogram<int> BatchStreamGroups { get; }
 
+  // Queue depth (reported periodically, not every tick)
+
+  /// <summary>Pending perspective events awaiting processing (observable gauge, updated periodically).</summary>
+  private long _pendingEventsValue;
+
+  /// <summary>Updates the cached pending events count for the observable gauge.</summary>
+  public void SetPendingEvents(long count) => Interlocked.Exchange(ref _pendingEventsValue, count);
+
   // Rewind
 
   /// <summary>Rewind operations triggered. Tags: perspective_name, has_snapshot.</summary>
@@ -98,6 +106,10 @@ public sealed class PerspectiveMetrics {
     BatchWorkItems = meter.CreateHistogram<int>("whizbang.perspective.batch.work_items", description: "Work items claimed per batch");
     BatchEventCount = meter.CreateHistogram<int>("whizbang.perspective.batch.event_count", description: "Events loaded per batch");
     BatchStreamGroups = meter.CreateHistogram<int>("whizbang.perspective.batch.stream_groups", description: "Distinct streams per batch");
+
+    meter.CreateObservableGauge("whizbang.perspective.pending_events",
+      observeValue: () => Interlocked.Read(ref _pendingEventsValue),
+      description: "Pending perspective events awaiting processing");
 
     Rewinds = meter.CreateCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations triggered");
     RewindDuration = meter.CreateHistogram<double>("whizbang.perspective.rewind.duration", "ms", "Rewind replay duration");

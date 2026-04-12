@@ -201,6 +201,7 @@ public partial class PerspectiveWorker(
 
         await _processWorkBatchAsync(stoppingToken);
         _periodicStaleTrackingCleanup();
+        await _periodicGatherStatisticsAsync(stoppingToken);
       } catch (ObjectDisposedException) {
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -292,6 +293,26 @@ public partial class PerspectiveWorker(
       LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
     }
     return false;
+  }
+
+  private int _statsGaugeCounter;
+
+  private async Task _periodicGatherStatisticsAsync(CancellationToken ct) {
+    // Gather expensive stats every 60 ticks (~60 seconds)
+    // These are COUNT(*) queries that we don't want on the hot path
+    if (++_statsGaugeCounter % 60 != 0) {
+      return;
+    }
+
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var stats = await workCoordinator.GatherStatisticsAsync(ct);
+      _metrics?.SetPendingEvents(stats.PendingPerspectiveEvents);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Don't let gauge failure interrupt the main loop
+      // Swallow — periodic stats gathering is non-critical
+    }
   }
 
   private void _periodicStaleTrackingCleanup() {
@@ -2333,6 +2354,7 @@ internal static partial class PerspectiveStartupScanLog {
     Message = "Error during startup rewind scan — rewinds will be processed during normal polling"
   )]
   internal static partial void LogStartupRewindScanError(ILogger logger, Exception exception);
+
 }
 
 /// <summary>
