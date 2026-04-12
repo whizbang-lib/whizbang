@@ -56,6 +56,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -104,6 +105,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -147,6 +149,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -190,6 +193,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -233,6 +237,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -279,6 +284,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddSingleton<IEventTypeProvider>(new MatchingEventTypeProvider());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -323,6 +329,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddSingleton<IEventTypeProvider>(new MatchingEventTypeProvider());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -378,6 +385,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddSingleton<IPerspectiveRunnerRegistry>(perspectiveRegistry);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -494,6 +502,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -537,6 +546,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -578,6 +588,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -637,6 +648,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -703,6 +715,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();

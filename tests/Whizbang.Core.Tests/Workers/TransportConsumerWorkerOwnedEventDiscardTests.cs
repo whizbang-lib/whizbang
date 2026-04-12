@@ -72,6 +72,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => new NoOpWorkCoordinator());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.Configure<RoutingOptions>(opts => { opts.OwnDomains(ownedDomains); });
     var sp = services.BuildServiceProvider();
