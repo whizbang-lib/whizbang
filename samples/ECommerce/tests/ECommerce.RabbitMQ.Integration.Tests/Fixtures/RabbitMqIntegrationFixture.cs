@@ -732,33 +732,50 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Task.Delay, making the wait deterministic and fast.
   /// </summary>
   private async Task _waitForWorkersReadyAsync(CancellationToken ct) {
+    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
     var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
     var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
     var inventoryPersp = _inventoryHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
     var bffPersp = _bffHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
 
-    bool AllIdle() =>
-      (inventoryPub?.IsIdle ?? true) &&
-      (bffPub?.IsIdle ?? true) &&
-      (inventoryPersp?.IsIdle ?? true) &&
-      (bffPersp?.IsIdle ?? true);
-
-    // Poll for all workers to become idle.
-    // Workers may be doing startup work (initial checkpoints, rewind scans, perspective registry
-    // reconciliation) that keeps them active for several seconds after host startup.
-    var timeout = TimeSpan.FromSeconds(30);
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    while (sw.Elapsed < timeout) {
-      if (AllIdle()) {
-        Console.WriteLine($"[RabbitMqFixture] All workers idle after {sw.ElapsedMilliseconds}ms");
-        return;
-      }
-      await Task.Delay(250, ct);
+    // Wire one-shot idle handlers — signal fires when worker reaches idle after processing
+    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) { tcs.TrySetResult(true); } // re-check after subscribe (race window)
     }
 
-    // Log which workers are still not idle for diagnostics
-    Console.WriteLine($"[RabbitMqFixture] Timeout waiting for idle: invPub={inventoryPub?.IsIdle}, bffPub={bffPub?.IsIdle}, invPersp={inventoryPersp?.IsIdle}, bffPersp={bffPersp?.IsIdle}");
-    throw new TimeoutException("Workers did not become idle within 30 seconds");
+    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
+      if (w is null) { tcs.TrySetResult(true); return; }
+      if (w.IsIdle) { tcs.TrySetResult(true); return; }
+      WorkProcessingIdleHandler? h = null;
+      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      w.OnWorkProcessingIdle += h;
+      if (w.IsIdle) { tcs.TrySetResult(true); }
+    }
+
+    WireOnce(inventoryPub, tcsInventoryPub);
+    WireOnce(bffPub, tcsBffPub);
+    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
+    WirePerspOnce(bffPersp, tcsBffPersp);
+
+    // Wait for all 4 workers to signal idle (safety-net timeout prevents hang)
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(30000);
+    await Task.WhenAll(
+      tcsInventoryPub.Task,
+      tcsBffPub.Task,
+      tcsInventoryPersp.Task,
+      tcsBffPersp.Task
+    ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout), ct);
+
+    Console.WriteLine("[RabbitMqFixture] All workers idle");
   }
 
   /// <summary>
