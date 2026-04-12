@@ -223,9 +223,9 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     cts.Cancel();
 
-    // Assert - message was dropped without exception propagation
-    await Assert.That(workStrategy.QueueCallCount).IsEqualTo(1)
-      .Because("Message should reach QueueInboxMessage before ObjectDisposedException");
+    // Assert - message was stored via StoreInboxMessagesAsync (QueueInboxMessage no longer called)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("Message should be stored via StoreInboxMessagesAsync");
   }
 
   [Test]
@@ -319,7 +319,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - isEvent should be true
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsTrue()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsTrue()
       .Because("Message type matching IEventTypeProvider event types should set isEvent=true");
   }
 
@@ -707,7 +707,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - should fall back to MessageId since empty string is not a valid GUID
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Empty string AggregateId should fall back to MessageId");
   }
 
@@ -754,7 +754,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - no scope deltas on hops means scope should be null
-    await Assert.That(workStrategy.LastQueuedScope).IsNull()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().Scope).IsNull()
       .Because("Envelope with no scope deltas should result in null Scope");
   }
 

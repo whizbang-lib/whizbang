@@ -209,7 +209,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     cts.Cancel();
 
     // Assert - isEvent should be true (runtime check: payload is IEvent)
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsTrue()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsTrue()
       .Because("Without IEventTypeProvider, fallback to 'payload is IEvent' should detect events");
   }
 
@@ -272,7 +272,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     cts.Cancel();
 
     // Assert - isEvent should be false (runtime check: payload is not IEvent)
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
       .Because("Non-IEvent payload without IEventTypeProvider should set isEvent=false");
   }
 
