@@ -180,15 +180,15 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _bffHost.StartAsync(ct);
     Console.WriteLine("[RabbitMqFixture] BFF host started");
 
-    // Wait for workers to complete startup and first poll cycle.
-    // Workers may take several seconds for initial checkpoints, rewind scans, and registry reconciliation.
+    // Wait for workers to complete startup (initial checkpoints, rewind scan, registry reconciliation).
+    // The BFF PerspectiveWorker may not reach idle during startup due to background work
+    // (e.g. perspective registry reconciliation, table statistics collection).
+    // Tests use CleanupDatabaseAsync which also waits before each test.
     Console.WriteLine("[RabbitMqFixture] Waiting for workers to become ready...");
     try {
       await _waitForWorkersReadyAsync(ct);
     } catch (TimeoutException) {
-      // Workers may still be doing startup work — this is OK for initialization.
-      // Tests use CleanupDatabaseAsync which also waits for idle before each test.
-      Console.WriteLine("[RabbitMqFixture] Workers did not reach idle during init (startup work in progress) — continuing");
+      Console.WriteLine("[RabbitMqFixture] Some workers still active during init — continuing");
     }
     Console.WriteLine("[RabbitMqFixture] Workers ready");
 
@@ -221,8 +221,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
     // 1. Wait for workers to drain any in-flight messages from the previous test FIRST.
     // This prevents truncating data that workers are still processing.
-    // If workers don't become idle (e.g., startup work still in progress), proceed anyway —
-    // the database truncation below resets all work state.
+    // If idle wait times out (e.g., BFF PerspectiveWorker startup work), proceed —
+    // the database truncation below resets all state.
     try {
       await _waitForWorkersReadyAsync(cancellationToken);
     } catch (TimeoutException) {
