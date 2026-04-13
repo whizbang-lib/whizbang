@@ -25,7 +25,18 @@
 --   normalize_event_type('ECommerce.Events.ProductCreated, ECommerce.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null')
 --     => 'ECommerce.Events.ProductCreated, ECommerce.Contracts'
 -- ======================================================================================
-DROP FUNCTION IF EXISTS __SCHEMA__.normalize_event_type;
+DO $$
+DECLARE _oid oid;
+BEGIN
+  FOR _oid IN
+    SELECT p.oid FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE p.proname = 'normalize_event_type' AND n.nspname = current_schema()
+  LOOP
+    EXECUTE format('DROP FUNCTION IF EXISTS %s', _oid::regprocedure);
+  END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.normalize_event_type(type_name TEXT)
 RETURNS TEXT AS $$
@@ -55,7 +66,18 @@ COMMENT ON FUNCTION __SCHEMA__.normalize_event_type IS 'Defensively normalizes .
 -- "Namespace.TypeName, MyAssembly, Version=1.0.0.0, ..." => "MyAssembly"
 -- Used for fuzzy type matching in Phase 4.6/4.7 to compare types across assemblies.
 -- ======================================================================================
-DROP FUNCTION IF EXISTS __SCHEMA__.normalize_assembly_name;
+DO $$
+DECLARE _oid oid;
+BEGIN
+  FOR _oid IN
+    SELECT p.oid FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE p.proname = 'normalize_assembly_name' AND n.nspname = current_schema()
+  LOOP
+    EXECUTE format('DROP FUNCTION IF EXISTS %s', _oid::regprocedure);
+  END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.normalize_assembly_name(type_name TEXT)
 RETURNS TEXT AS $$
