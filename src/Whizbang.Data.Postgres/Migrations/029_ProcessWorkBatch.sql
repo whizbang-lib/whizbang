@@ -53,7 +53,10 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   p_stale_threshold_seconds INTEGER DEFAULT 600,
 
   -- Sync inquiries (for perspective sync awaiter)
-  p_sync_inquiries JSONB DEFAULT '[]'::JSONB
+  p_sync_inquiries JSONB DEFAULT '[]'::JSONB,
+
+  -- Perspective drain mode: maximum messages to claim per tick (NULL = use wh_settings default)
+  p_max_perspective_messages INTEGER DEFAULT NULL
 ) RETURNS TABLE(
   -- Heartbeat results
   instance_rank INTEGER,
@@ -129,6 +132,11 @@ BEGIN
   INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, p_stale_threshold_seconds, v_tier1_budget_percent
   FROM wh_settings
   WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
+
+  -- Override max_work_items from caller parameter if provided (drain mode)
+  IF p_max_perspective_messages IS NOT NULL THEN
+    v_max_work_items := p_max_perspective_messages;
+  END IF;
 
   -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
   v_tier1_max := (v_max_work_items * v_tier1_budget_percent) / 100;
@@ -552,13 +560,14 @@ BEGIN
     p_now
   ) AS cor;
 
-  -- Claim orphaned perspective events and track
+  -- Claim orphaned perspective events and track (full-stream capture with message budget)
   INSERT INTO temp_orphaned_perspective_events (event_work_id, stream_id, perspective_name)
   SELECT cope.event_work_id, cope.stream_id, cope.perspective_name
   FROM __SCHEMA__.claim_orphaned_perspective_events(
     p_instance_id,
     v_lease_expiry,
-    p_now
+    p_now,
+    v_max_work_items  -- Pass message budget (overridden by p_max_perspective_messages if set)
   ) AS cope;
 
   -- ========================================

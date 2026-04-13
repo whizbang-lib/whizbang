@@ -4,6 +4,8 @@
 --              Returns event work IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-021 (requires wh_perspective_events table from migration 009)
 
+SELECT __SCHEMA__.drop_all_overloads('store_perspective_events');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_perspective_events(
   p_events JSONB,
   p_instance_id UUID,
