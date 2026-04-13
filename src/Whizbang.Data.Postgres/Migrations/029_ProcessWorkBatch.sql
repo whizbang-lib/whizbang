@@ -7,8 +7,19 @@
 --              Uses log_event() function for tracking idempotent event conflicts.
 -- Dependencies: 009-028 (foundation, completion, failure, storage, cleanup, claiming functions, and error tracking)
 
--- Drop old monolithic version from migration 007 (different signature)
-DROP FUNCTION IF EXISTS __SCHEMA__.process_work_batch CASCADE;
+-- Drop ALL overloads to prevent ambiguous function name errors on deployment
+DO $$
+DECLARE _oid oid;
+BEGIN
+  FOR _oid IN
+    SELECT p.oid FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE p.proname = 'process_work_batch' AND n.nspname = current_schema()
+  LOOP
+    EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', _oid::regprocedure);
+  END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   -- Instance identification
