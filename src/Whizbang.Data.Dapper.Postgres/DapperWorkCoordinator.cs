@@ -453,18 +453,69 @@ public partial class DapperWorkCoordinator(
   /// Reports perspective cursor completion directly (out-of-band).
   /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// </summary>
+  /// <inheritdoc />
+  public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync("SELECT deregister_instance(@instanceId)", new { instanceId });
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.QuerySingleAsync<WorkCoordinatorStatistics>(@"
+      SELECT
+        (SELECT COUNT(*) FROM wh_perspective_events WHERE processed_at IS NULL) as PendingPerspectiveEvents,
+        (SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NULL) as PendingOutbox,
+        (SELECT COUNT(*) FROM wh_inbox WHERE processed_at IS NULL) as PendingInbox,
+        (SELECT COUNT(*) FROM wh_active_streams) as ActiveStreams");
+  }
+
+  /// <summary>
+  /// Stores inbox messages directly via store_inbox_messages SQL function.
+  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
+  /// </summary>
+  public async Task StoreInboxMessagesAsync(
+    InboxMessage[] messages,
+    int partitionCount = 2,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var json = _serializeNewInboxMessages(messages);
+    var now = DateTimeOffset.UtcNow;
+
+    await connection.ExecuteAsync(
+      "SELECT * FROM store_inbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
+      new {
+        messages = json,
+        now,
+        partitionCount
+      });
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
+    var processedEventIdsJson = JsonSerializer.Serialize(
+      completion.ProcessedEventIds,
+      _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
       new {
         StreamId = completion.StreamId,
         PerspectiveName = completion.PerspectiveName,
         LastEventId = completion.LastEventId,
+        ProcessedEventIds = processedEventIdsJson,
         Status = (short)completion.Status,
         Error = (string?)null
       });
@@ -480,12 +531,17 @@ public partial class DapperWorkCoordinator(
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
+    var processedEventIdsJson = JsonSerializer.Serialize(
+      failure.ProcessedEventIds,
+      _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
       new {
         StreamId = failure.StreamId,
         PerspectiveName = failure.PerspectiveName,
         LastEventId = failure.LastEventId,
+        ProcessedEventIds = processedEventIdsJson,
         Status = (short)failure.Status,
         Error = failure.Error
       });

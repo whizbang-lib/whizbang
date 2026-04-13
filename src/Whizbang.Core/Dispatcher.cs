@@ -3454,10 +3454,10 @@ public abstract partial class Dispatcher(
     };
     envelope.AddHop(hop);
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Destination={Destination}", destination);
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Queueing event {EventType} with destination '{Destination}'",
+        eventType.Name, destination);
       CascadeLogger.LogDebug("[TRACE] PublishToOutboxAsync: TraceParent={TraceParent}, HasActivity={HasActivity}",
         hop.TraceParent ?? "(null)", System.Diagnostics.Activity.Current is not null);
     }
@@ -3504,7 +3504,7 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
 
     // Flush strategy to execute the batch
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var outboxCount = workBatch.OutboxWork.Count;
@@ -3514,7 +3514,12 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Successfully queued event {EventType} via work coordinator",
+        eventType.Name);
+    }
+#pragma warning restore CA1848
   }
 
   /// <summary>
@@ -3559,7 +3564,7 @@ public abstract partial class Dispatcher(
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
       strategy.QueueOutboxMessage(newOutboxMessage);
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
         await asyncDisposable.DisposeAsync();
@@ -3838,7 +3843,7 @@ public abstract partial class Dispatcher(
       strategy.QueueOutboxMessage(newOutboxMessage);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
@@ -3924,7 +3929,7 @@ public abstract partial class Dispatcher(
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -3990,7 +3995,7 @@ public abstract partial class Dispatcher(
       }
 
       // Flush ONCE for all messages
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
 
     } finally {
       // Dispose scope asynchronously

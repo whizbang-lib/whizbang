@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Dapper;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -14,17 +13,12 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Tests for Phase 4.6B out-of-order detection in auto-created perspective events.
-/// Verifies that process_work_batch sets RewindRequired flag when perspective events
-/// are created for events that the cursor has already advanced past.
-///
-/// These tests go through the real EFCore work coordinator path (C# → SQL),
-/// reproducing the exact code path that runs in production.
-///
-/// Bug scenario: Runner reads ahead from wh_event_store, advancing the cursor.
-/// Later ticks create perspective events for those same events via Phase 4.6.
-/// Without Phase 4.6B, these events sit stuck forever in wh_perspective_events.
+/// Tests for Phase 4.6B out-of-order detection, debounce, and completion cleanup.
+/// Goes through the real EFCore work coordinator path (C# → SQL).
+/// Uses raw NpgsqlCommand for setup/verification — no Dapper dependency.
 /// </summary>
+/// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql</tests>
+/// <tests>src/Whizbang.Data.Postgres/Migrations/005_CreateCompletePerspectiveCheckpointFunction.sql</tests>
 public class EFCoreRewindDetectionTests : EFCoreTestBase {
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _sut = null!;
   private Guid _instanceId;
@@ -39,255 +33,805 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
     await Task.CompletedTask;
   }
 
+  #region Phase 4.6B Out-of-Order Detection
+
   [Test]
   public async Task ProcessWorkBatch_WithOutOfOrderEvent_SetsRewindRequiredOnCursorAsync() {
-    // Arrange - Register perspective association
-    await RegisterMessageAssociationAsync(
-      "TestApp.Events.OrderCreatedEvent, TestApp",
-      "perspective",
-      "OrderListPerspective",
-      "TestService");
+    // Arrange
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
 
     var streamId = _idProvider.NewGuid();
-    // UUID7: eventId1 < eventId2 < eventId3 (time-ordered)
     var eventId1 = _idProvider.NewGuid();
     var eventId2 = _idProvider.NewGuid();
     var eventId3 = _idProvider.NewGuid();
 
-    // Only pre-insert the cursor's event in event_store (FK constraint requires it).
-    // Do NOT pre-insert eventId1 — it must flow through Phase 4.5A to be tracked
-    // in v_stored_outbox_events so Phase 4.6 creates the perspective event.
-    await InsertEventStoreRowAsync(eventId3, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(eventId3, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "OrderListPerspective", lastEventId: eventId3, status: 2);
 
-    // Pre-create cursor that has already advanced to eventId3
-    // (simulates runner having read ahead from wh_event_store)
-    await InsertPerspectiveCursorAsync(streamId, "OrderListPerspective",
-      lastEventId: eventId3, status: 2);
-
-    // Act - Send an event with eventId1 (OLDER than cursor's last_event_id)
-    // Goes through real C# → SQL path: EFCoreWorkCoordinator → process_work_batch
-    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
-      _instanceId,
-      "TestService",
-      "test-host",
-      12345,
-      Metadata: null,
-      OutboxCompletions: [],
-      OutboxFailures: [],
-      InboxCompletions: [],
-      InboxFailures: [],
-      ReceptorCompletions: [],
-      ReceptorFailures: [],
-      PerspectiveCompletions: [],
-      PerspectiveFailures: [],
-      NewOutboxMessages: [CreateEventOutboxMessage(eventId1, streamId,
-        "TestApp.Events.OrderCreatedEvent, TestApp")],
-      NewInboxMessages: [],
-      RenewOutboxLeaseIds: [],
-      RenewInboxLeaseIds: [],
+    // Act
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [_createEventOutboxMessage(eventId1, streamId, "TestApp.Events.OrderCreatedEvent, TestApp")],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Assert - Cursor should have RewindRequired flag set (bit 5 = 32)
-    var cursor = await GetPerspectiveCursorAsync(streamId, "OrderListPerspective");
-    await Assert.That(cursor).IsNotNull();
-    await Assert.That(cursor!.Status & 32).IsEqualTo(32)
+    // Assert
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "OrderListPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
       .Because("Phase 4.6B should detect out-of-order event and set RewindRequired flag");
-    await Assert.That(cursor.RewindTriggerEventId).IsEqualTo(eventId1)
+    await Assert.That(triggerEventId).IsEqualTo(eventId1)
       .Because("rewind_trigger_event_id should be set to the out-of-order event");
   }
 
   [Test]
   public async Task ProcessWorkBatch_WithInOrderEvent_DoesNotSetRewindRequiredAsync() {
     // Arrange
-    await RegisterMessageAssociationAsync(
-      "TestApp.Events.OrderCreatedEvent, TestApp",
-      "perspective",
-      "OrderListPerspective",
-      "TestService");
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
 
     var streamId = _idProvider.NewGuid();
     var eventId1 = _idProvider.NewGuid();
     var eventId2 = _idProvider.NewGuid();
 
-    // Only pre-insert cursor's event in event_store (FK constraint)
-    await InsertEventStoreRowAsync(eventId1, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(eventId1, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "OrderListPerspective", lastEventId: eventId1, status: 2);
 
-    // Cursor at eventId1
-    await InsertPerspectiveCursorAsync(streamId, "OrderListPerspective",
-      lastEventId: eventId1, status: 2);
-
-    // Act - Send eventId2 (> eventId1, in order)
+    // Act
     await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
-      _instanceId,
-      "TestService",
-      "test-host",
-      12345,
-      Metadata: null,
-      OutboxCompletions: [],
-      OutboxFailures: [],
-      InboxCompletions: [],
-      InboxFailures: [],
-      ReceptorCompletions: [],
-      ReceptorFailures: [],
-      PerspectiveCompletions: [],
-      PerspectiveFailures: [],
-      NewOutboxMessages: [CreateEventOutboxMessage(eventId2, streamId,
-        "TestApp.Events.OrderCreatedEvent, TestApp")],
-      NewInboxMessages: [],
-      RenewOutboxLeaseIds: [],
-      RenewInboxLeaseIds: [],
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [_createEventOutboxMessage(eventId2, streamId, "TestApp.Events.OrderCreatedEvent, TestApp")],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Assert - No rewind for in-order events
-    var cursor = await GetPerspectiveCursorAsync(streamId, "OrderListPerspective");
-    await Assert.That(cursor!.Status & 32).IsEqualTo(0)
+    // Assert
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "OrderListPerspective");
+    await Assert.That(status & 32).IsEqualTo(0)
       .Because("In-order events should NOT set RewindRequired");
-    await Assert.That(cursor.RewindTriggerEventId).IsNull()
+    await Assert.That(triggerEventId).IsNull()
       .Because("rewind_trigger_event_id should remain NULL");
   }
 
   [Test]
   public async Task ProcessWorkBatch_RealLifeOrchestrationScenario_SetsRewindOnLateEventsAsync() {
-    // Arrange - Reproduces the exact production bug:
-    // 1. Orchestration starts → first batch creates perspective event → runner reads ahead
-    // 2. Fan-out produces many events in later batches
-    // 3. Phase 4.6 creates perspective events for late-arriving events
-    // 4. These are behind the cursor → should trigger rewind
-
-    await RegisterMessageAssociationAsync(
-      "TestApp.Events.OrchestrationStartedEvent, TestApp",
-      "perspective",
-      "OrchestrationPerspective",
-      "TestService");
-
-    await RegisterMessageAssociationAsync(
-      "TestApp.Events.ItemProcessedEvent, TestApp",
-      "perspective",
-      "OrchestrationPerspective",
-      "TestService");
+    // Arrange
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrchestrationStartedEvent, TestApp", "perspective",
+      "OrchestrationPerspective", "TestService");
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.ItemProcessedEvent, TestApp", "perspective",
+      "OrchestrationPerspective", "TestService");
 
     var streamId = _idProvider.NewGuid();
-
-    // Simulate: first batch stores the started event
     var startedEventId = _idProvider.NewGuid();
-
-    // Simulate: fan-out produces 5 item events (UUID7, so all > startedEventId)
-    var itemEventIds = Enumerable.Range(0, 5)
-      .Select(_ => _idProvider.NewGuid())
-      .ToArray();
-
-    // Only pre-insert the LAST event for cursor FK constraint.
-    // The early events must flow through Phase 4.5A → Phase 4.6 → Phase 4.6B.
+    var itemEventIds = Enumerable.Range(0, 5).Select(_ => _idProvider.NewGuid()).ToArray();
     var lastItemEventId = itemEventIds[^1];
-    await InsertEventStoreRowAsync(lastItemEventId, streamId,
-      "TestApp.Events.ItemProcessedEvent, TestApp", "{}");
 
-    // Simulate: runner read ahead from event_store and processed everything
-    // Cursor is now at the LAST item event
-    await InsertPerspectiveCursorAsync(streamId, "OrchestrationPerspective",
-      lastEventId: lastItemEventId, status: 2);
+    await _insertEventStoreRowAsync(lastItemEventId, streamId, "TestApp.Events.ItemProcessedEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "OrchestrationPerspective", lastEventId: lastItemEventId, status: 2);
 
-    // Act - Later tick: Phase 4.6 would create perspective events for earlier items
-    // We simulate by sending the EARLIER item events through process_work_batch
-    var lateOutboxMessages = itemEventIds[..3]  // First 3 items (all < cursor)
-      .Select(id => CreateEventOutboxMessage(id, streamId,
-        "TestApp.Events.ItemProcessedEvent, TestApp"))
+    // Act — send 3 earlier items (all < cursor)
+    var lateOutboxMessages = itemEventIds[..3]
+      .Select(id => _createEventOutboxMessage(id, streamId, "TestApp.Events.ItemProcessedEvent, TestApp"))
       .ToArray();
 
     await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
-      _instanceId,
-      "TestService",
-      "test-host",
-      12345,
-      Metadata: null,
-      OutboxCompletions: [],
-      OutboxFailures: [],
-      InboxCompletions: [],
-      InboxFailures: [],
-      ReceptorCompletions: [],
-      ReceptorFailures: [],
-      PerspectiveCompletions: [],
-      PerspectiveFailures: [],
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
       NewOutboxMessages: lateOutboxMessages,
-      NewInboxMessages: [],
-      RenewOutboxLeaseIds: [],
-      RenewInboxLeaseIds: [],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Assert - Cursor should have RewindRequired flag, trigger at earliest late event
-    var cursor = await GetPerspectiveCursorAsync(streamId, "OrchestrationPerspective");
-    await Assert.That(cursor!.Status & 32).IsEqualTo(32)
+    // Assert
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "OrchestrationPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
       .Because("Late perspective events from fan-out should trigger rewind");
-    await Assert.That(cursor.RewindTriggerEventId).IsEqualTo(itemEventIds[0])
+    await Assert.That(triggerEventId).IsEqualTo(itemEventIds[0])
       .Because("rewind_trigger_event_id should be the earliest late event");
   }
 
-  // Helper methods
+  #endregion
 
-  private async Task InsertEventStoreRowAsync(
-      Guid eventId, Guid streamId, string eventType, string eventData) {
+  #region Debounce
+
+  [Test]
+  public async Task ProcessWorkBatch_Debounce_SlidingWindowHoldsBackEventsAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await _insertEventStoreRowAsync(eventId3, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "OrderListPerspective", lastEventId: eventId3, status: 2);
+
+    // Act 1 — Store late event → flags cursor
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [_createEventOutboxMessage(eventId1, streamId, "TestApp.Events.OrderCreatedEvent, TestApp")],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — both timestamps set
+    var (status, _, flaggedAt, firstFlaggedAt) = await _getPerspectiveCursorRewindStateAsync(streamId, "OrderListPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
+      .Because("RewindRequired should be set");
+    await Assert.That(flaggedAt.HasValue).IsTrue()
+      .Because("Sliding window edge should be set");
+    await Assert.That(firstFlaggedAt.HasValue).IsTrue()
+      .Because("Max cap anchor should be set");
+
+    // Act 2 — Next batch within window: zero perspective work
+    var result2 = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    await Assert.That(result2.PerspectiveWork).Count().IsEqualTo(0)
+      .Because("Debounce should hold back perspective events within the sliding window");
+  }
+
+  #endregion
+
+  #region Completion Cleanup
+
+  [Test]
+  public async Task ProcessWorkBatch_Completion_ClearsAllRewindColumnsAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await _insertEventStoreRowAsync(eventId3, streamId, "TestApp.Events.OrderCreatedEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "OrderListPerspective", lastEventId: eventId3, status: 2);
+
+    // Flag cursor
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [_createEventOutboxMessage(eventId1, streamId, "TestApp.Events.OrderCreatedEvent, TestApp")],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Verify flags set
+    var (beforeStatus, beforeTrigger, beforeFlagged, beforeFirst) =
+      await _getPerspectiveCursorRewindStateAsync(streamId, "OrderListPerspective");
+    await Assert.That(beforeTrigger.HasValue).IsTrue();
+    await Assert.That(beforeFlagged.HasValue).IsTrue();
+    await Assert.That(beforeFirst.HasValue).IsTrue();
+
+    // Act — Complete cursor (simulating successful rewind)
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "OrderListPerspective",
+        LastEventId = eventId3,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = [eventId1, eventId3]
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — all rewind columns cleared
+    var (_, afterTrigger, afterFlagged, afterFirst) =
+      await _getPerspectiveCursorRewindStateAsync(streamId, "OrderListPerspective");
+    await Assert.That(afterTrigger).IsNull()
+      .Because("Completion should clear rewind_trigger_event_id");
+    await Assert.That(afterFlagged.HasValue).IsFalse()
+      .Because("Completion should clear rewind_flagged_at");
+    await Assert.That(afterFirst.HasValue).IsFalse()
+      .Because("Completion should clear rewind_first_flagged_at");
+  }
+
+  #endregion
+
+  #region Completion ProcessedEventIds — Prevents Concurrent Event Over-Marking
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithProcessedEventIds_OnlyMarksSpecificEventsAsync() {
+    // Arrange — reproduces the bulk write concurrency bug:
+    // Events committed later can have UUIDv7 event_ids below the cursor.
+    // complete_perspective_cursor_work must only mark actually-processed events.
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.JobEvent, TestApp", "perspective",
+      "UberPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+
+    // IMPORTANT: Generate "low" IDs first (earlier UUIDv7 = lower values)
+    // These simulate events created by slow handlers that get stored AFTER the "high" events
+    var lowEventId1 = _idProvider.NewGuid();
+    var lowEventId2 = _idProvider.NewGuid();
+    var lowEventId3 = _idProvider.NewGuid();
+
+    // Generate "high" IDs after (later UUIDv7 = higher values)
+    // These simulate events from fast handlers that get stored first
+    var highEventId1 = _idProvider.NewGuid();
+    var highEventId2 = _idProvider.NewGuid();
+
+    // Store batch 1 events (high IDs) via outbox — Phase 4.5 stores to event_store, Phase 4.6A creates perspective_events
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [
+        _createEventOutboxMessage(highEventId1, streamId, "TestApp.Events.JobEvent, TestApp"),
+        _createEventOutboxMessage(highEventId2, streamId, "TestApp.Events.JobEvent, TestApp")
+      ],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Simulate runner having processed batch 1 — set cursor to highEventId2
+    await _updatePerspectiveCursorAsync(streamId, "UberPerspective", lastEventId: highEventId2, status: 2);
+
+    // Late-arriving events with LOW event_ids (created earlier, stored later)
+    // These have event_ids BELOW the cursor
+    await _insertEventStoreRowAsync(lowEventId1, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(lowEventId2, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(lowEventId3, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertPerspectiveEventAsync(streamId, "UberPerspective", lowEventId1);
+    await _insertPerspectiveEventAsync(streamId, "UberPerspective", lowEventId2);
+    await _insertPerspectiveEventAsync(streamId, "UberPerspective", lowEventId3);
+
+    // Act — Complete with ProcessedEventIds containing ONLY the actually-processed events
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "UberPerspective",
+        LastEventId = highEventId2,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = [highEventId1, highEventId2]
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — only the explicitly-listed events should be marked as processed
+    var high1Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", highEventId1);
+    var high2Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", highEventId2);
+    var low1Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", lowEventId1);
+    var low2Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", lowEventId2);
+    var low3Processed = await _isPerspectiveEventProcessedAsync(streamId, "UberPerspective", lowEventId3);
+
+    await Assert.That(high1Processed).IsTrue()
+      .Because("highEventId1 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(high2Processed).IsTrue()
+      .Because("highEventId2 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(low1Processed).IsFalse()
+      .Because("lowEventId1 was NOT in ProcessedEventIds and should remain unprocessed");
+    await Assert.That(low2Processed).IsFalse()
+      .Because("lowEventId2 was NOT in ProcessedEventIds and should remain unprocessed");
+    await Assert.That(low3Processed).IsFalse()
+      .Because("lowEventId3 was NOT in ProcessedEventIds and should remain unprocessed");
+
+    // Assert — belt-and-suspenders: straggler detection should flag rewind
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "UberPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
+      .Because("Straggler detection should set RewindRequired for unprocessed events below cursor");
+    await Assert.That(triggerEventId).IsNotNull()
+      .Because("rewind_trigger_event_id should point to earliest straggler");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithEmptyProcessedEventIds_MarksNothingAsync() {
+    // Arrange — completion with empty ProcessedEventIds (runner processed 0 events)
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.JobEvent, TestApp", "perspective",
+      "EmptyPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var cursorEventId = _idProvider.NewGuid();
+
+    // Create cursor and an unprocessed perspective_event below it
+    await _insertEventStoreRowAsync(cursorEventId, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertEventStoreRowAsync(eventId1, streamId, "TestApp.Events.JobEvent, TestApp", "{}");
+    await _insertPerspectiveCursorAsync(streamId, "EmptyPerspective", lastEventId: cursorEventId, status: 2);
+    await _insertPerspectiveEventAsync(streamId, "EmptyPerspective", eventId1);
+
+    // Act — Complete with empty ProcessedEventIds
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "EmptyPerspective",
+        LastEventId = cursorEventId,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = []
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — no events should be marked as processed
+    var event1Processed = await _isPerspectiveEventProcessedAsync(streamId, "EmptyPerspective", eventId1);
+    await Assert.That(event1Processed).IsFalse()
+      .Because("Empty ProcessedEventIds should not mark any events as processed");
+
+    // Assert — rewind should be flagged for the unprocessed event below cursor
+    var (status, _, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "EmptyPerspective");
+    await Assert.That(status & 32).IsEqualTo(32)
+      .Because("Straggler detection should flag rewind when unprocessed events exist below cursor");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_CompletionWithAllProcessedEventIds_NoStragglers_NoRewindAsync() {
+    // Arrange — happy path: all perspective_events below cursor are in ProcessedEventIds
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.JobEvent, TestApp", "perspective",
+      "HappyPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+
+    // Store events via outbox — Phase 4.5 stores to event_store, Phase 4.6A creates perspective_events
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [
+        _createEventOutboxMessage(eventId1, streamId, "TestApp.Events.JobEvent, TestApp"),
+        _createEventOutboxMessage(eventId2, streamId, "TestApp.Events.JobEvent, TestApp")
+      ],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Act — Complete with ALL event IDs in ProcessedEventIds
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "HappyPerspective",
+        LastEventId = eventId2,
+        Status = PerspectiveProcessingStatus.Completed,
+        ProcessedEventIds = [eventId1, eventId2]
+      }],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [], NewInboxMessages: [],
+      RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — all events marked as processed
+    var event1Processed = await _isPerspectiveEventProcessedAsync(streamId, "HappyPerspective", eventId1);
+    var event2Processed = await _isPerspectiveEventProcessedAsync(streamId, "HappyPerspective", eventId2);
+    await Assert.That(event1Processed).IsTrue()
+      .Because("eventId1 was in ProcessedEventIds and should be marked processed");
+    await Assert.That(event2Processed).IsTrue()
+      .Because("eventId2 was in ProcessedEventIds and should be marked processed");
+
+    // Assert — no rewind (no stragglers)
+    var (status, triggerEventId, _, _) = await _getPerspectiveCursorRewindStateAsync(streamId, "HappyPerspective");
+    await Assert.That(status & 32).IsEqualTo(0)
+      .Because("No stragglers means no RewindRequired flag");
+    await Assert.That(triggerEventId).IsNull()
+      .Because("No stragglers means no rewind_trigger_event_id");
+  }
+
+  #endregion
+
+  #region Two-Tier Fair Scheduling
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_SmallStreamServedBeforeLargeStreamAsync() {
+    // Arrange
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var smallStreamId = _idProvider.NewGuid();
+    var largeStreamId = _idProvider.NewGuid();
+
+    // Small stream: 2 events
+    var smallMessages = new[] {
+      _createEventOutboxMessage(_idProvider.NewGuid(), smallStreamId, "TestApp.Events.OrderCreatedEvent, TestApp"),
+      _createEventOutboxMessage(_idProvider.NewGuid(), smallStreamId, "TestApp.Events.OrderCreatedEvent, TestApp")
+    };
+
+    // Large stream: 30 events
+    var largeMessages = Enumerable.Range(0, 30)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), largeStreamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    // Act — send all in one batch
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [.. smallMessages, .. largeMessages],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    // Assert — small stream items appear before large stream items
+    var maxSmallPos = -1;
+    var minLargePos = int.MaxValue;
+    for (var i = 0; i < result.PerspectiveWork.Count; i++) {
+      var sid = result.PerspectiveWork[i].StreamId;
+      if (sid == smallStreamId) {
+        maxSmallPos = Math.Max(maxSmallPos, i);
+      } else if (sid == largeStreamId) {
+        minLargePos = Math.Min(minLargePos, i);
+      }
+    }
+
+    await Assert.That(maxSmallPos).IsGreaterThanOrEqualTo(0)
+      .Because("Small stream should have work items");
+    await Assert.That(minLargePos).IsLessThan(int.MaxValue)
+      .Because("Large stream should also have work items");
+    await Assert.That(maxSmallPos).IsLessThan(minLargePos)
+      .Because("All small stream items (Tier 1) should appear before large stream items (Tier 2)");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_SmallStreamCompletesInOneTickAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var messages = Enumerable.Range(0, 3)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), streamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: messages,
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var streamItems = result.PerspectiveWork.Where(w => w.StreamId == streamId).Count();
+    await Assert.That(streamItems).IsEqualTo(3)
+      .Because("All events from a small stream should be returned in one tick");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_LargeStreamStillServedAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var messages = Enumerable.Range(0, 40)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), streamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: messages,
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var streamItems = result.PerspectiveWork.Where(w => w.StreamId == streamId).Count();
+    await Assert.That(streamItems).IsGreaterThan(0)
+      .Because("Large stream should still be served");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_LargeStreamCappedAtPerStreamLimitAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var streamId = _idProvider.NewGuid();
+    var messages = Enumerable.Range(0, 50)
+      .Select(_ => _createEventOutboxMessage(_idProvider.NewGuid(), streamId, "TestApp.Events.OrderCreatedEvent, TestApp"))
+      .ToArray();
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: messages,
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var streamItems = result.PerspectiveWork.Where(w => w.StreamId == streamId).Count();
+    await Assert.That(streamItems).IsLessThanOrEqualTo(25)
+      .Because("Large stream should be capped at max_work_items_per_stream (25)");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_MultipleSmallStreamsFillFirstAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var small1 = _idProvider.NewGuid();
+    var small2 = _idProvider.NewGuid();
+    var small3 = _idProvider.NewGuid();
+    var large = _idProvider.NewGuid();
+
+    var messages = new List<OutboxMessage>();
+    foreach (var sid in new[] { small1, small2, small3 }) {
+      for (var i = 0; i < 2; i++) {
+        messages.Add(_createEventOutboxMessage(_idProvider.NewGuid(), sid, "TestApp.Events.OrderCreatedEvent, TestApp"));
+      }
+    }
+    for (var i = 0; i < 30; i++) {
+      messages.Add(_createEventOutboxMessage(_idProvider.NewGuid(), large, "TestApp.Events.OrderCreatedEvent, TestApp"));
+    }
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [.. messages],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var smallIds = new HashSet<Guid> { small1, small2, small3 };
+    var maxSmallPos = -1;
+    var minLargePos = int.MaxValue;
+    for (var i = 0; i < result.PerspectiveWork.Count; i++) {
+      var sid = result.PerspectiveWork[i].StreamId;
+      if (smallIds.Contains(sid)) {
+        maxSmallPos = Math.Max(maxSmallPos, i);
+      } else if (sid == large) {
+        minLargePos = Math.Min(minLargePos, i);
+      }
+    }
+
+    await Assert.That(maxSmallPos).IsLessThan(minLargePos)
+      .Because("All small stream items should appear before any large stream items");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_TwoTier_AllSmallStreams_NoTier2NeededAsync() {
+    await _registerMessageAssociationAsync(
+      "TestApp.Events.OrderCreatedEvent, TestApp", "perspective",
+      "OrderListPerspective", "TestService");
+
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+
+    var messages = new List<OutboxMessage>();
+    foreach (var sid in new[] { stream1, stream2 }) {
+      for (var i = 0; i < 5; i++) {
+        messages.Add(_createEventOutboxMessage(_idProvider.NewGuid(), sid, "TestApp.Events.OrderCreatedEvent, TestApp"));
+      }
+    }
+
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId, "TestService", "test-host", 12345, Metadata: null,
+      OutboxCompletions: [], OutboxFailures: [],
+      InboxCompletions: [], InboxFailures: [],
+      ReceptorCompletions: [], ReceptorFailures: [],
+      PerspectiveCompletions: [], PerspectiveFailures: [],
+      NewOutboxMessages: [.. messages],
+      NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
+      LeaseSeconds: 300));
+
+    var s1 = result.PerspectiveWork.Where(w => w.StreamId == stream1).Count();
+    var s2 = result.PerspectiveWork.Where(w => w.StreamId == stream2).Count();
+
+    await Assert.That(s1).IsEqualTo(5).Because("Stream 1 should have all 5 events");
+    await Assert.That(s2).IsEqualTo(5).Because("Stream 2 should have all 5 events");
+  }
+
+  #endregion
+
+  #region Helpers (raw NpgsqlCommand — no Dapper)
+
+  private async Task _insertEventStoreRowAsync(Guid eventId, Guid streamId, string eventType, string eventData) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
-    var metadata = JsonSerializer.Serialize(new { MessageId = eventId, Hops = Array.Empty<object>() });
-    await connection.ExecuteAsync(@"
+
+    var metadata = $$$"""{"MessageId":"{{{eventId}}}","Hops":[]}""";
+
+    await using var cmd = new NpgsqlCommand("""
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type,
         event_data, metadata, scope, version, created_at)
       VALUES (@eventId, @streamId, @streamId, 'TestAggregate', @eventType,
         @eventData::jsonb, @metadata::jsonb, NULL,
-        (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @streamId), NOW())",
-      new { eventId, streamId, eventType, eventData, metadata });
+        (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @streamId), NOW())
+      """, connection);
+
+    cmd.Parameters.AddWithValue("eventId", eventId);
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("eventType", eventType);
+    cmd.Parameters.AddWithValue("eventData", eventData);
+    cmd.Parameters.AddWithValue("metadata", metadata);
+
+    await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task RegisterMessageAssociationAsync(
+  private async Task _registerMessageAssociationAsync(
       string messageType, string associationType, string targetName, string serviceName) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
-    await connection.ExecuteAsync(@"
-      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-      VALUES (@messageType, @associationType, @targetName, @serviceName, NOW(), NOW())",
-      new { messageType, associationType, targetName, serviceName });
+
+    await using var cmd = new NpgsqlCommand("""
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (@messageType, @associationType, @targetName, @serviceName, normalize_event_type(@messageType), NOW(), NOW())
+      """, connection);
+
+    cmd.Parameters.AddWithValue("messageType", messageType);
+    cmd.Parameters.AddWithValue("associationType", associationType);
+    cmd.Parameters.AddWithValue("targetName", targetName);
+    cmd.Parameters.AddWithValue("serviceName", serviceName);
+
+    await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task InsertPerspectiveCursorAsync(
-      Guid streamId, string perspectiveName,
-      Guid? lastEventId = null, short status = 0,
-      Guid? rewindTriggerEventId = null) {
+  private async Task _insertPerspectiveCursorAsync(
+      Guid streamId, string perspectiveName, Guid? lastEventId = null, short status = 0) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
-    await connection.ExecuteAsync(@"
-      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id)
-      VALUES (@streamId, @perspectiveName, @lastEventId, @status, @rewindTriggerEventId)",
-      new { streamId, perspectiveName, lastEventId, status, rewindTriggerEventId });
+
+    await using var cmd = new NpgsqlCommand("""
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status)
+      VALUES (@streamId, @perspectiveName, @lastEventId, @status)
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("lastEventId", (object?)lastEventId ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("status", status);
+
+    await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task<PerspectiveCursorRow?> GetPerspectiveCursorAsync(
-      Guid streamId, string perspectiveName) {
+  private async Task<(short Status, Guid? TriggerEventId, DateTime? FlaggedAt, DateTime? FirstFlaggedAt)>
+      _getPerspectiveCursorRewindStateAsync(Guid streamId, string perspectiveName) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
-    return await connection.QueryFirstOrDefaultAsync<PerspectiveCursorRow>(@"
-      SELECT stream_id as StreamId, perspective_name as PerspectiveName,
-             last_event_id as LastEventId, status as Status,
-             error as Error, rewind_trigger_event_id as RewindTriggerEventId
+
+    await using var cmd = new NpgsqlCommand("""
+      SELECT status, rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at
       FROM wh_perspective_cursors
-      WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
-      new { streamId, perspectiveName });
+      WHERE stream_id = @streamId AND perspective_name = @perspectiveName
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync()) {
+      return (0, null, null, null);
+    }
+
+    return (
+      reader.GetInt16(0),
+      reader.IsDBNull(1) ? null : reader.GetGuid(1),
+      reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+      reader.IsDBNull(3) ? null : reader.GetDateTime(3));
   }
 
-  private OutboxMessage CreateEventOutboxMessage(
-      Guid eventId, Guid streamId, string eventType) {
+  private async Task _updatePerspectiveCursorAsync(
+      Guid streamId, string perspectiveName, Guid lastEventId, short status) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("""
+      UPDATE wh_perspective_cursors
+      SET last_event_id = @lastEventId, status = @status
+      WHERE stream_id = @streamId AND perspective_name = @perspectiveName
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("lastEventId", lastEventId);
+    cmd.Parameters.AddWithValue("status", status);
+
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task _insertPerspectiveEventAsync(
+      Guid streamId, string perspectiveName, Guid eventId) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("""
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
+      VALUES (gen_random_uuid(), @streamId, @perspectiveName, @eventId, 1, 0, NOW())
+      ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("eventId", eventId);
+
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task<bool> _isPerspectiveEventProcessedAsync(
+      Guid streamId, string perspectiveName, Guid eventId) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("""
+      SELECT processed_at IS NOT NULL
+      FROM wh_perspective_events
+      WHERE stream_id = @streamId AND perspective_name = @perspectiveName AND event_id = @eventId
+      """, connection);
+
+    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue("eventId", eventId);
+
+    var result = await cmd.ExecuteScalarAsync();
+    return result is true;
+  }
+
+  private static OutboxMessage _createEventOutboxMessage(Guid eventId, Guid streamId, string eventType) {
     return new OutboxMessage {
       MessageId = eventId,
-      Destination = null,  // Events don't have destinations
+      Destination = null,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(eventId),
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = [],
         Payload = JsonDocument.Parse("{}").RootElement
       },
-      Metadata = new EnvelopeMetadata {
-        MessageId = MessageId.From(eventId),
-        Hops = []
-      },
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(eventId), Hops = [] },
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType}]], Whizbang.Core",
       MessageType = eventType,
       StreamId = streamId,
@@ -295,11 +839,5 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
     };
   }
 
-  private sealed record PerspectiveCursorRow(
-    Guid StreamId,
-    string PerspectiveName,
-    Guid? LastEventId,
-    short Status,
-    string? Error,
-    Guid? RewindTriggerEventId);
+  #endregion
 }

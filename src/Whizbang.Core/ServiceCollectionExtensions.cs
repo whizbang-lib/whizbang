@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
@@ -92,6 +93,11 @@ public static class ServiceCollectionExtensions {
   public static WhizbangBuilder AddWhizbang(
       this IServiceCollection services,
       Action<WhizbangCoreOptions>? configure) {
+    // Register startup logger (logs Whizbang version via ILogger on first call only)
+    if (!services.Any(s => s.ServiceType == typeof(WhizbangCoreOptions))) {
+      services.AddSingleton<IHostedService, WhizbangStartupLogger>();
+    }
+
     // Create and configure options
     var coreOptions = new WhizbangCoreOptions();
     configure?.Invoke(coreOptions);

@@ -274,6 +274,7 @@ param(
     [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
     [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
+    [bool]$Fast = $true,  # Disable analyzers, XML docs, and code style enforcement for faster builds. Use -Fast:$false for full analysis
 
     [string]$LogFile = "",  # Tee output to file (verbose to file, sparse to console)
 
@@ -308,6 +309,12 @@ Set-StrictMode -Version Latest
 
 # Import shared PR readiness module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+
+# Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
+$fastBuildArgs = @()
+if ($Fast) {
+    $fastBuildArgs = @('/p:RunAnalyzers=false', '/p:GenerateDocumentationFile=false', '/p:EnforceCodeStyleInBuild=false')
+}
 
 # Handle cleanup flags
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -640,6 +647,7 @@ try {
         if ($FailFast) { $headerParams["FailFast"] = "On" }
         if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
         if ($Tag) { $headerParams["Tag"] = $Tag }
+        if ($Fast) { $headerParams["Fast"] = "On" }
 
         # Build detail lines for the config box
         $details = @()
@@ -875,7 +883,7 @@ try {
             $buildFailed = $false
             foreach ($projectPath in $allProjectsToBuild) {
                 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                $buildOutput = & dotnet build $projectPath --configuration $Configuration 2>&1
+                $buildOutput = & dotnet build $projectPath --configuration $Configuration @fastBuildArgs 2>&1
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "Build failed for $projectName`:" -ForegroundColor Red
                     $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
@@ -1256,7 +1264,7 @@ try {
             } else {
                 Write-Host "Building solution..." -ForegroundColor Gray
             }
-            & dotnet build --verbosity quiet
+            & dotnet build --verbosity quiet @fastBuildArgs
             if ($LASTEXITCODE -ne 0) {
                 Write-Error "Build failed. Cannot discover test projects."
                 exit 1

@@ -1,4 +1,3 @@
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
@@ -7,7 +6,6 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
-using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
 

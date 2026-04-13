@@ -28,14 +28,15 @@ public static class SharedRabbitMqFixtureSource {
         var inventoryDbConnection = GetPerTestDatabaseConnectionString();
         var bffDbConnection = GetPerTestDatabaseConnectionString();
 
-        _fixture = new RabbitMqIntegrationFixture(
+        var fixture = new RabbitMqIntegrationFixture(
           RabbitMqConnectionString,
           inventoryDbConnection,
           bffDbConnection,
           ManagementApiUri,
           testId: Guid.NewGuid().ToString("N")[..12]
         );
-        await _fixture.InitializeAsync(cancellationToken);
+        await fixture.InitializeAsync(cancellationToken);
+        _fixture = fixture;  // Only assign after successful initialization
         Console.WriteLine("[SharedRabbitMqFixture] Shared fixture created and initialized");
       }
       return _fixture;

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -363,7 +364,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         PerspectiveName = perspectiveName,
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
-        Status = resultStatus
+        Status = resultStatus,
+        EventsProcessed = eventsProcessed,
+        ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
       };
 
     } catch (Exception ex) {
@@ -515,25 +518,32 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         replayFromEventId = snapshot.Value.SnapshotEventId;
         hasSnapshot = true;
 
-        _logger.LogInformation(
+        _logger.LogWarning(
             "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
             perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
       } else {
-        _logger.LogInformation(
+        _logger.LogWarning(
             "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
             perspectiveName, streamId, triggeringEventId);
       }
     } else {
-      _logger.LogInformation(
+      _logger.LogWarning(
           "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
           perspectiveName, streamId, triggeringEventId);
     }
 
-    // Fire PerspectiveRewindStarted system event
+    // Fire PerspectiveRewindStarted system event as System user
+    // These events are marked [AuditEvent(Exclude = true)] to skip the audit pipeline
+    // which requires security context that doesn't exist during background rewind.
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
-      await dispatcher.PublishAsync(new PerspectiveRewindStarted(
-          streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+      try {
+        await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindStarted(
+            streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId}",
+          perspectiveName, streamId);
+      }
     }
 
     // In-memory replay: apply all events without intermediate DB writes
@@ -543,10 +553,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Fire PerspectiveRewindCompleted system event
     if (dispatcher is not null) {
-      await dispatcher.PublishAsync(new PerspectiveRewindCompleted(
-          streamId, perspectiveName, triggeringEventId, result.LastEventId,
-          0, // EventsReplayed count not available from result
-          startedAt, DateTimeOffset.UtcNow));
+      try {
+        await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindCompleted(
+            streamId, perspectiveName, triggeringEventId, result.LastEventId,
+            result.EventsProcessed,
+            startedAt, DateTimeOffset.UtcNow));
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindCompleted for {PerspectiveName} stream {StreamId}",
+          perspectiveName, streamId);
+      }
     }
 
     return result;
@@ -681,7 +696,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       PerspectiveName = perspectiveName,
       PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
       LastEventId = lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
-      Status = resultStatus
+      Status = resultStatus,
+      EventsProcessed = eventsProcessed
     };
   }
 

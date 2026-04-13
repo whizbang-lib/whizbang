@@ -53,6 +53,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     // No IReceptorInvoker registered
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
@@ -103,6 +105,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(eventTypeProvider);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
@@ -133,8 +137,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
       .Because("TestCommand is not in IEventTypeProvider list so should not be detected as event");
   }
 
@@ -155,6 +159,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -263,6 +269,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -309,6 +317,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -346,7 +356,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -459,6 +469,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -500,6 +512,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -564,6 +578,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -613,7 +629,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     cts.Cancel();
 
     // Assert - should fall back to MessageId since AggregateId is not a valid GUID
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Non-Guid AggregateId should fall back to MessageId");
   }
 
@@ -633,6 +649,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -682,7 +700,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     cts.Cancel();
 
     // Assert - should fall back to MessageId since AggregateId is not a string
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Numeric AggregateId should fall back to MessageId");
   }
 
@@ -759,6 +777,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -790,7 +810,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     // Assert - handler name extraction uses LastIndexOf('.') on full message type string
     // "My.Deep.Namespace.CreateOrderCommand, TestAssembly" -> after last dot = "CreateOrderCommand, TestAssembly"
     // -> Split(',')[0] = "CreateOrderCommand" -> + "Handler" = "CreateOrderCommandHandler"
-    await Assert.That(workStrategy.LastQueuedHandlerName).IsEqualTo("CreateOrderCommandHandler")
+    await Assert.That(noOpCoordinator.StoredMessages.Last().HandlerName).IsEqualTo("CreateOrderCommandHandler")
       .Because("Handler name should be simple type name + Handler suffix");
   }
 

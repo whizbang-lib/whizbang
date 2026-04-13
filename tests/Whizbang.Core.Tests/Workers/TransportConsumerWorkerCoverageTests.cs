@@ -315,6 +315,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -350,7 +352,7 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert - work coordinator should have been called
-    await Assert.That(workStrategy.QueuedInboxCount).IsGreaterThanOrEqualTo(1)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
       .Because("Handler should queue inbox message via strategy");
   }
 
@@ -371,6 +373,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -399,11 +403,9 @@ public class TransportConsumerWorkerCoverageTests {
 
     cts.Cancel();
 
-    // Assert - message was queued but flush returned no work (duplicate)
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1)
-      .Because("Message should be queued even if it's a duplicate");
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1)
-      .Because("Flush should be called to check for duplicates");
+    // Assert - message was stored via StoreInboxMessagesAsync (duplicate detection happens downstream)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("Message should be stored even if it's a duplicate");
   }
 
   // ========================================
@@ -422,6 +424,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -462,6 +466,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -506,6 +512,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -552,6 +560,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -582,8 +592,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     cts.Cancel();
 
-    // Assert - message was processed (duplicate detection path)
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1);
+    // Assert - message was stored via StoreInboxMessagesAsync
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1);
   }
 
   // ========================================
@@ -604,6 +614,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -634,8 +646,8 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(streamId)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(streamId)
       .Because("StreamId should be extracted from AggregateId metadata");
   }
 
@@ -655,6 +667,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -684,7 +698,7 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("StreamId should fall back to MessageId when no AggregateId metadata");
   }
 
@@ -779,6 +793,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -825,6 +841,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -859,8 +877,7 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -956,6 +973,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -997,8 +1016,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     cts.Cancel();
 
-    // Assert - message was processed (duplicate path since returnEmptyInboxWork=true)
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1);
+    // Assert - message was stored via StoreInboxMessagesAsync
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1);
   }
 
   // ========================================
