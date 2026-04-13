@@ -25,7 +25,7 @@
 --   normalize_event_type('ECommerce.Events.ProductCreated, ECommerce.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null')
 --     => 'ECommerce.Events.ProductCreated, ECommerce.Contracts'
 -- ======================================================================================
-DROP FUNCTION IF EXISTS __SCHEMA__.normalize_event_type;
+SELECT __SCHEMA__.drop_all_overloads('normalize_event_type');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.normalize_event_type(type_name TEXT)
 RETURNS TEXT AS $$
@@ -55,7 +55,7 @@ COMMENT ON FUNCTION __SCHEMA__.normalize_event_type IS 'Defensively normalizes .
 -- "Namespace.TypeName, MyAssembly, Version=1.0.0.0, ..." => "MyAssembly"
 -- Used for fuzzy type matching in Phase 4.6/4.7 to compare types across assemblies.
 -- ======================================================================================
-DROP FUNCTION IF EXISTS __SCHEMA__.normalize_assembly_name;
+SELECT __SCHEMA__.drop_all_overloads('normalize_assembly_name');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.normalize_assembly_name(type_name TEXT)
 RETURNS TEXT AS $$

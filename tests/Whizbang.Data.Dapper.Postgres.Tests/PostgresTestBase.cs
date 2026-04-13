@@ -134,6 +134,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "src", "Whizbang.Data.Postgres", "Migrations");
 
     var functionFiles = new[] {
+      "000_MigrationTracking.sql",
       "001_CreateComputePartitionFunction.sql",
       "002_CreateAcquireReceptorProcessingFunction.sql",
       "003_CreateCompleteReceptorProcessingFunction.sql",

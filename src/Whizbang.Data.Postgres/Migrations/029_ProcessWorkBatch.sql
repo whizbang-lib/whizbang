@@ -7,8 +7,7 @@
 --              Uses log_event() function for tracking idempotent event conflicts.
 -- Dependencies: 009-028 (foundation, completion, failure, storage, cleanup, claiming functions, and error tracking)
 
--- Drop old monolithic version from migration 007 (different signature)
-DROP FUNCTION IF EXISTS __SCHEMA__.process_work_batch CASCADE;
+SELECT __SCHEMA__.drop_all_overloads('process_work_batch');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   -- Instance identification

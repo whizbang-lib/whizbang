@@ -8,10 +8,7 @@
 -- Dependencies: 001-004 (requires wh_perspective_cursors table)
 -- Used by: 006 (process_work_batch calls this function)
 
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, VARCHAR(200), UUID, SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, UUID[], SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, JSONB, SMALLINT, TEXT);
+SELECT __SCHEMA__.drop_all_overloads('complete_perspective_cursor_work');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_cursor_work(
   p_stream_id UUID,
