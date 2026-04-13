@@ -42,3 +42,20 @@ END $$;
 
 COMMENT ON TABLE __SCHEMA__.wh_schema_versions IS 'Tracks library versions that have applied migrations. Each version maps to a set of migration hashes.';
 COMMENT ON TABLE __SCHEMA__.wh_schema_migrations IS 'Tracks individual migration files by content hash for skip-on-unchanged detection. Status: 0=Pending, 1=Applied, 2=Updated, 3=Skipped, 4=MigratingInBackground, -1=Failed.';
+
+-- Utility: safely drop ALL overloads of a function by name (prevents ambiguous function name errors)
+CREATE OR REPLACE FUNCTION __SCHEMA__.drop_all_overloads(p_function_name TEXT)
+RETURNS VOID AS $$
+DECLARE
+  _oid oid;
+BEGIN
+  FOR _oid IN
+    SELECT p.oid FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE p.proname = p_function_name
+      AND n.nspname = current_schema()
+  LOOP
+    EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', _oid::regprocedure);
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
