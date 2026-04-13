@@ -1206,9 +1206,9 @@ BEGIN
     pe.stream_id as work_stream_id,
     NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
     NULL::VARCHAR(200) as destination,
-    es.event_type as message_type,  -- Event type from wh_event_store (late JOIN — only for returned rows)
-    NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
-    NULL::TEXT as message_data,          -- Event data comes from wh_event_store
+    NULL::VARCHAR(500) as message_type,  -- Not needed: PerspectiveWorker resolves event types from registry
+    NULL::VARCHAR(500) as envelope_type,
+    NULL::TEXT as message_data,
     -- CRITICAL: First row includes ack counts if no outbox/inbox work
     CASE WHEN pe.row_num = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
       THEN v_ack_counts
@@ -1221,7 +1221,6 @@ BEGIN
     NULL::INTEGER as failure_reason,
     pe.perspective_name
   FROM ordered_perspective pe
-  INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- Late JOIN: only for the ≤100 returned rows
   WHERE pe.row_num <= v_max_work_items
   ORDER BY pe.row_num;
 
