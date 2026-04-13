@@ -163,7 +163,8 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "027_ClaimOrphanedPerspectiveEvents.sql",
       "028_EventStorageErrorTracking.sql",
       "029_ProcessWorkBatch.sql",
-      "030_ReconcilePerspectiveRegistry.sql"
+      "030_ReconcilePerspectiveRegistry.sql",
+      "036_DeregisterInstance.sql"
     };
 
     foreach (var functionFile in functionFiles) {

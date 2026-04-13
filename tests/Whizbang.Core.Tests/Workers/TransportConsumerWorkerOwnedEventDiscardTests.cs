@@ -50,7 +50,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    await Assert.That(worker.QueuedInboxCount).IsEqualTo(0)
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
       .Because("Self-echo (owned event from this service) should be discarded before inbox");
   }
 
@@ -67,11 +67,13 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   private static TestWorkerWrapper _createWorker(string[] ownedDomains, string serviceName) {
     var transport = new StubTransport();
     var workStrategy = new StubWorkStrategy();
+    var noOpCoordinator = new NoOpWorkCoordinator();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.Configure<RoutingOptions>(opts => { opts.OwnDomains(ownedDomains); });
     var sp = services.BuildServiceProvider();
@@ -88,7 +90,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       serviceInstanceProvider: instanceProvider
     );
 
-    return new TestWorkerWrapper(worker, transport, workStrategy);
+    return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }
 
   private static MessageEnvelope<JsonElement> _createEnvelope(DispatchModes mode, string sourceServiceName) {
@@ -117,10 +119,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   private sealed class TestWorkerWrapper(
     TransportConsumerWorker worker,
     StubTransport transport,
-    StubWorkStrategy strategy) : IDisposable {
+    NoOpWorkCoordinator coordinator) : IDisposable {
     private CancellationTokenSource? _cts;
 
-    public int QueuedInboxCount => strategy.QueuedInboxCount;
+    public int StoredInboxCount => coordinator.StoredInboxCount;
 
     public async Task StartAsync() {
       _cts = new CancellationTokenSource();

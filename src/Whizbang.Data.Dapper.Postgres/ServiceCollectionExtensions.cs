@@ -131,6 +131,10 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
+    // Register perspective snapshot and rewind options
+    services.AddOptions<PerspectiveSnapshotOptions>();
+    services.AddOptions<PerspectiveRewindOptions>();
+
     // Register perspective snapshot store and stream locker
     services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
@@ -231,6 +235,10 @@ public static class ServiceCollectionExtensions {
         options.CommandTimeoutSeconds));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // Register perspective snapshot and rewind options
+    services.AddOptions<PerspectiveSnapshotOptions>();
+    services.AddOptions<PerspectiveRewindOptions>();
 
     // Register perspective snapshot store and stream locker
     services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>

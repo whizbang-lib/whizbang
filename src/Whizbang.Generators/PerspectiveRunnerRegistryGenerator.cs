@@ -350,6 +350,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
 
     source.AppendLine();
+    source.AppendLine("    // TURNKEY: Register shutdown service BEFORE workers (LIFO: stops AFTER workers)");
+    source.AppendLine("    // Ensures graceful deregistration runs after all workers finish in-flight work");
+    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.WhizbangShutdownService>();");
+    source.AppendLine();
     source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
     source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");
     source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.PerspectiveWorker>();");

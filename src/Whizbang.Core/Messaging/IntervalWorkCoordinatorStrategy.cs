@@ -336,7 +336,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
 
   /// <summary>
   /// Timer callback that triggers periodic flushing of queued operations.
@@ -396,7 +396,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
-      await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);

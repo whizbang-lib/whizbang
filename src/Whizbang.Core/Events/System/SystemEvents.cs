@@ -1,3 +1,4 @@
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Events.System;
@@ -92,6 +93,7 @@ public record PerspectiveRebuildFailed(
 /// <param name="HasSnapshot">Whether a snapshot was available for the rewind.</param>
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 public record PerspectiveRewindStarted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -112,12 +114,51 @@ public record PerspectiveRewindStarted(
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <param name="CompletedAt">When the rewind operation completed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 public record PerspectiveRewindCompleted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
     Guid TriggeringEventId,
     Guid FinalEventId,
     int EventsReplayed,
+    DateTimeOffset StartedAt,
+    DateTimeOffset CompletedAt
+) : IEvent;
+
+/// <summary>
+/// Emitted once per stream before any per-perspective rewinds begin.
+/// Brackets all <see cref="PerspectiveRewindStarted"/> events for the same stream.
+/// </summary>
+/// <param name="StreamId">The stream requiring rewind.</param>
+/// <param name="PerspectiveNames">All perspectives that need rewind on this stream.</param>
+/// <param name="TriggerEventId">The late-arriving event that triggered the rewind.</param>
+/// <param name="StartedAt">When the stream-level rewind operation started.</param>
+/// <docs>fundamentals/perspectives/rewind#stream-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+public record StreamRewindStarted(
+    [property: StreamId] Guid StreamId,
+    string[] PerspectiveNames,
+    Guid TriggerEventId,
+    DateTimeOffset StartedAt
+) : IEvent;
+
+/// <summary>
+/// Emitted once per stream after all per-perspective rewinds complete.
+/// Brackets all <see cref="PerspectiveRewindCompleted"/> events for the same stream.
+/// </summary>
+/// <param name="StreamId">The stream that was rewound.</param>
+/// <param name="PerspectiveNames">All perspectives that were rewound on this stream.</param>
+/// <param name="TotalEventsReplayed">Aggregate count of events replayed across all perspectives.</param>
+/// <param name="StartedAt">When the stream-level rewind operation started.</param>
+/// <param name="CompletedAt">When all perspective rewinds completed.</param>
+/// <docs>fundamentals/perspectives/rewind#stream-events</docs>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
+[AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+public record StreamRewindCompleted(
+    [property: StreamId] Guid StreamId,
+    string[] PerspectiveNames,
+    int TotalEventsReplayed,
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt
 ) : IEvent;

@@ -44,7 +44,8 @@ public partial class PerspectiveWorker(
   IProcessedEventCacheObserver? processedEventCacheObserver = null,
   TimeProvider? timeProvider = null,
   LifecycleCoordinatorMetrics? coordinatorMetrics = null,
-  IWorkChannelWriter? workChannelWriter = null
+  IWorkChannelWriter? workChannelWriter = null,
+  IOptions<PerspectiveRewindOptions>? rewindOptions = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly ConcurrentBag<Task> _detachedTasks = [];
@@ -67,6 +68,10 @@ public partial class PerspectiveWorker(
   );
 
   private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
+  private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions?.Value ?? new PerspectiveRewindOptions();
+  private readonly ILogger _startupScanLogger = scopeFactory.CreateScope().ServiceProvider
+    .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
+    ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
 
@@ -98,6 +103,7 @@ public partial class PerspectiveWorker(
   // Wake signal: allows external callers to interrupt the polling delay
   // so the worker processes new perspective events immediately.
   private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
+  private int _wakeSignaled;  // Guard to prevent SemaphoreFullException on redundant wake calls
 
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
@@ -140,7 +146,9 @@ public partial class PerspectiveWorker(
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
   public void RequestImmediatePoll() {
-    try { _pollWakeSignal.Release(); } catch (SemaphoreFullException) { /* already signaled */ }
+    if (Interlocked.CompareExchange(ref _wakeSignaled, 1, 0) == 0) {
+      _pollWakeSignal.Release();
+    }
   }
 
   /// <summary>
@@ -176,6 +184,7 @@ public partial class PerspectiveWorker(
     await _initializePerspectiveRegistryAsync();
     await _processInitialCheckpointsAsync(stoppingToken);
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
+    await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     if (workChannelWriter is not null) {
@@ -186,11 +195,13 @@ public partial class PerspectiveWorker(
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
           await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+          Interlocked.Exchange(ref _wakeSignaled, 0);
           continue;
         }
 
         await _processWorkBatchAsync(stoppingToken);
         _periodicStaleTrackingCleanup();
+        await _periodicGatherStatisticsAsync(stoppingToken);
       } catch (ObjectDisposedException) {
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -202,6 +213,7 @@ public partial class PerspectiveWorker(
         // Wait for either the polling interval OR an external wake signal (whichever comes first).
         // RequestImmediatePoll() releases the semaphore, waking this loop early.
         await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+        Interlocked.Exchange(ref _wakeSignaled, 0);
       } catch (OperationCanceledException) {
         break;
       }
@@ -283,6 +295,26 @@ public partial class PerspectiveWorker(
     return false;
   }
 
+  private int _statsGaugeCounter;
+
+  private async Task _periodicGatherStatisticsAsync(CancellationToken ct) {
+    // Gather expensive stats every 60 ticks (~60 seconds)
+    // These are COUNT(*) queries that we don't want on the hot path
+    if (++_statsGaugeCounter % 60 != 0) {
+      return;
+    }
+
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var stats = await workCoordinator.GatherStatisticsAsync(ct);
+      _metrics?.SetPendingEvents(stats.PendingPerspectiveEvents);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Don't let gauge failure interrupt the main loop
+      // Swallow — periodic stats gathering is non-critical
+    }
+  }
+
   private void _periodicStaleTrackingCleanup() {
     if (++_batchCycleCount % 10 != 0) {
       return;
@@ -345,6 +377,60 @@ public partial class PerspectiveWorker(
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogReconciliationFailed(_logger, ex);
+    }
+  }
+
+  /// <summary>
+  /// Scans for streams needing rewind on startup and processes them.
+  /// In Blocking mode, keeps processing work batches until no RewindRequired cursors remain.
+  /// In Background mode, logs the summary and lets normal polling handle them.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
+    if (!_rewindOptions.StartupScanEnabled) {
+      return;
+    }
+
+    try {
+      if (!await _databaseReadinessCheck.IsReadyAsync(ct)) {
+        return;
+      }
+
+      // Query cursors with RewindRequired flag
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var workCoordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (workCoordinator is null) {
+        return;
+      }
+
+      var rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
+      if (rewindCursors.Count == 0) {
+        PerspectiveStartupScanLog.LogStartupRewindScanClean(_startupScanLogger);
+        return;
+      }
+
+      var streamCount = rewindCursors.Select(c => c.StreamId).Distinct().Count();
+      var perspectiveCount = rewindCursors.Count;
+      PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLogger, streamCount, perspectiveCount);
+
+      if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // Keep processing work batches until all rewinds are done
+        var maxIterations = 100;  // Safety limit
+        for (var i = 0; i < maxIterations; i++) {
+          await _processWorkBatchAsync(ct);
+
+          // Re-check
+          rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
+          if (rewindCursors.Count == 0) {
+            break;
+          }
+        }
+        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLogger, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
+      }
+      // Background mode: normal polling loop will pick them up — individual rewinds log via PerspectiveWorker
+    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
+      PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLogger, ex);
     }
   }
 
@@ -934,15 +1020,21 @@ public partial class PerspectiveWorker(
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
 
-    // Check if any work item in the group has RewindRequired flag
-    var groupStatus = group.Aggregate(PerspectiveProcessingStatus.None, (acc, w) => acc | w.Status);
-    var needsRewind = groupStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
+    // Check if cursor has RewindRequired flag (set by Phase 4.6B when out-of-order events detected)
+    var cursorStatus = checkpoint?.Status ?? PerspectiveProcessingStatus.None;
+    var needsRewind = cursorStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
     var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
     if (needsRewind && rewindTriggerEventId.HasValue) {
+      var eventsBehind = group.Count();
+      LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
+        checkpoint?.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
+      _metrics?.RewindEventsBehind.Record(eventsBehind,
+        new KeyValuePair<string, object?>("perspective_name", streamCtx.PerspectiveName));
+
       var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
-        enablePerspectiveSpans, cancellationToken);
+        eventsBehind, enablePerspectiveSpans, cancellationToken);
       return (result, ProcessingMode.Replay, lockSkipped);
     }
 
@@ -965,6 +1057,7 @@ public partial class PerspectiveWorker(
       Guid streamId,
       string perspectiveName,
       Guid rewindTriggerEventId,
+      int eventsBehind,
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
 
@@ -997,12 +1090,50 @@ public partial class PerspectiveWorker(
         activity?.SetTag("whizbang.perspective.rewind_trigger_event_id", rewindTriggerEventId.ToString());
 
         var runnerSw = System.Diagnostics.Stopwatch.StartNew();
-        result = await runner.RewindAndRunAsync(
-          streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
-        _metrics?.RunnerDuration.Record(runnerSw.Elapsed.TotalMilliseconds);
+        try {
+          result = await runner.RewindAndRunAsync(
+            streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          // Isolate rewind failures — a single stream's failure must not crash the worker.
+          // The stream will retry on the next polling cycle.
+          LogRewindFailed(_logger, ex, perspectiveName, streamId, rewindTriggerEventId);
+          _metrics?.Errors.Add(1);
+          activity?.SetTag("whizbang.perspective.rewind.error", ex.Message);
+          activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
 
+          return (new PerspectiveCursorCompletion {
+            StreamId = streamId,
+            PerspectiveName = perspectiveName,
+            LastEventId = Guid.Empty,
+            Status = PerspectiveProcessingStatus.None
+          }, LockSkipped: false);
+        }
+
+        var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
+        _metrics?.RunnerDuration.Record(rewindDurationMs);
+
+        // Rewind-specific meters
+        var hasSnapshot = _snapshotStore is not null;
+        _metrics?.Rewinds.Add(1,
+          new KeyValuePair<string, object?>("perspective_name", perspectiveName),
+          new KeyValuePair<string, object?>("has_snapshot", hasSnapshot));
+        _metrics?.RewindDuration.Record(rewindDurationMs,
+          new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+        _metrics?.RewindEventsReplayed.Record(result.EventsProcessed,
+          new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+
+        // Span enrichment
         activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
         activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+        activity?.SetTag("whizbang.perspective.rewind.events_behind", eventsBehind);
+        activity?.SetTag("whizbang.perspective.rewind.events_replayed", result.EventsProcessed);
+        activity?.SetTag("whizbang.perspective.rewind.has_snapshot", hasSnapshot);
+        activity?.SetTag("whizbang.perspective.rewind.replay_source", hasSnapshot ? "snapshot" : "full");
+
+        // Completion log — hasSnapshot indicates store availability, not actual usage.
+        // The runner logs the actual snapshot decision (restore from snapshot vs full replay).
+        LogRewindCompleted(_logger, perspectiveName, streamId, result.EventsProcessed,
+          (long)rewindDurationMs, hasSnapshot ? "snapshot store available" : "no snapshot store");
       }
 
       // Stop keepalive
@@ -2166,6 +2297,64 @@ public partial class PerspectiveWorker(
     Message = "Lifecycle reconciliation scan failed. Will retry on next startup."
   )]
   static partial void LogReconciliationFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(
+    EventId = 52,
+    Level = LogLevel.Warning,
+    Message = "Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)"
+  )]
+  static partial void LogRewindRequired(ILogger logger, string perspectiveName, Guid streamId, Guid cursorEventId, Guid triggerEventId, int eventsBehind);
+
+  [LoggerMessage(
+    EventId = 53,
+    Level = LogLevel.Warning,
+    Message = "Perspective rewind completed for {PerspectiveName} stream {StreamId} — replayed {EventsReplayed} events in {DurationMs}ms (from {ReplaySource})"
+  )]
+  static partial void LogRewindCompleted(ILogger logger, string perspectiveName, Guid streamId, int eventsReplayed, long durationMs, string replaySource);
+
+  [LoggerMessage(
+    EventId = 58,
+    Level = LogLevel.Error,
+    Message = "Perspective rewind failed for {PerspectiveName} stream {StreamId} — trigger event {TriggerEventId}. Stream will retry on next cycle."
+  )]
+  static partial void LogRewindFailed(ILogger logger, Exception exception, string perspectiveName, Guid streamId, Guid triggerEventId);
+}
+
+/// <summary>
+/// Log messages for perspective startup rewind scan.
+/// Separate category from PerspectiveWorker so log level can be configured independently.
+/// Configure via: "Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
+/// </summary>
+/// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+internal static partial class PerspectiveStartupScanLog {
+  [LoggerMessage(
+    EventId = 54,
+    Level = LogLevel.Information,
+    Message = "Startup rewind scan started: {StreamCount} streams require rewind across {PerspectiveCount} perspectives"
+  )]
+  internal static partial void LogStartupRewindScanStarted(ILogger logger, int streamCount, int perspectiveCount);
+
+  [LoggerMessage(
+    EventId = 55,
+    Level = LogLevel.Information,
+    Message = "Startup rewind scan completed: {StreamCount} streams, {PerspectiveCount} perspectives rewound in {DurationMs}ms"
+  )]
+  internal static partial void LogStartupRewindScanCompleted(ILogger logger, int streamCount, int perspectiveCount, long durationMs);
+
+  [LoggerMessage(
+    EventId = 57,
+    Level = LogLevel.Information,
+    Message = "Startup rewind scan: no streams require rewind"
+  )]
+  internal static partial void LogStartupRewindScanClean(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 56,
+    Level = LogLevel.Warning,
+    Message = "Error during startup rewind scan — rewinds will be processed during normal polling"
+  )]
+  internal static partial void LogStartupRewindScanError(ILogger logger, Exception exception);
+
 }
 
 /// <summary>

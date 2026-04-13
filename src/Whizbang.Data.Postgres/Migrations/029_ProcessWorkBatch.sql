@@ -110,24 +110,29 @@ DECLARE
   -- Boolean flags to avoid re-querying for ack count placement
   v_has_outbox_work BOOLEAN := false;
   v_has_inbox_work BOOLEAN := false;
+
+  -- Rewind debounce: how long to hold back rewind-pending streams (seconds)
+  v_rewind_debounce_seconds INTEGER;
+  v_rewind_max_debounce_seconds INTEGER;
+
+  -- Two-tier budget split
+  v_tier1_budget_percent INTEGER;
+  v_tier1_max INTEGER;
 BEGIN
-  -- Read settings from wh_settings (fall back to defaults if not configured)
-  SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'max_work_items_per_tick'),
-    100
-  ) INTO v_max_work_items;
+  -- Read all settings in a single query (pivoted)
+  SELECT
+    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_tick' THEN setting_value::INTEGER END), 300),
+    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_stream' THEN setting_value::INTEGER END), 25),
+    COALESCE(MAX(CASE WHEN setting_key = 'rewind_debounce_seconds' THEN setting_value::INTEGER END), 5),
+    COALESCE(MAX(CASE WHEN setting_key = 'rewind_max_debounce_seconds' THEN setting_value::INTEGER END), 30),
+    COALESCE(MAX(CASE WHEN setting_key = 'stale_threshold_seconds' THEN setting_value::INTEGER END), p_stale_threshold_seconds),
+    COALESCE(MAX(CASE WHEN setting_key = 'tier1_budget_percent' THEN setting_value::INTEGER END), 70)
+  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, p_stale_threshold_seconds, v_tier1_budget_percent
+  FROM wh_settings
+  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
 
-  SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'max_work_items_per_stream'),
-    25
-  ) INTO v_max_work_items_per_stream;
-
-  -- Stale threshold: override from wh_settings if configured, else use function parameter
-  -- Default 30s (not 600s) — 30 missed 1-second heartbeats is more than enough to declare dead
-  p_stale_threshold_seconds := COALESCE(
-    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stale_threshold_seconds'),
-    p_stale_threshold_seconds
-  );
+  -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
+  v_tier1_max := (v_max_work_items * v_tier1_budget_percent) / 100;
 
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
@@ -291,16 +296,16 @@ BEGIN
         (elem->>'StreamId')::UUID as stream_id,
         elem->>'PerspectiveName' as perspective_name,
         (elem->>'LastEventId')::UUID as last_event_id,
+        elem->'ProcessedEventIds' as processed_event_ids_json,
         (elem->>'Status')::SMALLINT as status
       FROM jsonb_array_elements(p_perspective_completions) as elem
     LOOP
-      -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
-      -- This prevents FK constraint violation when event doesn't exist in wh_event_store
       IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
         PERFORM __SCHEMA__.complete_perspective_cursor_work(
           v_completion.stream_id,
           v_completion.perspective_name,
           v_completion.last_event_id,
+          COALESCE(v_completion.processed_event_ids_json, '[]'::JSONB),
           v_completion.status,
           NULL::TEXT
         );
@@ -334,17 +339,17 @@ BEGIN
         (elem->>'StreamId')::UUID as stream_id,
         elem->>'PerspectiveName' as perspective_name,
         (elem->>'LastEventId')::UUID as last_event_id,
+        elem->'ProcessedEventIds' as processed_event_ids_json,
         (elem->>'Status')::SMALLINT as status,
         elem->>'Error' as error_message
       FROM jsonb_array_elements(p_perspective_failures) as elem
     LOOP
-      -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
-      -- This prevents FK constraint violation when event doesn't exist in wh_event_store
       IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
         PERFORM __SCHEMA__.complete_perspective_cursor_work(
           v_completion.stream_id,
           v_completion.perspective_name,
           v_completion.last_event_id,
+          COALESCE(v_completion.processed_event_ids_json, '[]'::JSONB),
           v_completion.status,
           v_completion.error_message
         );
@@ -504,12 +509,67 @@ BEGIN
   END IF;
 
   -- ========================================
+  -- Phase 5: Claiming (Orphaned Work)
+  -- ========================================
+  -- MOVED BEFORE Phase 4.5 so that claimed inbox events get stored to wh_event_store
+  -- and have perspective events/cursors created in Phase 4.5B/4.6/4.7 (self-healing).
+  -- This enables the "drop and walk away" inbox pattern where TransportConsumerWorker
+  -- only INSERTs into wh_inbox, and the next tick's claiming + event storage handles the rest.
+
+  -- Claim orphaned outbox and track
+  INSERT INTO temp_orphaned_outbox (message_id, stream_id)
+  SELECT coo.message_id, coo.stream_id
+  FROM __SCHEMA__.claim_orphaned_outbox(
+    p_instance_id,
+    v_rank,
+    v_count,
+    v_lease_expiry,
+    p_now,
+    p_partition_count
+  ) AS coo;
+
+  -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
+  IF (p_flags & 64) = 0 THEN
+    INSERT INTO temp_orphaned_inbox (message_id, stream_id)
+    SELECT coi.message_id, coi.stream_id
+    FROM __SCHEMA__.claim_orphaned_inbox(
+      p_instance_id,
+      v_rank,
+      v_count,
+      v_lease_expiry,
+      p_now,
+      p_partition_count
+    ) AS coi;
+  END IF;
+
+  -- Claim orphaned receptor work and track
+  INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
+  SELECT cor.processing_id, cor.stream_id
+  FROM __SCHEMA__.claim_orphaned_receptor_work(
+    p_instance_id,
+    v_rank,
+    v_count,
+    v_lease_expiry,
+    p_now
+  ) AS cor;
+
+  -- Claim orphaned perspective events and track
+  INSERT INTO temp_orphaned_perspective_events (event_work_id, stream_id, perspective_name)
+  SELECT cope.event_work_id, cope.stream_id, cope.perspective_name
+  FROM __SCHEMA__.claim_orphaned_perspective_events(
+    p_instance_id,
+    v_lease_expiry,
+    p_now
+  ) AS cope;
+
+  -- ========================================
   -- Phase 4.5: Event Storage
   -- ========================================
-  -- Store events from newly created outbox/inbox messages to wh_event_store
+  -- Store events from newly created AND newly claimed outbox/inbox messages to wh_event_store
   -- with sequential versioning and optimistic concurrency control.
   -- This is the authoritative event storage - all events flow through process_work_batch.
   -- Uses array tracking to capture successfully stored events for Phase 4.6/4.7 filtering.
+  -- Includes orphaned messages for self-healing (crash recovery + inbox drop-and-walk-away).
 
   -- Phase 4.5A: Store events from outbox messages with tracking
   WITH outbox_events AS (
@@ -523,9 +583,20 @@ BEGIN
       o.created_at,
       ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) as row_num
     FROM wh_outbox o
-    WHERE o.message_id IN (SELECT message_id FROM temp_new_outbox)
+    WHERE o.message_id IN (
+        SELECT message_id FROM temp_new_outbox
+        UNION ALL
+        SELECT message_id FROM temp_orphaned_outbox
+      )
       AND o.is_event = true
       AND o.stream_id IS NOT NULL
+  ),
+  outbox_stream_versions AS (
+    -- Single aggregate scan for all streams instead of correlated subquery per row
+    SELECT es.stream_id, MAX(es.version) as max_version
+    FROM wh_event_store es
+    WHERE es.stream_id IN (SELECT DISTINCT stream_id FROM outbox_events)
+    GROUP BY es.stream_id
   ),
   outbox_base_versions AS (
     SELECT
@@ -537,11 +608,9 @@ BEGIN
       oe.scope,
       oe.created_at,
       oe.row_num,
-      COALESCE(
-        (SELECT MAX(version) FROM wh_event_store WHERE wh_event_store.stream_id = oe.stream_id),
-        0
-      ) as base_version
+      COALESCE(sv.max_version, 0) as base_version
     FROM outbox_events oe
+    LEFT JOIN outbox_stream_versions sv ON sv.stream_id = oe.stream_id
   ),
   stored_events AS (
     INSERT INTO wh_event_store (
@@ -639,9 +708,20 @@ BEGIN
       i.received_at,
       ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) as row_num
     FROM wh_inbox i
-    WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
+    WHERE i.message_id IN (
+        SELECT message_id FROM temp_new_inbox
+        UNION ALL
+        SELECT message_id FROM temp_orphaned_inbox
+      )
       AND i.is_event = true
       AND i.stream_id IS NOT NULL
+  ),
+  inbox_stream_versions AS (
+    -- Single aggregate scan for all streams instead of correlated subquery per row
+    SELECT es.stream_id, MAX(es.version) as max_version
+    FROM wh_event_store es
+    WHERE es.stream_id IN (SELECT DISTINCT stream_id FROM inbox_events)
+    GROUP BY es.stream_id
   ),
   inbox_base_versions AS (
     SELECT
@@ -653,11 +733,9 @@ BEGIN
       ie.scope,
       ie.received_at,
       ie.row_num,
-      COALESCE(
-        (SELECT MAX(version) FROM wh_event_store WHERE wh_event_store.stream_id = ie.stream_id),
-        0
-      ) as base_version
+      COALESCE(sv.max_version, 0) as base_version
     FROM inbox_events ie
+    LEFT JOIN inbox_stream_versions sv ON sv.stream_id = ie.stream_id
   ),
   stored_events AS (
     INSERT INTO wh_event_store (
@@ -769,10 +847,7 @@ BEGIN
     v_lease_expiry as lease_expiry
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
-    ON (
-      -- Normalized match using IMMUTABLE helper (exact after stripping Version/Culture/PublicKeyToken)
-      __SCHEMA__.normalize_event_type(es.event_type) = __SCHEMA__.normalize_event_type(ma.message_type)
-    )
+    ON es.event_type = ma.normalized_message_type  -- Pre-computed; es.event_type already normalized at Phase 4.5 storage
     AND ma.association_type = 'perspective'
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
@@ -796,7 +871,9 @@ BEGIN
         WHEN pc.rewind_trigger_event_id IS NULL THEN ooo.min_event_id
         WHEN ooo.min_event_id < pc.rewind_trigger_event_id THEN ooo.min_event_id
         ELSE pc.rewind_trigger_event_id
-      END
+      END,
+      rewind_flagged_at = p_now,  -- Sliding window: reset on every late event
+      rewind_first_flagged_at = COALESCE(pc.rewind_first_flagged_at, p_now)  -- Max cap anchor: set once, preserved on re-flag
   FROM (
     SELECT DISTINCT ON (pe.stream_id, pe.perspective_name)
       pe.stream_id,
@@ -835,10 +912,7 @@ BEGIN
     0                -- status = 0 (PerspectiveProcessingStatus.None)
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
-    ON (
-      -- Normalized match using IMMUTABLE helper (exact after stripping Version/Culture/PublicKeyToken)
-      __SCHEMA__.normalize_event_type(es.event_type) = __SCHEMA__.normalize_event_type(ma.message_type)
-    )
+    ON es.event_type = ma.normalized_message_type  -- Pre-computed; es.event_type already normalized at Phase 4.5 storage
     AND ma.association_type = 'perspective'
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
@@ -847,56 +921,6 @@ BEGIN
         AND pc_check.perspective_name = ma.target_name
     )
   ON CONFLICT DO NOTHING;  -- Idempotency - relies on primary key (stream_id, perspective_name)
-
-  -- ========================================
-  -- Phase 5: Claiming (Orphaned Work)
-  -- ========================================
-
-  -- Claim orphaned outbox and track
-  INSERT INTO temp_orphaned_outbox (message_id, stream_id)
-  SELECT coo.message_id, coo.stream_id
-  FROM __SCHEMA__.claim_orphaned_outbox(
-    p_instance_id,
-    v_rank,
-    v_count,
-    v_lease_expiry,
-    p_now,
-    p_partition_count
-  ) AS coo;
-
-  -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
-  IF (p_flags & 64) = 0 THEN
-    INSERT INTO temp_orphaned_inbox (message_id, stream_id)
-    SELECT coi.message_id, coi.stream_id
-    FROM __SCHEMA__.claim_orphaned_inbox(
-      p_instance_id,
-      v_rank,
-      v_count,
-      v_lease_expiry,
-      p_now,
-      p_partition_count
-    ) AS coi;
-  END IF;
-
-  -- Claim orphaned receptor work and track
-  INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
-  SELECT cor.processing_id, cor.stream_id
-  FROM __SCHEMA__.claim_orphaned_receptor_work(
-    p_instance_id,
-    v_rank,
-    v_count,
-    v_lease_expiry,
-    p_now
-  ) AS cor;
-
-  -- Claim orphaned perspective events and track
-  INSERT INTO temp_orphaned_perspective_events (event_work_id, stream_id, perspective_name)
-  SELECT cope.event_work_id, cope.stream_id, cope.perspective_name
-  FROM __SCHEMA__.claim_orphaned_perspective_events(
-    p_instance_id,
-    v_lease_expiry,
-    p_now
-  ) AS cope;
 
   -- ========================================
   -- Phase 6: Lease Renewals
@@ -945,32 +969,10 @@ BEGIN
   -- Phase 7: Return Results
   -- ========================================
 
-  -- Pre-compute work existence flags to avoid redundant subqueries in RETURN QUERY
-  -- Returns ALL owned unprocessed work (not just new/orphaned) to prevent message limbo.
-  -- Stream ordering preserved: messages blocked by an earlier scheduled retry are excluded.
-  SELECT EXISTS(
-    SELECT 1 FROM wh_outbox o
-    WHERE o.instance_id = p_instance_id AND o.lease_expiry > p_now AND o.processed_at IS NULL
-      AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
-      AND NOT EXISTS (
-        SELECT 1 FROM wh_outbox blocked
-        WHERE blocked.stream_id = o.stream_id AND blocked.stream_id IS NOT NULL
-          AND blocked.processed_at IS NULL AND blocked.created_at < o.created_at
-          AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
-      )
-  ) INTO v_has_outbox_work;
-
-  SELECT EXISTS(
-    SELECT 1 FROM wh_inbox i
-    WHERE i.instance_id = p_instance_id AND i.lease_expiry > p_now AND i.processed_at IS NULL
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
-      AND NOT EXISTS (
-        SELECT 1 FROM wh_inbox blocked
-        WHERE blocked.stream_id = i.stream_id AND blocked.stream_id IS NOT NULL
-          AND blocked.processed_at IS NULL AND blocked.received_at < i.received_at
-          AND blocked.scheduled_for IS NOT NULL AND blocked.scheduled_for > p_now
-      )
-  ) INTO v_has_inbox_work;
+  -- v_has_outbox_work / v_has_inbox_work are set AFTER each RETURN QUERY block
+  -- via GET DIAGNOSTICS (zero cost — uses already-materialized data).
+  -- This replaces the expensive pre-computation EXISTS checks that duplicated
+  -- the same complex WHERE clauses from the RETURN QUERY blocks.
 
   -- DIAGNOSTIC: Log counts before returning results
   IF (p_flags & 4) != 0 THEN
@@ -1036,6 +1038,9 @@ BEGIN
     NULL::VARCHAR(200) as perspective_name
   FROM ordered_outbox o;
 
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  v_has_outbox_work := v_count > 0;
+
   -- Return inbox work (first row includes acknowledgement counts if no outbox work)
   -- Same per-stream ranking + global limit as outbox.
   RETURN QUERY
@@ -1090,6 +1095,9 @@ BEGIN
     NULL::VARCHAR(200) as perspective_name
   FROM ordered_inbox i;
 
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  v_has_inbox_work := v_count > 0;
+
   -- Return receptor work
   RETURN QUERY
   SELECT
@@ -1126,10 +1134,9 @@ BEGIN
       pe.*,
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
-      es.event_type,  -- Get event_type from event_store for perspective worker
-      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank
+      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank,
+      COUNT(*) OVER (PARTITION BY pe.stream_id, pe.perspective_name) as stream_pending_count
     FROM wh_perspective_events pe
-    INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
     LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
     LEFT JOIN __SCHEMA__.wh_perspective_cursors pc
@@ -1146,13 +1153,50 @@ BEGIN
       -- Note: pe.processed_at IS NULL already prevents re-processing individual events
       -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
       -- Filtering on checkpoint status would block all subsequent events in the stream
+      -- DEBOUNCE: Hold back streams with RewindRequired until the sliding window expires OR max cap is reached.
+      -- Sliding window: extends on each new late event. Max cap: forces rewind after absolute limit.
+      -- This prevents rewind loops on high-throughput streams and frees work item slots for other streams.
+      AND NOT (
+        (pc.status & 32) = 32  -- RewindRequired flag set
+        AND pc.rewind_flagged_at IS NOT NULL
+        -- Sliding window still active
+        AND pc.rewind_flagged_at + (v_rewind_debounce_seconds || ' seconds')::INTERVAL > p_now
+        -- AND max cap not yet reached (if first_flagged_at is NULL, treat as not capped)
+        AND (pc.rewind_first_flagged_at IS NULL
+             OR pc.rewind_first_flagged_at + (v_rewind_max_debounce_seconds || ' seconds')::INTERVAL > p_now)
+      )
+  ),
+  -- Two-tier fair scheduling with split budget:
+  -- Tier 1 (small streams): capped at tier1_budget_percent of total budget (default 70%)
+  -- Tier 2 (large streams): gets remaining budget + any unused Tier 1 slots
+  -- Prevents either tier from starving the other during bulk operations.
+  -- docs: fundamentals/perspectives/work-scheduling#two-tier
+  tier1_limited AS (
+    SELECT e.*
+    FROM eligible_perspective e
+    WHERE e.stream_pending_count <= v_max_work_items_per_stream
+    ORDER BY e.stream_id, e.perspective_name, e.event_id
+    LIMIT v_tier1_max
+  ),
+  tier1_used AS (
+    SELECT COUNT(*) as cnt FROM tier1_limited
+  ),
+  tier2_limited AS (
+    SELECT e.*
+    FROM eligible_perspective e
+    WHERE e.stream_pending_count > v_max_work_items_per_stream
+      AND e.stream_rank <= v_max_work_items_per_stream
+    ORDER BY e.stream_id, e.perspective_name, e.event_id
+    LIMIT v_max_work_items - (SELECT cnt FROM tier1_used)
   ),
   ordered_perspective AS (
-    SELECT e.*,
-      ROW_NUMBER() OVER (ORDER BY e.stream_id, e.perspective_name, e.event_id) as row_num
-    FROM eligible_perspective e
-    WHERE e.stream_rank <= v_max_work_items_per_stream
-    LIMIT v_max_work_items
+    SELECT combined.*,
+      ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
+    FROM (
+      SELECT t1.*, 1 as tier FROM tier1_limited t1
+      UNION ALL
+      SELECT t2.*, 2 as tier FROM tier2_limited t2
+    ) combined
   )
   SELECT
     v_rank as instance_rank,
@@ -1162,9 +1206,9 @@ BEGIN
     pe.stream_id as work_stream_id,
     NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
     NULL::VARCHAR(200) as destination,
-    pe.event_type as message_type,  -- Event type from wh_event_store JOIN
-    NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
-    NULL::TEXT as message_data,          -- Event data comes from wh_event_store
+    NULL::VARCHAR(500) as message_type,  -- Not needed: PerspectiveWorker resolves event types from registry
+    NULL::VARCHAR(500) as envelope_type,
+    NULL::TEXT as message_data,
     -- CRITICAL: First row includes ack counts if no outbox/inbox work
     CASE WHEN pe.row_num = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
       THEN v_ack_counts
@@ -1177,7 +1221,8 @@ BEGIN
     NULL::INTEGER as failure_reason,
     pe.perspective_name
   FROM ordered_perspective pe
-  ORDER BY pe.stream_id, pe.perspective_name, pe.event_id;
+  WHERE pe.row_num <= v_max_work_items
+  ORDER BY pe.row_num;
 
   -- Return sync inquiry results
   RETURN QUERY

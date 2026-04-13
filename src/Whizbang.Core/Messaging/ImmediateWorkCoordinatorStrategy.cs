@@ -177,7 +177,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
 
   // ========================================
   // High-Performance LoggerMessage Delegates

@@ -2,12 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -1133,6 +1133,10 @@ public class SecurityIntegrationTests {
       CancellationToken cancellationToken = default) {
       onContextEstablished(context);
       return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnContextEstablishedAsync(IScopeContext context, IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
     }
   }
 

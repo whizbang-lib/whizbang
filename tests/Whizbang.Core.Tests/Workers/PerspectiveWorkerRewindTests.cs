@@ -496,7 +496,95 @@ public class PerspectiveWorkerRewindTests {
 
   #endregion
 
+  #region Rewind Error Isolation Tests
+
+  [Test]
+  public async Task Worker_RewindFails_LogsErrorAndContinuesAsync() {
+    // Arrange
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var runner = new ThrowingPerspectiveRunner(new InvalidOperationException("Snapshot corrupt"));
+    var registry = new SingleRunnerRegistry("TestPerspective", runner);
+
+    var streamId = Guid.CreateVersion7();
+    var triggerEventId = Guid.CreateVersion7();
+
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "TestPerspective",
+        LastProcessedEventId = Guid.CreateVersion7(),
+        PartitionNumber = 1,
+        Status = PerspectiveProcessingStatus.RewindRequired,
+        WorkId = Guid.CreateVersion7()
+      }
+    ];
+
+    coordinator.CursorOverrides[("TestPerspective", streamId)] = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = "TestPerspective",
+      LastEventId = Guid.CreateVersion7(),
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = triggerEventId
+    };
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act — worker should NOT crash despite the rewind throwing
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(400);
+    await cts.CancelAsync();
+
+    // Assert — worker should stop cleanly (no unhandled exception)
+    Exception? caught = null;
+    try { await workerTask; } catch (Exception ex) when (ex is not OperationCanceledException) { caught = ex; }
+    await Assert.That(caught).IsNull()
+      .Because("A rewind failure should NOT crash the worker");
+    await Assert.That(runner.RewindAndRunCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("RewindAndRunAsync should have been called");
+  }
+
+  #endregion
+
   #region Test Doubles
+
+  private sealed class ThrowingPerspectiveRunner(Exception exceptionToThrow) : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
+    public int RewindAndRunCallCount { get; private set; }
+
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      return Task.FromResult(new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.CreateVersion7(),
+        Status = PerspectiveProcessingStatus.Completed
+      });
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
+      RewindAndRunCallCount++;
+      throw exceptionToThrow;
+    }
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+  }
 
   private sealed class TrackingPerspectiveRunner : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object); // Fake — no real perspective type
@@ -560,6 +648,12 @@ public class PerspectiveWorkerRewindTests {
 
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
       if (CursorOverrides.TryGetValue((perspectiveName, streamId), out var cursor)) {

@@ -56,6 +56,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEnvelopeSerializer>(serializer);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -97,7 +99,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     // Assert - serializer was called, message was queued
     await Assert.That(serializer.SerializeCallCount).IsEqualTo(1)
       .Because("Strongly-typed envelope should invoke IEnvelopeSerializer");
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -116,6 +118,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -162,6 +166,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEnvelopeSerializer>(serializer);
     // Intentionally NOT registering IEventTypeProvider — exercises fallback `payload is IEvent`
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -203,7 +209,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     cts.Cancel();
 
     // Assert - isEvent should be true (runtime check: payload is IEvent)
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsTrue()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsTrue()
       .Because("Without IEventTypeProvider, fallback to 'payload is IEvent' should detect events");
   }
 
@@ -224,6 +230,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEnvelopeSerializer>(serializer);
     // Intentionally NOT registering IEventTypeProvider
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -264,7 +272,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     cts.Cancel();
 
     // Assert - isEvent should be false (runtime check: payload is not IEvent)
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
       .Because("Non-IEvent payload without IEventTypeProvider should set isEvent=false");
   }
 
@@ -285,6 +293,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -337,6 +347,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEnvelopeSerializer>(serializer);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -374,7 +386,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     cts.Cancel();
 
     // Assert - message was queued successfully
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -511,6 +523,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     // No IEnvelopeSerializer registered
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -608,6 +622,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -638,7 +654,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     cts.Cancel();
 
     // Assert - message was queued for processing
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================

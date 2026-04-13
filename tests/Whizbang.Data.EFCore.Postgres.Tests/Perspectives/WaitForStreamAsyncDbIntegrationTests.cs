@@ -1,4 +1,3 @@
-using Dapper;
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Core.Generated;
@@ -61,8 +60,8 @@ public class WaitForStreamAsyncDbIntegrationTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name)
-      VALUES (@eventType, 'perspective', @perspectiveName, 'TestService')
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, normalized_message_type)
+      VALUES (@eventType, 'perspective', @perspectiveName, 'TestService', normalize_event_type(@eventType))
       ON CONFLICT DO NOTHING",
       new { eventType, perspectiveName });
   }

@@ -56,6 +56,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -88,7 +90,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - message was queued, metrics code paths were hit
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   [Test]
@@ -104,6 +106,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -130,7 +134,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
       .Because("Message should be queued even if dedup returns empty work");
   }
 
@@ -147,6 +151,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -190,6 +196,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -215,9 +223,9 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     cts.Cancel();
 
-    // Assert - message was dropped without exception propagation
-    await Assert.That(workStrategy.QueueCallCount).IsEqualTo(1)
-      .Because("Message should reach QueueInboxMessage before ObjectDisposedException");
+    // Assert - message was stored via StoreInboxMessagesAsync (QueueInboxMessage no longer called)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("Message should be stored via StoreInboxMessagesAsync");
   }
 
   [Test]
@@ -233,6 +241,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -279,6 +289,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new MatchingEventTypeProvider());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -307,7 +319,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - isEvent should be true
-    await Assert.That(workStrategy.LastQueuedIsEvent).IsTrue()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsTrue()
       .Because("Message type matching IEventTypeProvider event types should set isEvent=true");
   }
 
@@ -323,6 +335,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new MatchingEventTypeProvider());
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
@@ -378,6 +392,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddSingleton<IPerspectiveRunnerRegistry>(perspectiveRegistry);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -494,6 +510,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -537,6 +555,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -578,6 +598,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -617,7 +639,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - message was processed
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -637,6 +659,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -683,7 +707,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - should fall back to MessageId since empty string is not a valid GUID
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("Empty string AggregateId should fall back to MessageId");
   }
 
@@ -703,6 +727,8 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -728,7 +754,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     cts.Cancel();
 
     // Assert - no scope deltas on hops means scope should be null
-    await Assert.That(workStrategy.LastQueuedScope).IsNull()
+    await Assert.That(noOpCoordinator.StoredMessages.Last().Scope).IsNull()
       .Because("Envelope with no scope deltas should result in null Scope");
   }
 

@@ -1,7 +1,6 @@
 #pragma warning disable CA1707
 
 using System.Text.Json;
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;

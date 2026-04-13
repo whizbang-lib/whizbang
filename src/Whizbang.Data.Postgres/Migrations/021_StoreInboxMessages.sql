@@ -87,7 +87,8 @@ BEGIN
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
       -- Update active streams for stream ownership tracking
-      IF v_msg.stream_id IS NOT NULL THEN
+      -- Skip when instance_id is NULL (direct inbox INSERT path — claiming handles this later)
+      IF v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
         INSERT INTO __SCHEMA__.wh_active_streams (
           stream_id,
           assigned_instance_id,

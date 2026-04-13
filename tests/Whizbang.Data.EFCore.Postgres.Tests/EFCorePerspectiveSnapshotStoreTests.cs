@@ -346,12 +346,15 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "OrderPerspective";
 
-    // Create 5 snapshots
+    // Create 5 snapshots with delays to ensure UUID7 ordering
     var eventIds = new Guid[5];
     for (var i = 0; i < 5; i++) {
       eventIds[i] = Guid.CreateVersion7();
       using var data = JsonDocument.Parse($$$"""{"v": {{{i + 1}}}}""");
       await _store.CreateSnapshotAsync(streamId, perspectiveName, eventIds[i], data);
+      if (i < 4) {
+        await Task.Delay(10);
+      }
     }
 
     // Prune, keeping 2

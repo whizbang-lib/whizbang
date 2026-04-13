@@ -69,6 +69,16 @@ public static class PerspectiveCursorsSchema {
         Nullable: true
       ),
       new ColumnDefinition(
+        Name: "rewind_flagged_at",
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
+      ),
+      new ColumnDefinition(
+        Name: "rewind_first_flagged_at",
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
+      ),
+      new ColumnDefinition(
         Name: "stream_lock_instance_id",
         DataType: WhizbangDataType.UUID,
         Nullable: true
@@ -109,6 +119,8 @@ public static class PerspectiveCursorsSchema {
     public const string PROCESSED_AT = "processed_at";
     public const string ERROR = "error";
     public const string REWIND_TRIGGER_EVENT_ID = "rewind_trigger_event_id";
+    public const string REWIND_FLAGGED_AT = "rewind_flagged_at";
+    public const string REWIND_FIRST_FLAGGED_AT = "rewind_first_flagged_at";
     public const string STREAM_LOCK_INSTANCE_ID = "stream_lock_instance_id";
     public const string STREAM_LOCK_EXPIRY = "stream_lock_expiry";
     public const string STREAM_LOCK_REASON = "stream_lock_reason";

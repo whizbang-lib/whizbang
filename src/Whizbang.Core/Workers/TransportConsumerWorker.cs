@@ -351,9 +351,10 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     await using var scope = _scopeFactory.CreateAsyncScope();
-    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    var queued = 0;
+    // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
+    var inboxMessages = new List<InboxMessage>(messages.Count);
     foreach (var msg in messages) {
       var envelopeType = msg.EnvelopeType;
       var envelope = msg.Envelope;
@@ -373,13 +374,12 @@ public partial class TransportConsumerWorker : BackgroundService {
         }
       }
 
-      // Per-message: OTEL activity, serialize, queue for batch flush
+      // Per-message: OTEL activity, serialize, collect for batch INSERT
       var inboxActivity = _startInboxActivity(envelope, messageType);
       try {
         _populateDeliveredAtTimestamp(envelope, envelopeType);
         var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
-        strategy.QueueInboxMessage(inboxMessage);
-        queued++;
+        inboxMessages.Add(inboxMessage);
         inboxActivity?.SetStatus(ActivityStatusCode.Ok);
       } catch (Exception ex) {
         _logger.LogError(ex, "Failed to serialize message {MessageId} for inbox — skipping", envelope.MessageId);
@@ -390,22 +390,20 @@ public partial class TransportConsumerWorker : BackgroundService {
       }
     }
 
-    if (queued > 0) {
-      // ONE process_work_batch for all N messages — bulk insert into inbox
-      var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, cancellationToken);
-      _metrics?.InboxMessagesProcessed.Add(queued);
+    if (inboxMessages.Count > 0) {
+      // Direct INSERT into wh_inbox — bypasses process_work_batch entirely.
+      // Event storage + perspective creation happens on next tick via self-healing
+      // (Phase 5 claims → Phase 4.5B stores events → Phase 4.6/4.7 creates perspectives).
+      await workCoordinator.StoreInboxMessagesAsync(
+        [.. inboxMessages],
+        cancellationToken: cancellationToken);
+      _metrics?.InboxMessagesProcessed.Add(inboxMessages.Count);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Batch of {BatchCount} messages inserted into inbox — ACKing transport, firing PostInbox", queued);
+        _logger.LogDebug("Batch of {BatchCount} messages inserted into inbox — ACKing transport", inboxMessages.Count);
       }
 
-      // Fire-and-forget PostInbox lifecycle + completion flush
-      // Runs AFTER handler returns (ACK), concurrently with next batch collection.
-      // Command receptors fire here. If PostInbox fails, messages stay in inbox
-      // and WorkCoordinatorPublisherWorker retries.
-      // PostInbox lifecycle (command receptors, perspective triggers) is handled by
-      // the WorkCoordinatorPublisherWorker when it claims inbox messages.
-      // Signal the publisher worker to poll immediately so commands are processed promptly.
+      // Signal the publisher worker to poll immediately so messages are claimed and processed promptly.
       _workChannelWriter?.SignalNewWorkAvailable();
     }
     // Handler returns → transport ACKs all N messages → next batch starts collecting

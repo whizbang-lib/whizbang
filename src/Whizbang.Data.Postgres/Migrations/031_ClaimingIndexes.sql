@@ -51,3 +51,8 @@ WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_perspective_events_processed
 ON wh_perspective_events (stream_id, perspective_name)
 WHERE processed_at IS NOT NULL;
+
+-- Stream lock index: support Phase 7 perspective work query filtering on stream_lock columns
+CREATE INDEX IF NOT EXISTS idx_perspective_cursors_stream_lock
+ON wh_perspective_cursors (stream_lock_instance_id, stream_lock_expiry)
+WHERE stream_lock_instance_id IS NOT NULL;
