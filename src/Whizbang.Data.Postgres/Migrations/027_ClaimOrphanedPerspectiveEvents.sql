@@ -21,12 +21,28 @@ BEGIN
   WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
     AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
     AND pe.processed_at IS NULL
-    -- Respect stream ownership
-    AND EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-      WHERE ast.stream_id = pe.stream_id
-        AND ast.assigned_instance_id = p_instance_id
-        AND ast.lease_expiry > p_now
+    -- Respect stream ownership — claim if:
+    -- 1. Stream is owned by this instance (normal case), OR
+    -- 2. Stream has no active owner (never assigned), OR
+    -- 3. Stream's owning instance is dead (not in wh_service_instances), OR
+    -- 4. Stream's lease has expired (owning instance crashed)
+    AND (
+      NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_active_streams ast
+        WHERE ast.stream_id = pe.stream_id
+      )
+      OR EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_active_streams ast
+        WHERE ast.stream_id = pe.stream_id
+          AND (
+            ast.assigned_instance_id = p_instance_id  -- owned by us
+            OR ast.lease_expiry <= p_now               -- lease expired
+            OR NOT EXISTS (                            -- owning instance is dead
+              SELECT 1 FROM __SCHEMA__.wh_service_instances si
+              WHERE si.instance_id = ast.assigned_instance_id
+            )
+          )
+      )
     )
     -- Critical: Ensure ordering - no earlier uncompleted events in same perspective
     -- Event IDs are UUIDv7 with temporal ordering, so we can compare them directly
