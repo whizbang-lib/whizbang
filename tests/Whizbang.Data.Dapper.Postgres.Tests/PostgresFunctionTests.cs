@@ -1557,7 +1557,7 @@ public class PostgresFunctionTests : PostgresTestBase {
         new { messageId = msgId, streamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
     }
 
-    // Act — call with default max (100)
+    // Act — call with default max (300)
     var result = await connection.QueryAsync<WorkBatchRow>(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId, p_service_name := 'TestService', p_host_name := 'test-host',
@@ -1565,7 +1565,7 @@ public class PostgresFunctionTests : PostgresTestBase {
       )", new { instanceId, now });
 
     var outboxWork = result.Where(r => r.source == "outbox").ToList();
-    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(100)
+    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(300)
       .Because("Phase 7 must limit returned work items to prevent hot loops that starve the publisher");
   }
 
