@@ -8,10 +8,22 @@
 -- Dependencies: 001-004 (requires wh_perspective_cursors table)
 -- Used by: 006 (process_work_batch calls this function)
 
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, VARCHAR(200), UUID, SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, UUID[], SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, JSONB, SMALLINT, TEXT);
+-- Drop ALL overloads to prevent ambiguous function name errors on deployment.
+-- Uses DO block with pg_proc lookup to handle any signature that may exist.
+DO $$
+DECLARE
+  _oid oid;
+BEGIN
+  FOR _oid IN
+    SELECT p.oid FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE p.proname = 'complete_perspective_cursor_work'
+      AND n.nspname = current_schema()
+  LOOP
+    EXECUTE format('DROP FUNCTION IF EXISTS %s', _oid::regprocedure);
+  END LOOP;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_cursor_work(
   p_stream_id UUID,
