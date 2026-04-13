@@ -4,6 +4,8 @@
 --              Used by process_work_batch orchestrator to maintain instance liveness tracking.
 -- Dependencies: 001-009 (requires wh_service_instances table)
 
+SELECT __SCHEMA__.drop_all_overloads('register_instance_heartbeat');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.register_instance_heartbeat(
   p_instance_id UUID,
   p_service_name VARCHAR(200),

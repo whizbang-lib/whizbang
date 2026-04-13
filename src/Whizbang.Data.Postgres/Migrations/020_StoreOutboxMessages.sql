@@ -4,6 +4,8 @@
 --              Returns message IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-019 (requires wh_outbox, wh_active_streams tables, compute_partition function)
 
+SELECT __SCHEMA__.drop_all_overloads('store_outbox_messages');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   p_messages JSONB,
   p_instance_id UUID,

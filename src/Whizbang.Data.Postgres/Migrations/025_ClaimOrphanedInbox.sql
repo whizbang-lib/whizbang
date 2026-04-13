@@ -4,6 +4,8 @@
 --              Uses partition-based load balancing to distribute work across instances.
 -- Dependencies: 001-024 (requires wh_inbox, wh_active_streams tables, compute_partition function)
 
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   p_instance_id UUID,
   p_instance_rank INTEGER,

@@ -4,6 +4,8 @@
 --              Implements exponential backoff retry with scheduled_for timestamp.
 -- Dependencies: 001-018 (requires wh_perspective_events table from migration 009)
 
+SELECT __SCHEMA__.drop_all_overloads('process_perspective_event_failures');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_perspective_event_failures(
   p_failures JSONB,
   p_now TIMESTAMPTZ
