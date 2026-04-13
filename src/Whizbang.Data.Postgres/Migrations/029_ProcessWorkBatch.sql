@@ -114,17 +114,25 @@ DECLARE
   -- Rewind debounce: how long to hold back rewind-pending streams (seconds)
   v_rewind_debounce_seconds INTEGER;
   v_rewind_max_debounce_seconds INTEGER;
+
+  -- Two-tier budget split
+  v_tier1_budget_percent INTEGER;
+  v_tier1_max INTEGER;
 BEGIN
-  -- Read all settings in a single query (5 separate SELECTs → 1 pivoted query)
+  -- Read all settings in a single query (pivoted)
   SELECT
-    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_tick' THEN setting_value::INTEGER END), 100),
+    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_tick' THEN setting_value::INTEGER END), 300),
     COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_stream' THEN setting_value::INTEGER END), 25),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_debounce_seconds' THEN setting_value::INTEGER END), 5),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_max_debounce_seconds' THEN setting_value::INTEGER END), 30),
-    COALESCE(MAX(CASE WHEN setting_key = 'stale_threshold_seconds' THEN setting_value::INTEGER END), p_stale_threshold_seconds)
-  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, p_stale_threshold_seconds
+    COALESCE(MAX(CASE WHEN setting_key = 'stale_threshold_seconds' THEN setting_value::INTEGER END), p_stale_threshold_seconds),
+    COALESCE(MAX(CASE WHEN setting_key = 'tier1_budget_percent' THEN setting_value::INTEGER END), 70)
+  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, p_stale_threshold_seconds, v_tier1_budget_percent
   FROM wh_settings
-  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds');
+  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
+
+  -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
+  v_tier1_max := (v_max_work_items * v_tier1_budget_percent) / 100;
 
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
@@ -1158,25 +1166,37 @@ BEGIN
              OR pc.rewind_first_flagged_at + (v_rewind_max_debounce_seconds || ' seconds')::INTERVAL > p_now)
       )
   ),
-  -- Two-tier fair scheduling: small streams complete in one tick,
-  -- large streams fill remaining budget. Prevents small streams
-  -- from being starved by a few busy streams consuming all work item slots.
-  -- Uses stream_pending_count window function from eligible_perspective (no extra CTE/JOIN).
+  -- Two-tier fair scheduling with split budget:
+  -- Tier 1 (small streams): capped at tier1_budget_percent of total budget (default 70%)
+  -- Tier 2 (large streams): gets remaining budget + any unused Tier 1 slots
+  -- Prevents either tier from starving the other during bulk operations.
   -- docs: fundamentals/perspectives/work-scheduling#two-tier
-  ordered_perspective AS (
-    SELECT e.*,
-      ROW_NUMBER() OVER (
-        ORDER BY
-          -- Tier 1 (small streams) before Tier 2 (large streams)
-          CASE WHEN e.stream_pending_count <= v_max_work_items_per_stream THEN 0 ELSE 1 END,
-          -- Within each tier, order by stream then event
-          e.stream_id, e.perspective_name, e.event_id
-      ) as row_num
+  tier1_limited AS (
+    SELECT e.*
     FROM eligible_perspective e
-    WHERE
-      -- Small streams: serve ALL events (no per-stream cap)
-      -- Large streams: cap at max_work_items_per_stream
-      (e.stream_pending_count <= v_max_work_items_per_stream OR e.stream_rank <= v_max_work_items_per_stream)
+    WHERE e.stream_pending_count <= v_max_work_items_per_stream
+    ORDER BY e.stream_id, e.perspective_name, e.event_id
+    LIMIT v_tier1_max
+  ),
+  tier1_used AS (
+    SELECT COUNT(*) as cnt FROM tier1_limited
+  ),
+  tier2_limited AS (
+    SELECT e.*
+    FROM eligible_perspective e
+    WHERE e.stream_pending_count > v_max_work_items_per_stream
+      AND e.stream_rank <= v_max_work_items_per_stream
+    ORDER BY e.stream_id, e.perspective_name, e.event_id
+    LIMIT v_max_work_items - (SELECT cnt FROM tier1_used)
+  ),
+  ordered_perspective AS (
+    SELECT combined.*,
+      ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
+    FROM (
+      SELECT t1.*, 1 as tier FROM tier1_limited t1
+      UNION ALL
+      SELECT t2.*, 2 as tier FROM tier2_limited t2
+    ) combined
   )
   SELECT
     v_rank as instance_rank,
