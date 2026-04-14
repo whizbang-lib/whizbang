@@ -492,4 +492,49 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     return ex.InnerException?.Message.Contains("23505") == true ||
            ex.InnerException?.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true;
   }
+
+  /// <inheritdoc />
+  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+      IReadOnlyList<StreamEventData> streamEvents,
+      IReadOnlyList<Type> eventTypes) {
+    if (streamEvents.Count == 0) {
+      return [];
+    }
+
+    // Build type lookup (same pattern as ReadPolymorphicAsync)
+    var typeMap = new Dictionary<string, Type>();
+    foreach (var type in eventTypes) {
+      typeMap[TypeNameFormatter.Format(type)] = type;
+      if (type.AssemblyQualifiedName != null) {
+        typeMap[type.AssemblyQualifiedName] = type;
+      }
+      if (type.FullName != null) {
+        typeMap[type.FullName] = type;
+      }
+      typeMap[type.Name] = type;
+    }
+
+    var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
+    foreach (var raw in streamEvents) {
+      var concreteType = _resolveConcreteType(raw.EventType, typeMap);
+      if (concreteType is null) {
+        continue;  // Skip unknown event types
+      }
+
+      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
+      var eventData = JsonSerializer.Deserialize(raw.EventData, typeInfo);
+      if (eventData is null) {
+        continue;
+      }
+
+      results.Add(new MessageEnvelope<IEvent> {
+        MessageId = new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
+        Payload = (IEvent)eventData,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      });
+    }
+
+    return results;
+  }
 }
