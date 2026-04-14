@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
@@ -81,6 +82,31 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid? lastProcessedEventId,
       CancellationToken cancellationToken = default) {
 
+    // Build event types list for polymorphic deserialization
+    var eventTypes = new[] {
+      #region EVENT_TYPES
+      // Generated event type list goes here
+      #endregion
+    };
+
+    // Read events from event store
+    var events = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+    await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
+        streamId, lastProcessedEventId, eventTypes, cancellationToken)) {
+      events.Add(envelope);
+    }
+
+    // Delegate to RunWithEventsAsync
+    return await RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events, cancellationToken);
+  }
+
+  public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      CancellationToken cancellationToken = default) {
+
     // Load current model or create new one
     var currentModel = await _perspectiveStore.GetByStreamIdAsync(
         streamId,
@@ -109,27 +135,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
 
-    // Build list of event types this perspective handles (for polymorphic deserialization)
-    var eventTypes = new[] {
-      #region EVENT_TYPES
-      // Generated event type list goes here
-      #endregion
-    };
-
     try {
-      // Materialize events into list for PrePerspective peek and main processing
-      // This allows PrePerspective receptors to receive the first event for type-based routing
-      var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-
-      await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
-          streamId,
-          lastProcessedEventId,
-          eventTypes,
-          cancellationToken)) {
-
-        events.Add(envelope);
-      }
-
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
       if (events.Count > 0) {
         var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
@@ -573,6 +579,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// No intermediate DB writes — single atomic UpsertAsync at the end.
   /// No lifecycle hooks — receptors are suppressed via ProcessingMode on the PerspectiveWorker context.
   /// </summary>
+  // FUTURE: optimize RunFromModelAsync to use RunWithEventsAsync with pre-supplied events
   private async Task<PerspectiveCursorCompletion> RunFromModelAsync(
       Guid streamId,
       string perspectiveName,
