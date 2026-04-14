@@ -897,10 +897,15 @@ public partial class PerspectiveWorker(
         }
 
         try {
-          // RunWithEventsAsync handles everything: model load, event application,
+          // Get cursor position so the runner knows where to start applying events.
+          // The runner uses this for checkpoint tracking — events before this position are skipped.
+          var checkpoint = await groupWorkCoordinator.GetPerspectiveCursorAsync(
+            streamId, perspectiveName, ct);
+          var lastProcessedEventId = checkpoint?.LastEventId;
+
+          // RunWithEventsAsync handles: model load, event application,
           // lifecycle hooks (Pre/PostPerspective), model save, and checkpoint.
-          // No separate cursor lookup, event fetch, or processed-events reload needed.
-          var result = await runner.RunWithEventsAsync(streamId, perspectiveName, null, typedEvents, ct);
+          var result = await runner.RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, typedEvents, ct);
 
           // Report completion and sync signals
           await _reportCompletionAndSignalSyncAsync(
