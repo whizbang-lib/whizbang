@@ -828,16 +828,17 @@ public partial class PerspectiveWorker(
     var streamsWithEvents = new HashSet<Guid>(eventsByStream.Select(g => g.Key));
 
     // Build (stream, perspective) work items for parallel processing
-    // Optimization #5: Parallelize across (stream, perspective) pairs, not just streams
-    var workItems = new List<(Guid StreamId, string PerspectiveName, List<StreamEventData> Events)>();
+    // Raw events are shared per stream; deserialization happens once per stream inside the parallel loop
+    var deserializedCache = new ConcurrentDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>();
+    var workItems = new List<(Guid StreamId, string PerspectiveName, List<StreamEventData> RawEvents)>();
     foreach (var streamGroup in eventsByStream) {
       var streamId = streamGroup.Key;
-      var events = streamGroup.ToList();
+      var rawEvents = streamGroup.ToList();
 
       // Determine applicable perspectives from event types
       var perspectiveNames = new HashSet<string>();
       if (_perspectivesPerEventType is not null) {
-        foreach (var evt in events) {
+        foreach (var evt in rawEvents) {
           if (_perspectivesPerEventType.TryGetValue(evt.EventType, out var names)) {
             foreach (var name in names) {
               perspectiveNames.Add(name);
@@ -847,7 +848,7 @@ public partial class PerspectiveWorker(
       }
 
       foreach (var perspectiveName in perspectiveNames) {
-        workItems.Add((streamId, perspectiveName, events));
+        workItems.Add((streamId, perspectiveName, rawEvents));
       }
     }
 
@@ -862,11 +863,10 @@ public partial class PerspectiveWorker(
         CancellationToken = cancellationToken
       },
       async (workItem, ct) => {
-        var (streamId, perspectiveName, events) = workItem;
+        var (streamId, perspectiveName, rawEvents) = workItem;
 
         await using var groupScope = _scopeFactory.CreateAsyncScope();
         var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-        var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
         var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
         var registry = groupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
         var eventStore = groupScope.ServiceProvider.GetRequiredService<IEventStore>();
@@ -880,72 +880,57 @@ public partial class PerspectiveWorker(
           return;
         }
 
-        var checkpoint = await groupWorkCoordinator.GetPerspectiveCursorAsync(
-          streamId, perspectiveName, ct);
-        var lastProcessedEventId = checkpoint?.LastEventId;
+        // Deserialize events ONCE per stream, cache for reuse across perspectives
+        var typedEvents = deserializedCache.GetOrAdd(streamId, _ => {
+          var eventTypes = _eventTypeProvider?.GetEventTypes() ?? [];
+          return eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
+        });
 
-        var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+        if (typedEvents.Count == 0) {
+          return;
+        }
 
         try {
-          // Load upcoming events for lifecycle stages
-          var upcomingEvents = await _loadUpcomingEventsForStreamAsync(
-            eventStore, streamId, lastProcessedEventId, ct);
+          // RunWithEventsAsync handles everything: model load, event application,
+          // lifecycle hooks (Pre/PostPerspective), model save, and checkpoint.
+          // No separate cursor lookup, event fetch, or processed-events reload needed.
+          var result = await runner.RunWithEventsAsync(streamId, perspectiveName, null, typedEvents, ct);
 
-          var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+          // Report completion and sync signals
+          await _reportCompletionAndSignalSyncAsync(
+            result, [], groupWorkCoordinator, streamId, perspectiveName, ct);
 
-          // Phase 3.1: PrePerspective lifecycle
-          await _invokePrePerspectiveLifecycleAsync(
-            upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
-            streamCtx, runner, ct);
-
-          // Phase 3.2: Execute perspective runner
-          var result = await runner.RunAsync(streamId, perspectiveName, lastProcessedEventId, ct);
-
-          // Phase 3a: Load processed events
-          var processedEvents = await _loadAndLogProcessedEventsAsync(
-            groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
-            lastProcessedEventId, ct);
-
-          // Collect processed events for PostLifecycle firing
-          foreach (var envelope in processedEvents) {
+          // Collect processed events for PostLifecycle firing (WhenAll gate)
+          foreach (var envelope in typedEvents) {
             batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
           }
 
-          // Phase 3c: Report completion and sync signals
-          await _reportCompletionAndSignalSyncAsync(
-            result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
-
-          // Phase 3d: PostPerspective lifecycle
-          await _invokePostPerspectiveLifecycleAsync(
-            processedEvents, groupReceptorInvoker, enableLifecycleSpans, streamCtx,
-            result, ProcessingMode.Live, ct);
-
-          LogPerspectiveCursorCompleted(_logger, perspectiveName, streamId, result.LastEventId);
-
           // Signal perspective complete for WhenAll tracking
           if (groupLifecycleCoordinator is not null) {
-            foreach (var envelope in processedEvents) {
+            foreach (var envelope in typedEvents) {
               groupLifecycleCoordinator.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
             }
           }
 
+          LogPerspectiveCursorCompleted(_logger, perspectiveName, streamId, result.LastEventId);
+
           // Fire processing hook
-          if (processedEvents.Count > 0) {
+          if (result.EventsProcessed > 0) {
             OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
               PerspectiveName = perspectiveName,
               StreamId = streamId,
-              EventCount = processedEvents.Count
+              EventCount = result.EventsProcessed
             });
           }
 
           // Record metrics
           _metrics?.StreamsUpdated.Add(1);
-          if (processedEvents.Count > 0) {
-            _metrics?.EventsProcessed.Add(processedEvents.Count);
+          if (result.EventsProcessed > 0) {
+            _metrics?.EventsProcessed.Add(result.EventsProcessed);
           }
 
           // Collect work_item_ids for batched completion
-          foreach (var evt in events) {
+          foreach (var evt in rawEvents) {
             allCompletedWorkIds.Add(evt.EventWorkId);
           }
         } catch (Exception ex) when (ex is not OperationCanceledException) {

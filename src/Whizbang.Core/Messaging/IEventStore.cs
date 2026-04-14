@@ -243,4 +243,16 @@ public interface IEventStore {
       => throw new NotSupportedException(
           "AppendAndWaitAsync requires the AppendAndWaitEventStoreDecorator to be registered. " +
           "Ensure AddWhizbang() is called with IEventCompletionAwaiter enabled.");
+
+  /// <summary>
+  /// Deserializes raw stream event data (from get_stream_events) into typed MessageEnvelope&lt;IEvent&gt;.
+  /// Used by drain mode to convert batch-fetched events into the format expected by RunWithEventsAsync.
+  /// AOT-compatible: uses the same type resolution and JsonSerializerOptions as ReadPolymorphicAsync.
+  /// </summary>
+  /// <param name="streamEvents">Raw event data from get_stream_events SQL function</param>
+  /// <param name="eventTypes">Known event types for type resolution</param>
+  /// <returns>List of deserialized message envelopes</returns>
+  List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+    IReadOnlyList<StreamEventData> streamEvents,
+    IReadOnlyList<Type> eventTypes) => [];
 }
