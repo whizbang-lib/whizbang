@@ -50,6 +50,8 @@ public sealed partial class TableStatisticsCollector(
 
         var depths = await provider.GetQueueDepthsAsync(stoppingToken);
         metrics.UpdateQueueDepths(depths);
+      } catch (ObjectDisposedException) {
+        break;  // Host is shutting down — exit the collection loop
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogCollectionError(_logger, ex);
       }

@@ -192,10 +192,16 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
-    await _initializePerspectiveRegistryAsync();
-    await _processInitialCheckpointsAsync(stoppingToken);
-    await _reconcileOrphanedLifecyclesAsync(stoppingToken);
-    await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
+    try {
+      await _initializePerspectiveRegistryAsync();
+      await _processInitialCheckpointsAsync(stoppingToken);
+      await _reconcileOrphanedLifecyclesAsync(stoppingToken);
+      await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
+    } catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) {
+      // Host shutting down while startup methods were running (e.g. port bind failure disposed
+      // the DI container before the background service finished initialising). Exit gracefully.
+      return;
+    }
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     if (workChannelWriter is not null) {

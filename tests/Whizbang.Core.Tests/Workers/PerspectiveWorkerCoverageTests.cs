@@ -1401,6 +1401,72 @@ public class PerspectiveWorkerCoverageTests {
       .Because("Worker should exit gracefully when service provider is disposed during shutdown");
   }
 
+  [Test]
+  public async Task Worker_WhenScopeFactoryDisposedDuringRegistryInit_ExitsGracefullyAsync() {
+    // Reproduces: Kestrel fails to bind → host disposes DI container → PerspectiveWorker startup crashes
+    // The scope factory throws ObjectDisposedException on the second CreateScope call
+    // (call 1 = constructor logger, call 2 = _initializePerspectiveRegistryAsync).
+    var services = new ServiceCollection();
+    services.AddLogging();
+    await using var realProvider = services.BuildServiceProvider();
+
+    // throwAfterCalls: 1 → constructor scope (call 1) succeeds, registry init (call 2) throws
+    var scopeFactory = new CountingDisposedScopeFactory(
+      realProvider.GetRequiredService<IServiceScopeFactory>(), throwAfterCalls: 1);
+
+    var worker = new PerspectiveWorker(
+      new FakeServiceInstanceProvider(),
+      scopeFactory,
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })
+    );
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask!;
+
+    // Worker should exit gracefully — not fault with ObjectDisposedException
+    await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+      .Because("Worker should exit gracefully when scope factory is disposed during registry init");
+  }
+
+  [Test]
+  public async Task Worker_WhenScopeFactoryDisposedDuringScanAndRepairRewinds_ExitsGracefullyAsync() {
+    // Reproduces: Kestrel bind failure → DI disposed → _scanAndRepairRewindsOnStartupAsync crashes host.
+    // Scope factory allows constructor (call 1) + registry init (call 2), then throws on call 3+.
+    // Empty registry → _reconcileOrphanedLifecyclesAsync returns early (no scope consumed).
+    // DB not ready for initial checkpoints → no processWorkBatch scope consumed.
+    // DB ready for startup scan → triggers the failing CreateAsyncScope (call 3).
+    var services = new ServiceCollection();
+    services.AddLogging();
+    await using var realProvider = services.BuildServiceProvider();
+
+    // throwAfterCalls: 2 → constructor (1) + registry init (2) succeed, scan (3) throws
+    var scopeFactory = new CountingDisposedScopeFactory(
+      realProvider.GetRequiredService<IServiceScopeFactory>(), throwAfterCalls: 2);
+
+    // false → _processInitialCheckpointsAsync skips processWorkBatch (no extra scope)
+    // true  → _scanAndRepairRewindsOnStartupAsync proceeds to CreateAsyncScope → throws
+    var databaseReadiness = new SequentialDatabaseReadinessCheck(false, true);
+
+    var worker = new PerspectiveWorker(
+      new FakeServiceInstanceProvider(),
+      scopeFactory,
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask!;
+
+    await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+      .Because("Worker should exit gracefully when scope factory disposed during startup rewind scan");
+  }
+
   #endregion
 
   #region Test Types
@@ -1873,6 +1939,32 @@ public class PerspectiveWorkerCoverageTests {
         _postLifecycleFired.TrySetResult();
       }
       return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// Scope factory that delegates the first N CreateScope calls to the inner factory,
+  /// then throws ObjectDisposedException to simulate DI container disposal during startup.
+  /// </summary>
+  private sealed class CountingDisposedScopeFactory(IServiceScopeFactory inner, int throwAfterCalls) : IServiceScopeFactory {
+    private int _callCount;
+
+    public IServiceScope CreateScope() {
+      var count = Interlocked.Increment(ref _callCount);
+      ObjectDisposedException.ThrowIf(count > throwAfterCalls, nameof(IServiceProvider));
+      return inner.CreateScope();
+    }
+  }
+
+  /// <summary>
+  /// Database readiness check that returns each bool in sequence, then true for any further calls.
+  /// </summary>
+  private sealed class SequentialDatabaseReadinessCheck(params bool[] responses) : IDatabaseReadinessCheck {
+    private readonly Queue<bool> _responses = new(responses);
+
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      var ready = _responses.Count > 0 ? _responses.Dequeue() : true;
+      return Task.FromResult(ready);
     }
   }
 
