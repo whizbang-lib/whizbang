@@ -55,8 +55,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   -- Sync inquiries (for perspective sync awaiter)
   p_sync_inquiries JSONB DEFAULT '[]'::JSONB,
 
-  -- Perspective drain mode: maximum messages to claim per tick (NULL = use wh_settings default)
-  p_max_perspective_messages INTEGER DEFAULT NULL
+  -- Perspective drain mode: maximum streams to claim per tick (NULL = use wh_settings default)
+  p_max_perspective_streams INTEGER DEFAULT NULL
 ) RETURNS TABLE(
   -- Heartbeat results
   instance_rank INTEGER,
@@ -133,9 +133,9 @@ BEGIN
   FROM wh_settings
   WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
 
-  -- Override max_work_items from caller parameter if provided (drain mode)
-  IF p_max_perspective_messages IS NOT NULL THEN
-    v_max_work_items := p_max_perspective_messages;
+  -- Override max_work_items from caller parameter if provided (drain mode stream limit)
+  IF p_max_perspective_streams IS NOT NULL THEN
+    v_max_work_items := p_max_perspective_streams;
   END IF;
 
   -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
@@ -560,14 +560,14 @@ BEGIN
     p_now
   ) AS cor;
 
-  -- Claim orphaned perspective events and track (full-stream capture with message budget)
+  -- Claim orphaned perspective events and track (full-stream capture with stream count limit)
   INSERT INTO temp_orphaned_perspective_events (event_work_id, stream_id, perspective_name)
   SELECT cope.event_work_id, cope.stream_id, cope.perspective_name
   FROM __SCHEMA__.claim_orphaned_perspective_events(
     p_instance_id,
     v_lease_expiry,
     p_now,
-    v_max_work_items  -- Pass message budget (overridden by p_max_perspective_messages if set)
+    v_max_work_items  -- Pass stream count limit (overridden by p_max_perspective_streams if set)
   ) AS cope;
 
   -- ========================================
@@ -1133,20 +1133,19 @@ BEGIN
     AND rp.lease_expiry > p_now
     AND rp.completed_at IS NULL;
 
-  -- Return perspective work (first row includes acknowledgement counts if no outbox/inbox work)
-  -- Uses per-stream+perspective ranking to prevent a single busy stream from starving others,
-  -- then applies a global LIMIT to prevent hot loops (same pattern as outbox/inbox).
+  -- Return perspective stream assignments (stream IDs only — worker handles the rest)
+  -- The worker determines which perspectives apply from event types using its C# registry.
+  -- Two-tier fair scheduling at stream level prevents large streams from starving small ones.
+  -- Return perspective stream assignments: one row per (stream_id, perspective_name) pair.
+  -- No individual event data — worker fetches events via get_stream_events.
+  -- Two-tier fair scheduling at STREAM level prevents large streams from starving small ones.
   RETURN QUERY
-  WITH eligible_perspective AS (
-    SELECT
-      pe.*,
-      temp_new.event_work_id as new_event_work_id,
-      temp_orphaned.event_work_id as orphaned_event_work_id,
-      ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank,
-      COUNT(*) OVER (PARTITION BY pe.stream_id, pe.perspective_name) as stream_pending_count
+  WITH eligible_pairs AS (
+    SELECT DISTINCT
+      pe.stream_id AS ep_stream_id,
+      pe.perspective_name AS ep_perspective_name,
+      COUNT(*) OVER (PARTITION BY pe.stream_id) as stream_pending_count
     FROM wh_perspective_events pe
-    LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
-    LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
     LEFT JOIN __SCHEMA__.wh_perspective_cursors pc
       ON pe.stream_id = pc.stream_id
       AND pe.perspective_name = pc.perspective_name
@@ -1154,83 +1153,71 @@ BEGIN
       AND pe.lease_expiry > p_now
       AND pe.processed_at IS NULL
       -- Skip streams locked by another active instance (rewind/bootstrap/purge in progress)
-      -- Events accumulate in wh_perspective_events and are processed after lock release
       AND (pc.stream_lock_instance_id IS NULL
            OR pc.stream_lock_expiry <= p_now
            OR pc.stream_lock_instance_id = p_instance_id)
-      -- Note: pe.processed_at IS NULL already prevents re-processing individual events
-      -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
-      -- Filtering on checkpoint status would block all subsequent events in the stream
       -- DEBOUNCE: Hold back streams with RewindRequired until the sliding window expires OR max cap is reached.
-      -- Sliding window: extends on each new late event. Max cap: forces rewind after absolute limit.
-      -- This prevents rewind loops on high-throughput streams and frees work item slots for other streams.
       AND NOT (
         (pc.status & 32) = 32  -- RewindRequired flag set
         AND pc.rewind_flagged_at IS NOT NULL
-        -- Sliding window still active
         AND pc.rewind_flagged_at + (v_rewind_debounce_seconds || ' seconds')::INTERVAL > p_now
-        -- AND max cap not yet reached (if first_flagged_at is NULL, treat as not capped)
         AND (pc.rewind_first_flagged_at IS NULL
              OR pc.rewind_first_flagged_at + (v_rewind_max_debounce_seconds || ' seconds')::INTERVAL > p_now)
       )
   ),
-  -- Two-tier fair scheduling with split budget:
-  -- Tier 1 (small streams): capped at tier1_budget_percent of total budget (default 70%)
-  -- Tier 2 (large streams): gets remaining budget + any unused Tier 1 slots
-  -- Prevents either tier from starving the other during bulk operations.
-  -- docs: fundamentals/perspectives/work-scheduling#two-tier
-  tier1_limited AS (
-    SELECT e.*
-    FROM eligible_perspective e
-    WHERE e.stream_pending_count <= v_max_work_items_per_stream
-    ORDER BY e.stream_id, e.perspective_name, e.event_id
+  -- Two-tier fair scheduling at STREAM level:
+  -- Tier 1 (small streams ≤ max_work_items_per_stream): gets 70% of budget
+  -- Tier 2 (large streams): gets remaining budget + unused Tier 1 slots
+  tier1_pairs AS (
+    SELECT ep.ep_stream_id, ep.ep_perspective_name
+    FROM eligible_pairs ep
+    WHERE ep.stream_pending_count <= v_max_work_items_per_stream
     LIMIT v_tier1_max
   ),
   tier1_used AS (
-    SELECT COUNT(*) as cnt FROM tier1_limited
+    SELECT COUNT(*) as cnt FROM tier1_pairs
   ),
-  tier2_limited AS (
-    SELECT e.*
-    FROM eligible_perspective e
-    WHERE e.stream_pending_count > v_max_work_items_per_stream
-      AND e.stream_rank <= v_max_work_items_per_stream
-    ORDER BY e.stream_id, e.perspective_name, e.event_id
+  tier2_pairs AS (
+    SELECT ep.ep_stream_id, ep.ep_perspective_name
+    FROM eligible_pairs ep
+    WHERE ep.stream_pending_count > v_max_work_items_per_stream
     LIMIT v_max_work_items - (SELECT cnt FROM tier1_used)
   ),
-  ordered_perspective AS (
-    SELECT combined.*,
-      ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
-    FROM (
-      SELECT t1.*, 1 as tier FROM tier1_limited t1
-      UNION ALL
-      SELECT t2.*, 2 as tier FROM tier2_limited t2
-    ) combined
+  all_pairs AS (
+    SELECT ep_stream_id, ep_perspective_name, 1 as tier FROM tier1_pairs
+    UNION ALL
+    SELECT ep_stream_id, ep_perspective_name, 2 as tier FROM tier2_pairs
+  ),
+  ordered_pairs AS (
+    SELECT p.ep_stream_id, p.ep_perspective_name,
+      ROW_NUMBER() OVER (ORDER BY p.tier, p.ep_stream_id, p.ep_perspective_name) as row_num
+    FROM all_pairs p
   )
   SELECT
     v_rank as instance_rank,
     v_count as active_instance_count,
     'perspective'::VARCHAR(20) as source,
-    pe.event_work_id as work_id,
-    pe.stream_id as work_stream_id,
-    NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
+    NULL::UUID as work_id,              -- No individual work IDs — worker fetches them via get_stream_events
+    op.ep_stream_id as work_stream_id,
+    NULL::INTEGER as partition_number,
     NULL::VARCHAR(200) as destination,
-    NULL::VARCHAR(500) as message_type,  -- Not needed: PerspectiveWorker resolves event types from registry
+    NULL::VARCHAR(500) as message_type,
     NULL::VARCHAR(500) as envelope_type,
     NULL::TEXT as message_data,
-    -- CRITICAL: First row includes ack counts if no outbox/inbox work
-    CASE WHEN pe.row_num = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
+    -- First row includes ack counts if no outbox/inbox work
+    CASE WHEN op.row_num = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
       THEN v_ack_counts
       ELSE NULL::JSONB END as metadata,
-    pe.status,
-    pe.attempts,
-    CASE WHEN pe.new_event_work_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
-    CASE WHEN pe.orphaned_event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::INTEGER as status,
+    NULL::INTEGER as attempts,
+    false as is_newly_stored,
+    false as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
-    pe.perspective_name
-  FROM ordered_perspective pe
-  WHERE pe.row_num <= v_max_work_items
-  ORDER BY pe.row_num;
+    op.ep_perspective_name  -- Included for backward compat with legacy processing path
+  FROM ordered_pairs op
+  WHERE op.row_num <= v_max_work_items
+  ORDER BY op.row_num;
 
   -- Return sync inquiry results
   RETURN QUERY

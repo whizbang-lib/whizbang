@@ -1,4 +1,5 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -30,6 +31,30 @@ public interface IPerspectiveRunner {
     Guid? lastProcessedEventId,
     CancellationToken cancellationToken = default
   );
+
+  /// <summary>
+  /// Processes perspective checkpoint using pre-fetched events (drain mode optimization).
+  /// Same as RunAsync but skips ReadPolymorphicAsync — uses supplied events directly.
+  /// Eliminates redundant DB reads when events are already fetched by get_stream_events.
+  /// </summary>
+  /// <param name="streamId">Stream ID to process</param>
+  /// <param name="perspectiveName">Name of the perspective to run</param>
+  /// <param name="lastProcessedEventId">Last event ID processed (null = start from beginning)</param>
+  /// <param name="events">Pre-fetched events to apply (already deserialized, in UUID7 order)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Perspective checkpoint completion with processing status and last event ID</returns>
+  Task<PerspectiveCursorCompletion> RunWithEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid? lastProcessedEventId,
+    IReadOnlyList<MessageEnvelope<IEvent>> events,
+    CancellationToken cancellationToken = default
+  ) => Task.FromResult(new PerspectiveCursorCompletion {
+    StreamId = streamId,
+    PerspectiveName = perspectiveName,
+    LastEventId = lastProcessedEventId ?? Guid.Empty,
+    Status = PerspectiveProcessingStatus.None
+  });
 
   /// <summary>
   /// Rewinds a perspective by restoring from the nearest snapshot before the triggering event,

@@ -1613,32 +1613,26 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )",
       new { instanceId, now, outboxMessages });
 
-    // Filter perspective work items
+    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
     var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
-    // Find positions of small vs large stream items
-    var smallStreamPositions = new List<int>();
-    var largeStreamPositions = new List<int>();
-    for (var i = 0; i < perspectiveWork.Count; i++) {
-      dynamic item = perspectiveWork[i];
-      Guid workStreamId = item.work_stream_id;
-      if (workStreamId == smallStreamId) {
-        smallStreamPositions.Add(i);
-      } else if (workStreamId == largeStreamId) {
-        largeStreamPositions.Add(i);
-      }
-    }
+    // Assert — both streams should be present
+    await Assert.That(streamIds).Contains(smallStreamId)
+      .Because("Small stream should be in the returned assignments");
+    await Assert.That(streamIds).Contains(largeStreamId)
+      .Because("Large stream should also be in the returned assignments");
 
-    // Assert — small stream items should appear BEFORE large stream items (Tier 1 before Tier 2)
-    await Assert.That(smallStreamPositions.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Small stream should have work items returned");
-    await Assert.That(largeStreamPositions.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Large stream should also have work items returned");
+    // Small stream (Tier 1) should appear before large stream (Tier 2) in the results
+    var smallPos = perspectiveWork.Select((dynamic r, int i) => new { Id = (Guid)r.work_stream_id, Pos = i })
+      .First(x => x.Id == smallStreamId).Pos;
+    var largePos = perspectiveWork.Select((dynamic r, int i) => new { Id = (Guid)r.work_stream_id, Pos = i })
+      .First(x => x.Id == largeStreamId).Pos;
+    await Assert.That(smallPos).IsLessThan(largePos)
+      .Because("Small stream (Tier 1) should appear before large stream (Tier 2)");
 
-    var maxSmallPosition = smallStreamPositions.Max();
-    var minLargePosition = largeStreamPositions.Min();
-    await Assert.That(maxSmallPosition).IsLessThan(minLargePosition)
-      .Because("All small stream items (Tier 1) should appear before any large stream items (Tier 2)");
+    await Assert.That(perspectiveWork.Count).IsEqualTo(2)
+      .Because("Should return 2 distinct stream IDs, not individual event rows");
   }
 
   [Test]
@@ -1679,11 +1673,14 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_new_outbox_messages := @outboxMessages::jsonb
       )", new { instanceId, now, outboxMessages });
 
+    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
     var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
-    var streamItems = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == streamId).ToList();
+    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
-    await Assert.That(streamItems.Count).IsEqualTo(3)
-      .Because("All 3 events from a small stream should be returned in one tick");
+    await Assert.That(streamIds).Contains(streamId)
+      .Because("Small stream should be in the returned assignments");
+    await Assert.That(perspectiveWork.Count).IsEqualTo(1)
+      .Because("Should return 1 distinct stream ID, not individual event rows");
   }
 
   [Test]
@@ -1724,11 +1721,14 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_new_outbox_messages := @outboxMessages::jsonb
       )", new { instanceId, now, outboxMessages });
 
+    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
     var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
-    var streamItems = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == streamId).ToList();
+    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
-    await Assert.That(streamItems.Count).IsGreaterThan(0)
+    await Assert.That(streamIds).Contains(streamId)
       .Because("Large stream should still be served even without small streams present");
+    await Assert.That(perspectiveWork.Count).IsEqualTo(1)
+      .Because("Should return 1 distinct stream ID, not individual event rows");
   }
 
   [Test]
@@ -1769,11 +1769,14 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_new_outbox_messages := @outboxMessages::jsonb
       )", new { instanceId, now, outboxMessages });
 
+    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
     var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
-    var streamItems = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == streamId).ToList();
+    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
-    await Assert.That(streamItems.Count).IsLessThanOrEqualTo(25)
-      .Because("Large stream should be capped at max_work_items_per_stream (25)");
+    await Assert.That(streamIds).Contains(streamId)
+      .Because("Large stream should be in the returned assignments");
+    await Assert.That(perspectiveWork.Count).IsEqualTo(1)
+      .Because("Should return 1 distinct stream ID, not individual event rows");
   }
 
   [Test]
@@ -1827,27 +1830,31 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_new_outbox_messages := @outboxMessages::jsonb
       )", new { instanceId, now, outboxMessages });
 
+    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
     var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
-    // Find max position of any small stream item
-    var smallStreamIds = new HashSet<Guid> { smallStream1, smallStream2, smallStream3 };
-    var maxSmallPos = -1;
-    var minLargePos = int.MaxValue;
-    for (var i = 0; i < perspectiveWork.Count; i++) {
-      Guid sid = perspectiveWork[i].work_stream_id;
-      if (smallStreamIds.Contains(sid)) {
-        maxSmallPos = Math.Max(maxSmallPos, i);
-      } else if (sid == largeStream) {
-        minLargePos = Math.Min(minLargePos, i);
-      }
-    }
+    // All 4 streams should be present
+    await Assert.That(streamIds).Contains(smallStream1)
+      .Because("Small stream 1 should be in the returned assignments");
+    await Assert.That(streamIds).Contains(smallStream2)
+      .Because("Small stream 2 should be in the returned assignments");
+    await Assert.That(streamIds).Contains(smallStream3)
+      .Because("Small stream 3 should be in the returned assignments");
+    await Assert.That(streamIds).Contains(largeStream)
+      .Because("Large stream should also be in the returned assignments");
 
-    await Assert.That(maxSmallPos).IsGreaterThanOrEqualTo(0)
-      .Because("Small streams should have items");
-    await Assert.That(minLargePos).IsLessThan(int.MaxValue)
-      .Because("Large stream should also have items");
-    await Assert.That(maxSmallPos).IsLessThan(minLargePos)
-      .Because("All small stream items should appear before any large stream items");
+    // Small streams (Tier 1) should appear before large stream (Tier 2)
+    var smallStreamIdSet = new HashSet<Guid> { smallStream1, smallStream2, smallStream3 };
+    var maxSmallPos = perspectiveWork.Select((dynamic r, int i) => new { Id = (Guid)r.work_stream_id, Pos = i })
+      .Where(x => smallStreamIdSet.Contains(x.Id)).Max(x => x.Pos);
+    var largePos = perspectiveWork.Select((dynamic r, int i) => new { Id = (Guid)r.work_stream_id, Pos = i })
+      .First(x => x.Id == largeStream).Pos;
+    await Assert.That(maxSmallPos).IsLessThan(largePos)
+      .Because("All small streams (Tier 1) should appear before the large stream (Tier 2)");
+
+    await Assert.That(perspectiveWork.Count).IsEqualTo(4)
+      .Because("Should return 4 distinct stream IDs, not individual event rows");
   }
 
   [Test]
@@ -1890,14 +1897,16 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_new_outbox_messages := @outboxMessages::jsonb
       )", new { instanceId, now, outboxMessages });
 
+    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
     var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
-    var s1Items = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == stream1).Count();
-    var s2Items = perspectiveWork.Where((dynamic r) => (Guid)r.work_stream_id == stream2).Count();
+    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
-    await Assert.That(s1Items).IsEqualTo(5)
-      .Because("Small stream 1 should have all 5 events");
-    await Assert.That(s2Items).IsEqualTo(5)
-      .Because("Small stream 2 should have all 5 events");
+    await Assert.That(streamIds).Contains(stream1)
+      .Because("Stream 1 should be in the returned assignments");
+    await Assert.That(streamIds).Contains(stream2)
+      .Because("Stream 2 should be in the returned assignments");
+    await Assert.That(perspectiveWork.Count).IsEqualTo(2)
+      .Because("Should return 2 distinct stream IDs, not individual event rows");
   }
 
   // Helper methods
