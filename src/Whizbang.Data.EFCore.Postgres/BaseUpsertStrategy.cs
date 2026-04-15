@@ -77,12 +77,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         Id = existingRow.Id,
         Data = model,
         Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
+        Scope = CloneScope(existingRow.Scope),
         CreatedAt = existingRow.CreatedAt,
         UpdatedAt = now,
         Version = existingRow.Version + 1
       };
       context.Set<PerspectiveRow<TModel>>().Update(row);
+      // SECURITY: Exclude scope from UPDATE SQL. Scope is set only on INSERT.
+      context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
     } else {
       row = _createNewRow(id, model, metadata, scope, now);
       context.Set<PerspectiveRow<TModel>>().Add(row);
@@ -139,8 +141,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       CustomerId = scope.CustomerId,
       UserId = scope.UserId,
       OrganizationId = scope.OrganizationId,
-      AllowedPrincipals = [.. scope.AllowedPrincipals],
-      Extensions = [.. scope.Extensions]
+      AllowedPrincipals = [.. (scope.AllowedPrincipals ?? [])],
+      Extensions = [.. (scope.Extensions ?? [])]
     };
   }
 
