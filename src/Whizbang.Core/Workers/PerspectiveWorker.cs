@@ -524,6 +524,13 @@ public partial class PerspectiveWorker(
     // (single SQL round-trip for events, pre-deserialized, RunWithEventsAsync skips ReadPolymorphicAsync).
     // The legacy path below is skipped for drain mode streams.
     if (workBatch.PerspectiveStreamIds.Count > 0) {
+      if (_logger.IsEnabled(LogLevel.Information)) {
+#pragma warning disable CA1848
+        _logger.LogInformation("Drain mode: processing {StreamCount} streams ({LegacyCount} legacy items skipped)",
+          workBatch.PerspectiveStreamIds.Count, workBatch.PerspectiveWork.Count);
+#pragma warning restore CA1848
+      }
+
       await _processDrainModeStreamsAsync(
         scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, cancellationToken);
 
@@ -877,7 +884,8 @@ public partial class PerspectiveWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds
+        StaleThresholdSeconds = _options.StaleThresholdSeconds,
+        MaxPerspectiveStreams = _options.MaxConcurrentPerspectives
       };
       var claimSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
