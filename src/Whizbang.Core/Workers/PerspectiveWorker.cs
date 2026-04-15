@@ -899,11 +899,9 @@ public partial class PerspectiveWorker(
           return eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
         });
 
-        if (typedEvents.Count == 0) {
-          System.IO.File.AppendAllText("/tmp/drain_completion.txt",
-            $"  SKIP: stream={streamId}, persp={perspectiveName}, rawEvents={rawEvents.Count}, typedEvents=0, sampleEventType={rawEvents.FirstOrDefault()?.EventType ?? "null"}\n");
-          return;
-        }
+        // If deserialization produced no typed events, fall back to RunAsync (reads from DB directly).
+        // This handles the case where IEventTypeProvider or JsonSerializerOptions can't resolve the types.
+        var useRunWithEvents = typedEvents.Count > 0;
 
         try {
           // Get cursor position — try cache first (drain mode optimization), fall back to DB.
@@ -914,9 +912,10 @@ public partial class PerspectiveWorker(
             lastProcessedEventId = checkpoint?.LastEventId;
           }
 
-          // RunWithEventsAsync handles: model load, event application,
-          // lifecycle hooks (Pre/PostPerspective), model save, and checkpoint.
-          var result = await runner.RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, typedEvents, ct);
+          // RunWithEventsAsync (pre-supplied events) or RunAsync (reads from DB) depending on deserialization success.
+          var result = useRunWithEvents
+            ? await runner.RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, typedEvents, ct)
+            : await runner.RunAsync(streamId, perspectiveName, lastProcessedEventId, ct);
 
           // Update cursor cache for next cycle
           if (result.Status == PerspectiveProcessingStatus.Completed && result.LastEventId != Guid.Empty) {
