@@ -224,9 +224,9 @@ public partial class PerspectiveWorker(
         _periodicStaleTrackingCleanup();
         await _periodicGatherStatisticsAsync(stoppingToken);
 
-        // Drain mode: if the tick returned new stream assignments, loop immediately
-        // to fetch and process their events without sleeping.
-        if (assignmentCount > 0) {
+        // Drain mode: if the tick returned a significant backlog, loop immediately.
+        // For trickle work (< 5 assignments), use normal polling to avoid thread starvation.
+        if (assignmentCount >= 5) {
           await Task.Yield();
           continue;
         }
