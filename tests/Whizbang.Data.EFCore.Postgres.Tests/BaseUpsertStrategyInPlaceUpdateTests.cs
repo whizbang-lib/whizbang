@@ -332,9 +332,11 @@ public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
       new { id = testId });
 
     await Assert.That(version).IsEqualTo(2);
-    await Assert.That(scope).Contains("tenant-2");
-    await Assert.That(scope).Contains("user:bob");
-    await Assert.That(scope).Contains("eu-central");
+    // SECURITY: Scope is set only on INSERT and preserved on UPDATE.
+    // The original scope (tenant-1, user:alice, us-west) must be retained.
+    await Assert.That(scope).Contains("tenant-1");
+    await Assert.That(scope).Contains("user:alice");
+    await Assert.That(scope).Contains("us-west");
   }
 
   // ============================================================================
