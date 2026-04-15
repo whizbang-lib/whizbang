@@ -226,10 +226,9 @@ public partial class PerspectiveWorker(
 
         // Drain mode: if the tick returned a significant backlog, loop immediately.
         // For trickle work (< 5 assignments), use normal polling to avoid thread starvation.
-        if (assignmentCount >= 5) {
-          await Task.Yield();
-          continue;
-        }
+        // Drain mode disabled: always use normal polling to avoid thread starvation.
+        // The perspective processing speed comes from MaxConcurrentPerspectives=30
+        // and batch fetch, not from eliminating the 1-second sleep.
       } catch (ObjectDisposedException) {
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
