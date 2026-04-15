@@ -3019,17 +3019,15 @@ public abstract partial class Dispatcher(
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
-      // Queue to outbox and invoke local handlers simultaneously.
-      // PublishToOutboxAsync enqueues to DeferredOutboxChannel (ConcurrentQueue) — completes instantly.
-      // Starting it before the receptor ensures the original event is in the deferred channel
-      // before any cascaded events from the receptor, maintaining FIFO order.
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      // Invoke local handlers - zero reflection, strongly typed
       await publisher(eventData);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(eventData, eventType);
 
-      await outboxTask;
+      // Publish event for cross-service delivery if work coordinator strategy is available
+      // process_work_batch will store events to wh_event_store and create perspective events atomically
+      await PublishToOutboxAsync(eventData, eventType, messageId);
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
@@ -3084,15 +3082,12 @@ public abstract partial class Dispatcher(
       var publisher = GetReceptorPublisher(eventData, eventType);
 
       options.CancellationToken.ThrowIfCancellationRequested();
-
-      // Queue to outbox and invoke local handlers simultaneously (see other overload for rationale)
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
       await publisher(eventData);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(eventData, eventType);
 
-      await outboxTask;
+      await PublishToOutboxAsync(eventData, eventType, messageId);
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
