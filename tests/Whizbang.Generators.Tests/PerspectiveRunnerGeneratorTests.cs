@@ -2088,4 +2088,194 @@ namespace TestNamespace {
   }
 
   #endregion
+
+  #region IScopeEvent / IPerspectiveScopeFor Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithIScopeEvent_GeneratesScopeHandlingCodeAsync() {
+    // Arrange - Event implements IScopeEvent
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record TenantChangedEvent : IScopeEvent {
+    public string OrderId { get; init; } = "";
+    public PerspectiveScope Scope { get; init; } = new();
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, TenantChangedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, TenantChangedEvent @event) {
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - scope handling code generated
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
+    await Assert.That(runnerSource).Contains("scopeChanged = true");
+    await Assert.That(runnerSource).Contains("forceUpdateScope");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithIPerspectiveScopeFor_GeneratesApplyScopeCallAsync() {
+    // Arrange - Perspective implements IPerspectiveScopeFor
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record TenantChangedEvent : IScopeEvent {
+    public string OrderId { get; init; } = "";
+    public PerspectiveScope Scope { get; init; } = new();
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective :
+    IPerspectiveFor<OrderReadModel, TenantChangedEvent>,
+    IPerspectiveScopeFor<OrderReadModel> {
+
+    public OrderReadModel Apply(OrderReadModel currentData, TenantChangedEvent @event) {
+      return currentData;
+    }
+
+    public PerspectiveScope ApplyScope(PerspectiveScope currentScope, PerspectiveScope proposedScope) {
+      return proposedScope;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - ApplyScope call generated
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("IPerspectiveScopeFor");
+    await Assert.That(runnerSource).Contains("ApplyScope");
+    await Assert.That(runnerSource).Contains("scopeChanged = true");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithIScopeEventWithoutIPerspectiveScopeFor_UsesDirectScopeAsync() {
+    // Arrange - Event is IScopeEvent but perspective doesn't implement IPerspectiveScopeFor
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record TenantChangedEvent : IScopeEvent {
+    public string OrderId { get; init; } = "";
+    public PerspectiveScope Scope { get; init; } = new();
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, TenantChangedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, TenantChangedEvent @event) {
+      return currentData;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Direct scope assignment, no ApplyScope call
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
+    await Assert.That(runnerSource).Contains("lastScope = proposedScope");
+    await Assert.That(runnerSource).DoesNotContain("ApplyScope");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithIScopeEventAndIPerspectiveFor_GeneratesBothCallsAsync() {
+    // Arrange - Both Apply and scope handling should be generated
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = "";
+  }
+
+  public record TenantChangedEvent : IScopeEvent {
+    public string OrderId { get; init; } = "";
+    public PerspectiveScope Scope { get; init; } = new();
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = "";
+  }
+
+  public class OrderPerspective :
+    IPerspectiveFor<OrderReadModel, OrderCreatedEvent, TenantChangedEvent>,
+    IPerspectiveScopeFor<OrderReadModel> {
+
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+
+    public OrderReadModel Apply(OrderReadModel currentData, TenantChangedEvent @event) {
+      return currentData;
+    }
+
+    public PerspectiveScope ApplyScope(PerspectiveScope currentScope, PerspectiveScope proposedScope) {
+      return proposedScope;
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Both Apply cases and scope handling generated
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    // Apply cases for both events
+    await Assert.That(runnerSource).Contains("OrderCreatedEvent");
+    await Assert.That(runnerSource).Contains("TenantChangedEvent");
+    // Scope handling
+    await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
+    await Assert.That(runnerSource).Contains("ApplyScope");
+    await Assert.That(runnerSource).Contains("forceUpdateScope");
+  }
+
+  #endregion
 }
