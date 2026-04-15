@@ -53,7 +53,7 @@ public partial class PerspectiveWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
-  private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
+  private IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
@@ -823,6 +823,13 @@ public partial class PerspectiveWorker(
 
     if (_watchList.Count == 0) {
       return;
+    }
+
+    // Lazy-resolve IEventTypeProvider from scoped provider if constructor injection missed it.
+    // This is a singleton, so resolving once and caching is safe.
+    if (_eventTypeProvider is null) {
+      await using var resolveScope = _scopeFactory.CreateAsyncScope();
+      _eventTypeProvider = resolveScope.ServiceProvider.GetService<IEventTypeProvider>();
     }
 
     // Optimization #2: Cap streams per cycle to keep cycles fast and responsive
