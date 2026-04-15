@@ -76,22 +76,7 @@ public partial class PerspectiveWorker(
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
 
   // Perspective event completions (WorkIds to delete from wh_perspective_events)
-  // Used by legacy PerspectiveWork path; drain mode uses per-stream immediate completion instead.
   private readonly System.Collections.Concurrent.ConcurrentQueue<PerspectiveEventCompletion> _pendingEventCompletions = new();
-
-  // Drain mode watch-list: StreamId → cooldown counter.
-  // Active streams (with events) have cooldown = 0.
-  // Streams with no events get cooldown set to WatchListCooldownCycles, decremented each cycle.
-  // Removed from watch-list when cooldown reaches 0 after decrement.
-  private readonly Dictionary<Guid, int> _watchList = new();
-
-  // Persistent PostLifecycle tracking: events stay until WhenAll resolves and PostLifecycle fires.
-  // Carries over across ticks so events that fail WhenAll in tick N get re-checked in tick N+1.
-  private readonly ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> _pendingPostLifecycleEvents = new();
-
-  // Cursor cache: avoids GetPerspectiveCursorAsync DB call on every drain cycle.
-  // Updated after each successful RunWithEventsAsync. Invalidated on rewind/rebuild/watch-list removal.
-  private readonly PerspectiveCursorCache _cursorCache = new();
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _bootstrappedThisSession = new();
@@ -196,16 +181,10 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
-    try {
-      await _initializePerspectiveRegistryAsync();
-      await _processInitialCheckpointsAsync(stoppingToken);
-      await _reconcileOrphanedLifecyclesAsync(stoppingToken);
-      await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
-    } catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException) {
-      // Host shutting down while startup methods were running (e.g. port bind failure disposed
-      // the DI container before the background service finished initialising). Exit gracefully.
-      return;
-    }
+    await _initializePerspectiveRegistryAsync();
+    await _processInitialCheckpointsAsync(stoppingToken);
+    await _reconcileOrphanedLifecyclesAsync(stoppingToken);
+    await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
 
     // Subscribe to new perspective work signals so we poll immediately when events arrive
     if (workChannelWriter is not null) {
@@ -220,16 +199,9 @@ public partial class PerspectiveWorker(
           continue;
         }
 
-        var assignmentCount = await _processWorkBatchAsync(stoppingToken);
+        await _processWorkBatchAsync(stoppingToken);
         _periodicStaleTrackingCleanup();
         await _periodicGatherStatisticsAsync(stoppingToken);
-
-        // Drain mode: if the tick returned a significant backlog, loop immediately.
-        // For trickle work (< 5 assignments), use normal polling to avoid thread starvation.
-        if (assignmentCount >= 5) {
-          await Task.Yield();
-          continue;
-        }
       } catch (ObjectDisposedException) {
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -477,7 +449,7 @@ public partial class PerspectiveWorker(
 
   // S3776: Core perspective processing pipeline — inherent complexity from 5-phase lifecycle (claim/apply/buffer/postPerspective/postLifecycle)
 #pragma warning disable S3776
-  private async Task<int> _processWorkBatchAsync(CancellationToken cancellationToken) {
+  private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
 #pragma warning restore S3776
     var batchSw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -519,14 +491,6 @@ public partial class PerspectiveWorker(
     var (workBatch, completionsToSend, failuresToSend) = await _submitCompletionsAndClaimWorkAsync(
       workCoordinator, cancellationToken);
 
-    // Update watch-list from tick results (drain mode stream assignments)
-    var newAssignmentCount = _updateWatchListFromTick(workBatch);
-
-    // DIAGNOSTIC: Log perspective work count
-    if (workBatch.PerspectiveWork.Count > 0) {
-      Console.WriteLine($"[PW-DIAG] [{_instanceProvider.ServiceName}] PerspectiveWorker instanceId={_instanceProvider.InstanceId} got {workBatch.PerspectiveWork.Count} perspective events");
-    }
-
     // 5-8. Reconcile acknowledgements and prepare work groups
     var groupedWork = _reconcileAcknowledgementsAndPrepareWork(workBatch);
 
@@ -536,15 +500,14 @@ public partial class PerspectiveWorker(
     // Diagnostic logging for batch composition
     _logBatchComposition(workBatch, groupedWork);
 
-    // Use persistent field — events that fail WhenAll carry over to next tick for re-check
-    var batchProcessedEvents = _pendingPostLifecycleEvents;
+    // Collect all processed events across groups for PostLifecycle firing
+    var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
 
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
-    // Legacy path always runs — it handles PostLifecycle/tagged notifications correctly.
-    // Drain mode runs AFTER for watch-list management and batched completions.
-    var legacyWork = groupedWork;
+    // Parallelized: different (streamId, perspectiveName) pairs are independent — different cursors,
+    // different perspective tables, no ordering constraints between them.
     await Parallel.ForEachAsync(
-      legacyWork,
+      groupedWork,
       new ParallelOptions {
         MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
         CancellationToken = cancellationToken
@@ -668,10 +631,6 @@ public partial class PerspectiveWorker(
         }
       });
 
-    // === Drain mode: process watched streams via batch-fetch ===
-    await _processDrainModeStreamsAsync(
-      workCoordinator, batchProcessedEvents, batchActivity, effectiveParent, cancellationToken);
-
     // Phase 5: Fire PostLifecycle once per unique event — ONLY after ALL perspectives complete (WhenAll)
     await _firePostLifecycleDetached(
       batchProcessedEvents, lifecycleCoordinator, receptorInvoker, groupedWork,
@@ -683,10 +642,7 @@ public partial class PerspectiveWorker(
     _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
 
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
-    var hasWork = workBatch.PerspectiveWork.Count > 0 || newAssignmentCount > 0;
-    _updateWorkStateTracking(hasWork);
-
-    return newAssignmentCount;
+    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
   }
 
   /// <summary>
@@ -740,8 +696,7 @@ public partial class PerspectiveWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds,
-        MaxPerspectiveStreams = _options.MaxPerspectiveStreams
+        StaleThresholdSeconds = _options.StaleThresholdSeconds
       };
       var claimSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
@@ -754,255 +709,6 @@ public partial class PerspectiveWorker(
       _metrics?.Errors.Add(1);
       throw; // Never swallow exceptions
     }
-  }
-
-  /// <summary>
-  /// Updates the watch-list from the tick's PerspectiveStreamIds.
-  /// New streams are added with cooldown = 0 (active).
-  /// Existing streams already in the watch-list have their cooldown reset to 0.
-  /// Returns the count of new stream assignments from this tick.
-  /// </summary>
-  private int _updateWatchListFromTick(WorkBatch workBatch) {
-    var streamIds = workBatch.PerspectiveStreamIds;
-    if (streamIds.Count == 0) {
-      return 0;
-    }
-
-    foreach (var streamId in streamIds) {
-      // New or existing — set cooldown to 0 (active)
-      _watchList[streamId] = 0;
-    }
-
-    return streamIds.Count;
-  }
-
-  /// <summary>
-  /// Manages watch-list cooldown after a processing cycle.
-  /// Streams that had events stay active (cooldown = 0).
-  /// Streams with no events get cooldown set, then decremented each cycle.
-  /// Streams whose cooldown reaches 0 after decrement are removed.
-  /// </summary>
-  private void _manageWatchListCooldowns(HashSet<Guid> streamsWithEvents) {
-    var toRemove = new List<Guid>();
-    foreach (var (streamId, cooldown) in _watchList) {
-      if (streamsWithEvents.Contains(streamId)) {
-        // Had events — keep active
-        _watchList[streamId] = 0;
-        continue;
-      }
-
-      if (cooldown == 0) {
-        // First cycle with no events — start cooldown
-        _watchList[streamId] = _options.WatchListCooldownCycles;
-      } else {
-        var newCooldown = cooldown - 1;
-        if (newCooldown <= 0) {
-          toRemove.Add(streamId);
-        } else {
-          _watchList[streamId] = newCooldown;
-        }
-      }
-    }
-
-    foreach (var streamId in toRemove) {
-      _watchList.Remove(streamId);
-      _cursorCache.InvalidateStream(streamId);
-    }
-  }
-
-  /// <summary>
-  /// Drain mode stream processing: batch-fetches events for a capped set of watched streams,
-  /// parallelizes across (stream, perspective) pairs, and batches completions into a single call.
-  /// </summary>
-  private async Task _processDrainModeStreamsAsync(
-      IWorkCoordinator workCoordinator,
-      ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
-      Activity? batchActivity,
-      ActivityContext effectiveParent,
-      CancellationToken cancellationToken) {
-
-    if (_watchList.Count == 0) {
-      return;
-    }
-
-    // Optimization #2: Cap streams per cycle to keep cycles fast and responsive
-    var watchedStreamIds = _watchList.Keys
-      .Take(_options.MaxConcurrentPerspectives)
-      .ToArray();
-
-    // Batch-fetch events for capped set of watched streams
-    var streamEvents = await workCoordinator.GetStreamEventsAsync(
-      _instanceProvider.InstanceId, watchedStreamIds, cancellationToken);
-
-    // Group by StreamId, deduplicate events (same event_id appears per perspective in wh_perspective_events)
-    var eventsByStream = streamEvents.GroupBy(e => e.StreamId).ToList();
-    var streamsWithEvents = new HashSet<Guid>(eventsByStream.Select(g => g.Key));
-
-    // Build (stream, perspective) work items for parallel processing
-    // Raw events are shared per stream; deserialization happens once per stream inside the parallel loop
-    var deserializedCache = new ConcurrentDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>();
-    var workItems = new List<(Guid StreamId, string PerspectiveName, List<StreamEventData> RawEvents)>();
-    foreach (var streamGroup in eventsByStream) {
-      var streamId = streamGroup.Key;
-      var rawEvents = streamGroup.ToList();
-
-      // Determine applicable perspectives from event types
-      var perspectiveNames = new HashSet<string>();
-      if (_perspectivesPerEventType is not null) {
-        foreach (var evt in rawEvents) {
-          if (_perspectivesPerEventType.TryGetValue(evt.EventType, out var names)) {
-            foreach (var name in names) {
-              perspectiveNames.Add(name);
-            }
-          }
-        }
-      }
-
-      foreach (var perspectiveName in perspectiveNames) {
-        workItems.Add((streamId, perspectiveName, rawEvents));
-      }
-    }
-
-    // Optimization #3: Collect all work_item_ids for a single batched completion call
-    var allCompletedWorkIds = new ConcurrentBag<Guid>();
-
-    // Process all (stream, perspective) pairs in parallel
-    await Parallel.ForEachAsync(
-      workItems,
-      new ParallelOptions {
-        MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
-        CancellationToken = cancellationToken
-      },
-      async (workItem, ct) => {
-        var (streamId, perspectiveName, rawEvents) = workItem;
-
-        await using var groupScope = _scopeFactory.CreateAsyncScope();
-        var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-        var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
-        var registry = groupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
-        var eventStore = groupScope.ServiceProvider.GetRequiredService<IEventStore>();
-
-        if (registry is null) {
-          return;
-        }
-
-        var runner = registry.GetRunner(perspectiveName, groupScope.ServiceProvider);
-        if (runner is null) {
-          return;
-        }
-
-        // Deserialize events ONCE per stream, cache for reuse across perspectives.
-        // Resolve IEventTypeProvider from scoped provider (more reliable than constructor-injected field).
-        var typedEvents = deserializedCache.GetOrAdd(streamId, _ => {
-          var scopedEventTypeProvider = groupScope.ServiceProvider.GetService<IEventTypeProvider>();
-          var eventTypes = scopedEventTypeProvider?.GetEventTypes() ?? [];
-          return eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
-        });
-
-        // If deserialization produced no typed events, fall back to RunAsync (reads from DB directly).
-        // This handles the case where IEventTypeProvider or JsonSerializerOptions can't resolve the types.
-        var useRunWithEvents = typedEvents.Count > 0;
-
-        try {
-          // Get cursor position — try cache first (drain mode optimization), fall back to DB.
-          Guid? lastProcessedEventId;
-          if (!_cursorCache.TryGet(streamId, perspectiveName, out lastProcessedEventId)) {
-            var checkpoint = await groupWorkCoordinator.GetPerspectiveCursorAsync(
-              streamId, perspectiveName, ct);
-            lastProcessedEventId = checkpoint?.LastEventId;
-          }
-
-          // RunWithEventsAsync (pre-supplied events) or RunAsync (reads from DB) depending on deserialization success.
-          var result = useRunWithEvents
-            ? await runner.RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, typedEvents, ct)
-            : await runner.RunAsync(streamId, perspectiveName, lastProcessedEventId, ct);
-
-          // Update cursor cache for next cycle
-          if (result.Status == PerspectiveProcessingStatus.Completed && result.LastEventId != Guid.Empty) {
-            _cursorCache.Set(streamId, perspectiveName, result.LastEventId);
-          }
-
-          // Report completion and sync signals
-          await _reportCompletionAndSignalSyncAsync(
-            result, [], groupWorkCoordinator, streamId, perspectiveName, ct);
-
-          // Collect processed events for PostLifecycle firing (WhenAll gate)
-          // Note: when legacy path runs, PostLifecycle is handled there.
-          // This is for the future when drain mode replaces legacy path entirely.
-          foreach (var envelope in typedEvents) {
-            batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
-          }
-          if (groupLifecycleCoordinator is not null) {
-            foreach (var envelope in typedEvents) {
-              groupLifecycleCoordinator.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
-            }
-          }
-
-          LogPerspectiveCursorCompleted(_logger, perspectiveName, streamId, result.LastEventId);
-
-          // Fire processing hook
-          if (result.EventsProcessed > 0) {
-            OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
-              PerspectiveName = perspectiveName,
-              StreamId = streamId,
-              EventCount = result.EventsProcessed
-            });
-          }
-
-          // Record metrics
-          _metrics?.StreamsUpdated.Add(1);
-          if (result.EventsProcessed > 0) {
-            _metrics?.EventsProcessed.Add(result.EventsProcessed);
-          }
-
-          // Collect work_item_ids for batched completion
-          foreach (var evt in rawEvents) {
-            allCompletedWorkIds.Add(evt.EventWorkId);
-          }
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
-          _metrics?.Errors.Add(1);
-          throw;
-        }
-      });
-
-    // NOTE: Drain mode completion (CompletePerspectiveEventsAsync) is DISABLED while legacy path runs.
-    // The legacy path handles completions via the batched strategy (_pendingEventCompletions).
-    // Enabling drain mode completion would delete wh_perspective_events rows before the legacy path
-    // can process them on the next tick, breaking PostLifecycle/tagged notifications.
-    // TODO: Re-enable when drain mode fully replaces legacy path (after deserialization fix).
-
-    // Manage watch-list cooldowns (optimization #6: immediate removal on 0 events)
-    _manageWatchListCooldowns(streamsWithEvents);
-  }
-
-  /// <summary>
-  /// Loads upcoming events for a stream from the event store, starting after the last processed event.
-  /// Used by drain mode to get MessageEnvelope events for lifecycle stages.
-  /// </summary>
-  private async Task<List<MessageEnvelope<IEvent>>> _loadUpcomingEventsForStreamAsync(
-      IEventStore eventStore,
-      Guid streamId,
-      Guid? lastProcessedEventId,
-      CancellationToken ct) {
-    if (_eventTypeProvider is null) {
-      return [];
-    }
-
-    var eventTypes = _eventTypeProvider.GetEventTypes();
-    if (eventTypes.Count == 0) {
-      return [];
-    }
-
-    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
-      streamId,
-      lastProcessedEventId,
-      Guid.Empty, // Read all events after lastProcessedEventId
-      eventTypes,
-      ct
-    );
-
-    return events;
   }
 
   /// <summary>
@@ -1387,9 +1093,6 @@ public partial class PerspectiveWorker(
         try {
           result = await runner.RewindAndRunAsync(
             streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
-
-          // Invalidate cursor cache after rewind — cursor position has changed
-          _cursorCache.Invalidate(streamId, perspectiveName);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
           // Isolate rewind failures — a single stream's failure must not crash the worker.
           // The stream will retry on the next polling cycle.
@@ -1567,12 +1270,8 @@ public partial class PerspectiveWorker(
     // Phase 3c.0: Mark processed events in singleton tracker for cross-scope sync
     // This signals any WaitForPerspectiveEventsAsync callers that this perspective has processed these events
     // Note: Uses MarkProcessedByPerspective to only remove THIS perspective's entry, not all perspectives
-    // When processedEvents is empty (drain mode), fall back to result.ProcessedEventIds from the runner.
-    var syncEventIds = processedEvents.Count > 0
-      ? processedEvents.Select(e => e.MessageId.Value).ToList()
-      : result.ProcessedEventIds?.ToList() ?? [];
-    if (syncEventIds.Count > 0 && _syncEventTracker is not null) {
-      var processedEventIds = syncEventIds;
+    if (processedEvents.Count > 0 && _syncEventTracker is not null) {
+      var processedEventIds = processedEvents.Select(e => e.MessageId.Value).ToList();
 #pragma warning disable CA1848
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessedByPerspective: Perspective={Perspective}, StreamId={StreamId}, EventCount={Count}, EventIds=[{Ids}]",
@@ -1583,7 +1282,7 @@ public partial class PerspectiveWorker(
     } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848
       _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}, HasTracker={HasTracker}",
-        syncEventIds.Count, _syncEventTracker is not null);
+        processedEvents.Count, _syncEventTracker is not null);
 #pragma warning restore CA1848
     }
 
@@ -1734,32 +1433,21 @@ public partial class PerspectiveWorker(
 #pragma warning restore S3267
     }
 
-    // Replay signals — perspectives already completed during the group loop (or drain mode),
-    // but expectations may have been registered just above. Replaying ensures WhenAll resolves.
-    if (groupedWork.Count > 0) {
-      // Legacy path: replay from grouped work
-      foreach (var group in groupedWork) {
-        var gPerspectiveName = group.Key.PerspectiveName;
-        foreach (var (eventId, _) in batchProcessedEvents.Where(e => e.Value.StreamId == group.Key.StreamId)) {
-          lifecycleCoordinator.SignalPerspectiveComplete(eventId, gPerspectiveName);
-        }
-      }
-    } else if (_perspectivesPerEventType is not null) {
-      // Drain mode: replay using registry — all perspectives that handle each event type
-      foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
-        var eventType = envelope.Payload.GetType();
-        var eventTypeKey = $"{eventType.FullName}, {eventType.Assembly.GetName().Name}";
-        if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives)) {
-          foreach (var perspectiveName in perspectives) {
-            lifecycleCoordinator.SignalPerspectiveComplete(eventId, perspectiveName);
-          }
-        }
+    // Replay signals — perspectives already completed during the group loop, but
+    // expectations may have been registered just above. Replaying ensures WhenAll resolves.
+    foreach (var group in groupedWork) {
+      var gPerspectiveName = group.Key.PerspectiveName;
+      foreach (var (eventId, _) in batchProcessedEvents.Where(e => e.Value.StreamId == group.Key.StreamId)) {
+        lifecycleCoordinator.SignalPerspectiveComplete(eventId, gPerspectiveName);
       }
     }
 
     foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
       // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete
       if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
+        // Not all perspectives have completed yet — keep tracking alive for next batch.
+        // Don't abandon: the tracking instance preserves the stage guard so
+        // PostAllPerspectivesDetached fires exactly once across all batch cycles.
         continue;
       }
 
@@ -1790,11 +1478,12 @@ public partial class PerspectiveWorker(
         coordinatorMetrics?.PostLifecycleErrors.Add(1);
       }
 
-      // PostLifecycle fired — remove from persistent tracking to prevent unbounded growth.
-      // The tracking instance's stage guard prevents re-firing in subsequent cycles.
-      batchProcessedEvents.TryRemove(eventId, out _);
+      // DON'T abandon tracking after stages fire — the tracking instance's stage guard
+      // prevents PostAllPerspectivesDetached from firing again in subsequent batch cycles.
+      // The tracking is marked _isComplete after PostLifecycleInline (see LifecycleTrackingState),
+      // so all future AdvanceToAsync calls return immediately.
+      // Memory cleanup happens naturally as events age out of batchProcessedEvents.
     }
-
   }
 
   /// <summary>
@@ -2726,26 +2415,12 @@ public class PerspectiveWorkerOptions {
   public int PerspectiveBatchSize { get; set; } = 100;
 
   /// <summary>
-  /// Maximum number of streams to process concurrently within a single batch.
-  /// Higher values improve throughput when multiple streams have pending work.
-  /// Different streams are independent and can safely run in parallel.
-  /// Default: 30
+  /// Maximum number of perspective groups to process concurrently within a single batch.
+  /// Higher values improve throughput when multiple perspectives/streams have pending work.
+  /// Different (streamId, perspectiveName) pairs are independent and can safely run in parallel.
+  /// Default: 10
   /// </summary>
-  public int MaxConcurrentPerspectives { get; set; } = 30;
-
-  /// <summary>
-  /// Maximum number of streams to claim per tick for perspective processing (drain mode).
-  /// NULL uses the default from wh_settings. Passed to process_work_batch as p_max_perspective_streams.
-  /// Default: 500
-  /// </summary>
-  public int? MaxPerspectiveStreams { get; set; } = 500;
-
-  /// <summary>
-  /// Number of empty processing cycles a stream stays on the watch-list before removal.
-  /// Handles the race where new messages arrive just after the worker checked.
-  /// Default: 1 (aggressive removal to keep batch fetches lean)
-  /// </summary>
-  public int WatchListCooldownCycles { get; set; } = 1;
+  public int MaxConcurrentPerspectives { get; set; } = 10;
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
