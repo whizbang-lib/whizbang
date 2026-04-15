@@ -1087,6 +1087,12 @@ public record StreamEventData {
   /// <summary>Serialized event data from wh_event_store.</summary>
   public required string EventData { get; init; }
 
+  /// <summary>Serialized metadata JSONB from wh_event_store. Contains MessageId, Hops, DispatchContext.</summary>
+  public string? Metadata { get; init; }
+
+  /// <summary>Serialized scope JSONB from wh_event_store. Contains tenant context (TenantId, UserId, etc.).</summary>
+  public string? Scope { get; init; }
+
   /// <summary>Work ID from wh_perspective_events. Used for completion reporting via CompletePerspectiveEventsAsync.</summary>
   public required Guid EventWorkId { get; init; }
 }

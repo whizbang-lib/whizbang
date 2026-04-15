@@ -591,6 +591,8 @@ public partial class DapperWorkCoordinator(
       EventId = r.out_event_id,
       EventType = r.out_event_type,
       EventData = r.out_event_data,
+      Metadata = r.out_metadata,
+      Scope = r.out_scope,
       EventWorkId = r.out_event_work_id
     })];
   }
@@ -824,6 +826,8 @@ internal class StreamEventRow {
   public Guid out_event_id { get; set; }
   public string out_event_type { get; set; } = string.Empty;
   public string out_event_data { get; set; } = string.Empty;
+  public string? out_metadata { get; set; }
+  public string? out_scope { get; set; }
   public Guid out_event_work_id { get; set; }
 }
 

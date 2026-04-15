@@ -1,8 +1,9 @@
 -- Migration: 038_GetStreamEvents.sql
--- Date: 2026-04-13
+-- Date: 2026-04-13 (updated 2026-04-14 to include metadata + scope for envelope reconstruction)
 -- Description: Creates get_stream_events function for batch-fetching events for multiple streams.
 --              Called by PerspectiveWorker AFTER process_work_batch returns stream IDs.
 --              Returns denormalized rows: one row per (stream, event) with event_work_id for completion.
+--              Includes metadata (JSONB) and scope (JSONB) for full envelope reconstruction.
 --              C# determines which perspectives apply from event_type using its registry.
 -- Dependencies: 001-037 (requires wh_perspective_events, wh_event_store tables)
 
@@ -17,6 +18,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   out_event_id UUID,
   out_event_type TEXT,
   out_event_data TEXT,
+  out_metadata TEXT,
+  out_scope TEXT,
   out_event_work_id UUID
 ) AS $$
 BEGIN
@@ -26,6 +29,8 @@ BEGIN
     es.event_id,
     es.event_type::TEXT,
     es.event_data::TEXT,
+    es.metadata::TEXT,
+    es.scope::TEXT,
     pe.event_work_id
   FROM wh_perspective_events pe
   INNER JOIN wh_event_store es
@@ -40,4 +45,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.get_stream_events IS
-'Batch-fetches events for multiple streams in a single call. Returns denormalized rows joining wh_perspective_events (work queue) with wh_event_store (actual event data). Only returns events leased to the requesting instance. C# determines which perspectives apply from event_type. event_work_id is used for completion reporting via complete_perspective_events.';
+'Batch-fetches events for multiple streams in a single call. Returns denormalized rows joining wh_perspective_events (work queue) with wh_event_store (actual event data). Includes metadata and scope columns for full envelope reconstruction with tenant context and tracing. Only returns events leased to the requesting instance. C# determines which perspectives apply from event_type. event_work_id is used for completion reporting via complete_perspective_events.';

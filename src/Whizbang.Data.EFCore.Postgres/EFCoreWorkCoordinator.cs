@@ -1370,11 +1370,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
+      var metadataOrdinal = reader.GetOrdinal("out_metadata");
+      var scopeOrdinal = reader.GetOrdinal("out_scope");
       results.Add(new StreamEventData {
         StreamId = reader.GetGuid(reader.GetOrdinal("out_stream_id")),
         EventId = reader.GetGuid(reader.GetOrdinal("out_event_id")),
         EventType = reader.GetString(reader.GetOrdinal("out_event_type")),
         EventData = reader.GetString(reader.GetOrdinal("out_event_data")),
+        Metadata = reader.IsDBNull(metadataOrdinal) ? null : reader.GetString(metadataOrdinal),
+        Scope = reader.IsDBNull(scopeOrdinal) ? null : reader.GetString(scopeOrdinal),
         EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id"))
       });
     }
