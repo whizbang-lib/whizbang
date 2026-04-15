@@ -18,6 +18,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
+  private const string PERSPECTIVE_SCOPE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveScopeFor";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   /// <inheritdoc/>
@@ -157,6 +158,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Check if model is a record type (supports 'with {}' expressions for immutable copies)
     var isModelRecord = modelType is INamedTypeSymbol namedModel && namedModel.IsRecord;
 
+    // Check if perspective implements IPerspectiveScopeFor<TModel> for IScopeEvent handling
+    var hasScopeInterface = _hasScopeForInterface(classSymbol);
+
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
             ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -171,7 +175,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
             StorageMode: storageMode,
-            IsModelRecord: isModelRecord
+            IsModelRecord: isModelRecord,
+            HasScopeInterface: hasScopeInterface
         ),
         Warning: null
     );
@@ -331,6 +336,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
 
+    // Generate scope event handling code
+    var scopeEventCode = _generateScopeEventHandlingCode(perspective);
+
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
@@ -340,6 +348,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
+    result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
 
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
@@ -366,6 +375,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       sb.AppendLine("          streamId,");
       sb.AppendLine("          model,");
       sb.AppendLine("          scope,");
+      sb.AppendLine("          forceUpdateScope,");
       sb.AppendLine("          cancellationToken");
       sb.AppendLine("      );");
       sb.AppendLine("    } else {");
@@ -433,9 +443,42 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       sb.AppendLine("        model,");
       sb.AppendLine("        physicalFieldValues,");
       sb.AppendLine("        scope,");
+      sb.AppendLine("        forceUpdateScope,");
       sb.AppendLine("        cancellationToken");
       sb.AppendLine("    );");
     }
+
+    return sb.ToString().TrimEnd('\r', '\n');
+  }
+
+  /// <summary>
+  /// Generates scope event handling code for the event loop.
+  /// When HasScopeInterface is true, generates IScopeEvent detection and ApplyScope call.
+  /// When false, generates a simple IScopeEvent check that uses the proposed scope directly.
+  /// </summary>
+  private static string _generateScopeEventHandlingCode(PerspectiveInfo perspective) {
+    var sb = new StringBuilder();
+
+    // Always generate IScopeEvent detection — perspectives that handle IScopeEvent-implementing
+    // events will get scope changes even without IPerspectiveScopeFor
+    sb.AppendLine("        if (@event is global::Whizbang.Core.IScopeEvent scopeEvent) {");
+    sb.AppendLine("          var proposedScope = scopeEvent.Scope;");
+
+    if (perspective.HasScopeInterface) {
+      // Perspective implements IPerspectiveScopeFor — let it decide the final scope
+      sb.AppendLine($"          if (perspective is global::Whizbang.Core.Perspectives.IPerspectiveScopeFor<{perspective.InterfaceTypeArguments[0]}> scopePerspective) {{");
+      sb.AppendLine("            var currentScope = lastScope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();");
+      sb.AppendLine("            lastScope = scopePerspective.ApplyScope(currentScope, proposedScope);");
+      sb.AppendLine("          } else {");
+      sb.AppendLine("            lastScope = proposedScope;");
+      sb.AppendLine("          }");
+    } else {
+      // No IPerspectiveScopeFor — accept proposed scope directly
+      sb.AppendLine("          lastScope = proposedScope;");
+    }
+
+    sb.AppendLine("          scopeChanged = true;");
+    sb.AppendLine("        }");
 
     return sb.ToString().TrimEnd('\r', '\n');
   }
@@ -482,6 +525,18 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           return originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
         })];
+  }
+
+  /// <summary>
+  /// Checks if a class implements IPerspectiveScopeFor&lt;TModel&gt;.
+  /// </summary>
+  private static bool _hasScopeForInterface(INamedTypeSymbol classSymbol) {
+    return classSymbol.AllInterfaces
+        .Any(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          return originalDef == PERSPECTIVE_SCOPE_FOR_INTERFACE_NAME + "<TModel>"
+                 && i.TypeArguments.Length == 1;
+        });
   }
 
   /// <summary>

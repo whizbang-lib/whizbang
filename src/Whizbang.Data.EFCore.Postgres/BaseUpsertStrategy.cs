@@ -24,7 +24,20 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, id, model, metadata, scope, null, cancellationToken);
+    _upsertCoreAsync(context, id, model, metadata, scope, null, false, cancellationToken);
+
+  /// <inheritdoc/>
+  public Task UpsertPerspectiveRowAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    _upsertCoreAsync(context, id, model, metadata, scope, null, forceUpdateScope, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -37,7 +50,21 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, id, model, metadata, scope, physicalFieldValues, cancellationToken);
+    _upsertCoreAsync(context, id, model, metadata, scope, physicalFieldValues, false, cancellationToken);
+
+  /// <inheritdoc/>
+  public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      bool forceUpdateScope,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    _upsertCoreAsync(context, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, cancellationToken);
 
   private async Task _upsertCoreAsync<TModel>(
       DbContext context,
@@ -46,6 +73,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveMetadata metadata,
       PerspectiveScope scope,
       IDictionary<string, object?>? physicalFieldValues,
+      bool forceUpdateScope,
       CancellationToken cancellationToken)
       where TModel : class {
     // Check if entity exists in local tracker and detach it to avoid tracking conflicts.
@@ -77,12 +105,21 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         Id = existingRow.Id,
         Data = model,
         Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
+        Scope = forceUpdateScope ? CloneScope(scope) : CloneScope(existingRow.Scope),
         CreatedAt = existingRow.CreatedAt,
         UpdatedAt = now,
         Version = existingRow.Version + 1
       };
       context.Set<PerspectiveRow<TModel>>().Update(row);
+      if (!forceUpdateScope) {
+        // SECURITY: Exclude scope from UPDATE SQL. Scope is set only on INSERT.
+        // When forceUpdateScope is true (IScopeEvent), scope IS included in UPDATE.
+        // Guard: only mark as unmodified when Scope is mapped as a complex property.
+        var entityType = context.Entry(row).Metadata;
+        if (entityType.FindComplexProperty(nameof(PerspectiveRow<TModel>.Scope)) != null) {
+          context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
+        }
+      }
     } else {
       row = _createNewRow(id, model, metadata, scope, now);
       context.Set<PerspectiveRow<TModel>>().Add(row);
@@ -139,8 +176,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       CustomerId = scope.CustomerId,
       UserId = scope.UserId,
       OrganizationId = scope.OrganizationId,
-      AllowedPrincipals = [.. scope.AllowedPrincipals],
-      Extensions = [.. scope.Extensions]
+      AllowedPrincipals = [.. (scope.AllowedPrincipals ?? [])],
+      Extensions = [.. (scope.Extensions ?? [])]
     };
   }
 
