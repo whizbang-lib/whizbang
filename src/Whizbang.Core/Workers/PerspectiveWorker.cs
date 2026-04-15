@@ -539,9 +539,10 @@ public partial class PerspectiveWorker(
     var batchProcessedEvents = _pendingPostLifecycleEvents;
 
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
-    // When drain mode is active (PerspectiveStreamIds populated), skip legacy path —
-    // _processDrainModeStreamsAsync handles processing via GetStreamEventsAsync.
-    var legacyWork = workBatch.PerspectiveStreamIds.Count > 0 ? [] : groupedWork;
+    // Legacy path ALWAYS runs — required for PostAllPerspectives/tagged notifications.
+    // Drain mode runs AFTER for watch-list and batched completions only (no duplicate processing
+    // because the dedup cache prevents re-application of already-processed events).
+    var legacyWork = groupedWork;
     await Parallel.ForEachAsync(
       legacyWork,
       new ParallelOptions {
