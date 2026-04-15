@@ -527,11 +527,31 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         continue;
       }
 
+      // Reconstruct full envelope from metadata and scope (same as ReadPolymorphicAsync)
+      // AOT-safe: use GetTypeInfo for source-generated serialization
+      EnvelopeMetadata? metadata = null;
+      if (!string.IsNullOrEmpty(raw.Metadata)) {
+        var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+        metadata = (EnvelopeMetadata?)JsonSerializer.Deserialize(raw.Metadata, metadataTypeInfo);
+      }
+
+      PerspectiveScope? scope = null;
+      if (!string.IsNullOrEmpty(raw.Scope)) {
+        var scopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
+        scope = (PerspectiveScope?)JsonSerializer.Deserialize(raw.Scope, scopeTypeInfo);
+      }
+
+      var hops = metadata?.Hops?.ToList() ?? [];
+      // Restore scope into first hop (same pattern as _restoreScopeInHops)
+      if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
+        hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+      }
+
       results.Add(new MessageEnvelope<IEvent> {
-        MessageId = new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
+        MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
         Payload = (IEvent)eventData,
-        Hops = [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        Hops = hops,
+        DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
       });
     }
 
