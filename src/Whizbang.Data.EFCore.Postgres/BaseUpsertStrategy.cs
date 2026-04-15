@@ -114,7 +114,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       if (!forceUpdateScope) {
         // SECURITY: Exclude scope from UPDATE SQL. Scope is set only on INSERT.
         // When forceUpdateScope is true (IScopeEvent), scope IS included in UPDATE.
-        context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
+        // Guard: only mark as unmodified when Scope is mapped as a complex property.
+        var entityType = context.Entry(row).Metadata;
+        if (entityType.FindComplexProperty(nameof(PerspectiveRow<TModel>.Scope)) != null) {
+          context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
+        }
       }
     } else {
       row = _createNewRow(id, model, metadata, scope, now);
