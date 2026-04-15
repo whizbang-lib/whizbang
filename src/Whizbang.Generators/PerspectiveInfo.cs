@@ -33,7 +33,8 @@ internal sealed record PerspectiveInfo(
     PhysicalFieldInfoCompact[]? PhysicalFields = null,
     bool IsWithActionsInterface = false,
     int StorageMode = 0,
-    bool IsModelRecord = false
+    bool IsModelRecord = false,
+    bool HasScopeInterface = false
 );
 
 /// <summary>
