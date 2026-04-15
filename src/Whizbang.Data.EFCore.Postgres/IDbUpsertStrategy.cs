@@ -41,6 +41,22 @@ public interface IDbUpsertStrategy {
       where TModel : class;
 
   /// <summary>
+  /// Performs an atomic upsert with optional forced scope update.
+  /// When <paramref name="forceUpdateScope"/> is true and a row exists, the scope column is included in the UPDATE.
+  /// </summary>
+  Task UpsertPerspectiveRowAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    UpsertPerspectiveRowAsync(context, tableName, id, model, metadata, scope, cancellationToken);
+
+  /// <summary>
   /// Performs an atomic upsert (insert or update) of a perspective row with physical field values.
   /// Physical fields are stored in shadow properties configured by the EF Core model.
   /// </summary>
@@ -67,4 +83,20 @@ public interface IDbUpsertStrategy {
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
       where TModel : class;
+
+  /// <summary>
+  /// Performs an atomic upsert with physical fields and optional forced scope update.
+  /// </summary>
+  Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      bool forceUpdateScope,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    UpsertPerspectiveRowWithPhysicalFieldsAsync(context, tableName, id, model, metadata, scope, physicalFieldValues, cancellationToken);
 }
