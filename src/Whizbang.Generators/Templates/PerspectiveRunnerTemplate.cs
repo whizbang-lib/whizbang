@@ -108,6 +108,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
+    var scopeChanged = false;  // Track if an IScopeEvent changed scope (forces scope UPDATE)
 
     // Build list of event types this perspective handles (for polymorphic deserialization)
     var eventTypes = new[] {
@@ -248,6 +249,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             break;
         }
 
+        // IScopeEvent handling: if the event carries a scope change, apply it
+        #region SCOPE_EVENT_HANDLING
+        // Default: no scope event handling (IScopeEvent not used by this perspective)
+        #endregion
+
         // Track envelope for PostPerspective lifecycle hooks (fire AFTER save completes)
         // Envelope preserved for security context propagation
         processedEvents.Add(envelope);
@@ -288,7 +294,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               updatedModel,
               lastSuccessfulEventId!.Value,
               cancellationToken,
-              lastScope
+              lastScope,
+              scopeChanged
           );
         }
 
@@ -389,7 +396,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 updatedModel,
                 lastSuccessfulEventId.Value,
                 cancellationToken,
-                lastScope
+                lastScope,
+                scopeChanged
             );
           }
         } catch (Exception saveEx) {
@@ -476,7 +484,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
       CancellationToken cancellationToken,
-      PerspectiveScope? scope = null) {
+      PerspectiveScope? scope = null,
+      bool forceUpdateScope = false) {
 
     #region UPSERT_CALL
     // Upsert model (insert or update)
