@@ -369,6 +369,127 @@ public class BaseUpsertStrategyIsModifiedTests : EFCoreTestBase {
 
   // ─── End: Scope exclusion tests ─────────────────────────────────────────
 
+  // ─── Phase 2: forceUpdateScope tests (IScopeEvent path) ────────────────
+
+  /// <summary>
+  /// When forceUpdateScope is true, scope IS updated on existing rows.
+  /// This is the IScopeEvent path.
+  /// </summary>
+  [Test]
+  public async Task UpsertAsync_WithForceUpdateScope_UpdatesScopeColumnAsync() {
+    // Arrange
+    var strategy = new PostgresUpsertStrategy();
+    var testId = Guid.CreateVersion7();
+    var metadata = new PerspectiveMetadata {
+      EventType = "ScopeChanged",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+    var originalScope = new PerspectiveScope { TenantId = "tenant-old" };
+    var newScope = new PerspectiveScope { TenantId = "tenant-new", UserId = "user-new" };
+
+    // INSERT with original scope
+    await using (var context = CreateDbContext()) {
+      await strategy.UpsertPerspectiveRowAsync(
+          context, "wh_per_order", testId,
+          new Order { OrderId = new TestOrderId(testId), Amount = 100m, Status = "Created" },
+          metadata, originalScope);
+    }
+
+    // Act - UPDATE with forceUpdateScope = true
+    await using (var context = CreateDbContext()) {
+      await strategy.UpsertPerspectiveRowAsync(
+          context, "wh_per_order", testId,
+          new Order { OrderId = new TestOrderId(testId), Amount = 200m, Status = "ScopeChanged" },
+          metadata, newScope, forceUpdateScope: true);
+    }
+
+    // Assert - scope must now be the NEW scope
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var (tenantId, userId) = await conn.QuerySingleAsync<(string tenantId, string userId)>(
+        "SELECT scope->>'t' as tenantId, scope->>'u' as userId FROM wh_per_order WHERE id = @id",
+        new { id = testId });
+
+    await Assert.That(tenantId).IsEqualTo("tenant-new");
+    await Assert.That(userId).IsEqualTo("user-new");
+  }
+
+  /// <summary>
+  /// forceUpdateScope on INSERT still sets scope normally.
+  /// </summary>
+  [Test]
+  public async Task UpsertAsync_WithForceUpdateScope_OnInsert_SetsScopeAsync() {
+    // Arrange
+    var strategy = new PostgresUpsertStrategy();
+    var testId = Guid.CreateVersion7();
+    var metadata = new PerspectiveMetadata {
+      EventType = "ScopeSet",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+    var scope = new PerspectiveScope { TenantId = "tenant-force-insert" };
+
+    // Act - INSERT with forceUpdateScope = true (should still set scope)
+    await using (var context = CreateDbContext()) {
+      await strategy.UpsertPerspectiveRowAsync(
+          context, "wh_per_order", testId,
+          new Order { OrderId = new TestOrderId(testId), Amount = 50m, Status = "New" },
+          metadata, scope, forceUpdateScope: true);
+    }
+
+    // Assert
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var tenantId = await conn.QuerySingleAsync<string>(
+        "SELECT scope->>'t' FROM wh_per_order WHERE id = @id",
+        new { id = testId });
+
+    await Assert.That(tenantId).IsEqualTo("tenant-force-insert");
+  }
+
+  /// <summary>
+  /// Without forceUpdateScope, scope is preserved (default behavior unchanged).
+  /// </summary>
+  [Test]
+  public async Task UpsertAsync_WithoutForceUpdateScope_PreservesScopeAsync() {
+    // Arrange
+    var strategy = new PostgresUpsertStrategy();
+    var testId = Guid.CreateVersion7();
+    var metadata = new PerspectiveMetadata {
+      EventType = "OrderUpdated",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+    var originalScope = new PerspectiveScope { TenantId = "tenant-preserve" };
+
+    await using (var context = CreateDbContext()) {
+      await strategy.UpsertPerspectiveRowAsync(
+          context, "wh_per_order", testId,
+          new Order { OrderId = new TestOrderId(testId), Amount = 100m, Status = "Created" },
+          metadata, originalScope);
+    }
+
+    // Act - UPDATE with forceUpdateScope = false (explicit)
+    await using (var context = CreateDbContext()) {
+      await strategy.UpsertPerspectiveRowAsync(
+          context, "wh_per_order", testId,
+          new Order { OrderId = new TestOrderId(testId), Amount = 200m, Status = "Updated" },
+          metadata, new PerspectiveScope { TenantId = "tenant-different" }, forceUpdateScope: false);
+    }
+
+    // Assert - original scope preserved
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var tenantId = await conn.QuerySingleAsync<string>(
+        "SELECT scope->>'t' FROM wh_per_order WHERE id = @id",
+        new { id = testId });
+
+    await Assert.That(tenantId).IsEqualTo("tenant-preserve");
+  }
+
+  // ─── End: forceUpdateScope tests ───────────────────────────────────────
+
   /// <summary>
   /// Tests that the InMemoryUpsertStrategy (which doesn't clear change tracker)
   /// also correctly persists data changes.
