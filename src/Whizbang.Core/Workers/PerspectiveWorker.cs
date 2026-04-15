@@ -966,13 +966,11 @@ public partial class PerspectiveWorker(
         }
       });
 
-    // Optimization #3: Single batched completion call instead of per-stream
-    var workIdsToComplete = allCompletedWorkIds.Distinct().ToArray();
-    System.IO.File.AppendAllText("/tmp/drain_completion.txt",
-      $"[{DateTime.UtcNow:HH:mm:ss}] workItems={workItems.Count}, allCompletedWorkIds={allCompletedWorkIds.Count}, distinct={workIdsToComplete.Length}\n");
-    if (workIdsToComplete.Length > 0) {
-      await workCoordinator.CompletePerspectiveEventsAsync(workIdsToComplete, cancellationToken);
-    }
+    // NOTE: Drain mode completion (CompletePerspectiveEventsAsync) is DISABLED while legacy path runs.
+    // The legacy path handles completions via the batched strategy (_pendingEventCompletions).
+    // Enabling drain mode completion would delete wh_perspective_events rows before the legacy path
+    // can process them on the next tick, breaking PostLifecycle/tagged notifications.
+    // TODO: Re-enable when drain mode fully replaces legacy path (after deserialization fix).
 
     // Manage watch-list cooldowns (optimization #6: immediate removal on 0 events)
     _manageWatchListCooldowns(streamsWithEvents);
