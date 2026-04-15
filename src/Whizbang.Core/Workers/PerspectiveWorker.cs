@@ -536,7 +536,7 @@ public partial class PerspectiveWorker(
     _logBatchComposition(workBatch, groupedWork);
 
     // Use persistent field — events that fail WhenAll carry over to next tick for re-check
-    var batchProcessedEvents = _pendingPostLifecycleEvents;
+    var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
 
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
     // Legacy path ALWAYS runs — required for PostAllPerspectives/tagged notifications.
