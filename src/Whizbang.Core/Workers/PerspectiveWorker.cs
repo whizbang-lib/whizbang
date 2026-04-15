@@ -89,6 +89,10 @@ public partial class PerspectiveWorker(
   // Carries over across ticks so events that fail WhenAll in tick N get re-checked in tick N+1.
   private readonly ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> _pendingPostLifecycleEvents = new();
 
+  // Cursor cache: avoids GetPerspectiveCursorAsync DB call on every drain cycle.
+  // Updated after each successful RunWithEventsAsync. Invalidated on rewind/rebuild/watch-list removal.
+  private readonly PerspectiveCursorCache _cursorCache = new();
+
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _bootstrappedThisSession = new();
 
@@ -802,6 +806,7 @@ public partial class PerspectiveWorker(
 
     foreach (var streamId in toRemove) {
       _watchList.Remove(streamId);
+      _cursorCache.InvalidateStream(streamId);
     }
   }
 
@@ -897,15 +902,22 @@ public partial class PerspectiveWorker(
         }
 
         try {
-          // Get cursor position so the runner knows where to start applying events.
-          // The runner uses this for checkpoint tracking — events before this position are skipped.
-          var checkpoint = await groupWorkCoordinator.GetPerspectiveCursorAsync(
-            streamId, perspectiveName, ct);
-          var lastProcessedEventId = checkpoint?.LastEventId;
+          // Get cursor position — try cache first (drain mode optimization), fall back to DB.
+          Guid? lastProcessedEventId;
+          if (!_cursorCache.TryGet(streamId, perspectiveName, out lastProcessedEventId)) {
+            var checkpoint = await groupWorkCoordinator.GetPerspectiveCursorAsync(
+              streamId, perspectiveName, ct);
+            lastProcessedEventId = checkpoint?.LastEventId;
+          }
 
           // RunWithEventsAsync handles: model load, event application,
           // lifecycle hooks (Pre/PostPerspective), model save, and checkpoint.
           var result = await runner.RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, typedEvents, ct);
+
+          // Update cursor cache for next cycle
+          if (result.Status == PerspectiveProcessingStatus.Completed && result.LastEventId != Guid.Empty) {
+            _cursorCache.Set(streamId, perspectiveName, result.LastEventId);
+          }
 
           // Report completion and sync signals
           await _reportCompletionAndSignalSyncAsync(
@@ -1372,6 +1384,9 @@ public partial class PerspectiveWorker(
         try {
           result = await runner.RewindAndRunAsync(
             streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
+
+          // Invalidate cursor cache after rewind — cursor position has changed
+          _cursorCache.Invalidate(streamId, perspectiveName);
         } catch (Exception ex) when (ex is not OperationCanceledException) {
           // Isolate rewind failures — a single stream's failure must not crash the worker.
           // The stream will retry on the next polling cycle.
