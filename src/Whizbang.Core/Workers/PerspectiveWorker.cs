@@ -891,13 +891,17 @@ public partial class PerspectiveWorker(
           return;
         }
 
-        // Deserialize events ONCE per stream, cache for reuse across perspectives
+        // Deserialize events ONCE per stream, cache for reuse across perspectives.
+        // Resolve IEventTypeProvider from scoped provider (more reliable than constructor-injected field).
         var typedEvents = deserializedCache.GetOrAdd(streamId, _ => {
-          var eventTypes = _eventTypeProvider?.GetEventTypes() ?? [];
+          var scopedEventTypeProvider = groupScope.ServiceProvider.GetService<IEventTypeProvider>();
+          var eventTypes = scopedEventTypeProvider?.GetEventTypes() ?? [];
           return eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
         });
 
         if (typedEvents.Count == 0) {
+          System.IO.File.AppendAllText("/tmp/drain_completion.txt",
+            $"  SKIP: stream={streamId}, persp={perspectiveName}, rawEvents={rawEvents.Count}, typedEvents=0, sampleEventType={rawEvents.FirstOrDefault()?.EventType ?? "null"}\n");
           return;
         }
 
@@ -965,6 +969,8 @@ public partial class PerspectiveWorker(
 
     // Optimization #3: Single batched completion call instead of per-stream
     var workIdsToComplete = allCompletedWorkIds.Distinct().ToArray();
+    System.IO.File.AppendAllText("/tmp/drain_completion.txt",
+      $"[{DateTime.UtcNow:HH:mm:ss}] workItems={workItems.Count}, allCompletedWorkIds={allCompletedWorkIds.Count}, distinct={workIdsToComplete.Length}\n");
     if (workIdsToComplete.Length > 0) {
       await workCoordinator.CompletePerspectiveEventsAsync(workIdsToComplete, cancellationToken);
     }
