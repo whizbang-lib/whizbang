@@ -540,9 +540,9 @@ public partial class PerspectiveWorker(
     var batchProcessedEvents = _pendingPostLifecycleEvents;
 
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
-    // When drain mode is active (PerspectiveStreamIds populated), skip legacy path —
-    // _processDrainModeStreamsAsync handles processing via GetStreamEventsAsync.
-    var legacyWork = workBatch.PerspectiveStreamIds.Count > 0 ? [] : groupedWork;
+    // Legacy path always runs — it handles PostLifecycle/tagged notifications correctly.
+    // Drain mode runs AFTER for watch-list management and batched completions.
+    var legacyWork = groupedWork;
     await Parallel.ForEachAsync(
       legacyWork,
       new ParallelOptions {
@@ -927,11 +927,11 @@ public partial class PerspectiveWorker(
             result, [], groupWorkCoordinator, streamId, perspectiveName, ct);
 
           // Collect processed events for PostLifecycle firing (WhenAll gate)
+          // Note: when legacy path runs, PostLifecycle is handled there.
+          // This is for the future when drain mode replaces legacy path entirely.
           foreach (var envelope in typedEvents) {
             batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
           }
-
-          // Signal perspective complete for WhenAll tracking
           if (groupLifecycleCoordinator is not null) {
             foreach (var envelope in typedEvents) {
               groupLifecycleCoordinator.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
