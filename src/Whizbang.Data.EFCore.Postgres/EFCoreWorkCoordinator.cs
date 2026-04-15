@@ -355,20 +355,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Select(_mapInboxWork)
       .ToList();
 
+    // Drain mode: SQL returns 'perspective_stream' rows (one per distinct stream, no per-event detail).
+    // Legacy: SQL returns 'perspective' rows (one per event with perspective_name).
+    var perspectiveStreamRows = validResults
+      .Where(r => r.Source == "perspective_stream")
+      .ToList();
+
     var perspectiveRows = validResults
       .Where(r => r.Source == "perspective")
       .ToList();
 
-    var perspectiveWork = perspectiveRows
-      .Select(_mapPerspectiveWork)
-      .ToList();
+    // Drain mode: stream IDs from dedicated rows (skip PerspectiveWork construction entirely)
+    // Legacy: deduplicate stream IDs from per-event rows
+    var perspectiveStreamIds = perspectiveStreamRows.Count > 0
+      ? perspectiveStreamRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).ToList()
+      : perspectiveRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).Distinct().ToList();
 
-    // Drain mode: collect distinct stream IDs from perspective rows
-    var perspectiveStreamIds = perspectiveRows
-      .Where(r => r.StreamId.HasValue)
-      .Select(r => r.StreamId!.Value)
-      .Distinct()
-      .ToList();
+    var perspectiveWork = perspectiveStreamRows.Count > 0
+      ? new List<PerspectiveWork>()
+      : perspectiveRows.Select(_mapPerspectiveWork).ToList();
 
     var syncInquiryResults = validResults
       .Where(r => r.Source == "sync_result")

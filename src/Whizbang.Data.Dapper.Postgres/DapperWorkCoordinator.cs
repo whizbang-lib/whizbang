@@ -207,7 +207,14 @@ public partial class DapperWorkCoordinator(
         case "inbox":
           inboxWork.Add(_mapInboxWork(r));
           break;
+        case "perspective_stream":
+          // Drain mode: SQL returns one row per distinct stream (no per-event detail)
+          if (r.work_stream_id.HasValue) {
+            perspectiveStreamIds.Add(r.work_stream_id.Value);
+          }
+          break;
         case "perspective":
+          // Legacy mode: per-event rows with perspective_name
           perspectiveWork.Add(_mapPerspectiveWork(r));
           if (r.work_stream_id.HasValue) {
             perspectiveStreamIds.Add(r.work_stream_id.Value);
