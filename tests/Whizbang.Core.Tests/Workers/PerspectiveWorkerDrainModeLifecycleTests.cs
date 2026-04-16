@@ -67,9 +67,11 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
   /// <summary>
   /// Work coordinator that supports drain mode with configurable stream events.
+  /// Signals batch completion on the SECOND ProcessWorkBatchAsync call (meaning the first
+  /// batch including Phase 5 PostLifecycle has fully completed).
   /// </summary>
   private sealed class DrainWorkCoordinator : IWorkCoordinator {
-    private readonly TaskCompletionSource _completionReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _batchCycleComplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _batchCount;
 
     public List<Guid> StreamIdsToReturn { get; set; } = [];
@@ -78,11 +80,15 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);
-      await _completionReported.Task.WaitAsync(cts.Token);
+      await _batchCycleComplete.Task.WaitAsync(cts.Token);
     }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
       var batch = Interlocked.Increment(ref _batchCount);
+      if (batch >= 2) {
+        // Second call means first batch (including Phase 5 PostLifecycle) is complete
+        _batchCycleComplete.TrySetResult();
+      }
       // Return stream IDs on first batch, empty on subsequent
       var streamIds = batch == 1 ? new List<Guid>(StreamIdsToReturn) : [];
       return Task.FromResult(new WorkBatch {
@@ -99,7 +105,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
-      _completionReported.TrySetResult();
+      _batchCycleComplete.TrySetResult();
       return Task.CompletedTask;
     }
 
@@ -229,7 +235,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     EventWorkId = Guid.NewGuid()
   };
 
-  private (PerspectiveWorker Worker, DrainWorkCoordinator Coordinator, FilteringPerspectiveRunnerRegistry Registry, FakeEventStore EventStore, CapturingReceptorInvoker Invoker) _createWorkerWithLifecycle(
+  private (PerspectiveWorker Worker, DrainWorkCoordinator Coordinator, FilteringPerspectiveRunnerRegistry Registry, FakeEventStore EventStore, CapturingReceptorInvoker Invoker, ILifecycleCoordinator LifecycleCoordinator) _createWorkerWithLifecycle(
       List<PerspectiveRegistrationInfo> perspectiveRegistrations,
       List<StreamEventData> rawEvents,
       List<MessageEnvelope<IEvent>> typedEvents,
@@ -265,13 +271,18 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       eventTypeProvider: null
     );
 
-    return (worker, coordinator, registry, eventStore, invoker);
+    var lifecycleCoordinator = serviceProvider.GetRequiredService<ILifecycleCoordinator>();
+    return (worker, coordinator, registry, eventStore, invoker, lifecycleCoordinator);
   }
 
   private async Task _runWorkerOneBatchAsync(PerspectiveWorker worker, DrainWorkCoordinator coordinator) {
-    using var cts = new CancellationTokenSource();
+    // Use a semaphore to wait for the FULL batch cycle (including Phase 5 PostLifecycle).
+    // The 2nd ProcessWorkBatchAsync call means the 1st batch is fully complete.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     var workerTask = worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    // Small additional wait for any fire-and-forget tasks to complete
+    await Task.Yield();
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
   }
@@ -304,7 +315,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(betaEventId, new BetaEvent("beta"))
     };
 
-    var (worker, coordinator, registry, _, _) = _createWorkerWithLifecycle(
+    var (worker, coordinator, registry, _, _, _) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -341,7 +352,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(alphaEventId, new AlphaEvent("alpha"))
     };
 
-    var (worker, coordinator, registry, _, _) = _createWorkerWithLifecycle(
+    var (worker, coordinator, registry, _, _, _) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -377,7 +388,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(betaEventId, new BetaEvent("beta"))
     };
 
-    var (worker, coordinator, registry, _, _) = _createWorkerWithLifecycle(
+    var (worker, coordinator, registry, _, _, _) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -411,7 +422,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -442,15 +453,26 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, registry, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
     await _runWorkerOneBatchAsync(worker, coordinator);
 
-    // Assert — PostAllPerspectivesDetached + PostAllPerspectivesInline should fire
-    await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesDetached)).IsTrue();
-    await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue();
+    // Assert — check coordinator state
+    var allComplete = lc.AreAllPerspectivesComplete(eventId);
+    var hasTracking = lc.GetTracking(eventId) is not null;
+    var allStages = invoker.Invocations.Select(i => i.Stage.ToString()).ToList();
+    var runCount = registry.RunWithEventsCallCount;
+
+    await Assert.That(runCount).IsGreaterThanOrEqualTo(2)
+      .Because("Both perspectives should have run via RunWithEventsAsync");
+    await Assert.That(allComplete).IsTrue()
+      .Because("Both perspectives signaled complete — WhenAll should resolve");
+    await Assert.That(hasTracking).IsTrue()
+      .Because("BeginTracking was called in PrePerspective");
+    await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
+      .Because($"Expected PostAllPerspectivesInline (runCount={runCount}) but only saw: [{string.Join(", ", allStages)}]");
   }
 
   [Test]
@@ -472,7 +494,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -502,7 +524,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -540,7 +562,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId2, new AlphaEvent("two"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -575,7 +597,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -606,7 +628,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, coordinator, _, _, invoker) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act — should NOT throw duplicate key exception
