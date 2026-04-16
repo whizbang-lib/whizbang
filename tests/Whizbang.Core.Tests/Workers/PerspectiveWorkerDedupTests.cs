@@ -716,6 +716,8 @@ public class PerspectiveWorkerDedupTests {
       throw new NotImplementedException();
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
       throw new NotImplementedException();
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>

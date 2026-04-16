@@ -257,4 +257,9 @@ public sealed class AuditingEventStoreDecorator(
     };
   }
 
+  /// <inheritdoc />
+  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
+  }
+
 }

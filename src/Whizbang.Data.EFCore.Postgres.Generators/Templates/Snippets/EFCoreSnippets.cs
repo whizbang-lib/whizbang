@@ -143,7 +143,7 @@ __PHYSICAL_FIELD_CONFIGS__
     // JsonSerializerOptions are created from JsonContextRegistry (auto-discovers all registered contexts)
     services.AddScoped<global::Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      var jsonOptions = global::Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
+      var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
         jsonOptions
