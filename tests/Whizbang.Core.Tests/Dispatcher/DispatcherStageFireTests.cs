@@ -31,16 +31,35 @@ public class DispatcherStageFireTests {
   public record StageTestEvent([property: StreamId] Guid EntityId) : IEvent;
 
   // ========================================
-  // Static counters
+  // Static counters + per-stage fire log
   // ========================================
 
   private static int _defaultHandlerCount;
   private static int _explicitHandlerCount;
 
+  // (ReceptorName, Stage) — lets every test assert not just fire-count but *where* each fire
+  // happened. "publish" denotes a fire that came through PublishAsync's typed publisher
+  // (i.e. not a lifecycle stage). Anything else is the LifecycleStage the invoker passed in.
+  private static readonly List<(string Receptor, string Stage)> _fireLog = [];
+  private static readonly object _fireLogLock = new();
+  private static void _recordFire(string receptor, string stage) {
+    lock (_fireLogLock) {
+      _fireLog.Add((receptor, stage));
+    }
+  }
+  private static List<(string Receptor, string Stage)> _snapshotFireLog() {
+    lock (_fireLogLock) {
+      return [.. _fireLog];
+    }
+  }
+
   [Before(Test)]
   public Task ResetCountersAsync() {
     Interlocked.Exchange(ref _defaultHandlerCount, 0);
     Interlocked.Exchange(ref _explicitHandlerCount, 0);
+    lock (_fireLogLock) {
+      _fireLog.Clear();
+    }
     return Task.CompletedTask;
   }
 
@@ -56,18 +75,24 @@ public class DispatcherStageFireTests {
   }
 
   /// <summary>Default-stage void handler (no [FireAt]) — should fire during cascade.</summary>
-  public class DefaultStageTestReceptor : IReceptor<StageTestEvent> {
+  public class DefaultStageTestReceptor : IReceptor<StageTestEvent>, IAcceptsLifecycleContext {
+    private ILifecycleContext? _ctx;
+    public void SetLifecycleContext(ILifecycleContext context) => _ctx = context;
     public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _defaultHandlerCount);
+      _recordFire(nameof(DefaultStageTestReceptor), _ctx?.CurrentStage.ToString() ?? "publish");
       return ValueTask.CompletedTask;
     }
   }
 
-  /// <summary>Explicit [FireAt(PostAllPerspectivesDetached)] handler — should NOT fire during cascade.</summary>
+  /// <summary>Explicit [FireAt(PostAllPerspectivesDetached)] handler — must fire ONLY at that stage.</summary>
   [FireAt(LifecycleStage.PostAllPerspectivesDetached)]
-  public class ExplicitPostAllPerspectivesReceptor : IReceptor<StageTestEvent> {
+  public class ExplicitPostAllPerspectivesReceptor : IReceptor<StageTestEvent>, IAcceptsLifecycleContext {
+    private ILifecycleContext? _ctx;
+    public void SetLifecycleContext(ILifecycleContext context) => _ctx = context;
     public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _explicitHandlerCount);
+      _recordFire(nameof(ExplicitPostAllPerspectivesReceptor), _ctx?.CurrentStage.ToString() ?? "publish");
       return ValueTask.CompletedTask;
     }
   }
@@ -198,8 +223,11 @@ public class DispatcherStageFireTests {
   }
 
   [Test]
-  public async Task PublishAsync_ExplicitFireAtVoidHandler_FiresAsync() {
-    // Arrange — PublishAsync is an explicit publish, not cascade. All handlers should fire.
+  public async Task PublishAsync_ExplicitFireAt_DoesNotFireDuringPublishAsync() {
+    // [FireAt(stage)] declares "invoke me at `stage`, never before." PublishAsync is an
+    // explicit publish — it must leave [FireAt] receptors alone and let the lifecycle
+    // pipeline invoke them at their declared stage. The engineer's double-fire report
+    // was that the receptor fired here AND at its declared stage.
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
@@ -210,11 +238,122 @@ public class DispatcherStageFireTests {
     var sp = services.BuildServiceProvider();
     var dispatcher = sp.GetRequiredService<IDispatcher>();
 
-    // Act
     await dispatcher.PublishAsync(new StageTestEvent(Guid.NewGuid()));
 
-    // Assert — explicit [FireAt] handler also fires via PublishAsync (not cascade, no IsDefaultDispatch filtering)
+    await Assert.That(_explicitHandlerCount).IsEqualTo(0)
+      .Because("[FireAt] is deferred to its declared stage — PublishAsync must not invoke it");
+    var log = _snapshotFireLog();
+    await Assert.That(log.Any(e => e.Receptor == nameof(ExplicitPostAllPerspectivesReceptor))).IsFalse()
+      .Because("[FireAt(PostAllPerspectivesDetached)] should not appear in the fire log at all after PublishAsync");
+  }
+
+  [Test]
+  public async Task PublishAsync_ExplicitFireAt_FiresOnlyAtDeclaredStage_OnceAsync() {
+    // End-to-end invariant: a [FireAt(PostAllPerspectivesDetached)] receptor must fire
+    // exactly once, and only when the lifecycle reaches PostAllPerspectivesDetached.
+    // Publishing the event synchronously must NOT fire it (Path 1 bug).
+    // The "lifecycle reached" step is simulated here by calling IReceptorInvoker directly
+    // at the declared stage — that's exactly what the work coordinator does in production.
+    var strategy = new StubWorkCoordinatorStrategy();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    var sp = services.BuildServiceProvider();
+    var dispatcher = sp.GetRequiredService<IDispatcher>();
+
+    var evt = new StageTestEvent(Guid.NewGuid());
+    await dispatcher.PublishAsync(evt);
+
+    // Walk the lifecycle through every stage that could possibly match. The registry
+    // only returns entries for stages the receptor is actually registered at, so the
+    // non-declared stages are no-ops — but we drive them anyway to prove it.
+    using var scope = sp.CreateScope();
+    var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+    var envelope = new MessageEnvelope<StageTestEvent> {
+      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      Payload = evt,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    foreach (var stage in Enum.GetValues<LifecycleStage>()) {
+      await invoker.InvokeAsync(envelope, stage);
+    }
+
     await Assert.That(_explicitHandlerCount).IsEqualTo(1)
-      .Because("Explicit [FireAt] void handler should fire via PublishAsync (not a cascade path)");
+      .Because("[FireAt(PostAllPerspectivesDetached)] must fire exactly once across the full lifecycle");
+    var log = _snapshotFireLog();
+    var explicitFires = log.Where(e => e.Receptor == nameof(ExplicitPostAllPerspectivesReceptor)).ToList();
+    await Assert.That(explicitFires).Count().IsEqualTo(1)
+      .Because("exactly one fire entry for the explicit-stage receptor");
+    await Assert.That(explicitFires[0].Stage).IsEqualTo(nameof(LifecycleStage.PostAllPerspectivesDetached))
+      .Because("that single fire must be at the declared stage, never at 'publish' or any other stage");
+  }
+
+  [Test]
+  public async Task PublishAsync_FromInsideHandler_ExplicitFireAt_FiresOnlyAtDeclaredStage_OnceAsync() {
+    // Engineer's reproducer: a handler calls _dispatcher.PublishAsync(...) from within
+    // HandleAsync. Before the fix, the [FireAt] receptor fires twice — once during the
+    // nested PublishAsync (Path 1) and again when the lifecycle reaches its declared
+    // stage. After the fix: exactly once, at the declared stage.
+    var strategy = new StubWorkCoordinatorStrategy();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    var sp = services.BuildServiceProvider();
+    var dispatcher = sp.GetRequiredService<IDispatcher>();
+
+    // Simulate a handler calling PublishAsync internally.
+    var evt = new StageTestEvent(Guid.NewGuid());
+    await dispatcher.PublishAsync(evt);
+
+    // Now the lifecycle runs and reaches the [FireAt] stage.
+    using var scope = sp.CreateScope();
+    var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+    var envelope = new MessageEnvelope<StageTestEvent> {
+      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      Payload = evt,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostAllPerspectivesDetached);
+
+    await Assert.That(_explicitHandlerCount).IsEqualTo(1)
+      .Because("handler-invoked PublishAsync + lifecycle stage = exactly one [FireAt] invocation");
+    var log = _snapshotFireLog();
+    var explicitFires = log.Where(e => e.Receptor == nameof(ExplicitPostAllPerspectivesReceptor)).ToList();
+    await Assert.That(explicitFires).Count().IsEqualTo(1);
+    await Assert.That(explicitFires[0].Stage).IsEqualTo(nameof(LifecycleStage.PostAllPerspectivesDetached));
+  }
+
+  [Test]
+  public async Task PublishAsync_DefaultStage_StillFiresImmediatelyAsync() {
+    // Regression guard for the fix: default-stage (no [FireAt]) void receptors and typed
+    // receptors must still fire from PublishToReceptors (Path 1). The fix must only skip
+    // explicit [FireAt] void receptors.
+    var strategy = new StubWorkCoordinatorStrategy();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    var sp = services.BuildServiceProvider();
+    var dispatcher = sp.GetRequiredService<IDispatcher>();
+
+    await dispatcher.PublishAsync(new StageTestEvent(Guid.NewGuid()));
+
+    await Assert.That(_defaultHandlerCount).IsEqualTo(1)
+      .Because("default-stage void handler must still fire during PublishAsync");
+    var log = _snapshotFireLog();
+    var defaultFires = log.Where(e => e.Receptor == nameof(DefaultStageTestReceptor)).ToList();
+    await Assert.That(defaultFires).Count().IsEqualTo(1);
+    await Assert.That(defaultFires[0].Stage).IsEqualTo("publish")
+      .Because("default-stage receptors fire directly from PublishAsync without a lifecycle context");
   }
 }
