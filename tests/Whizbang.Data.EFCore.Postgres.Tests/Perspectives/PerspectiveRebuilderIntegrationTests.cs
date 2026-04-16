@@ -156,6 +156,11 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // Recording invoker — observes ProcessingMode seen by lifecycle receptor invocation.
     services.AddScoped<IReceptorInvoker>(_ => new RecordingReceptorInvoker(_receptorInvocations, _receptorInvocationsLock));
 
+    // Cursor persistence: matches what PostgresDriverExtensions.Postgres registers.
+    services.AddScoped<IPerspectiveCheckpointCompleter>(sp =>
+        new EFCorePostgresPerspectiveCheckpointCompleter(
+            sp.GetRequiredService<WorkCoordinationDbContext>()));
+
     return services.BuildServiceProvider();
   }
 
@@ -301,8 +306,14 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     await Assert.That(baseline.Success).IsTrue();
     await Assert.That(baseline.StreamsProcessed).IsEqualTo(2);
 
-    // Simulate an event-store purge: remove all events for orphanStream. liveStream keeps its event.
+    // Simulate an event-store purge: remove all events for orphanStream. liveStream keeps its
+    // event. We first delete the cursor row — wh_perspective_cursors.last_event_id has a FK to
+    // wh_event_store.event_id now that rebuild persists cursors, so deleting events would fail
+    // if the cursor still references them.
     await using (var purgeContext = CreateDbContext()) {
+      await purgeContext.Set<PerspectiveCursorRecord>()
+          .Where(c => c.StreamId == orphanStream && c.PerspectiveName == RebuildBalancePerspectiveName)
+          .ExecuteDeleteAsync();
       await purgeContext.Set<EventStoreRecord>()
           .Where(e => e.StreamId == orphanStream)
           .ExecuteDeleteAsync();
