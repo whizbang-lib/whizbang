@@ -1,0 +1,133 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
+
+/// <summary>
+/// End-to-end integration tests for PerspectiveRebuilder against a real Postgres event store
+/// and real EFCore perspective storage. Covers RebuildInPlaceAsync and RebuildStreamsAsync.
+/// Paired with the unit tests in Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs.
+/// </summary>
+[Category("Integration")]
+public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
+
+  private const string RebuildBalancePerspectiveName =
+      "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
+
+  /// <summary>
+  /// Builds a ServiceProvider wired for rebuild: real Postgres-backed event store,
+  /// real EFCorePostgresPerspectiveStore, the source-generated runner registry, and
+  /// the registered RebuildBalancePerspective runner. Uses reflection to pick up the
+  /// generated types so the test survives compile passes where generators don't run.
+  /// </summary>
+  private ServiceProvider _buildRebuildServices() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+
+    // DbContext scoped — one per DI scope, same options as EFCoreTestBase uses for direct access
+    services.AddScoped<WorkCoordinationDbContext>(_ => new WorkCoordinationDbContext(DbContextOptions));
+    services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
+
+    // Real Postgres event store — AppendAsync writes to wh_event_store
+    services.AddScoped<IEventStore>(sp =>
+        new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()));
+
+    // Real Postgres IEventStoreQuery — reads from wh_event_store via IQueryable
+    services.AddScoped<IEventStoreQuery>(sp =>
+        new EFCoreFilterableEventStoreQuery(sp.GetRequiredService<WorkCoordinationDbContext>()));
+
+    // Real EFCorePostgresPerspectiveStore<RebuildBalanceModel>
+    services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
+        new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
+            sp.GetRequiredService<WorkCoordinationDbContext>(),
+            "rebuild_balance"));
+
+    // Register the perspective itself and its source-generated runner. Use reflection to
+    // locate the generated runner type so this file compiles even when the generator hasn't
+    // produced output yet (e.g., during dotnet format passes). Same pattern as
+    // PerspectiveRunnerModelActionTests.
+    services.AddScoped<RebuildBalancePerspective>();
+
+    var asm = typeof(PerspectiveRebuilderIntegrationTests).Assembly;
+    var runnerType = asm.GetTypes().Single(t => t.Name == "RebuildBalancePerspectiveRunner");
+    services.AddScoped(runnerType);
+
+    // Source-generated IPerspectiveRunnerRegistry lives in the .Generated namespace.
+    var registryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
+        t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
+    services.AddSingleton(typeof(IPerspectiveRunnerRegistry), registryType);
+
+    return services.BuildServiceProvider();
+  }
+
+  private static async Task _appendEventAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload)
+      where TEvent : IEvent {
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = MessageId.New(),
+      Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await eventStore.AppendAsync(streamId, envelope);
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_ReplaysAllStreamsAndUpdatesProjectionAndCursorsAsync() {
+    // Arrange: seed three streams with a mix of Credited/Debited events.
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    var expectedBalances = new Dictionary<Guid, decimal> {
+      [streams[0]] = 150m,  // +100 + 50
+      [streams[1]] = 25m,   // +100 - 75
+      [streams[2]] = 500m   // +500
+    };
+
+    await using var sp = _buildRebuildServices();
+
+    // Use a scoped IEventStore to append — matches the production scope lifetime.
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+
+      await _appendEventAsync(eventStore, streams[0], new RebuildCreditedEvent { StreamId = streams[0], Amount = 100m });
+      await _appendEventAsync(eventStore, streams[0], new RebuildCreditedEvent { StreamId = streams[0], Amount = 50m });
+
+      await _appendEventAsync(eventStore, streams[1], new RebuildCreditedEvent { StreamId = streams[1], Amount = 100m });
+      await _appendEventAsync(eventStore, streams[1], new RebuildDebitedEvent { StreamId = streams[1], Amount = 75m });
+
+      await _appendEventAsync(eventStore, streams[2], new RebuildCreditedEvent { StreamId = streams[2], Amount = 500m });
+    }
+
+    // Act: rebuild in place.
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+
+    // Assert: rebuild result reports success across all three streams.
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.PerspectiveName).IsEqualTo(RebuildBalancePerspectiveName);
+    await Assert.That(result.StreamsProcessed).IsEqualTo(3);
+    await Assert.That(result.Error).IsNull();
+
+    // Assert: the projection table reflects the replayed balances.
+    await using var verifyContext = CreateDbContext();
+    foreach (var (streamId, expected) in expectedBalances) {
+      var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(r => r.Id == streamId);
+      await Assert.That(row).IsNotNull();
+      await Assert.That(row!.Data.Balance).IsEqualTo(expected);
+    }
+  }
+}
