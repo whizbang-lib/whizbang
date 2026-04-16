@@ -380,6 +380,93 @@ function Test-DotNetNuGetAvailable {
     return $false
 }
 
+function Test-IsAzureDevOpsFeed {
+    param([string]$FeedUrl)
+    return $FeedUrl -match 'pkgs\.dev\.azure\.com|\.pkgs\.visualstudio\.com'
+}
+
+function Initialize-AzureDevOpsAuth {
+    param([string]$FeedUrl)
+
+    # Check if az CLI is available
+    try {
+        $null = az --version 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "az not found" }
+    } catch {
+        Write-Host "  Azure CLI (az) is not installed. Install from https://aka.ms/install-azure-cli" -ForegroundColor Red
+        Write-Host "  Or provide a PAT via -ApiKey or NUGET_PUBLISH_KEY env var" -ForegroundColor Yellow
+        return $false
+    }
+
+    # Check if logged in
+    try {
+        $account = az account show --output json 2>&1 | ConvertFrom-Json
+        Write-Host "  Azure CLI: logged in as $($account.user.name)" -ForegroundColor Gray
+    } catch {
+        Write-Host "  Azure CLI: not logged in. Run 'az login' first." -ForegroundColor Red
+        return $false
+    }
+
+    # Get Azure DevOps access token
+    try {
+        $token = az account get-access-token --resource "499b84ac-1321-427f-aa17-267ca6975798" --query accessToken -o tsv 2>&1
+        if ($LASTEXITCODE -ne 0 -or -not $token) {
+            throw "Failed to acquire token"
+        }
+    } catch {
+        Write-Host "  Failed to get Azure DevOps token: $_" -ForegroundColor Red
+        return $false
+    }
+
+    # Set credential provider env var so dotnet nuget push authenticates
+    $env:VSS_NUGET_EXTERNAL_FEED_ENDPOINTS = @{
+        endpointCredentials = @(@{ endpoint = $FeedUrl; password = $token })
+    } | ConvertTo-Json -Compress
+
+    Write-Host "  Auth: Azure CLI token acquired" -ForegroundColor Gray
+    return $true
+}
+
+function Test-FeedConnectivity {
+    param([string]$FeedUrl)
+
+    # For v3 feed URLs, the index.json IS the service index
+    $serviceIndex = $FeedUrl
+    if ($serviceIndex -notmatch '/index\.json$') {
+        $serviceIndex = $serviceIndex.TrimEnd('/') + '/index.json'
+    }
+
+    try {
+        $headers = @{}
+        # Use the VSS token if it was set by Initialize-AzureDevOpsAuth
+        if ($env:VSS_NUGET_EXTERNAL_FEED_ENDPOINTS) {
+            $endpoints = $env:VSS_NUGET_EXTERNAL_FEED_ENDPOINTS | ConvertFrom-Json
+            $cred = $endpoints.endpointCredentials | Where-Object { $FeedUrl -match [regex]::Escape($_.endpoint) -or $_.endpoint -match [regex]::Escape($FeedUrl) } | Select-Object -First 1
+            if (-not $cred) { $cred = $endpoints.endpointCredentials | Select-Object -First 1 }
+            if ($cred -and $cred.password) {
+                $headers["Authorization"] = "Bearer $($cred.password)"
+            }
+        }
+
+        $response = Invoke-RestMethod -Uri $serviceIndex -Headers $headers -TimeoutSec 15 -ErrorAction Stop
+        if ($response.version -or $response.resources) {
+            return $true
+        }
+        Write-Host "  Feed responded but returned unexpected content" -ForegroundColor Yellow
+        return $true  # Might still work for push
+    } catch {
+        $status = $_.Exception.Response.StatusCode.value__
+        if ($status -eq 401 -or $status -eq 403) {
+            Write-Host "  Feed auth check failed ($status). Check credentials or az login." -ForegroundColor Red
+        } elseif ($status) {
+            Write-Host "  Feed returned HTTP $status" -ForegroundColor Red
+        } else {
+            Write-Host "  Cannot reach feed: $_" -ForegroundColor Red
+        }
+        return $false
+    }
+}
+
 function Publish-NuGetPackages {
     param(
         [Parameter(Mandatory)]
@@ -487,6 +574,41 @@ if ($ApiKey -and -not $Publish) {
 if ($Publish -and -not $ApiKey) {
     $ApiKey = $env:NUGET_PUBLISH_KEY
 }
+
+# --- Publish preflight: validate auth and feed connectivity before building ---
+if ($Publish) {
+    Write-Host "Preflight: checking feed access..." -ForegroundColor Cyan
+    Write-Host "  Feed: $Publish" -ForegroundColor Gray
+
+    if (-not (Test-DotNetNuGetAvailable)) {
+        Write-Error "dotnet nuget is not available. Ensure the .NET SDK is installed."
+        exit 1
+    }
+
+    # Resolve authentication before building
+    $isAdoFeed = Test-IsAzureDevOpsFeed $Publish
+    if ($isAdoFeed -and (-not $ApiKey -or $ApiKey -eq 'az' -or $ApiKey -eq 'AzureDevOps')) {
+        # Azure DevOps feed — use az login token
+        if (-not (Initialize-AzureDevOpsAuth -FeedUrl $Publish)) {
+            Write-Error "Cannot authenticate to Azure DevOps feed. Run 'az login' or provide a PAT via -ApiKey."
+            exit 1
+        }
+        $ApiKey = "AzureDevOps"
+    } elseif ($ApiKey) {
+        Write-Host "  Auth: API key provided" -ForegroundColor Gray
+    } else {
+        Write-Host "  Auth: none (public feed or pre-configured source)" -ForegroundColor Gray
+    }
+
+    # Test feed connectivity
+    if (-not (Test-FeedConnectivity -FeedUrl $Publish)) {
+        Write-Error "Feed preflight check failed. Fix the issue above before building."
+        exit 1
+    }
+    Write-Host "  Feed: OK" -ForegroundColor Green
+    Write-Host ""
+}
+
 if ($Output) {
     # Resolve ~ and relative paths to absolute
     $Output = [System.IO.Path]::GetFullPath($Output.Replace('~', $env:HOME))
@@ -814,37 +936,25 @@ if ($packFiles.Count -gt 0) {
 }
 $zipTime = (Get-Date) - $zipStart
 
-# Publish to NuGet feed if -Publish specified
+# Publish to NuGet feed if -Publish specified (auth already resolved in preflight)
 if ($Publish) {
     Write-Host ""
     Write-Host "Publishing to feed..." -ForegroundColor Cyan
-    Write-Host "  Feed: $Publish" -ForegroundColor Gray
     $publishStart = Get-Date
 
-    if (-not (Test-DotNetNuGetAvailable)) {
-        Write-Host "dotnet nuget is not available. Ensure the .NET SDK is installed." -ForegroundColor Red
+    $publishResult = Publish-NuGetPackages `
+        -PackagesDir $localPackagesDir `
+        -Source $Publish `
+        -ApiKey $ApiKey `
+        -SkipSymbols:$SkipSymbols `
+        -TimeoutSeconds $PublishTimeout
+
+    if ($publishResult.FailCount -gt 0) {
         $publishFailed = $true
-    } else {
-        if (-not $ApiKey) {
-            Write-Host "  Auth: Credential provider (no API key)" -ForegroundColor Gray
-        } else {
-            Write-Host "  Auth: API key provided" -ForegroundColor Gray
-        }
-
-        $publishResult = Publish-NuGetPackages `
-            -PackagesDir $localPackagesDir `
-            -Source $Publish `
-            -ApiKey $ApiKey `
-            -SkipSymbols:$SkipSymbols `
-            -TimeoutSeconds $PublishTimeout
-
-        if ($publishResult.FailCount -gt 0) {
-            $publishFailed = $true
-        }
-
-        Write-Host ""
-        Write-Host "Published: $($publishResult.PushCount) | Skipped: $($publishResult.SkipCount) | Failed: $($publishResult.FailCount)" -ForegroundColor $(if ($publishResult.FailCount -gt 0) { "Yellow" } else { "Green" })
     }
+
+    Write-Host ""
+    Write-Host "Published: $($publishResult.PushCount) | Skipped: $($publishResult.SkipCount) | Failed: $($publishResult.FailCount)" -ForegroundColor $(if ($publishResult.FailCount -gt 0) { "Yellow" } else { "Green" })
 
     $publishTime = (Get-Date) - $publishStart
 }
