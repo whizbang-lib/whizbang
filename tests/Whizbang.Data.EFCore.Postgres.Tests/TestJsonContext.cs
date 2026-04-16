@@ -23,6 +23,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [JsonSerializable(typeof(ActionTestUpdatedEvent))]
 [JsonSerializable(typeof(ActionTestSoftDeletedEvent))]
 [JsonSerializable(typeof(ActionTestPurgedEvent))]
+[JsonSerializable(typeof(RebuildBalanceModel))]
+[JsonSerializable(typeof(RebuildCreditedEvent))]
+[JsonSerializable(typeof(RebuildDebitedEvent))]
 public partial class TestJsonContext : JsonSerializerContext {
   /// <summary>
   /// Module initializer that registers TestJsonContext with the global registry.
