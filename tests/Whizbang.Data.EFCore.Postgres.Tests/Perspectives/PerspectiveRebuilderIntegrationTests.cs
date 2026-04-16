@@ -174,4 +174,63 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       }
     }
   }
+
+  /// <summary>
+  /// Documents the rebuild-does-not-truncate behavior. If all events for a stream are
+  /// removed from wh_event_store after the projection row was written, rebuild does NOT
+  /// remove the stale projection row. Stream discovery uses a distinct scan of the event
+  /// store, so a stream with zero events is invisible to rebuild — RunAsync is never called
+  /// for it — and the projection store is never asked to purge it. The <c>IPerspectiveRebuilder</c>
+  /// XML doc claims InPlace "truncates the active table"; the implementation does not. Pinning
+  /// the actual behavior here lets a future truncation feature land with a deliberately
+  /// failing test to flip.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_DoesNotRemoveProjectionRowsForStreamsWithNoEventsAsync() {
+    var orphanStream = Guid.NewGuid();
+    var liveStream = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    // Seed both streams with events and project them once so both projection rows exist.
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, orphanStream, new RebuildCreditedEvent { StreamId = orphanStream, Amount = 42m });
+      await _appendEventAsync(eventStore, liveStream, new RebuildCreditedEvent { StreamId = liveStream, Amount = 7m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var baseline = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(baseline.Success).IsTrue();
+    await Assert.That(baseline.StreamsProcessed).IsEqualTo(2);
+
+    // Simulate an event-store purge: remove all events for orphanStream. liveStream keeps its event.
+    await using (var purgeContext = CreateDbContext()) {
+      await purgeContext.Set<EventStoreRecord>()
+          .Where(e => e.StreamId == orphanStream)
+          .ExecuteDeleteAsync();
+    }
+
+    // Act: rebuild after the purge.
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+
+    // Assert: only the live stream gets reprojected; rebuild did not see the orphan stream.
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+
+    // Assert: the orphan projection row is STILL there — rebuild does not truncate.
+    await using var verifyContext = CreateDbContext();
+    var orphanRow = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == orphanStream);
+    await Assert.That(orphanRow).IsNotNull();
+    await Assert.That(orphanRow!.Data.Balance).IsEqualTo(42m);
+
+    var liveRow = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == liveStream);
+    await Assert.That(liveRow).IsNotNull();
+  }
 }
