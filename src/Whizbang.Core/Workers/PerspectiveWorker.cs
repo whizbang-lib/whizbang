@@ -161,7 +161,7 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Event fired after a complete batch cycle finishes, including all phases:
-  /// drain mode / legacy processing, lifecycle stages (PostAllPerspectives, PostLifecycle),
+  /// drain mode processing, lifecycle stages (PostAllPerspectives, PostLifecycle),
   /// and metrics recording. Fires once per worker tick regardless of whether work was found.
   /// </summary>
   /// <remarks>
@@ -720,6 +720,8 @@ public partial class PerspectiveWorker(
   /// Full lifecycle chain: PrePerspective → RunWithEvents → PostPerspective → signal coordinator.
   /// PostAllPerspectives + PostLifecycle fire via _firePostLifecycleDetached after this returns.
   /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
   private async Task _processDrainModeStreamsAsync(
       AsyncServiceScope scope,
       List<Guid> streamIds,

@@ -362,6 +362,7 @@ public interface IWorkCoordinator {
   /// <param name="streamIds">Stream IDs to fetch cursors for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of cursor info for all streams that have checkpoints</returns>
+  /// <docs>fundamentals/perspectives/drain-mode#batch-cursor-fetch</docs>
   Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
     Guid[] streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());

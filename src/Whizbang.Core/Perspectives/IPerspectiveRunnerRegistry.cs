@@ -33,6 +33,7 @@ public interface IPerspectiveRunnerRegistry : IEventTypeProvider {
   /// The set is computed at compile time by the source generator and is immutable.
   /// An empty set means no lifecycle receptors exist — all invocations can be skipped.
   /// </remarks>
+  /// <docs>fundamentals/perspectives/drain-mode#lifecycle-skip</docs>
   IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; }
 }
 

@@ -1158,7 +1158,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )",
       new { instanceId, nowWithin });
 
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     await Assert.That(perspectiveWork.Count).IsEqualTo(0)
       .Because("Debounce should hold back perspective events for rewind-pending streams within the window");
   }
@@ -1216,7 +1216,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )",
       new { instanceId, nowAfter });
 
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     await Assert.That(perspectiveWork.Count).IsGreaterThan(0)
       .Because("After debounce window expires, perspective events should be released");
   }
@@ -1614,7 +1614,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
     // Assert — both streams should be present
@@ -1674,7 +1674,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
     await Assert.That(streamIds).Contains(streamId)
@@ -1722,7 +1722,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
     await Assert.That(streamIds).Contains(streamId)
@@ -1770,7 +1770,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
     await Assert.That(streamIds).Contains(streamId)
@@ -1831,7 +1831,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
+    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
     var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
     // All 4 streams should be present
@@ -1897,16 +1897,16 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_new_outbox_messages := @outboxMessages::jsonb
       )", new { instanceId, now, outboxMessages });
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var perspectiveWork = results.Where((dynamic r) => r.source == "perspective").ToList();
-    var streamIds = perspectiveWork.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
+    // Drain mode: returns 'perspective_stream' rows with distinct stream IDs
+    var perspectiveStreamRows = results.Where((dynamic r) => r.source == "perspective_stream").ToList();
+    var streamIds = perspectiveStreamRows.Select((dynamic r) => (Guid)r.work_stream_id).Distinct().ToList();
 
     await Assert.That(streamIds).Contains(stream1)
-      .Because("Stream 1 should be in the returned assignments");
+      .Because("Stream 1 should be in the returned stream assignments");
     await Assert.That(streamIds).Contains(stream2)
-      .Because("Stream 2 should be in the returned assignments");
-    await Assert.That(perspectiveWork.Count).IsEqualTo(2)
-      .Because("Should return 2 distinct stream IDs, not individual event rows");
+      .Because("Stream 2 should be in the returned stream assignments");
+    await Assert.That(perspectiveStreamRows.Count).IsEqualTo(2)
+      .Because("Should return 2 distinct stream IDs (drain mode)");
   }
 
   // Helper methods
