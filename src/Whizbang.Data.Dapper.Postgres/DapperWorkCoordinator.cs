@@ -120,7 +120,7 @@ public partial class DapperWorkCoordinator(
         @p_flags::int,
         @p_stale_threshold_seconds::int,
         @p_sync_inquiries::jsonb,
-        @p_max_perspective_streams::int
+        @p_max_streams::int
       )";
 
     var parameters = new {

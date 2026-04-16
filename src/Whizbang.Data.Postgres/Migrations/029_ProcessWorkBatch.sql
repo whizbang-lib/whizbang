@@ -50,7 +50,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   p_flags INTEGER DEFAULT 0,
 
   -- Thresholds
-  p_stale_threshold_seconds INTEGER DEFAULT 600,
+  p_stale_threshold_seconds INTEGER DEFAULT 30,
 
   -- Sync inquiries (for perspective sync awaiter)
   p_sync_inquiries JSONB DEFAULT '[]'::JSONB,
@@ -535,6 +535,14 @@ BEGIN
     p_partition_count
   ) AS coo;
 
+  -- Establish stream ownership for claimed outbox messages
+  UPDATE __SCHEMA__.wh_active_streams ast
+  SET assigned_instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry
+  FROM temp_orphaned_outbox too
+  WHERE ast.stream_id = too.stream_id
+    AND too.stream_id IS NOT NULL;
+
   -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
   IF (p_flags & 64) = 0 THEN
     INSERT INTO temp_orphaned_inbox (message_id, stream_id)
@@ -548,6 +556,14 @@ BEGIN
       p_partition_count
     ) AS coi;
   END IF;
+
+  -- Establish stream ownership for claimed inbox messages
+  UPDATE __SCHEMA__.wh_active_streams ast
+  SET assigned_instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry
+  FROM temp_orphaned_inbox toi
+  WHERE ast.stream_id = toi.stream_id
+    AND toi.stream_id IS NOT NULL;
 
   -- Claim orphaned receptor work and track
   INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
@@ -972,6 +988,13 @@ BEGIN
       SELECT (elem::TEXT)::UUID
       FROM jsonb_array_elements_text(p_renew_perspective_event_lease_ids) as elem
     );
+
+  -- Renew active stream ownership for all streams owned by this instance.
+  -- Keeps stream stickiness alive as long as the instance is heartbeating (~1s ticks).
+  -- Without this, streams with no new messages would lose ownership after lease expiry.
+  UPDATE __SCHEMA__.wh_active_streams
+  SET lease_expiry = v_lease_expiry
+  WHERE assigned_instance_id = p_instance_id;
 
   -- ========================================
   -- Phase 7: Return Results

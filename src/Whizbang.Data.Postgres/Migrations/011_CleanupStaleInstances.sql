@@ -22,8 +22,7 @@ BEGIN
   SELECT ARRAY_AGG(instance_id) INTO v_deleted_ids
   FROM deleted;
 
-  -- Release messages from deleted instances
-  -- (wh_active_streams FK CASCADE handles automatic stream cleanup)
+  -- Release all work from deleted instances
   IF v_deleted_ids IS NOT NULL THEN
     -- Release outbox messages
     UPDATE wh_outbox
@@ -42,6 +41,30 @@ BEGIN
     SET instance_id = NULL,
         lease_expiry = NULL
     WHERE instance_id = ANY(v_deleted_ids);
+
+    -- Release active stream assignments from deleted instances
+    UPDATE wh_active_streams
+    SET assigned_instance_id = NULL,
+        lease_expiry = NULL
+    WHERE assigned_instance_id = ANY(v_deleted_ids);
+
+    -- Release receptor processing leases from deleted instances
+    UPDATE wh_receptor_processing
+    SET instance_id = NULL,
+        lease_expiry = NULL
+    WHERE instance_id = ANY(v_deleted_ids);
+
+    -- Log stale instance removal to wh_log for audit trail
+    INSERT INTO wh_log (log_level, source, message_id, error_message, metadata)
+    SELECT
+      2,  -- Warning
+      'stale_cleanup',
+      unnest(v_deleted_ids),
+      'Stale instance removed — all leases released',
+      jsonb_build_object(
+        'deleted_instance_count', array_length(v_deleted_ids, 1),
+        'stale_cutoff', p_stale_cutoff
+      );
   END IF;
 
   -- Return deleted IDs for orchestrator logging
