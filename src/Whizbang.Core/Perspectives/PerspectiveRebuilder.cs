@@ -20,6 +20,11 @@ public sealed partial class PerspectiveRebuilder(
 
   private readonly ConcurrentDictionary<string, RebuildStatus> _activeRebuilds = new();
 
+  // Batch size for flushing pending cursor completions to IPerspectiveCheckpointCompleter.
+  // Matches PerspectiveWorker's intent of amortizing round-trips while still persisting
+  // partial progress during long rebuilds.
+  private const int COMPLETION_FLUSH_BATCH_SIZE = 50;
+
   /// <inheritdoc/>
   public async Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) {
     return await _rebuildCoreAsync(perspectiveName, RebuildMode.BlueGreen, streamIds: null, ct);
@@ -63,6 +68,13 @@ public sealed partial class PerspectiveRebuilder(
             $"No runner found for perspective '{perspectiveName}'. Registered: {registered}");
       }
 
+      // Cursor persistence: rebuild captures each runner.RunAsync return value and flushes
+      // them through IPerspectiveCheckpointCompleter so wh_perspective_cursors reflects the
+      // rebuild end-state. Optional dependency — when no driver registers a completer, the
+      // rebuilder still updates projections and just skips cursor persistence.
+      var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
+      var pendingCompletions = completer != null ? new List<PerspectiveCursorCompletion>(64) : null;
+
       // Get stream IDs to process
       if (streamIds == null) {
         var eventStoreQuery = sp.GetRequiredService<IEventStoreQuery>();
@@ -90,9 +102,17 @@ public sealed partial class PerspectiveRebuilder(
           ct.ThrowIfCancellationRequested();
 
           try {
-            await runner.RunAsync(streamId, perspectiveName, null, ct);
+            var completion = await runner.RunAsync(streamId, perspectiveName, null, ct);
             streamsProcessed++;
             eventsReplayed++;
+
+            if (pendingCompletions != null) {
+              pendingCompletions.Add(completion);
+              if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+                await completer!.CompleteAsync(pendingCompletions, ct);
+                pendingCompletions.Clear();
+              }
+            }
 
             if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
               _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
@@ -100,6 +120,12 @@ public sealed partial class PerspectiveRebuilder(
           } catch (Exception ex) {
             LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
           }
+        }
+
+        // Flush any remaining completions at the end of the rebuild.
+        if (pendingCompletions is { Count: > 0 }) {
+          await completer!.CompleteAsync(pendingCompletions, ct);
+          pendingCompletions.Clear();
         }
       } finally {
         Current = previousMode;

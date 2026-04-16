@@ -199,6 +199,96 @@ public class PerspectiveRebuilderTests {
   }
 
   [Test]
+  public async Task RebuildInPlaceAsync_CallsCompleter_WithSuccessfulCompletionsAsync() {
+    // Arrange — covers the cursor-persistence fix: rebuilder now captures RunAsync's
+    // PerspectiveCursorCompletion return value and flushes through IPerspectiveCheckpointCompleter.
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streams);
+    var completer = new RecordingCheckpointCompleter();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IPerspectiveCheckpointCompleter>(completer);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(3);
+    await Assert.That(completer.CompletionsReceived.Count).IsEqualTo(3);
+    foreach (var completion in completer.CompletionsReceived) {
+      await Assert.That(completion.PerspectiveName).IsEqualTo("TestPerspective");
+      await Assert.That(completion.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    }
+    var receivedStreamIds = completer.CompletionsReceived.Select(c => c.StreamId).ToHashSet();
+    foreach (var s in streams) {
+      await Assert.That(receivedStreamIds.Contains(s)).IsTrue();
+    }
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_FailedStream_NotInCompletionsAsync() {
+    // Arrange — failed streams must not be forwarded to the completer.
+    var runner = new FakePerspectiveRunner { FailOnStreamIndex = 1 };
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streams = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streams);
+    var completer = new RecordingCheckpointCompleter();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IPerspectiveCheckpointCompleter>(completer);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(completer.CompletionsReceived.Count).IsEqualTo(2);
+    await Assert.That(completer.CompletionsReceived.Any(c => c.StreamId == streams[1])).IsFalse();
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithoutCompleterRegistered_StillSucceedsAsync() {
+    // Arrange — backward-compatible fallback: if no IPerspectiveCheckpointCompleter is
+    // registered (e.g., caller pre-dates this feature), rebuild still updates projections.
+    // Cursors won't be persisted, but the rebuild itself must not fail.
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var eventStoreQuery = new FakeEventStoreQuery([Guid.NewGuid()]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    // NO IPerspectiveCheckpointCompleter registration.
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task RebuildInPlaceAsync_WithSyncQueryable_UsesNonAsyncFallbackAsync() {
     // Arrange — covers lines 136-138 (sync IQueryable fallback in ToListAsync)
     // The default FakeEventStoreQuery returns a regular IQueryable (not IAsyncEnumerable),
@@ -270,6 +360,17 @@ public class PerspectiveRebuilderTests {
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [];
     public IReadOnlyList<Type> GetEventTypes() => [];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
+  }
+
+  private sealed class RecordingCheckpointCompleter : IPerspectiveCheckpointCompleter {
+    public List<PerspectiveCursorCompletion> CompletionsReceived { get; } = [];
+    public int CallCount { get; private set; }
+
+    public Task CompleteAsync(IReadOnlyList<PerspectiveCursorCompletion> completions, CancellationToken cancellationToken = default) {
+      CallCount++;
+      CompletionsReceived.AddRange(completions);
+      return Task.CompletedTask;
+    }
   }
 
   private sealed class FakeEventStoreQuery(Guid[] streamIds) : IEventStoreQuery {
