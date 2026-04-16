@@ -130,4 +130,48 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       await Assert.That(row!.Data.Balance).IsEqualTo(expected);
     }
   }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WithSubset_UpdatesOnlyTargetedStreamsAsync() {
+    // Arrange: seed five streams with events. Do NOT project ahead of time — this keeps the
+    // test focused on per-stream isolation without tripping over the rebuild's replay-on-top
+    // semantics (replay loads existing projection state, so re-replaying after a baseline
+    // double-applies additive events like Credited).
+    var streams = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToArray();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      }
+    }
+
+    // Act: rebuild only two of the five streams.
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+    var targeted = new[] { streams[0], streams[2] };
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, targeted, CancellationToken.None);
+
+    // Assert: result reports exactly the two targeted streams.
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+
+    // Assert: targeted streams have a projection row with balance 100; the three untargeted
+    // streams have no projection row at all — rebuild never touched them.
+    await using var verifyContext = CreateDbContext();
+    var targetedSet = new HashSet<Guid>(targeted);
+    foreach (var streamId in streams) {
+      var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(r => r.Id == streamId);
+      if (targetedSet.Contains(streamId)) {
+        await Assert.That(row).IsNotNull();
+        await Assert.That(row!.Data.Balance).IsEqualTo(100m);
+      } else {
+        await Assert.That(row).IsNull();
+      }
+    }
+  }
 }
