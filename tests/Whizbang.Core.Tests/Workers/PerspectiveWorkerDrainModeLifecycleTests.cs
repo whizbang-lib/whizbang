@@ -105,7 +105,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
-      _batchCycleComplete.TrySetResult();
+      // Do NOT signal here — this fires during perspective processing (before Phase 5).
+      // Signal is in ProcessWorkBatchAsync 2nd call, which happens AFTER Phase 5 completes.
       return Task.CompletedTask;
     }
 
@@ -636,5 +637,74 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     // Assert — processed successfully
     await Assert.That(invoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue();
+  }
+}
+
+// ========================================
+// MINIMAL ISOLATION TEST — bypasses PerspectiveWorker
+// ========================================
+
+public class LifecycleCoordinatorPostAllPerspectivesIsolationTests {
+  [Test]
+  public async Task Coordinator_AfterAllPerspectivesSignaled_AdvanceToPostAllPerspectivesFires_Async() {
+    // Arrange — use REAL coordinator, real tracking
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var invoker = new CapturingInvoker();
+
+    var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(_ => invoker);
+    services.AddLogging();
+    var sp = services.BuildServiceProvider();
+
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = new MessageId(eventId),
+      Payload = new TestIsolationEvent("test"),
+      Hops = [new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 }
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act — simulate the full lifecycle: BeginTracking → Expect → Signal → AdvanceTo
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local, Guid.NewGuid());
+
+    // Register expectations (2 perspectives)
+    coordinator.ExpectPerspectiveCompletions(eventId, ["P1", "P2"]);
+
+    // Signal both perspectives complete
+    coordinator.SignalPerspectiveComplete(eventId, "P1");
+    coordinator.SignalPerspectiveComplete(eventId, "P2");
+
+    // Verify WhenAll resolved
+    var allComplete = coordinator.AreAllPerspectivesComplete(eventId);
+    await Assert.That(allComplete).IsTrue();
+
+    // Advance to PostAllPerspectives stages
+    await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesDetached, sp, default);
+    await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, sp, default);
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, sp, default);
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, sp, default);
+
+    // Allow detached tasks to complete
+    await Task.Delay(50);
+
+    // Assert — invoker should have captured inline stages
+    await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue();
+    await Assert.That(invoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue();
+  }
+
+  private sealed record TestIsolationEvent(string Data) : IEvent;
+
+  private sealed class CapturingInvoker : IReceptorInvoker {
+    private readonly System.Collections.Concurrent.ConcurrentBag<LifecycleStage> _stages = [];
+    public bool HasStage(LifecycleStage stage) => _stages.Contains(stage);
+
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      _stages.Add(stage);
+      return ValueTask.CompletedTask;
+    }
   }
 }
