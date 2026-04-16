@@ -91,9 +91,10 @@ public class DispatcherSnippets {
 
           var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
           // Default-stage receptors fire immediately from PublishAsync (Path 1, fast path).
-          // Explicit FireAt receptors are skipped here and fire at their declared
-          // lifecycle stage via ReceptorInvoker. The generator emits a local
-          // isDefaultDispatch=true only when there are FireAt receptors to gate.
+          // Explicit FireAt receptors are NOT emitted here — the generator omits them
+          // for the publish path. They fire at their declared lifecycle stage via
+          // ReceptorInvoker (from the registry). The cascade path below still emits
+          // them, gated by a runtime isDefaultDispatch flag derived from sourceEnvelope.
           __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
