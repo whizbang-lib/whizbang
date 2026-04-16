@@ -752,7 +752,14 @@ public partial class PerspectiveWorker(
       return;
     }
 
-    // 3. Group typed events by streamId
+    // 3. Cache TypeNameFormatter.Format per event type (avoids N×M string allocations in filter loops)
+    var typeNameCache = new Dictionary<Type, string>();
+    foreach (var envelope in typedEvents) {
+      var type = envelope.Payload.GetType();
+      typeNameCache.TryAdd(type, TypeNameFormatter.Format(type));
+    }
+
+    // 4. Group typed events by streamId
     var eventsByStream = typedEvents
       .GroupBy(e => rawEvents.First(r => r.EventId == e.MessageId.Value).StreamId)
       .ToDictionary(g => g.Key, g => g.ToList());
@@ -773,12 +780,11 @@ public partial class PerspectiveWorker(
         var streamId = streamGroup.Key;
         var streamEvents = streamGroup.Value;
 
-        // Determine which perspectives handle the event types in this stream
+        // Determine which perspectives handle the event types in this stream (uses cached type names)
         var perspectiveNames = new HashSet<string>();
         foreach (var envelope in streamEvents) {
-          var eventType = envelope.Payload.GetType();
-          var eventTypeKey = TypeNameFormatter.Format(eventType);
-          if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives)) {
+          if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
+              && _perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives)) {
             foreach (var p in perspectives) {
               perspectiveNames.Add(p);
             }
@@ -787,19 +793,21 @@ public partial class PerspectiveWorker(
 
         // Fire PrePerspective lifecycle for each event (once per event via coordinator stage guard)
         // and register WhenAll expectations BEFORE any signals are sent.
+        // Uses a per-stream scope to avoid contention on the outer shared scope in Parallel.ForEachAsync.
         if (lifecycleCoordinator is not null) {
+          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           foreach (var envelope in streamEvents) {
             var tracking = lifecycleCoordinator.BeginTracking(
               envelope.MessageId.Value, envelope,
               LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
-            await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, scope.ServiceProvider, ct);
-            await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, scope.ServiceProvider, ct);
+            await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, lifecycleScope.ServiceProvider, ct);
+            await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, lifecycleScope.ServiceProvider, ct);
 
             // Register expected perspective completions for WhenAll gate.
             // Must happen BEFORE SignalPerspectiveComplete — signals sent before
             // expectations are registered are silently lost by the coordinator.
-            var eventTypeKey = TypeNameFormatter.Format(envelope.Payload.GetType());
-            if (_perspectivesPerEventType!.TryGetValue(eventTypeKey, out var expected)) {
+            if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
+                && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var expected)) {
               lifecycleCoordinator.ExpectPerspectiveCompletions(envelope.MessageId.Value, expected);
             }
           }
@@ -807,12 +815,10 @@ public partial class PerspectiveWorker(
 
         // Run each perspective with FILTERED events (only events this perspective handles)
         foreach (var perspectiveName in perspectiveNames) {
-          // Filter stream events to only those this perspective handles
+          // Filter stream events to only those this perspective handles (uses cached type names)
           var filteredEvents = streamEvents
-              .Where(e => {
-                var key = TypeNameFormatter.Format(e.Payload.GetType());
-                return _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName);
-              })
+              .Where(e => typeNameCache.TryGetValue(e.Payload.GetType(), out var key)
+                && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
               .ToList();
 
           if (filteredEvents.Count == 0) {
