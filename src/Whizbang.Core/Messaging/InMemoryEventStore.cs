@@ -322,4 +322,9 @@ public class InMemoryEventStore : IEventStore {
   }
 
   private sealed record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
+
+  /// <inheritdoc />
+  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    return [];
+  }
 }

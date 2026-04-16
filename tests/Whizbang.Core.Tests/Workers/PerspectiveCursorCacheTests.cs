@@ -1,5 +1,5 @@
-using TUnit.Core;
 using TUnit.Assertions.Extensions;
+using TUnit.Core;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;

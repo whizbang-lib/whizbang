@@ -3019,15 +3019,24 @@ public abstract partial class Dispatcher(
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
-      // Invoke local handlers - zero reflection, strongly typed
-      await publisher(eventData);
+      // Start outbox publishing concurrently with the local receptor.
+      // The receptor (publisher) can take 30+ seconds for heavy operations — we don't want
+      // to delay cross-service event delivery by that amount. Starting the outbox first also
+      // ensures FIFO order: the original event enters the outbox before any cascaded events
+      // produced by the receptor.
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      try {
+        await publisher(eventData);
+      } catch {
+        // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
+        try { await outboxTask; } catch { /* outbox exception is secondary */ }
+        throw;
+      }
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(eventData, eventType);
 
-      // Publish event for cross-service delivery if work coordinator strategy is available
-      // process_work_batch will store events to wh_event_store and create perspective events atomically
-      await PublishToOutboxAsync(eventData, eventType, messageId);
+      await outboxTask;
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
@@ -3082,12 +3091,20 @@ public abstract partial class Dispatcher(
       var publisher = GetReceptorPublisher(eventData, eventType);
 
       options.CancellationToken.ThrowIfCancellationRequested();
-      await publisher(eventData);
+
+      // Start outbox concurrently with receptor (see other overload for rationale)
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      try {
+        await publisher(eventData);
+      } catch {
+        try { await outboxTask; } catch { /* outbox exception is secondary */ }
+        throw;
+      }
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(eventData, eventType);
 
-      await PublishToOutboxAsync(eventData, eventType, messageId);
+      await outboxTask;
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),

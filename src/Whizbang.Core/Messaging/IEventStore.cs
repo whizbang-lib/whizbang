@@ -254,5 +254,5 @@ public interface IEventStore {
   /// <returns>List of deserialized message envelopes</returns>
   List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
     IReadOnlyList<StreamEventData> streamEvents,
-    IReadOnlyList<Type> eventTypes) => [];
+    IReadOnlyList<Type> eventTypes);
 }
