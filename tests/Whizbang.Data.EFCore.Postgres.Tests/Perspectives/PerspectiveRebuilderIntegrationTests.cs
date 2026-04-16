@@ -29,6 +29,51 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildInventoryPerspective";
 
   /// <summary>
+  /// Thread-local cell that lets scenario 4 inject a single poison stream without rebuilding
+  /// the whole DI graph. When non-empty, the wrapping event store (see _buildRebuildServices)
+  /// throws on ReadPolymorphicAsync for any stream in the set, causing the generated runner's
+  /// event-load step to propagate the exception up to PerspectiveRebuilder — which should
+  /// then catch it per-stream without aborting the batch.
+  /// </summary>
+  private readonly HashSet<Guid> _poisonStreams = [];
+
+  /// <summary>
+  /// Event store decorator that forwards every operation to the wrapped store except
+  /// ReadPolymorphicAsync for streams in <paramref name="poisonStreams"/>, which throw.
+  /// Reused from scenario 4. Kept inside the test class since it has no production value.
+  /// </summary>
+  private sealed class PoisonEventStore(IEventStore inner, HashSet<Guid> poisonStreams) : IEventStore {
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
+        inner.AppendAsync(streamId, envelope, ct);
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
+        inner.AppendAsync(streamId, message, ct);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
+        inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
+        inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
+
+    public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+        Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
+      if (poisonStreams.Contains(streamId)) {
+        throw new InvalidOperationException($"Simulated read failure for poison stream {streamId}");
+      }
+      await foreach (var env in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct)) {
+        yield return env;
+      }
+    }
+
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
+        inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
+        inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, ct);
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
+        inner.GetLastSequenceAsync(streamId, ct);
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
+        inner.DeserializeStreamEvents(streamEvents, eventTypes);
+  }
+
+  /// <summary>
   /// Builds a ServiceProvider wired for rebuild: real Postgres-backed event store,
   /// real EFCorePostgresPerspectiveStore, the source-generated runner registry, and
   /// the registered RebuildBalancePerspective runner. Uses reflection to pick up the
@@ -42,9 +87,13 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddScoped<WorkCoordinationDbContext>(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
 
-    // Real Postgres event store — AppendAsync writes to wh_event_store
+    // Real Postgres event store — AppendAsync writes to wh_event_store.
+    // Wrapped in PoisonEventStore so scenario 4 can inject read failures for a specific
+    // stream by adding its ID to _poisonStreams; a normal run leaves the set empty.
     services.AddScoped<IEventStore>(sp =>
-        new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()));
+        new PoisonEventStore(
+            new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()),
+            _poisonStreams));
 
     // Real Postgres IEventStoreQuery — reads from wh_event_store via IQueryable
     services.AddScoped<IEventStoreQuery>(sp =>
@@ -306,5 +355,115 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         .FirstOrDefaultAsync(r => r.Id == balanceStream);
     await Assert.That(balanceRow).IsNotNull();
     await Assert.That(balanceRow!.Data.Balance).IsEqualTo(99m);
+  }
+
+  /// <summary>
+  /// A single stream failing mid-rebuild must not abort the remaining streams. PerspectiveRebuilder
+  /// wraps each runner.RunAsync call in a try/catch and logs per-stream failures. The batch-level
+  /// Success flag is still true and StreamsProcessed reflects the successful streams only. Pins
+  /// that behavior so any future "fail the batch on first error" change lands deliberately with
+  /// this test flipping.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_ContinuesAfterPerStreamFailureAsync() {
+    var streams = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+    var poisonStream = streams[1];
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+      }
+    }
+
+    // Mark poisonStream as a read-failure target. The wrapper throws on ReadPolymorphicAsync
+    // for this ID; the runner's event-load path has no try/catch around the enumeration, so
+    // the exception propagates to PerspectiveRebuilder's per-stream catch.
+    _poisonStreams.Add(poisonStream);
+
+    try {
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+      var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+      var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+
+      // Rebuilder treats per-stream failures as non-fatal — Success is unconditional after
+      // the loop completes (see PerspectiveRebuilder.cs:111).
+      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.StreamsProcessed).IsEqualTo(3);
+      await Assert.That(result.Error).IsNull();
+    } finally {
+      _poisonStreams.Remove(poisonStream);
+    }
+
+    // Assert: the three non-poison streams have projection rows; the poison stream does not.
+    await using var verifyContext = CreateDbContext();
+    foreach (var streamId in streams) {
+      var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(r => r.Id == streamId);
+      if (streamId == poisonStream) {
+        await Assert.That(row).IsNull();
+      } else {
+        await Assert.That(row).IsNotNull();
+        await Assert.That(row!.Data.Balance).IsEqualTo(10m);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Rebuild must re-project a stream when its projection row has been removed (e.g., via a
+  /// direct admin purge) even though the stream's events are still in the event store.
+  /// Exercises the "currentModel == null at runner start" branch with a cursor that already
+  /// exists from the prior projection — rebuild must not be confused by a stale cursor into
+  /// skipping the replay.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_RecreatesMissingProjectionRowAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 250m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    // Baseline project — creates projection row AND cursor.
+    var baseline = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(baseline.Success).IsTrue();
+    await Assert.That(baseline.StreamsProcessed).IsEqualTo(1);
+
+    // Simulate admin purge — delete the projection row, leave the cursor in place.
+    await using (var purgeContext = CreateDbContext()) {
+      await purgeContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+          .Where(r => r.Id == streamId)
+          .ExecuteDeleteAsync();
+    }
+
+    // Confirm the row is gone.
+    await using (var midContext = CreateDbContext()) {
+      var missing = await midContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(r => r.Id == streamId);
+      await Assert.That(missing).IsNull();
+    }
+
+    // Act: rebuild again. Expectation: row is recreated from the event log.
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Balance).IsEqualTo(250m);
   }
 }
