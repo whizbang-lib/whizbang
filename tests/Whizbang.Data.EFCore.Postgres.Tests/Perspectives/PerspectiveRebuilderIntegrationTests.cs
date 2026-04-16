@@ -38,6 +38,34 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   private readonly HashSet<Guid> _poisonStreams = [];
 
   /// <summary>
+  /// Shared capture list for scenario 3. Every receptor invocation the runner triggers during
+  /// a rebuild appends (stage, ambient-processing-mode) here, letting the test assert that the
+  /// ambient mode propagates into the lifecycle context exactly as <see cref="PerspectiveRebuilder"/>
+  /// sets it. Lives on the test class so it survives across the scoped invoker instances the
+  /// runner creates per lifecycle stage.
+  /// </summary>
+  private readonly List<(LifecycleStage Stage, ProcessingMode? Mode)> _receptorInvocations = [];
+  private readonly Lock _receptorInvocationsLock = new();
+
+  /// <summary>
+  /// Test-only IReceptorInvoker that records what stage was invoked and the ProcessingMode
+  /// carried in the lifecycle context. Used by scenario 3 to prove PerspectiveRebuilder's
+  /// ambient mode is visible at the receptor-invocation boundary.
+  /// </summary>
+  private sealed class RecordingReceptorInvoker(
+      List<(LifecycleStage Stage, ProcessingMode? Mode)> sink,
+      Lock sinkLock) : IReceptorInvoker {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
+        ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      var mode = (context as LifecycleExecutionContext)?.ProcessingMode;
+      lock (sinkLock) {
+        sink.Add((stage, mode));
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
   /// Event store decorator that forwards every operation to the wrapped store except
   /// ReadPolymorphicAsync for streams in <paramref name="poisonStreams"/>, which throw.
   /// Reused from scenario 4. Kept inside the test class since it has no production value.
@@ -124,6 +152,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     var registryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
         t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
     services.AddSingleton(typeof(IPerspectiveRunnerRegistry), registryType);
+
+    // Recording invoker — observes ProcessingMode seen by lifecycle receptor invocation.
+    services.AddScoped<IReceptorInvoker>(_ => new RecordingReceptorInvoker(_receptorInvocations, _receptorInvocationsLock));
 
     return services.BuildServiceProvider();
   }
@@ -465,5 +496,48 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         .FirstOrDefaultAsync(r => r.Id == streamId);
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Balance).IsEqualTo(250m);
+  }
+
+  /// <summary>
+  /// PerspectiveRebuilder sets <c>ProcessingModeAccessor.Current = ProcessingMode.Rebuild</c>
+  /// for the duration of the replay. Generated runners copy that ambient value into the
+  /// <see cref="LifecycleExecutionContext"/> they pass to every <see cref="IReceptorInvoker"/>
+  /// call. The real <see cref="ReceptorInvoker"/> consults <c>context.ProcessingMode</c> to
+  /// suppress receptors that lack <see cref="FireDuringReplayAttribute"/>. This test pins the
+  /// contract between rebuilder and invoker: the ambient mode arrives at the invocation site.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_SetsProcessingModeOnLifecycleContextAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    _receptorInvocations.Clear();
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+
+    // Snapshot under the lock so the async background lifecycle tasks the runner queues
+    // (e.g., PrePerspectiveDetached via Task.Run) don't race with the assertion.
+    List<(LifecycleStage Stage, ProcessingMode? Mode)> captured;
+    lock (_receptorInvocationsLock) {
+      captured = [.. _receptorInvocations];
+    }
+
+    // At least one lifecycle receptor invocation must have happened for the stream we seeded.
+    await Assert.That(captured.Count).IsGreaterThan(0);
+
+    // Every captured invocation carries the rebuild mode — not null, not Replay, not Live.
+    foreach (var (stage, mode) in captured) {
+      await Assert.That(mode).IsEqualTo(ProcessingMode.Rebuild);
+    }
   }
 }
