@@ -1671,7 +1671,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_now := @now::timestamptz,
         p_lease_duration_seconds := 30,
         p_partition_count := 2,
-        p_new_outbox_messages := @outboxMessages::jsonb
+        p_new_outbox_messages := @outboxMessages::jsonb,
+        p_max_streams := 300
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
@@ -1719,7 +1720,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_now := @now::timestamptz,
         p_lease_duration_seconds := 30,
         p_partition_count := 2,
-        p_new_outbox_messages := @outboxMessages::jsonb
+        p_new_outbox_messages := @outboxMessages::jsonb,
+        p_max_streams := 300
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
@@ -1767,7 +1769,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_now := @now::timestamptz,
         p_lease_duration_seconds := 30,
         p_partition_count := 2,
-        p_new_outbox_messages := @outboxMessages::jsonb
+        p_new_outbox_messages := @outboxMessages::jsonb,
+        p_max_streams := 300
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
@@ -1828,7 +1831,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_now := @now::timestamptz,
         p_lease_duration_seconds := 30,
         p_partition_count := 2,
-        p_new_outbox_messages := @outboxMessages::jsonb
+        p_new_outbox_messages := @outboxMessages::jsonb,
+        p_max_streams := 300
       )", new { instanceId, now, outboxMessages });
 
     // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
@@ -1895,7 +1899,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_now := @now::timestamptz,
         p_lease_duration_seconds := 30,
         p_partition_count := 2,
-        p_new_outbox_messages := @outboxMessages::jsonb
+        p_new_outbox_messages := @outboxMessages::jsonb,
+        p_max_streams := 300
       )", new { instanceId, now, outboxMessages });
 
     // Drain mode: returns 'perspective_stream' rows with distinct stream IDs
