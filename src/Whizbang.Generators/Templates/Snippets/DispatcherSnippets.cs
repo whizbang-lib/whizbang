@@ -90,7 +90,10 @@ public class DispatcherSnippets {
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
 
           var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
-          // PublishAsync is NOT a cascade — it's an explicit publish. All receptors fire (no IsDefaultDispatch filtering).
+          // Default-stage receptors fire immediately from PublishAsync (Path 1, fast path).
+          // Explicit FireAt receptors are skipped here and fire at their declared
+          // lifecycle stage via ReceptorInvoker. The generator emits a local
+          // isDefaultDispatch=true only when there are FireAt receptors to gate.
           __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {

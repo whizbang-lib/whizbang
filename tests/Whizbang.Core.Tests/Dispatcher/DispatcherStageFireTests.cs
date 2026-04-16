@@ -249,11 +249,11 @@ public class DispatcherStageFireTests {
 
   [Test]
   public async Task PublishAsync_ExplicitFireAt_FiresOnlyAtDeclaredStage_OnceAsync() {
-    // End-to-end invariant: a [FireAt(PostAllPerspectivesDetached)] receptor must fire
-    // exactly once, and only when the lifecycle reaches PostAllPerspectivesDetached.
-    // Publishing the event synchronously must NOT fire it (Path 1 bug).
-    // The "lifecycle reached" step is simulated here by calling IReceptorInvoker directly
-    // at the declared stage — that's exactly what the work coordinator does in production.
+    // End-to-end invariant — asserted via sequenced counts, since the compile-time-generated
+    // receptor invoker doesn't plumb IAcceptsLifecycleContext. Stage attribution is proved
+    // by the sequence: after PublishAsync the count must be 0 (no publish fire); after
+    // invoking non-declared stages the count must still be 0; only after invoking the
+    // declared stage does the count go to 1.
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
@@ -266,10 +266,9 @@ public class DispatcherStageFireTests {
 
     var evt = new StageTestEvent(Guid.NewGuid());
     await dispatcher.PublishAsync(evt);
+    await Assert.That(_explicitHandlerCount).IsEqualTo(0)
+      .Because("PublishAsync must not fire the [FireAt] receptor");
 
-    // Walk the lifecycle through every stage that could possibly match. The registry
-    // only returns entries for stages the receptor is actually registered at, so the
-    // non-declared stages are no-ops — but we drive them anyway to prove it.
     using var scope = sp.CreateScope();
     var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
     var envelope = new MessageEnvelope<StageTestEvent> {
@@ -278,18 +277,21 @@ public class DispatcherStageFireTests {
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
+
+    // Drive every stage that is NOT the declared one. Count must stay 0 at every step.
     foreach (var stage in Enum.GetValues<LifecycleStage>()) {
+      if (stage == LifecycleStage.PostAllPerspectivesDetached) {
+        continue;
+      }
       await invoker.InvokeAsync(envelope, stage);
+      await Assert.That(_explicitHandlerCount).IsEqualTo(0)
+        .Because($"[FireAt(PostAllPerspectivesDetached)] must not fire at {stage}");
     }
 
+    // Now hit the declared stage — should fire exactly once.
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostAllPerspectivesDetached);
     await Assert.That(_explicitHandlerCount).IsEqualTo(1)
-      .Because("[FireAt(PostAllPerspectivesDetached)] must fire exactly once across the full lifecycle");
-    var log = _snapshotFireLog();
-    var explicitFires = log.Where(e => e.Receptor == nameof(ExplicitPostAllPerspectivesReceptor)).ToList();
-    await Assert.That(explicitFires).Count().IsEqualTo(1)
-      .Because("exactly one fire entry for the explicit-stage receptor");
-    await Assert.That(explicitFires[0].Stage).IsEqualTo(nameof(LifecycleStage.PostAllPerspectivesDetached))
-      .Because("that single fire must be at the declared stage, never at 'publish' or any other stage");
+      .Because("[FireAt(PostAllPerspectivesDetached)] must fire exactly once, at its declared stage");
   }
 
   [Test]
@@ -311,8 +313,10 @@ public class DispatcherStageFireTests {
     // Simulate a handler calling PublishAsync internally.
     var evt = new StageTestEvent(Guid.NewGuid());
     await dispatcher.PublishAsync(evt);
+    await Assert.That(_explicitHandlerCount).IsEqualTo(0)
+      .Because("handler-invoked PublishAsync must not fire the [FireAt] receptor eagerly");
 
-    // Now the lifecycle runs and reaches the [FireAt] stage.
+    // Now the lifecycle reaches the declared [FireAt] stage.
     using var scope = sp.CreateScope();
     var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
     var envelope = new MessageEnvelope<StageTestEvent> {
@@ -324,11 +328,7 @@ public class DispatcherStageFireTests {
     await invoker.InvokeAsync(envelope, LifecycleStage.PostAllPerspectivesDetached);
 
     await Assert.That(_explicitHandlerCount).IsEqualTo(1)
-      .Because("handler-invoked PublishAsync + lifecycle stage = exactly one [FireAt] invocation");
-    var log = _snapshotFireLog();
-    var explicitFires = log.Where(e => e.Receptor == nameof(ExplicitPostAllPerspectivesReceptor)).ToList();
-    await Assert.That(explicitFires).Count().IsEqualTo(1);
-    await Assert.That(explicitFires[0].Stage).IsEqualTo(nameof(LifecycleStage.PostAllPerspectivesDetached));
+      .Because("nested-PublishAsync + lifecycle stage = exactly one [FireAt] invocation, no double-fire");
   }
 
   [Test]
