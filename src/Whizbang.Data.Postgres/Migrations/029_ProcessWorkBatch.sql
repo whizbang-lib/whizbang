@@ -127,11 +127,11 @@ BEGIN
     COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_stream' THEN setting_value::INTEGER END), 25),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_debounce_seconds' THEN setting_value::INTEGER END), 5),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_max_debounce_seconds' THEN setting_value::INTEGER END), 30),
-    COALESCE(MAX(CASE WHEN setting_key = 'stale_threshold_seconds' THEN setting_value::INTEGER END), p_stale_threshold_seconds),
     COALESCE(MAX(CASE WHEN setting_key = 'tier1_budget_percent' THEN setting_value::INTEGER END), 70)
-  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, p_stale_threshold_seconds, v_tier1_budget_percent
+  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, v_tier1_budget_percent
   FROM wh_settings
-  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
+  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'tier1_budget_percent');
+  -- Note: stale_threshold_seconds is controlled by C# WorkCoordinatorOptions, not wh_settings
 
   -- Override max_work_items from caller parameter if provided (drain mode)
   IF p_max_streams IS NOT NULL THEN
