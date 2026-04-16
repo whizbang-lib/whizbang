@@ -149,7 +149,7 @@ public partial class DapperWorkCoordinator(
       p_flags = (int)request.Flags,
       p_stale_threshold_seconds = request.StaleThresholdSeconds,
       p_sync_inquiries = serializedData.SyncInquiries,
-      p_max_perspective_streams = request.MaxPerspectiveStreams
+      p_max_streams = request.MaxStreamsPerBatch
     };
 
     return new CommandDefinition(
