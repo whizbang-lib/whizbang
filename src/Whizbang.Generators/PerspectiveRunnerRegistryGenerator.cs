@@ -318,6 +318,15 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  /// Used by PerspectiveWorker for lifecycle receptor invocation (AOT-compatible polymorphic deserialization).");
     source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public IReadOnlyList<Type> GetEventTypes() => _allEventTypes;");
+    source.AppendLine();
+
+    // LifecycleStagesWithReceptors — empty by default (no lifecycle receptors in perspective runner registry).
+    // The set would be populated by ReceptorDiscoveryGenerator if lifecycle receptors are registered.
+    // For now, an empty set means PerspectiveWorker can skip all lifecycle invocations.
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+    source.AppendLine("  /// Gets lifecycle stages with registered receptors. Empty means no lifecycle receptors.");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+    source.AppendLine("  public IReadOnlySet<global::Whizbang.Core.Messaging.LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<global::Whizbang.Core.Messaging.LifecycleStage>();");
     source.AppendLine("}");
     source.AppendLine();
   }

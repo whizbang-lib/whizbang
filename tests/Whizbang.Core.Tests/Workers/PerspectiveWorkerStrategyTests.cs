@@ -510,6 +510,7 @@ public class PerspectiveWorkerStrategyTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
@@ -610,6 +611,7 @@ public class PerspectiveWorkerStrategyTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   #endregion

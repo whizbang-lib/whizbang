@@ -312,6 +312,7 @@ public sealed class PerspectiveWorkerParallelTests {
         .ToList();
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -334,6 +335,7 @@ public sealed class PerspectiveWorkerParallelTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>

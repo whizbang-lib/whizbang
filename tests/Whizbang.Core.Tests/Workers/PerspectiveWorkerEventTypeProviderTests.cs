@@ -263,6 +263,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => new FakePerspectiveRunner();
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {

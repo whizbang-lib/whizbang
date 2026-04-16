@@ -691,6 +691,7 @@ public class PerspectiveWorkerRewindTests {
       [new PerspectiveRegistrationInfo(perspectiveName, $"global::Test.{perspectiveName}", "global::Test.TestModel", ["global::Test.TestEvent"])];
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveStreamLocker : IPerspectiveStreamLocker {
