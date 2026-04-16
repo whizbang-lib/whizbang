@@ -356,6 +356,18 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Batch-fetches perspective cursors for multiple streams in a single SQL call.
+  /// Used by drain mode to prefetch all cursors before parallel processing starts,
+  /// eliminating N individual GetPerspectiveCursorAsync calls during the hot loop.
+  /// </summary>
+  /// <param name="streamIds">Stream IDs to fetch cursors for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of cursor info for all streams that have checkpoints</returns>
+  Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
+
+  /// <summary>
   /// Records that PostLifecycle completed for an event.
   /// Used as a durable marker for crash recovery reconciliation.
   /// Idempotent — duplicate event IDs are silently ignored.

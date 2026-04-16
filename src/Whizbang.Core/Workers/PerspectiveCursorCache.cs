@@ -79,6 +79,14 @@ public sealed class PerspectiveCursorCache {
   }
 
   /// <summary>
+  /// Checks if ANY cursor for this stream is cached.
+  /// Used by drain mode to skip batch cursor fetch for streams already in cache.
+  /// </summary>
+  public bool HasStream(Guid streamId) {
+    return _cache.Keys.Any(k => k.StreamId == streamId);
+  }
+
+  /// <summary>
   /// Clears all cached cursors. Called on full rebuild or worker restart.
   /// </summary>
   public void Clear() {
