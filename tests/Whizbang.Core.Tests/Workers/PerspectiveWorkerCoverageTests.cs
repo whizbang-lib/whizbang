@@ -1622,6 +1622,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1637,6 +1638,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1652,6 +1654,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1667,6 +1670,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1682,6 +1686,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {

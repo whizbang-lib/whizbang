@@ -166,6 +166,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registrations;
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(AlphaEvent), typeof(BetaEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; set; } = new HashSet<LifecycleStage>();
 
     private sealed class CapturingPerspectiveRunner(FilteringPerspectiveRunnerRegistry registry) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);
@@ -241,12 +242,16 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       List<PerspectiveRegistrationInfo> perspectiveRegistrations,
       List<StreamEventData> rawEvents,
       List<MessageEnvelope<IEvent>> typedEvents,
-      List<Guid> streamIds) {
+      List<Guid> streamIds,
+      IReadOnlySet<LifecycleStage>? lifecycleStages = null) {
 
     var coordinator = new DrainWorkCoordinator { StreamIdsToReturn = streamIds, StreamEventsToReturn = rawEvents };
     var instanceProvider = new FakeServiceInstanceProvider();
     var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FilteringPerspectiveRunnerRegistry(perspectiveRegistrations);
+    if (lifecycleStages is not null) {
+      registry.LifecycleStagesWithReceptors = lifecycleStages;
+    }
     var eventStore = new FakeEventStore { DeserializedEventsToReturn = typedEvents };
     var eventTypeProvider = new FakeEventTypeProvider([typeof(AlphaEvent), typeof(BetaEvent)]);
     var invoker = new CapturingReceptorInvoker();
@@ -431,13 +436,17 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
+    var allStages = new HashSet<LifecycleStage> {
+      LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
+      LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
+    };
     var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
-      registrations, rawEvents, typedEvents, [streamId]);
+      registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
     await _runWorkerOneBatchAsync(worker, coordinator);
 
-    // Assert — PostPerspectiveInline should have fired
+    // Assert — PostPerspectiveInline should have fired (receptors registered via lifecycleStages)
     await Assert.That(invoker.HasStage(LifecycleStage.PostPerspectiveInline)).IsTrue();
   }
 
@@ -533,15 +542,17 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
+    var allStages = new HashSet<LifecycleStage> {
+      LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
+      LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
+    };
     var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
-      registrations, rawEvents, typedEvents, [streamId]);
+      registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
     await _runWorkerOneBatchAsync(worker, coordinator);
 
-    // Assert — full lifecycle chain fires for the event
-    // PrePerspective fires via coordinator (AdvanceToAsync), not via invoker directly in drain mode
-    // PostPerspectiveInline fires via invoker
+    // Assert — full lifecycle chain fires for the event (all stages enabled via lifecycleStages)
     await Assert.That(invoker.HasStage(LifecycleStage.PostPerspectiveInline)).IsTrue();
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesDetached)).IsTrue();
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue();
@@ -571,8 +582,12 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId2, new AlphaEvent("two"))
     };
 
+    var allStages = new HashSet<LifecycleStage> {
+      LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
+      LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
+    };
     var (worker, coordinator, _, _, invoker, lc) = _createWorkerWithLifecycle(
-      registrations, rawEvents, typedEvents, [streamId]);
+      registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
     await _runWorkerOneBatchAsync(worker, coordinator);

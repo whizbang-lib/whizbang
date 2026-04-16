@@ -1616,6 +1616,7 @@ public class PerspectiveWorkerSecurityContextTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(TestEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {

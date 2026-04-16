@@ -202,6 +202,7 @@ public class PerspectiveWorkerDrainModeTests {
         [TypeNameFormatter.Format(typeof(DrainModeTestEvent))])];
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(DrainModeTestEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
 
     private sealed class DrainModePerspectiveRunner(DrainModePerspectiveRunnerRegistry registry) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);

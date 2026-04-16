@@ -94,6 +94,11 @@ public partial class PerspectiveWorker(
   // not once per batch cycle.
   private Dictionary<string, IReadOnlyList<string>>? _perspectivesPerEventType;
 
+  // Lifecycle stage skip flags — set once at startup from IPerspectiveRunnerRegistry.LifecycleStagesWithReceptors.
+  // When false, drain mode skips the invocation entirely (no DI resolution, no context creation, no InvokeAsync).
+  private bool _hasPrePerspectiveReceptors;
+  private bool _hasPostPerspectiveReceptors;
+
   // Cursor position cache for drain mode — eliminates redundant GetPerspectiveCursorAsync DB calls
   private readonly PerspectiveCursorCache _cursorCache = new();
 
@@ -266,6 +271,14 @@ public partial class PerspectiveWorker(
     }
 
     _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
+
+    // Cache lifecycle stage skip flags from the registry's compile-time stage set.
+    // When no receptors exist for a stage, drain mode skips the invocation entirely.
+    var stagesWithReceptors = registry.LifecycleStagesWithReceptors;
+    _hasPrePerspectiveReceptors = stagesWithReceptors.Contains(LifecycleStage.PrePerspectiveDetached)
+      || stagesWithReceptors.Contains(LifecycleStage.PrePerspectiveInline);
+    _hasPostPerspectiveReceptors = stagesWithReceptors.Contains(LifecycleStage.PostPerspectiveInline)
+      || stagesWithReceptors.Contains(LifecycleStage.PostPerspectiveDetached);
   }
 
   private static Dictionary<string, IReadOnlyList<string>> _buildPerspectivesPerEventTypeMap(
@@ -792,17 +805,21 @@ public partial class PerspectiveWorker(
           }
         }
 
-        // Fire PrePerspective lifecycle for each event (once per event via coordinator stage guard)
-        // and register WhenAll expectations BEFORE any signals are sent.
-        // Uses a per-stream scope to avoid contention on the outer shared scope in Parallel.ForEachAsync.
+        // Coordinator tracking + PrePerspective lifecycle per event.
+        // BeginTracking and ExpectPerspectiveCompletions ALWAYS run (coordinator gates PostAllPerspectives).
+        // AdvanceToAsync (receptor invocation) only runs if PrePerspective receptors exist.
         if (lifecycleCoordinator is not null) {
-          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           foreach (var envelope in streamEvents) {
             var tracking = lifecycleCoordinator.BeginTracking(
               envelope.MessageId.Value, envelope,
               LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
-            await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, lifecycleScope.ServiceProvider, ct);
-            await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, lifecycleScope.ServiceProvider, ct);
+
+            // Only invoke PrePerspective receptors if any are registered (skip DI + context if not)
+            if (_hasPrePerspectiveReceptors) {
+              await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, lifecycleScope.ServiceProvider, ct);
+              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, lifecycleScope.ServiceProvider, ct);
+            }
 
             // Register expected perspective completions for WhenAll gate.
             // Must happen BEFORE SignalPerspectiveComplete — signals sent before
@@ -857,16 +874,18 @@ public partial class PerspectiveWorker(
                 batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
               }
 
-              // Fire PostPerspectiveInline + ImmediateDetached (per-perspective, per-event)
-              var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
-              await _invokeLifecycleReceptorsForEventsAsync(
-                filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
-                LifecycleStage.PostPerspectiveInline, ct);
-              await _invokeLifecycleReceptorsForEventsAsync(
-                filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
-                LifecycleStage.ImmediateDetached, ct);
+              // Fire PostPerspectiveInline + ImmediateDetached only if receptors exist (skip DI + context if not)
+              if (_hasPostPerspectiveReceptors) {
+                var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+                await _invokeLifecycleReceptorsForEventsAsync(
+                  filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
+                  LifecycleStage.PostPerspectiveInline, ct);
+                await _invokeLifecycleReceptorsForEventsAsync(
+                  filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
+                  LifecycleStage.ImmediateDetached, ct);
+              }
 
-              // Signal WhenAll coordinator for PostAllPerspectives gate
+              // Signal WhenAll coordinator for PostAllPerspectives gate (always — gates PostLifecycle)
               if (lifecycleCoordinator is not null) {
                 foreach (var envelope in filteredEvents) {
                   lifecycleCoordinator.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
