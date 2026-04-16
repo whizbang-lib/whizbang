@@ -168,11 +168,10 @@ public sealed record ProcessWorkBatchRequest {
   public int StaleThresholdSeconds { get; init; } = 30;
 
   /// <summary>
-  /// Maximum number of streams to claim per tick for perspective processing (drain mode).
-  /// NULL uses the default from wh_settings. When set, overrides v_max_work_items in SQL
-  /// for stream selection in claim_orphaned_perspective_events.
+  /// Maximum number of streams to return per batch for perspective processing.
+  /// Controls how many distinct streams the SQL returns per tick. Default: 300.
   /// </summary>
-  public int? MaxPerspectiveStreams { get; init; }
+  public int MaxStreamsPerBatch { get; init; } = 300;
 }
 
 /// <summary>

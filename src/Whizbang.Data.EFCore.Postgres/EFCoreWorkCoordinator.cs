@@ -194,8 +194,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var syncInquiriesParam = PostgresJsonHelper.JsonStringToJsonb(syncInquiriesJson);
     syncInquiriesParam.ParameterName = "p_sync_inquiries";
 
-    var maxPerspectiveStreamsParam = new Npgsql.NpgsqlParameter("p_max_perspective_streams", NpgsqlTypes.NpgsqlDbType.Integer) {
-      Value = request.MaxPerspectiveStreams.HasValue ? request.MaxPerspectiveStreams.Value : DBNull.Value
+    var maxStreamsParam = new Npgsql.NpgsqlParameter("p_max_streams", NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = request.MaxStreamsPerBatch
     };
 
     var now = DateTimeOffset.UtcNow;
@@ -243,7 +243,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_flags,
         @p_stale_threshold_seconds,
         @p_sync_inquiries,
-        @p_max_perspective_streams
+        @p_max_streams
       )";
 
     // Hook PostgreSQL RAISE DEBUG messages for debugging
@@ -285,7 +285,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
           new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds),
           syncInquiriesParam,
-          maxPerspectiveStreamsParam
+          maxStreamsParam
         )
         .ToListAsync(cancellationToken);
     } catch (Exception ex) {

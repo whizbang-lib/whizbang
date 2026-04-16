@@ -55,8 +55,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   -- Sync inquiries (for perspective sync awaiter)
   p_sync_inquiries JSONB DEFAULT '[]'::JSONB,
 
-  -- Perspective drain mode: maximum messages to claim per tick (NULL = use wh_settings default)
-  p_max_perspective_streams INTEGER DEFAULT NULL
+  -- Maximum streams to return per batch (configurable, default 300)
+  p_max_streams INTEGER DEFAULT 300
 ) RETURNS TABLE(
   -- Heartbeat results
   instance_rank INTEGER,
@@ -134,8 +134,8 @@ BEGIN
   WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
 
   -- Override max_work_items from caller parameter if provided (drain mode)
-  IF p_max_perspective_streams IS NOT NULL THEN
-    v_max_work_items := p_max_perspective_streams;
+  IF p_max_streams IS NOT NULL THEN
+    v_max_work_items := p_max_streams;
   END IF;
 
   -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
@@ -1133,16 +1133,10 @@ BEGIN
     AND rp.lease_expiry > p_now
     AND rp.completed_at IS NULL;
 
-  -- Return perspective work — two modes:
-  -- Drain mode (p_max_perspective_streams IS NOT NULL): return one row per distinct stream (source='perspective_stream').
-  --   The C# PerspectiveWorker determines perspectives from event types using its registry,
-  --   then calls get_stream_events to batch-fetch the actual event data in a single SQL round-trip.
-  -- Legacy mode (p_max_perspective_streams IS NULL): return one row per event with perspective_name.
-  --   Uses per-stream+perspective ranking to prevent a single busy stream from starving others,
-  --   then applies a global LIMIT to prevent hot loops.
-  IF p_max_perspective_streams IS NOT NULL THEN
-    -- Drain mode: return distinct stream IDs only
-    RETURN QUERY
+  -- Return perspective work: one row per distinct stream (source='perspective_stream').
+  -- The C# PerspectiveWorker determines perspectives from event types using its registry,
+  -- then calls get_stream_events to batch-fetch the actual event data in a single SQL round-trip.
+  RETURN QUERY
     WITH eligible_perspective AS (
       SELECT
         pe.*,
@@ -1225,88 +1219,6 @@ BEGIN
       NULL::VARCHAR(200) as perspective_name
     FROM distinct_streams ds
     ORDER BY ds.stream_id;
-  ELSE
-    -- Legacy mode: return per-event rows with perspective_name
-    RETURN QUERY
-    WITH eligible_perspective AS (
-      SELECT
-        pe.*,
-        temp_new.event_work_id as new_event_work_id,
-        temp_orphaned.event_work_id as orphaned_event_work_id,
-        ROW_NUMBER() OVER (PARTITION BY pe.stream_id, pe.perspective_name ORDER BY pe.event_id) as stream_rank,
-        COUNT(*) OVER (PARTITION BY pe.stream_id, pe.perspective_name) as stream_pending_count
-      FROM wh_perspective_events pe
-      LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
-      LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
-      LEFT JOIN __SCHEMA__.wh_perspective_cursors pc
-        ON pe.stream_id = pc.stream_id
-        AND pe.perspective_name = pc.perspective_name
-      WHERE pe.instance_id = p_instance_id
-        AND pe.lease_expiry > p_now
-        AND pe.processed_at IS NULL
-        AND (pc.stream_lock_instance_id IS NULL
-             OR pc.stream_lock_expiry <= p_now
-             OR pc.stream_lock_instance_id = p_instance_id)
-        AND NOT (
-          (pc.status & 32) = 32
-          AND pc.rewind_flagged_at IS NOT NULL
-          AND pc.rewind_flagged_at + (v_rewind_debounce_seconds || ' seconds')::INTERVAL > p_now
-          AND (pc.rewind_first_flagged_at IS NULL
-               OR pc.rewind_first_flagged_at + (v_rewind_max_debounce_seconds || ' seconds')::INTERVAL > p_now)
-        )
-    ),
-    tier1_limited AS (
-      SELECT e.*
-      FROM eligible_perspective e
-      WHERE e.stream_pending_count <= v_max_work_items_per_stream
-      ORDER BY e.stream_id, e.perspective_name, e.event_id
-      LIMIT v_tier1_max
-    ),
-    tier1_used AS (
-      SELECT COUNT(*) as cnt FROM tier1_limited
-    ),
-    tier2_limited AS (
-      SELECT e.*
-      FROM eligible_perspective e
-      WHERE e.stream_pending_count > v_max_work_items_per_stream
-        AND e.stream_rank <= v_max_work_items_per_stream
-      ORDER BY e.stream_id, e.perspective_name, e.event_id
-      LIMIT v_max_work_items - (SELECT cnt FROM tier1_used)
-    ),
-    ordered_perspective AS (
-      SELECT combined.*,
-        ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
-      FROM (
-        SELECT t1.*, 1 as tier FROM tier1_limited t1
-        UNION ALL
-        SELECT t2.*, 2 as tier FROM tier2_limited t2
-      ) combined
-    )
-    SELECT
-      v_rank as instance_rank,
-      v_count as active_instance_count,
-      'perspective'::VARCHAR(20) as source,
-      pe.event_work_id as work_id,
-      pe.stream_id as work_stream_id,
-      NULL::INTEGER as partition_number,
-      NULL::VARCHAR(200) as destination,
-      NULL::VARCHAR(500) as message_type,
-      NULL::VARCHAR(500) as envelope_type,
-      NULL::TEXT as message_data,
-      CASE WHEN pe.row_num = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
-        THEN v_ack_counts
-        ELSE NULL::JSONB END as metadata,
-      pe.status,
-      pe.attempts,
-      CASE WHEN pe.new_event_work_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
-      CASE WHEN pe.orphaned_event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
-      NULL::TEXT as error,
-      NULL::INTEGER as failure_reason,
-      pe.perspective_name
-    FROM ordered_perspective pe
-    WHERE pe.row_num <= v_max_work_items
-    ORDER BY pe.row_num;
-  END IF;
 
   -- Return sync inquiry results
   RETURN QUERY

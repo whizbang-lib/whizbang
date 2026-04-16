@@ -994,7 +994,7 @@ public partial class PerspectiveWorker(
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
         StaleThresholdSeconds = _options.StaleThresholdSeconds,
-        MaxPerspectiveStreams = _options.MaxConcurrentPerspectives
+        MaxStreamsPerBatch = _options.MaxStreamsPerBatch
       };
       var claimSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
@@ -2716,9 +2716,16 @@ public class PerspectiveWorkerOptions {
   /// Maximum number of perspective groups to process concurrently within a single batch.
   /// Higher values improve throughput when multiple perspectives/streams have pending work.
   /// Different (streamId, perspectiveName) pairs are independent and can safely run in parallel.
-  /// Default: 10
+  /// Default: 30
   /// </summary>
   public int MaxConcurrentPerspectives { get; set; } = 30;
+
+  /// <summary>
+  /// Maximum number of streams to return per batch from the SQL function.
+  /// Controls how many distinct streams are claimed and processed per tick.
+  /// Default: 300
+  /// </summary>
+  public int MaxStreamsPerBatch { get; set; } = 300;
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
