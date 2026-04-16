@@ -1022,6 +1022,49 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  /// <inheritdoc />
+  public async Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) {
+
+    if (streamIds.Length == 0) {
+      return [];
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    await using var cmd = (Npgsql.NpgsqlCommand)dbConnection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    cmd.CommandText = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = ANY(@p_stream_ids)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streamIds
+    });
+
+    var results = new List<PerspectiveCursorInfo>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new PerspectiveCursorInfo {
+        StreamId = reader.GetGuid(0),
+        PerspectiveName = reader.GetString(1),
+        LastEventId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
+        RewindTriggerEventId = reader.IsDBNull(4) ? null : reader.GetGuid(4)
+      });
+    }
+
+    return results;
+  }
+
   /// <summary>
   /// Extracts the message type name from an envelope type name.
   /// Example: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
