@@ -540,4 +540,44 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       await Assert.That(mode).IsEqualTo(ProcessingMode.Rebuild);
     }
   }
+
+  /// <summary>
+  /// Pins that PerspectiveRebuilder does NOT persist cursor checkpoints. The generated
+  /// runner returns a <c>PerspectiveCursorCompletion</c> describing the replay end-state,
+  /// but the rebuilder discards the return value (see <c>PerspectiveRebuilder.cs:93</c> —
+  /// <c>await runner.RunAsync(streamId, perspectiveName, null, ct);</c>). Only
+  /// <c>PerspectiveWorker</c>, via <c>ProcessWorkBatchAsync</c> +
+  /// <c>complete_perspective_cursor_work</c>, writes to <c>wh_perspective_cursors</c>.
+  ///
+  /// Consequence: projection tables are correct after a rebuild, but cursor checkpoints
+  /// reflect only what live processing has done — not the rebuild itself. Raising as a
+  /// follow-up design question: a caller may reasonably expect rebuild to leave cursors
+  /// in a consistent Completed state.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_DoesNotWriteCursorCheckpointsAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+
+    // After rebuild, no cursor row exists for (streamId, perspectiveName) — the rebuilder
+    // discards the runner's PerspectiveCursorCompletion return value.
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNull();
+  }
 }
