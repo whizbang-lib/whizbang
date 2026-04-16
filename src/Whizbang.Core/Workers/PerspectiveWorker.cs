@@ -764,10 +764,11 @@ public partial class PerspectiveWorker(
       .GroupBy(e => rawEvents.First(r => r.EventId == e.MessageId.Value).StreamId)
       .ToDictionary(g => g.Key, g => g.ToList());
 
-    // Build a lookup from raw event ID → StreamEventData for work IDs (needed for completion).
-    // Use DistinctBy because the same event can appear multiple times when multiple perspectives
-    // reference it (get_stream_events joins perspective_events × event_store).
-    var rawByEventId = rawEvents.DistinctBy(r => r.EventId).ToDictionary(r => r.EventId);
+    // Build a lookup from raw event ID → StreamEventData list for work IDs (needed for completion).
+    // The same event can appear multiple times when multiple perspectives reference it
+    // (get_stream_events joins perspective_events × event_store). Each row has a unique EventWorkId
+    // that must be completed individually.
+    var rawByEventId = rawEvents.ToLookup(r => r.EventId);
 
     // 4. For each stream, determine applicable perspectives and run
     await Parallel.ForEachAsync(
@@ -886,10 +887,12 @@ public partial class PerspectiveWorker(
               _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
             }
 
-            // Buffer event work IDs for batched completion (deletion from wh_perspective_events)
+            // Buffer event work IDs for batched completion (deletion from wh_perspective_events).
+            // Each event may have multiple wh_perspective_events rows (one per perspective),
+            // each with a unique EventWorkId. Complete ALL rows for this event.
             if (result.Status == PerspectiveProcessingStatus.Completed) {
               foreach (var envelope in filteredEvents) {
-                if (rawByEventId.TryGetValue(envelope.MessageId.Value, out var rawEvent)) {
+                foreach (var rawEvent in rawByEventId[envelope.MessageId.Value]) {
                   _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
                     EventWorkId = rawEvent.EventWorkId
                   });
