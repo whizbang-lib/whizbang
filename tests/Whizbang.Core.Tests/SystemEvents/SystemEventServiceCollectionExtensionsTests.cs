@@ -417,6 +417,8 @@ public class SystemEventServiceCollectionExtensionsTests {
 
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
         Task.FromResult(0L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   private sealed class MockDeferredOutboxChannel : IDeferredOutboxChannel {

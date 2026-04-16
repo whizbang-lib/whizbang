@@ -4,6 +4,8 @@
 --              Returns deleted instance IDs for logging. Releases work from deleted instances.
 -- Dependencies: 001-010 (requires wh_service_instances, wh_outbox, wh_inbox, wh_perspective_events)
 
+SELECT __SCHEMA__.drop_all_overloads('cleanup_stale_instances');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.cleanup_stale_instances(
   p_stale_cutoff TIMESTAMPTZ
 ) RETURNS TABLE(deleted_instance_id UUID) AS $$

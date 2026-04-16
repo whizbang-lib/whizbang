@@ -53,7 +53,7 @@ public partial class PerspectiveWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
-  private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
+  private IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
@@ -93,6 +93,14 @@ public partial class PerspectiveWorker(
   // expectations per event so PostAllPerspectivesDetached fires once after ALL perspectives complete,
   // not once per batch cycle.
   private Dictionary<string, IReadOnlyList<string>>? _perspectivesPerEventType;
+
+  // Lifecycle stage skip flags — set once at startup from IPerspectiveRunnerRegistry.LifecycleStagesWithReceptors.
+  // When false, drain mode skips the invocation entirely (no DI resolution, no context creation, no InvokeAsync).
+  private bool _hasPrePerspectiveReceptors;
+  private bool _hasPostPerspectiveReceptors;
+
+  // Cursor position cache for drain mode — eliminates redundant GetPerspectiveCursorAsync DB calls
+  private readonly PerspectiveCursorCache _cursorCache = new();
 
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
@@ -150,6 +158,19 @@ public partial class PerspectiveWorker(
       _pollWakeSignal.Release();
     }
   }
+
+  /// <summary>
+  /// Event fired after a complete batch cycle finishes, including all phases:
+  /// drain mode / legacy processing, lifecycle stages (PostAllPerspectives, PostLifecycle),
+  /// and metrics recording. Fires once per worker tick regardless of whether work was found.
+  /// </summary>
+  /// <remarks>
+  /// Use for deterministic test synchronization when verifying lifecycle stages that fire
+  /// in Phase 5 (after perspective processing). Also useful in production for batch-level
+  /// monitoring and alerting on processing cadence.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public event Action? OnBatchCycleComplete;
 
   /// <summary>
   /// Event fired after a perspective successfully processes events for a stream.
@@ -210,9 +231,14 @@ public partial class PerspectiveWorker(
       }
 
       try {
-        // Wait for either the polling interval OR an external wake signal (whichever comes first).
-        // RequestImmediatePoll() releases the semaphore, waking this loop early.
-        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+        // Fast polling: when actively processing work (not idle), use shorter delay
+        // to keep drain mode responsive without starving threads (unlike Task.Yield).
+        // Normal polling: wait for the full polling interval or an external wake signal.
+        var pollingDelay = _isIdle
+          ? _options.PollingIntervalMilliseconds
+          : 50; // 20 ticks/sec during active processing
+
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(pollingDelay), stoppingToken);
         Interlocked.Exchange(ref _wakeSignaled, 0);
       } catch (OperationCanceledException) {
         break;
@@ -245,6 +271,14 @@ public partial class PerspectiveWorker(
     }
 
     _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
+
+    // Cache lifecycle stage skip flags from the registry's compile-time stage set.
+    // When no receptors exist for a stage, drain mode skips the invocation entirely.
+    var stagesWithReceptors = registry.LifecycleStagesWithReceptors;
+    _hasPrePerspectiveReceptors = stagesWithReceptors.Contains(LifecycleStage.PrePerspectiveDetached)
+      || stagesWithReceptors.Contains(LifecycleStage.PrePerspectiveInline);
+    _hasPostPerspectiveReceptors = stagesWithReceptors.Contains(LifecycleStage.PostPerspectiveInline)
+      || stagesWithReceptors.Contains(LifecycleStage.PostPerspectiveDetached);
   }
 
   private static Dictionary<string, IReadOnlyList<string>> _buildPerspectivesPerEventTypeMap(
@@ -481,6 +515,14 @@ public partial class PerspectiveWorker(
     var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
+    // Lazy-resolve IEventTypeProvider from DI scope when constructor injection was null.
+    // This happens due to DI registration order: PerspectiveWorker (HostedService) is constructed
+    // before PerspectiveRunnerRegistry registers IEventTypeProvider. The provider is a singleton,
+    // so resolving once and caching the reference is safe.
+    if (_eventTypeProvider is null) {
+      _eventTypeProvider = scope.ServiceProvider.GetService<IEventTypeProvider>();
+    }
+
     // Evict expired entries from the dedup cache (cheap scan each cycle)
     _processedEventCache.EvictExpired();
 
@@ -502,6 +544,30 @@ public partial class PerspectiveWorker(
 
     // Collect all processed events across groups for PostLifecycle firing
     var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
+
+    // === Drain mode: batch-fetch + RunWithEventsAsync for leased streams ===
+    // When PerspectiveStreamIds is populated, process those streams via drain mode
+    // (single SQL round-trip for events, pre-deserialized, RunWithEventsAsync skips ReadPolymorphicAsync).
+    // Events are filtered per-perspective to avoid "does not handle event type" errors.
+    // Full lifecycle chain fires: PrePerspective → PostPerspective → PostAllPerspectives → PostLifecycle.
+    if (workBatch.PerspectiveStreamIds.Count > 0) {
+      if (_logger.IsEnabled(LogLevel.Information)) {
+#pragma warning disable CA1848
+        _logger.LogInformation("Drain mode: processing {StreamCount} streams ({LegacyCount} legacy items skipped)",
+          workBatch.PerspectiveStreamIds.Count, workBatch.PerspectiveWork.Count);
+#pragma warning restore CA1848
+      }
+
+      await _processDrainModeStreamsAsync(
+        scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, lifecycleCoordinator, cancellationToken);
+
+      // Drain mode handles all perspective work — skip the legacy per-event path.
+      // BUT: if drain mode processed nothing (batchProcessedEvents empty), fall through
+      // to the legacy path so perspective events don't stay claimed forever.
+      if (!batchProcessedEvents.IsEmpty) {
+        groupedWork = [];
+      }
+    }
 
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
     // Parallelized: different (streamId, perspectiveName) pairs are independent — different cursors,
@@ -643,6 +709,237 @@ public partial class PerspectiveWorker(
 
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
     _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
+
+    // Signal batch cycle complete — all phases (drain/legacy + lifecycle + metrics) finished
+    OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Drain mode: processes perspective events for leased streams via batch-fetch + RunWithEventsAsync.
+  /// Single SQL round-trip for all events, pre-deserialized, perspectives run with pre-fetched events.
+  /// Full lifecycle chain: PrePerspective → RunWithEvents → PostPerspective → signal coordinator.
+  /// PostAllPerspectives + PostLifecycle fire via _firePostLifecycleDetached after this returns.
+  /// </summary>
+  private async Task _processDrainModeStreamsAsync(
+      AsyncServiceScope scope,
+      List<Guid> streamIds,
+      ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
+      ILifecycleCoordinator? lifecycleCoordinator,
+      CancellationToken cancellationToken) {
+
+    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var eventStore = scope.ServiceProvider.GetService<IEventStore>();
+
+    if (eventStore is null || _eventTypeProvider is null || _perspectivesPerEventType is null) {
+#pragma warning disable CA1848
+      _logger.LogWarning("Drain mode skipped: EventStore={HasStore}, EventTypeProvider={HasProvider}, PerspectiveMap={HasMap}",
+        eventStore is not null, _eventTypeProvider is not null, _perspectivesPerEventType is not null);
+#pragma warning restore CA1848
+      return;
+    }
+
+    // 1. Batch-fetch all events for leased streams in a single SQL call
+    var rawEvents = await workCoordinator.GetStreamEventsAsync(
+      _instanceProvider.InstanceId, streamIds.ToArray(), cancellationToken);
+
+    if (rawEvents.Count == 0) {
+      return;
+    }
+
+    // 2. Deserialize raw events into typed envelopes (AOT-safe)
+    var eventTypes = _eventTypeProvider.GetEventTypes();
+    List<MessageEnvelope<IEvent>> typedEvents;
+    try {
+      typedEvents = eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
+    } catch (Exception ex) {
+#pragma warning disable CA1848
+      _logger.LogError(ex, "Drain mode: DeserializeStreamEvents threw {ExceptionType}: {Message}", ex.GetType().Name, ex.Message);
+#pragma warning restore CA1848
+      return;
+    }
+
+    if (typedEvents.Count == 0) {
+#pragma warning disable CA1848
+      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rawEvents.Count);
+#pragma warning restore CA1848
+      return;
+    }
+
+    // 3. Cache TypeNameFormatter.Format per event type (avoids N×M string allocations in filter loops)
+    var typeNameCache = new Dictionary<Type, string>();
+    foreach (var envelope in typedEvents) {
+      var type = envelope.Payload.GetType();
+      typeNameCache.TryAdd(type, TypeNameFormatter.Format(type));
+    }
+
+    // 4. Group typed events by streamId
+    var eventsByStream = typedEvents
+      .GroupBy(e => rawEvents.First(r => r.EventId == e.MessageId.Value).StreamId)
+      .ToDictionary(g => g.Key, g => g.ToList());
+
+    // Build a lookup from raw event ID → StreamEventData list for work IDs (needed for completion).
+    // The same event can appear multiple times when multiple perspectives reference it
+    // (get_stream_events joins perspective_events × event_store). Each row has a unique EventWorkId
+    // that must be completed individually.
+    var rawByEventId = rawEvents.ToLookup(r => r.EventId);
+
+    // 4. Batch-fetch ALL cursors for ALL streams in one SQL call (eliminates N individual queries)
+    var allStreamIds = eventsByStream.Keys.ToArray();
+    var cursorsNotCached = allStreamIds.Where(sid => !_cursorCache.HasStream(sid)).ToArray();
+    if (cursorsNotCached.Length > 0) {
+      var batchWorkCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var batchCursors = await batchWorkCoordinator.GetPerspectiveCursorsBatchAsync(cursorsNotCached, cancellationToken);
+      foreach (var cursor in batchCursors) {
+        if (cursor.LastEventId.HasValue) {
+          _cursorCache.Set(cursor.StreamId, cursor.PerspectiveName, cursor.LastEventId.Value);
+        }
+      }
+    }
+
+    // 5. For each stream, determine applicable perspectives and run
+    await Parallel.ForEachAsync(
+      eventsByStream,
+      new ParallelOptions {
+        MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
+        CancellationToken = cancellationToken
+      },
+      async (streamGroup, ct) => {
+        var streamId = streamGroup.Key;
+        var streamEvents = streamGroup.Value;
+
+        // Determine which perspectives handle the event types in this stream (uses cached type names)
+        var perspectiveNames = new HashSet<string>();
+        foreach (var envelope in streamEvents) {
+          if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
+              && _perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives)) {
+            foreach (var p in perspectives) {
+              perspectiveNames.Add(p);
+            }
+          }
+        }
+
+        // Coordinator tracking + PrePerspective lifecycle per event.
+        // BeginTracking and ExpectPerspectiveCompletions ALWAYS run (coordinator gates PostAllPerspectives).
+        // AdvanceToAsync (receptor invocation) only runs if PrePerspective receptors exist.
+        if (lifecycleCoordinator is not null) {
+          foreach (var envelope in streamEvents) {
+            var tracking = lifecycleCoordinator.BeginTracking(
+              envelope.MessageId.Value, envelope,
+              LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
+
+            // Only invoke PrePerspective receptors if any are registered (skip DI + context if not)
+            if (_hasPrePerspectiveReceptors) {
+              await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, lifecycleScope.ServiceProvider, ct);
+              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, lifecycleScope.ServiceProvider, ct);
+            }
+
+            // Register expected perspective completions for WhenAll gate.
+            if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
+                && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var expected)) {
+              lifecycleCoordinator.ExpectPerspectiveCompletions(envelope.MessageId.Value, expected);
+            }
+          }
+        }
+
+        // Run each perspective with FILTERED events — per-perspective scope for clean DbContext
+        foreach (var perspectiveName in perspectiveNames) {
+          var filteredEvents = streamEvents
+              .Where(e => typeNameCache.TryGetValue(e.Payload.GetType(), out var key)
+                && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+              .ToList();
+
+          if (filteredEvents.Count == 0) {
+            continue;
+          }
+
+          await using var groupScope = _scopeFactory.CreateAsyncScope();
+          var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+          var registry = groupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+          var runner = registry?.GetRunner(perspectiveName, groupScope.ServiceProvider);
+
+          if (runner is null) {
+            continue;
+          }
+
+          // Get cursor from cache (pre-fetched in batch above, or set on previous run)
+          Guid? lastProcessedEventId = null;
+          if (_cursorCache.TryGet(streamId, perspectiveName, out var cachedEventId)) {
+            lastProcessedEventId = cachedEventId;
+          }
+
+          try {
+            var result = await runner.RunWithEventsAsync(
+              streamId, perspectiveName, lastProcessedEventId, filteredEvents, ct);
+
+            if (result.Status == PerspectiveProcessingStatus.Completed) {
+              _cursorCache.Set(streamId, perspectiveName, result.LastEventId);
+
+              foreach (var envelope in filteredEvents) {
+                batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
+              }
+
+              // Fire PostPerspectiveInline + ImmediateDetached only if receptors exist
+              if (_hasPostPerspectiveReceptors) {
+                var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+                await _invokeLifecycleReceptorsForEventsAsync(
+                  filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
+                  LifecycleStage.PostPerspectiveInline, ct);
+                await _invokeLifecycleReceptorsForEventsAsync(
+                  filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
+                  LifecycleStage.ImmediateDetached, ct);
+              }
+
+              // Signal WhenAll coordinator for PostAllPerspectives gate
+              if (lifecycleCoordinator is not null) {
+                foreach (var envelope in filteredEvents) {
+                  lifecycleCoordinator.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
+                }
+              }
+            }
+
+            await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, ct);
+
+            if (filteredEvents.Count > 0 && _syncEventTracker is not null) {
+              var processedEventIds = filteredEvents.Select(e => e.MessageId.Value).ToList();
+              _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+            }
+
+            if (result.PerspectiveType is not null) {
+              _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
+            }
+
+            if (result.Status == PerspectiveProcessingStatus.Completed) {
+              foreach (var envelope in filteredEvents) {
+                foreach (var rawEvent in rawByEventId[envelope.MessageId.Value]) {
+                  _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
+                    EventWorkId = rawEvent.EventWorkId
+                  });
+                }
+              }
+            }
+
+            _metrics?.StreamsUpdated.Add(1);
+            if (filteredEvents.Count > 0) {
+              _metrics?.EventsProcessed.Add(filteredEvents.Count);
+            }
+          } catch (Exception ex) when (ex is not OperationCanceledException) {
+#pragma warning disable CA1848
+            _logger.LogError(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
+#pragma warning restore CA1848
+            _metrics?.Errors.Add(1);
+
+            var failure = new PerspectiveCursorFailure {
+              StreamId = streamId,
+              PerspectiveName = perspectiveName,
+              LastEventId = Guid.Empty,
+              Status = PerspectiveProcessingStatus.Failed,
+              Error = ex.Message
+            };
+            await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
+          }
+        }
+      });
   }
 
   /// <summary>
@@ -696,7 +993,8 @@ public partial class PerspectiveWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds
+        StaleThresholdSeconds = _options.StaleThresholdSeconds,
+        MaxStreamsPerBatch = _options.MaxStreamsPerBatch
       };
       var claimSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
@@ -2418,9 +2716,16 @@ public class PerspectiveWorkerOptions {
   /// Maximum number of perspective groups to process concurrently within a single batch.
   /// Higher values improve throughput when multiple perspectives/streams have pending work.
   /// Different (streamId, perspectiveName) pairs are independent and can safely run in parallel.
-  /// Default: 10
+  /// Default: 30
   /// </summary>
-  public int MaxConcurrentPerspectives { get; set; } = 10;
+  public int MaxConcurrentPerspectives { get; set; } = 30;
+
+  /// <summary>
+  /// Maximum number of streams to return per batch from the SQL function.
+  /// Controls how many distinct streams are claimed and processed per tick.
+  /// Default: 300
+  /// </summary>
+  public int MaxStreamsPerBatch { get; set; } = 300;
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.

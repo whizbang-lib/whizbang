@@ -6,6 +6,8 @@
 --              Called by WhizbangShutdownService.StopAsync on SIGTERM / graceful shutdown.
 -- Dependencies: 001-035 (requires all core tables)
 
+SELECT __SCHEMA__.drop_all_overloads('deregister_instance');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.deregister_instance(
   p_instance_id UUID,
   p_service_name TEXT DEFAULT NULL,

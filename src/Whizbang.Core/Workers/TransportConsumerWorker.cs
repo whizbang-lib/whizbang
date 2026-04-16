@@ -56,6 +56,10 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
+
+  // Lazily-built set of event type names this service handles (has perspectives or receptors for).
+  // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
+  private HashSet<string>? _knownEventTypeNames;
   private readonly SemaphoreSlim? _concurrencySemaphore;
   private readonly TransportBatchOptions _transportBatchOptions;
   private readonly IWorkChannelWriter? _workChannelWriter;
@@ -391,6 +395,42 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     if (inboxMessages.Count > 0) {
+      // Pre-filter: drop events that this service has no perspectives or receptors for.
+      // Build known-types set lazily from IEventTypeProvider (immutable after startup).
+      if (_knownEventTypeNames is null) {
+        var eventTypeProvider = scope.ServiceProvider.GetService<IEventTypeProvider>();
+        if (eventTypeProvider is not null) {
+          var eventTypes = eventTypeProvider.GetEventTypes();
+          _knownEventTypeNames = new HashSet<string>(
+            eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(
+              t.FullName + ", " + t.Assembly.GetName().Name)),
+            StringComparer.Ordinal);
+        } else {
+          _knownEventTypeNames = [];  // Empty = no filtering (allow all)
+        }
+      }
+
+      if (_knownEventTypeNames.Count > 0) {
+        var beforeCount = inboxMessages.Count;
+        inboxMessages.RemoveAll(msg => {
+          // Keep non-events (commands) — they're routed to specific services intentionally
+          if (!msg.IsEvent) {
+            return false;
+          }
+          // Keep events this service handles
+          var normalized = EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType);
+          return !_knownEventTypeNames.Contains(normalized);
+        });
+        var filtered = beforeCount - inboxMessages.Count;
+        if (filtered > 0) {
+          _metrics?.InboxMessagesDeduplicated.Add(filtered);
+        }
+      }
+
+      if (inboxMessages.Count == 0) {
+        return;  // All messages filtered — nothing to store
+      }
+
       // Direct INSERT into wh_inbox — bypasses process_work_batch entirely.
       // Event storage + perspective creation happens on next tick via self-healing
       // (Phase 5 claims → Phase 4.5B stores events → Phase 4.6/4.7 creates perspectives).

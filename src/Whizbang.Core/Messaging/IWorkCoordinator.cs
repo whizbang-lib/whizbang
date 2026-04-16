@@ -166,6 +166,12 @@ public sealed record ProcessWorkBatchRequest {
   /// Instances with expired heartbeats are cleaned up and their work redistributed.
   /// </summary>
   public int StaleThresholdSeconds { get; init; } = 30;
+
+  /// <summary>
+  /// Maximum number of streams to return per batch for perspective processing.
+  /// Controls how many distinct streams the SQL returns per tick. Default: 300.
+  /// </summary>
+  public int MaxStreamsPerBatch { get; init; } = 300;
 }
 
 /// <summary>
@@ -349,6 +355,18 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Batch-fetches perspective cursors for multiple streams in a single SQL call.
+  /// Used by drain mode to prefetch all cursors before parallel processing starts,
+  /// eliminating N individual GetPerspectiveCursorAsync calls during the hot loop.
+  /// </summary>
+  /// <param name="streamIds">Stream IDs to fetch cursors for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of cursor info for all streams that have checkpoints</returns>
+  Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
+
+  /// <summary>
   /// Records that PostLifecycle completed for an event.
   /// Used as a durable marker for crash recovery reconciliation.
   /// Idempotent — duplicate event IDs are silently ignored.
@@ -396,6 +414,34 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
   Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
     CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RewindCursorInfo>>([]);
+
+  /// <summary>
+  /// Completes perspective events by deleting the specified work items from wh_perspective_events.
+  /// Called per-stream immediately after processing (drain mode — no buffering).
+  /// </summary>
+  /// <param name="workItemIds">Array of event_work_id values to delete</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Number of rows deleted</returns>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<int> CompletePerspectiveEventsAsync(
+    Guid[] workItemIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Batch-fetches events for multiple streams in a single call.
+  /// Returns denormalized rows joining wh_perspective_events with wh_event_store.
+  /// Only returns events leased to the requesting instance.
+  /// C# determines which perspectives apply from EventType using its registry.
+  /// </summary>
+  /// <param name="instanceId">Instance ID to filter leased events</param>
+  /// <param name="streamIds">Stream IDs to fetch events for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of stream event data for processing</returns>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<List<StreamEventData>> GetStreamEventsAsync(
+    Guid instanceId,
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
 }
 
 /// <summary>
@@ -494,6 +540,13 @@ public record WorkBatch {
   /// Each item represents a stream that needs perspective updates.
   /// </summary>
   public required List<PerspectiveWork> PerspectiveWork { get; init; }
+
+  /// <summary>
+  /// Stream IDs that have leased perspective events for this instance.
+  /// The worker determines which perspectives apply from event types using its C# registry.
+  /// Replaces the per-event PerspectiveWork return for drain mode.
+  /// </summary>
+  public List<Guid> PerspectiveStreamIds { get; init; } = [];
 
   /// <summary>
   /// Results of sync inquiries from this batch call.
@@ -1025,6 +1078,34 @@ public record PerspectiveWork {
   /// Contains keys like perspective_completions_processed, perspective_failures_processed, etc.
   /// </summary>
   public Dictionary<string, JsonElement>? Metadata { get; init; }
+}
+
+/// <summary>
+/// Represents a single event fetched for stream processing via get_stream_events.
+/// Denormalized row: one per (stream, event). C# groups by StreamId.
+/// No perspective_name — C# determines applicable perspectives from EventType using registry.
+/// </summary>
+public record StreamEventData {
+  /// <summary>Stream that this event belongs to.</summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>Event ID from wh_event_store (UUIDv7, naturally ordered).</summary>
+  public required Guid EventId { get; init; }
+
+  /// <summary>Event type (assembly-qualified name). Used to determine which perspectives apply.</summary>
+  public required string EventType { get; init; }
+
+  /// <summary>Serialized event data from wh_event_store.</summary>
+  public required string EventData { get; init; }
+
+  /// <summary>Serialized metadata JSONB from wh_event_store. Contains MessageId, Hops, DispatchContext.</summary>
+  public string? Metadata { get; init; }
+
+  /// <summary>Serialized scope JSONB from wh_event_store. Contains tenant context (TenantId, UserId, etc.).</summary>
+  public string? Scope { get; init; }
+
+  /// <summary>Work ID from wh_perspective_events. Used for completion reporting via CompletePerspectiveEventsAsync.</summary>
+  public required Guid EventWorkId { get; init; }
 }
 
 /// <summary>

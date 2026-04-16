@@ -576,6 +576,8 @@ public class AuditingEventStoreDecoratorTests {
       GetLastSequenceCalls.Add(streamId);
       return Task.FromResult(LastSequenceToReturn);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   private sealed class MockDeferredOutboxChannel : IDeferredOutboxChannel {

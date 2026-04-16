@@ -4,6 +4,8 @@
 -- Uses UPSERT pattern: insert new checkpoint or update existing one
 -- =============================================
 
+SELECT __SCHEMA__.drop_all_overloads('acquire_perspective_cursor_work');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.acquire_perspective_cursor_work(
   p_stream_id UUID,
   p_perspective_names TEXT[],

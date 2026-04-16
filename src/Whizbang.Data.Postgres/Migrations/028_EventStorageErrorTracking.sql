@@ -71,6 +71,8 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- Only logs if p_log_level >= configured minimum level
 -- =====================================================================================
 
+SELECT __SCHEMA__.drop_all_overloads('log_event');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.log_event(
   p_log_level INTEGER,
   p_source VARCHAR(50),

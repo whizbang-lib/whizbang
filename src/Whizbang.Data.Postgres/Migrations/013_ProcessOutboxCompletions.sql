@@ -4,6 +4,8 @@
 --              Returns stream IDs for downstream stream cleanup. Supports debug mode retention.
 -- Dependencies: 001-012 (requires wh_outbox table)
 
+SELECT __SCHEMA__.drop_all_overloads('process_outbox_completions');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,

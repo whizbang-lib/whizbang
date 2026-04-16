@@ -193,6 +193,8 @@ public sealed class SecurityContextEventStoreDecoratorTests {
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) => Task.FromResult(-1L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>
@@ -238,5 +240,7 @@ public sealed class SecurityContextEventStoreDecoratorTests {
       GetLastSequenceCalled = true;
       return Task.FromResult(LastSequenceToReturn);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 }
