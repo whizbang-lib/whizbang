@@ -4,6 +4,8 @@
 --              Returns instance rank and active count for use in claim_orphaned_* functions.
 -- Dependencies: 001-011 (requires wh_service_instances table)
 
+SELECT __SCHEMA__.drop_all_overloads('calculate_instance_rank');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.calculate_instance_rank(
   p_instance_id UUID,
   p_stale_cutoff TIMESTAMPTZ

@@ -4,6 +4,8 @@
 --              Checks outbox (unpublished), inbox (unstored), and perspective events (unprocessed).
 -- Dependencies: 001-022 (requires wh_active_streams, wh_outbox, wh_inbox, wh_perspective_events tables)
 
+SELECT __SCHEMA__.drop_all_overloads('cleanup_completed_streams');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.cleanup_completed_streams(
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$

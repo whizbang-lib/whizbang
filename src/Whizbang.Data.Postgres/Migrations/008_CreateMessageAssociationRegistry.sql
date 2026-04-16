@@ -38,6 +38,8 @@ ON wh_message_associations (normalized_message_type, association_type);
 --   updated_count INT - Number of existing associations updated
 --   deleted_count INT - Number of orphaned associations deleted
 
+SELECT __SCHEMA__.drop_all_overloads('register_message_associations');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.register_message_associations(
   p_associations JSONB
 )

@@ -37,6 +37,8 @@
 --   old_schema_hash VARCHAR - Previous schema hash (for drift detection) or NULL
 --   new_schema_hash VARCHAR - Current schema hash
 
+SELECT __SCHEMA__.drop_all_overloads('reconcile_perspective_registry');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.reconcile_perspective_registry(
   p_perspectives JSONB,
   p_service_name VARCHAR DEFAULT NULL

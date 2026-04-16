@@ -4,6 +4,8 @@
 --              Extensible — add new maintenance operations here over time.
 -- Dependencies: 001-031
 
+SELECT __SCHEMA__.drop_all_overloads('perform_maintenance');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.perform_maintenance()
 RETURNS TABLE(
   task_name TEXT,

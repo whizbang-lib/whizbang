@@ -4,6 +4,8 @@
 --              Returns stream/perspective pairs for checkpoint updates. Supports debug mode retention.
 -- Dependencies: 001-014 (requires wh_perspective_events table from migration 009)
 
+SELECT __SCHEMA__.drop_all_overloads('process_perspective_event_completions');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_perspective_event_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,

@@ -233,6 +233,7 @@ public class PerspectiveRebuilderTests {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => registrations;
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
@@ -268,6 +269,7 @@ public class PerspectiveRebuilderTests {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [];
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakeEventStoreQuery(Guid[] streamIds) : IEventStoreQuery {

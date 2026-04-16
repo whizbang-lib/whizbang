@@ -109,4 +109,9 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEve
   public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
     return _inner.GetLastSequenceAsync(streamId, cancellationToken);
   }
+
+  /// <inheritdoc />
+  public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    return _inner.DeserializeStreamEvents(streamEvents, eventTypes);
+  }
 }

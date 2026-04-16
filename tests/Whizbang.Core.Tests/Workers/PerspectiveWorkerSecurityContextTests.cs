@@ -1297,6 +1297,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
       return Task.FromResult(-1L);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>
@@ -1362,6 +1364,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
       return Task.FromResult(-1L);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   private sealed class TestScopeContext : IScopeContext {
@@ -1612,6 +1616,7 @@ public class PerspectiveWorkerSecurityContextTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(TestEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {

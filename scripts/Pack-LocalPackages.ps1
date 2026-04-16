@@ -45,6 +45,23 @@
     Requires -Output. Skips pack entirely. Looks up the latest nuget.org version for each
     Whizbang package and replaces local version references in the consumer repo. Clears NuGet cache.
 
+.PARAMETER Publish
+    NuGet feed URL or named source. After packing, pushes all .nupkg files to this feed
+    using dotnet nuget push. Can be combined with -Output for both remote publish and local deploy.
+    Cannot be combined with -RestoreNuGet.
+
+.PARAMETER ApiKey
+    API key or Personal Access Token for NuGet feed authentication.
+    Falls back to NUGET_PUBLISH_KEY environment variable if not provided.
+    For Azure DevOps feeds with credential provider, this can be omitted.
+
+.PARAMETER SkipSymbols
+    When publishing, skip pushing .snupkg symbol packages. By default, both .nupkg
+    and .snupkg files are published.
+
+.PARAMETER PublishTimeout
+    Timeout in seconds for each package push operation. Default: 300 (5 minutes).
+
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
     Packs all packages in Debug configuration.
@@ -72,6 +89,18 @@
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1 -EnableFrameworkDebugging
     Packs all packages with WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING defined.
+
+.EXAMPLE
+    ./scripts/Pack-LocalPackages.ps1 -Publish https://pkgs.dev.azure.com/myorg/_packaging/myfeed/nuget/v3/index.json -ApiKey $env:MY_PAT
+    Packs all packages and publishes to an Azure DevOps Artifacts feed.
+
+.EXAMPLE
+    ./scripts/Pack-LocalPackages.ps1 -Publish MyFeedName
+    Packs and publishes to a named NuGet source (configured via dotnet nuget add source).
+
+.EXAMPLE
+    ./scripts/Pack-LocalPackages.ps1 -Publish https://api.nuget.org/v3/index.json -ApiKey $env:NUGET_API_KEY -Configuration Release
+    Packs in Release mode and publishes to nuget.org.
 #>
 
 param(
@@ -94,7 +123,15 @@ param(
 
     [string]$Output,
 
-    [switch]$RestoreNuGet
+    [switch]$RestoreNuGet,
+
+    [string]$Publish,
+
+    [string]$ApiKey,
+
+    [switch]$SkipSymbols,
+
+    [int]$PublishTimeout = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -331,6 +368,98 @@ function Get-SingleNuGetVersion {
     }
 }
 
+function Test-DotNetNuGetAvailable {
+    try {
+        $null = dotnet nuget list source 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $sdkVersion = dotnet --version 2>&1
+            Write-Host "NuGet CLI: dotnet nuget (SDK $sdkVersion)" -ForegroundColor Gray
+            return $true
+        }
+    } catch { }
+    return $false
+}
+
+function Publish-NuGetPackages {
+    param(
+        [Parameter(Mandatory)]
+        [string]$PackagesDir,
+        [Parameter(Mandatory)]
+        [string]$Source,
+        [string]$ApiKey = "",
+        [switch]$SkipSymbols,
+        [int]$TimeoutSeconds = 300
+    )
+
+    $nupkgs = @(Get-ChildItem -Path $PackagesDir -Filter "*.nupkg" -File |
+        Where-Object { $_.Name -notmatch '\.symbols\.' } |
+        Sort-Object Name)
+
+    if ($nupkgs.Count -eq 0) {
+        Write-Host "No .nupkg files found in $PackagesDir" -ForegroundColor Yellow
+        return [PSCustomObject]@{ PushCount = 0; SkipCount = 0; FailCount = 0; FailedPackages = @() }
+    }
+
+    $pushCount = 0
+    $skipCount = 0
+    $failCount = 0
+    $failedPackages = @()
+
+    foreach ($nupkg in $nupkgs) {
+        $shortName = $nupkg.Name -replace '^SoftwareExtravaganza\.', '' -replace '\.nupkg$', ''
+        Write-Host "  Publishing $shortName..." -ForegroundColor Cyan -NoNewline
+
+        $pushArgs = @($nupkg.FullName, '--source', $Source, '--skip-duplicate', '--timeout', $TimeoutSeconds)
+        if ($ApiKey) {
+            $pushArgs += @('--api-key', $ApiKey)
+        }
+
+        $pushOutput = dotnet nuget push @pushArgs 2>&1
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -eq 0) {
+            $skipped = $pushOutput | Select-String -Pattern '(already exists|409|Conflict|skip)'
+            if ($skipped) {
+                Write-Host " SKIPPED (already exists)" -ForegroundColor DarkGray
+                $skipCount++
+            } else {
+                Write-Host " OK" -ForegroundColor Green
+                $pushCount++
+            }
+        } else {
+            Write-Host " FAILED" -ForegroundColor Red
+            $pushOutput | Where-Object { $_ -match 'error|unauthorized|forbidden' } | ForEach-Object {
+                Write-Host "    $_" -ForegroundColor Red
+            }
+            $failCount++
+            $failedPackages += $nupkg.Name
+        }
+    }
+
+    if (-not $SkipSymbols) {
+        $snupkgs = @(Get-ChildItem -Path $PackagesDir -Filter "*.snupkg" -File | Sort-Object Name)
+        if ($snupkgs.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  Publishing $($snupkgs.Count) symbol packages..." -ForegroundColor Gray -NoNewline
+            foreach ($snupkg in $snupkgs) {
+                $pushArgs = @($snupkg.FullName, '--source', $Source, '--skip-duplicate', '--timeout', $TimeoutSeconds)
+                if ($ApiKey) {
+                    $pushArgs += @('--api-key', $ApiKey)
+                }
+                dotnet nuget push @pushArgs 2>&1 | Out-Null
+            }
+            Write-Host " OK" -ForegroundColor Green
+        }
+    }
+
+    return [PSCustomObject]@{
+        PushCount      = $pushCount
+        SkipCount      = $skipCount
+        FailCount      = $failCount
+        FailedPackages = $failedPackages
+    }
+}
+
 # --- End helper functions ---
 
 # Find repo root
@@ -344,6 +473,19 @@ $repoRoot = Split-Path $scriptDir -Parent
 if ($RestoreNuGet -and -not $Output) {
     Write-Error "-RestoreNuGet requires -Output to specify the consumer repo path"
     exit 1
+}
+if ($Publish -and $RestoreNuGet) {
+    Write-Error "-Publish and -RestoreNuGet are mutually exclusive. -RestoreNuGet skips packing, but -Publish requires packed packages."
+    exit 1
+}
+if ($SkipSymbols -and -not $Publish) {
+    Write-Warning "-SkipSymbols has no effect without -Publish. Ignoring."
+}
+if ($ApiKey -and -not $Publish) {
+    Write-Warning "-ApiKey has no effect without -Publish. Ignoring."
+}
+if ($Publish -and -not $ApiKey) {
+    $ApiKey = $env:NUGET_PUBLISH_KEY
 }
 if ($Output) {
     # Resolve ~ and relative paths to absolute
@@ -485,6 +627,7 @@ $headerParams = @{ Config = $Configuration; Version = $currentVersion }
 if ($EnableFrameworkDebugging) { $headerParams["Debug"] = "On" }
 if ($Fast) { $headerParams["Fast"] = "On" }
 if ($Output) { $headerParams["Deploy"] = Split-Path $Output -Leaf }
+if ($Publish) { $headerParams["Publish"] = $Publish }
 Write-WhizbangHeader -ScriptName "Local Pack" -Params $headerParams
 Write-Host "Output: $localPackagesDir" -ForegroundColor DarkGray
 Write-Host ""
@@ -536,6 +679,9 @@ $packTime = [TimeSpan]::Zero
 $zipTime = [TimeSpan]::Zero
 $aborted = $false
 $deployFailed = $false
+$publishTime = [TimeSpan]::Zero
+$publishFailed = $false
+$publishResult = $null
 
 # Clean before building to prevent stale DLLs from being packed (opt-in)
 if ($CleanBuild) {
@@ -668,6 +814,41 @@ if ($packFiles.Count -gt 0) {
 }
 $zipTime = (Get-Date) - $zipStart
 
+# Publish to NuGet feed if -Publish specified
+if ($Publish) {
+    Write-Host ""
+    Write-Host "Publishing to feed..." -ForegroundColor Cyan
+    Write-Host "  Feed: $Publish" -ForegroundColor Gray
+    $publishStart = Get-Date
+
+    if (-not (Test-DotNetNuGetAvailable)) {
+        Write-Host "dotnet nuget is not available. Ensure the .NET SDK is installed." -ForegroundColor Red
+        $publishFailed = $true
+    } else {
+        if (-not $ApiKey) {
+            Write-Host "  Auth: Credential provider (no API key)" -ForegroundColor Gray
+        } else {
+            Write-Host "  Auth: API key provided" -ForegroundColor Gray
+        }
+
+        $publishResult = Publish-NuGetPackages `
+            -PackagesDir $localPackagesDir `
+            -Source $Publish `
+            -ApiKey $ApiKey `
+            -SkipSymbols:$SkipSymbols `
+            -TimeoutSeconds $PublishTimeout
+
+        if ($publishResult.FailCount -gt 0) {
+            $publishFailed = $true
+        }
+
+        Write-Host ""
+        Write-Host "Published: $($publishResult.PushCount) | Skipped: $($publishResult.SkipCount) | Failed: $($publishResult.FailCount)" -ForegroundColor $(if ($publishResult.FailCount -gt 0) { "Yellow" } else { "Green" })
+    }
+
+    $publishTime = (Get-Date) - $publishStart
+}
+
 # Deploy to consumer repo if -Output specified
 $deployTime = [TimeSpan]::Zero
 $deployFailed = $false
@@ -711,7 +892,7 @@ if ($Output) {
 # Runtime summary (always printed)
 $packVersion = if ((Get-Content $propsFile -Raw) -match '<Version>([^<]+)</Version>') { $Matches[1] } else { "unknown" }
 $totalTime = (Get-Date) - $totalStart
-$hasFailed = $aborted -or $failCount -gt 0 -or $deployFailed
+$hasFailed = $aborted -or $failCount -gt 0 -or $deployFailed -or $publishFailed
 Write-Host ""
 Write-Host "===============================" -ForegroundColor Cyan
 if ($aborted) {
@@ -724,6 +905,16 @@ if ($deployFailed) {
 } elseif ($Output -and -not $aborted) {
     Write-Host "Deploy: OK" -ForegroundColor Green
 }
+if ($publishFailed) {
+    Write-Host "Publish: FAILED" -ForegroundColor Red
+    if ($publishResult -and $publishResult.FailedPackages.Count -gt 0) {
+        $publishResult.FailedPackages | ForEach-Object {
+            Write-Host "  - $_" -ForegroundColor Red
+        }
+    }
+} elseif ($Publish -and -not $aborted) {
+    Write-Host "Publish: OK ($($publishResult.PushCount) pushed, $($publishResult.SkipCount) skipped)" -ForegroundColor Green
+}
 Write-Host ""
 Write-Host "Timing:" -ForegroundColor Cyan
 if ($CleanBuild) { Write-Host "  Clean:   $([math]::Round($cleanTime.TotalSeconds, 1))s" -ForegroundColor Gray }
@@ -731,6 +922,7 @@ Write-Host "  Build:   $([math]::Round($buildTime.TotalSeconds, 1))s" -Foregroun
 if (-not $aborted) {
     Write-Host "  Pack:    $([math]::Round($packTime.TotalSeconds, 1))s" -ForegroundColor Gray
     Write-Host "  Zip:     $([math]::Round($zipTime.TotalSeconds, 1))s" -ForegroundColor Gray
+    if ($Publish) { Write-Host "  Publish: $([math]::Round($publishTime.TotalSeconds, 1))s" -ForegroundColor Gray }
     if ($Output) { Write-Host "  Deploy:  $([math]::Round($deployTime.TotalSeconds, 1))s" -ForegroundColor Gray }
 }
 Write-Host "  Total:   $([math]::Round($totalTime.TotalSeconds, 1))s" -ForegroundColor $(if ($hasFailed) { "Yellow" } else { "Green" })

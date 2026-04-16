@@ -4,6 +4,8 @@
 --              Uses partition-based load balancing to distribute work across instances.
 -- Dependencies: 001-025 (requires wh_receptor_processing, wh_active_streams tables)
 
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_receptor_work');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_receptor_work(
   p_instance_id UUID,
   p_instance_rank INTEGER,
