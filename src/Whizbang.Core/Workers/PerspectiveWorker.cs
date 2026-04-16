@@ -155,6 +155,19 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// Event fired after a complete batch cycle finishes, including all phases:
+  /// drain mode / legacy processing, lifecycle stages (PostAllPerspectives, PostLifecycle),
+  /// and metrics recording. Fires once per worker tick regardless of whether work was found.
+  /// </summary>
+  /// <remarks>
+  /// Use for deterministic test synchronization when verifying lifecycle stages that fire
+  /// in Phase 5 (after perspective processing). Also useful in production for batch-level
+  /// monitoring and alerting on processing cadence.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public event Action? OnBatchCycleComplete;
+
+  /// <summary>
   /// Event fired after a perspective successfully processes events for a stream.
   /// Fires synchronously on the perspective worker thread after completion buffering.
   /// </summary>
@@ -683,6 +696,9 @@ public partial class PerspectiveWorker(
 
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
     _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
+
+    // Signal batch cycle complete — all phases (drain/legacy + lifecycle + metrics) finished
+    OnBatchCycleComplete?.Invoke();
   }
 
   /// <summary>
