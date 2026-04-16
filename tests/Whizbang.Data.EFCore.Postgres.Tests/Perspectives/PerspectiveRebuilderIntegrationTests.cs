@@ -25,6 +25,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   private const string RebuildBalancePerspectiveName =
       "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
 
+  private const string RebuildInventoryPerspectiveName =
+      "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildInventoryPerspective";
+
   /// <summary>
   /// Builds a ServiceProvider wired for rebuild: real Postgres-backed event store,
   /// real EFCorePostgresPerspectiveStore, the source-generated runner registry, and
@@ -53,15 +56,20 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
             sp.GetRequiredService<WorkCoordinationDbContext>(),
             "rebuild_balance"));
 
-    // Register the perspective itself and its source-generated runner. Use reflection to
-    // locate the generated runner type so this file compiles even when the generator hasn't
-    // produced output yet (e.g., during dotnet format passes). Same pattern as
-    // PerspectiveRunnerModelActionTests.
+    services.AddScoped<IPerspectiveStore<RebuildInventoryModel>>(sp =>
+        new EFCorePostgresPerspectiveStore<RebuildInventoryModel>(
+            sp.GetRequiredService<WorkCoordinationDbContext>(),
+            "rebuild_inventory"));
+
+    // Register the perspectives and their source-generated runners. Use reflection to locate
+    // the generated runner types so this file compiles even when the generator hasn't produced
+    // output yet (e.g., during dotnet format passes). Same pattern as PerspectiveRunnerModelActionTests.
     services.AddScoped<RebuildBalancePerspective>();
+    services.AddScoped<RebuildInventoryPerspective>();
 
     var asm = typeof(PerspectiveRebuilderIntegrationTests).Assembly;
-    var runnerType = asm.GetTypes().Single(t => t.Name == "RebuildBalancePerspectiveRunner");
-    services.AddScoped(runnerType);
+    services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildBalancePerspectiveRunner"));
+    services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildInventoryPerspectiveRunner"));
 
     // Source-generated IPerspectiveRunnerRegistry lives in the .Generated namespace.
     var registryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
@@ -232,5 +240,71 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         .AsNoTracking()
         .FirstOrDefaultAsync(r => r.Id == liveStream);
     await Assert.That(liveRow).IsNotNull();
+  }
+
+  /// <summary>
+  /// Rebuilding perspective A must not alter perspective B's projection. Pins the
+  /// per-perspective isolation semantics — rebuild resolves a single runner from the
+  /// registry and only that runner writes to its own perspective store.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_ForSinglePerspective_DoesNotAffectOtherPerspectivesAsync() {
+    var balanceStream = Guid.NewGuid();
+    var inventoryStream = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    // Seed events for both perspectives.
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, balanceStream, new RebuildCreditedEvent { StreamId = balanceStream, Amount = 99m });
+      await _appendEventAsync(eventStore, inventoryStream, new RebuildStockAdjustedEvent { StreamId = inventoryStream, Delta = 77 });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    // Project inventory first so it has a baseline row, then mutate that row to a value
+    // the event log would never produce. If the subsequent balance rebuild touches inventory,
+    // this drift will be overwritten; if rebuild is properly isolated, it stays drifted.
+    var inventoryBaseline = await rebuilder.RebuildInPlaceAsync(RebuildInventoryPerspectiveName, CancellationToken.None);
+    await Assert.That(inventoryBaseline.Success).IsTrue();
+    await Assert.That(inventoryBaseline.StreamsProcessed).IsEqualTo(2);
+
+    const int driftedValue = -12345;
+    await using (var corruptContext = CreateDbContext()) {
+      await corruptContext.Set<PerspectiveRow<RebuildInventoryModel>>()
+          .Where(r => r.Id == inventoryStream)
+          .ExecuteUpdateAsync(s => s.SetProperty(
+              r => r.Data,
+              new RebuildInventoryModel { Id = inventoryStream, OnHand = driftedValue }));
+    }
+
+    // Act: rebuild ONLY the balance perspective.
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+
+    // Assert: balance rebuild reports success for the two streams that exist in the store.
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+
+    // Assert: inventory row is still drifted — the balance rebuild did not touch it.
+    await using var verifyContext = CreateDbContext();
+    var inventoryRow = await verifyContext.Set<PerspectiveRow<RebuildInventoryModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == inventoryStream);
+    await Assert.That(inventoryRow).IsNotNull();
+    await Assert.That(inventoryRow!.Data.OnHand).IsEqualTo(driftedValue);
+
+    // Assert: balance projection reflects its own event stream (99).
+    // Note on 198 vs 99: the balance stream was seeded before inventory's baseline rebuild;
+    // the inventory rebuild iterates ALL streams in the event store but resolves the balance
+    // runner against the InventoryModel store, so it does nothing persistent for the balance
+    // stream (the inventory runner doesn't handle RebuildCreditedEvent). Only the explicit
+    // balance rebuild produces the 99 row.
+    var balanceRow = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == balanceStream);
+    await Assert.That(balanceRow).IsNotNull();
+    await Assert.That(balanceRow!.Data.Balance).IsEqualTo(99m);
   }
 }
