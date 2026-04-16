@@ -24,6 +24,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// and performance optimizations.
 /// <tests>src/Whizbang.Core/Workers/PerspectiveWorker.cs:_processDrainModeStreamsAsync</tests>
 /// </summary>
+[NotInParallel]
 public class PerspectiveWorkerDrainModeLifecycleTests {
 
   // ========================================
@@ -276,14 +277,21 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     return (worker, coordinator, registry, eventStore, invoker, lifecycleCoordinator);
   }
 
-  private async Task _runWorkerOneBatchAsync(PerspectiveWorker worker, DrainWorkCoordinator coordinator) {
-    // Use a semaphore to wait for the FULL batch cycle (including Phase 5 PostLifecycle).
-    // The 2nd ProcessWorkBatchAsync call means the 1st batch is fully complete.
+  private static async Task _runWorkerOneBatchAsync(PerspectiveWorker worker, DrainWorkCoordinator coordinator) {
+    // Wait for the FULL batch cycle to complete (including Phase 5 PostLifecycle).
+    // OnBatchCycleComplete fires at the end of _processWorkBatchAsync, after all lifecycle stages.
+    var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var batchCount = 0;
+    worker.OnBatchCycleComplete += () => {
+      // Signal on the FIRST batch that had work (coordinator returns stream IDs on 1st call only)
+      if (Interlocked.Increment(ref batchCount) == 1) {
+        batchComplete.TrySetResult();
+      }
+    };
+
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    // Small additional wait for any fire-and-forget tasks to complete
-    await Task.Yield();
+    await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
   }
