@@ -78,23 +78,63 @@ public class InboxNullLeaseTests : PostgresTestBase {
   }
 
   // ========================================
-  // Active streams: KEEP instance ownership
+  // Active streams: ownership set during claiming, not storage
   // ========================================
 
   [Test]
-  public async Task NewInboxMessage_ActiveStreams_RetainsInstanceOwnershipAsync() {
+  public async Task NewInboxMessage_ActiveStreams_HasNullOwnershipAfterStorageAsync() {
     // Arrange
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var inboxMessage = _createInboxMessage(messageId, streamId);
 
-    // Act
+    // Act — store with SkipInboxClaiming (transport consumer path)
     await _sut.ProcessWorkBatchAsync(_createRequest(inboxMessage));
 
-    // Assert — active_streams should have the instance_id (NOT NULL)
+    // Assert — active_streams should have NULL assigned_instance_id after storage.
+    // Ownership is established during the claiming phase, not during storage,
+    // to prevent the storing instance from blocking partition-assigned instances.
+    var activeStreamInstanceId = await _getActiveStreamInstanceIdAsync(streamId);
+    await Assert.That(activeStreamInstanceId).IsNull()
+      .Because("Storage should not claim stream ownership — claiming establishes ownership to support multi-instance partition-based load balancing");
+  }
+
+  [Test]
+  public async Task NewInboxMessage_ActiveStreams_OwnershipSetAfterClaimingAsync() {
+    // Arrange
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var inboxMessage = _createInboxMessage(messageId, streamId);
+
+    // Store with SkipInboxClaiming (transport consumer path)
+    await _sut.ProcessWorkBatchAsync(_createRequest(inboxMessage));
+
+    // Act — claim without SkipInboxClaiming (publisher worker path)
+    await _sut.ProcessWorkBatchAsync(
+      new ProcessWorkBatchRequest {
+        InstanceId = _instanceId,
+        ServiceName = "TestService",
+        HostName = "test-host",
+        ProcessId = 12345,
+        OutboxCompletions = [],
+        OutboxFailures = [],
+        InboxCompletions = [],
+        InboxFailures = [],
+        ReceptorCompletions = [],
+        ReceptorFailures = [],
+        PerspectiveCompletions = [],
+        PerspectiveEventCompletions = [],
+        PerspectiveFailures = [],
+        NewOutboxMessages = [],
+        NewInboxMessages = [],
+        RenewOutboxLeaseIds = [],
+        RenewInboxLeaseIds = []
+      });
+
+    // Assert — after claiming, active_streams should have the claiming instance's ID
     var activeStreamInstanceId = await _getActiveStreamInstanceIdAsync(streamId);
     await Assert.That(activeStreamInstanceId).IsEqualTo(_instanceId)
-      .Because("Active streams must retain instance ownership for claim_orphaned_inbox stream ownership checks");
+      .Because("After claiming, the claiming instance should own the stream for FIFO ordering");
   }
 
   [Test]
