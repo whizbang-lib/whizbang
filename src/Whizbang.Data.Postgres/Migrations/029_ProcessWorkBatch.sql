@@ -92,7 +92,7 @@ DECLARE
   v_completed_events JSONB;
   v_completion RECORD;
 
-  -- Batch limits from wh_settings (read once per tick, defaults if not configured)
+  -- Batch limits: derived from p_max_streams parameter (no longer read from wh_settings)
   v_max_work_items INTEGER;
   v_max_work_items_per_stream INTEGER;
 
@@ -121,22 +121,18 @@ DECLARE
   v_tier1_budget_percent INTEGER;
   v_tier1_max INTEGER;
 BEGIN
-  -- Read all settings in a single query (pivoted)
+  -- Set batch limits from p_max_streams parameter (unified budget for total and per-stream)
+  v_max_work_items := p_max_streams;
+  v_max_work_items_per_stream := p_max_streams;
+
+  -- Read remaining settings in a single query (pivoted)
   SELECT
-    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_tick' THEN setting_value::INTEGER END), 300),
-    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_stream' THEN setting_value::INTEGER END), 25),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_debounce_seconds' THEN setting_value::INTEGER END), 5),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_max_debounce_seconds' THEN setting_value::INTEGER END), 30),
     COALESCE(MAX(CASE WHEN setting_key = 'tier1_budget_percent' THEN setting_value::INTEGER END), 70)
-  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, v_tier1_budget_percent
+  INTO v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, v_tier1_budget_percent
   FROM wh_settings
-  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'tier1_budget_percent');
-  -- Note: stale_threshold_seconds is controlled by C# WorkCoordinatorOptions, not wh_settings
-
-  -- Override max_work_items from caller parameter if provided (drain mode)
-  IF p_max_streams IS NOT NULL THEN
-    v_max_work_items := p_max_streams;
-  END IF;
+  WHERE setting_key IN ('rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'tier1_budget_percent');
 
   -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
   v_tier1_max := (v_max_work_items * v_tier1_budget_percent) / 100;
