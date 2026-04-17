@@ -316,6 +316,100 @@ public class RewindScenarioTests {
     }
   }
 
+  // ==================== CONTRACT: multiple concurrent late arrivals all fire handlers ====================
+
+  [Test]
+  public async Task ConcurrentLateArrivals_AllLateEventsFirePostPerspective_Async() {
+    // Events 1,2,4,5 already processed. Then events 3, 2, 1 all arrive within the same
+    // rewind window (before the worker picks up the rewind and completes it). The
+    // coordinator updates the RewindTriggerEventId to the minimum each time, ending with
+    // trigger=event1. When the rewind completes, handlers must fire for events 3, 2, AND 1
+    // — not just the final trigger event.
+    var streamId = Guid.CreateVersion7();
+    var events = _createSequentialEvents(streamId, count: 5);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+    const string perspectiveName = "Test.ConcurrentLatePerspective";
+
+    // Pre-rewind cursor: events 1,2,4,5 already processed (indices 0,1,3,4 — i.e., all
+    // in-order events). We're using a scaffold where indices 0,1 are events "1,2",
+    // index 3 is "4", index 4 is "5", and index 2 is "3" (the late one — plus we'll
+    // inject two more "before" it to simulate multiple concurrent late arrivals).
+    var cursorBefore = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = eventIds[4],
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = eventIds[0] // the lowest of three late arrivals (events[0], events[1], events[2])
+    };
+
+    // Three late events pending: events[0], events[1], events[2]. All have id < cursor.
+    // Coordinator reports them as pending work (one PerspectiveWork row each).
+    var workItems = new List<PerspectiveWork> {
+      _lateWork(streamId, perspectiveName, eventIds[4]),
+      _lateWork(streamId, perspectiveName, eventIds[4]),
+      _lateWork(streamId, perspectiveName, eventIds[4])
+    };
+
+    var coordinator = new _cursorAwareCoordinator {
+      CursorPerStream = { [(streamId, perspectiveName)] = cursorBefore }
+    };
+    coordinator.WorkPerCycle.Add(workItems);
+
+    var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[4] };
+    var eventStore = new _rangeFilteringEventStore();
+    eventStore.EventsPerStream[streamId] = [.. events];
+    var spy = new _recordingReceptorInvoker();
+    var eventTypeProvider = new _fakeEventTypeProvider();
+
+    // Reader annotates events 0, 1, 2 (the three late arrivals) as is_new=true.
+    // Events 3, 4 (indices for events "4" and "5") were already processed.
+    var replayReader = new _scriptedReplayReader(
+      events,
+      isNew: new HashSet<Guid> { eventIds[0], eventIds[1], eventIds[2] });
+
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: eventStore,
+      eventTypeProvider: eventTypeProvider,
+      replayReader: replayReader);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: Each of the three late events fires PostPerspectiveInline exactly once.
+    var postPerspective = spy.Invocations
+      .Where(i => i.Stage == LifecycleStage.PostPerspectiveInline)
+      .ToList();
+    for (var i = 0; i < 3; i++) {
+      var id = eventIds[i];
+      var fires = postPerspective.Count(inv => inv.EventId == id);
+      await Assert.That(fires).IsEqualTo(1)
+        .Because($"LOCK-IN: Late event {i} ({id}) must fire PostPerspectiveInline exactly once when three late arrivals accumulate in a single rewind window. Narrow trigger-event-only fix does not handle this.");
+    }
+
+    // LOCK-IN: Already-processed events (indices 3, 4 = events 4, 5) must not re-fire.
+    var alreadyProcessedIds = new HashSet<Guid> { eventIds[3], eventIds[4] };
+    var wrongFires = postPerspective
+      .Where(i => alreadyProcessedIds.Contains(i.EventId))
+      .ToList();
+    await Assert.That(wrongFires.Count).IsEqualTo(0)
+      .Because("LOCK-IN: Already-processed events must not fire during rewind with multiple late arrivals.");
+  }
+
+  private static PerspectiveWork _lateWork(Guid streamId, string perspectiveName, Guid cursorLastEventId) => new() {
+    WorkId = Guid.CreateVersion7(),
+    StreamId = streamId,
+    PerspectiveName = perspectiveName,
+    LastProcessedEventId = cursorLastEventId,
+    PartitionNumber = 1
+  };
+
   // ==================== Helpers ====================
 
   private static List<MessageEnvelope<IEvent>> _createSequentialEvents(Guid streamId, int count) {
@@ -339,7 +433,8 @@ public class RewindScenarioTests {
     IPerspectiveRunnerRegistry registry,
     IReceptorInvoker? receptorInvoker = null,
     IEventStore? eventStore = null,
-    IEventTypeProvider? eventTypeProvider = null) {
+    IEventTypeProvider? eventTypeProvider = null,
+    IPerspectiveReplayReader? replayReader = null) {
 
     var instanceProvider = new _fakeInstanceProvider();
     var databaseReadiness = new _fakeDatabaseReadiness();
@@ -359,6 +454,9 @@ public class RewindScenarioTests {
     }
     if (eventStore is not null) {
       services.AddSingleton(eventStore);
+    }
+    if (replayReader is not null) {
+      services.AddSingleton(replayReader);
     }
 
     var serviceProvider = services.BuildServiceProvider();
@@ -789,6 +887,33 @@ public class RewindScenarioTests {
   // because of how Guid packs its fields. Keeping Comparer<Guid>.Default aligns the
   // test fakes with how Whizbang's generated identity types actually order themselves.
   internal static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Default;
+
+  /// <summary>
+  /// Replay reader that returns the provided envelopes, each annotated with IsNew=true
+  /// if its id appears in the preset is_new set. Simulates the LEFT JOIN against the
+  /// perspective work queue that the real Postgres implementation will do.
+  /// </summary>
+  private sealed class _scriptedReplayReader : IPerspectiveReplayReader {
+    private readonly List<MessageEnvelope<IEvent>> _events;
+    private readonly HashSet<Guid> _isNew;
+
+    public _scriptedReplayReader(List<MessageEnvelope<IEvent>> events, HashSet<Guid> isNew) {
+      _events = events;
+      _isNew = isNew;
+    }
+
+    public async IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(
+      Guid streamId,
+      string perspectiveName,
+      int fromVersionExclusive,
+      IReadOnlyCollection<Type> eventTypes,
+      [EnumeratorCancellation] CancellationToken cancellationToken) {
+      await Task.CompletedTask;
+      foreach (var env in _events) {
+        yield return new ReplayEventEnvelope(env, _isNew.Contains(env.MessageId.Value));
+      }
+    }
+  }
 
   private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
