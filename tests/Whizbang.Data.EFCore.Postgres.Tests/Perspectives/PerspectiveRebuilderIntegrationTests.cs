@@ -1029,6 +1029,77 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     await Assert.That(cursor.Error).IsNull();
   }
 
+  /// <summary>
+  /// System-command routing broadcasts RebuildPerspectiveCommand to every service via
+  /// SharedTopicInboxStrategy. Each service's receptor must silently skip perspectives it
+  /// doesn't own — no "No runner found" errors from services that happen to receive the
+  /// command but don't host the requested perspective. The receptor intersects the requested
+  /// PerspectiveNames with its local IPerspectiveRunnerRegistry, so per-service ownership is
+  /// automatic and needs no central coordination.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithUnknownPerspectiveName_SilentlySkipsAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    // Perspective name a different service might own, but we don't host it in this process.
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: ["SomeOtherService.SomeForeignPerspective"]));
+
+    // No cursor should exist — nothing was rebuilt here because we don't own that perspective.
+    await using var verifyContext = CreateDbContext();
+    var anyCursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .AnyAsync(c => c.StreamId == streamId);
+    await Assert.That(anyCursor).IsFalse();
+  }
+
+  /// <summary>
+  /// When the command requests a mix of locally-owned and foreign perspectives, the receptor
+  /// rebuilds the owned ones and silently ignores the foreign ones. Pins that
+  /// IncludeStreamIds / Mode still apply to the locally-owned subset.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithMixedOwnedAndUnknownNames_RebuildsOwnedOnlyAsync() {
+    var balanceStream = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, balanceStream,
+          new RebuildCreditedEvent { StreamId = balanceStream, Amount = 7m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [
+            "SomeOtherService.ForeignPerspective",
+            RebuildBalancePerspectiveName,
+            "YetAnotherService.AnotherForeign"
+        ]));
+
+    // Only the balance perspective (locally owned) should have its cursor updated.
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == balanceStream && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+  }
+
   [Test]
   public async Task RebuildPerspectiveCommand_WithFromEventIdSet_IgnoresItAndStillRebuildsAsync() {
     var streamId = Guid.NewGuid();
