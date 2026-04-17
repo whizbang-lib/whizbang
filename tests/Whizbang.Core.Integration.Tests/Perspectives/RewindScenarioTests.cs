@@ -410,6 +410,320 @@ public class RewindScenarioTests {
     PartitionNumber = 1
   };
 
+  // ==================== CONTRACT: rewind from a snapshot skips pre-snapshot handler firing ====================
+
+  [Test]
+  public async Task RewindFromSnapshot_Over20Events_OnlyIsNewFirePostPerspective_Async() {
+    // 25-event stream. Snapshot taken at event index 10 — events 0..10 persisted into the
+    // model via snapshot, no replay needed. Events 11..20 have been processed normally.
+    // Events 21..24 pending; plus a late event (index 15) arrives after events 21-23 landed.
+    // The reader returns events from the snapshot forward, annotated. Only is_new events
+    // fire PostPerspective*; pre-snapshot and already-fired events do not.
+    var streamId = Guid.CreateVersion7();
+    const int total = 25;
+    var events = _createSequentialEvents(streamId, total);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+    const string perspectiveName = "Test.SnapshotRewindPerspective";
+
+    // Late event: index 15 (middle of already-processed range). Cursor was at event 23.
+    var cursorBefore = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = eventIds[23],
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = eventIds[15]
+    };
+
+    // is_new set = events never before fired handlers: the late event + any not-yet-processed
+    // events above cursor (here: event 24 pending).
+    var isNewSet = new HashSet<Guid> { eventIds[15], eventIds[24] };
+    var reader = new _scriptedReplayReader(events, isNewSet);
+
+    var coordinator = new _cursorAwareCoordinator {
+      CursorPerStream = { [(streamId, perspectiveName)] = cursorBefore }
+    };
+    coordinator.WorkPerCycle.Add([_lateWork(streamId, perspectiveName, eventIds[23])]);
+
+    var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[24] };
+    var spy = new _recordingReceptorInvoker();
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: new _rangeFilteringEventStore { EventsPerStream = { [streamId] = [.. events] } },
+      eventTypeProvider: new _fakeEventTypeProvider(),
+      replayReader: reader);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    var postPerspective = spy.Invocations
+      .Where(i => i.Stage == LifecycleStage.PostPerspectiveInline)
+      .ToList();
+
+    // LOCK-IN: Exactly the is_new set fires PostPerspectiveInline.
+    foreach (var id in isNewSet) {
+      var fires = postPerspective.Count(i => i.EventId == id);
+      await Assert.That(fires).IsEqualTo(1)
+        .Because($"LOCK-IN: is_new event {id} must fire PostPerspectiveInline exactly once after snapshot-based rewind.");
+    }
+
+    // LOCK-IN: No event outside is_new fires (events 0..14 pre-snapshot/pre-rewind, 16..23 already-processed).
+    var extraneous = postPerspective
+      .Where(i => !isNewSet.Contains(i.EventId))
+      .ToList();
+    await Assert.That(extraneous.Count).IsEqualTo(0)
+      .Because("LOCK-IN: No pre-snapshot or already-processed events fire handlers on a snapshot-based rewind.");
+  }
+
+  // ==================== CONTRACT: rewind from zero (no snapshot) still only fires is_new ====================
+
+  [Test]
+  public async Task RewindFromZero_NoSnapshot_OnlyIsNewFirePostPerspective_Async() {
+    // 15-event stream, no snapshot. Cursor at event 12. Late event at index 4 triggers rewind.
+    // Reader annotates: events 4 (late), 13, 14 (pending) as is_new. Everything else is a
+    // full in-memory replay for model reconstruction only — handlers must not fire.
+    var streamId = Guid.CreateVersion7();
+    const int total = 15;
+    var events = _createSequentialEvents(streamId, total);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+    const string perspectiveName = "Test.RewindFromZeroPerspective";
+
+    var cursorBefore = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = eventIds[12],
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = eventIds[4]
+    };
+    var isNewSet = new HashSet<Guid> { eventIds[4], eventIds[13], eventIds[14] };
+
+    var coordinator = new _cursorAwareCoordinator {
+      CursorPerStream = { [(streamId, perspectiveName)] = cursorBefore }
+    };
+    coordinator.WorkPerCycle.Add([_lateWork(streamId, perspectiveName, eventIds[12])]);
+
+    var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[14] };
+    var spy = new _recordingReceptorInvoker();
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: new _rangeFilteringEventStore { EventsPerStream = { [streamId] = [.. events] } },
+      eventTypeProvider: new _fakeEventTypeProvider(),
+      replayReader: new _scriptedReplayReader(events, isNewSet));
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    var postPerspective = spy.Invocations
+      .Where(i => i.Stage == LifecycleStage.PostPerspectiveInline)
+      .ToList();
+    foreach (var id in isNewSet) {
+      await Assert.That(postPerspective.Count(i => i.EventId == id)).IsEqualTo(1)
+        .Because($"LOCK-IN: is_new event {id} must fire exactly once on a from-zero rewind.");
+    }
+    var extraneous = postPerspective.Where(i => !isNewSet.Contains(i.EventId)).ToList();
+    await Assert.That(extraneous.Count).IsEqualTo(0)
+      .Because("LOCK-IN: From-zero rewind must not fire handlers for the 12 already-processed events.");
+  }
+
+  // ==================== CONTRACT: chained rewinds — 3 rewinds back-to-back ====================
+
+  [Test]
+  public async Task ChainedRewinds_ThreeRewindsInSuccession_NoHandlerReFires_Async() {
+    // Cycle 1: late event A triggers rewind. Cycle 2: late event B triggers a fresh rewind.
+    // Cycle 3: late event C triggers another fresh rewind. Assert: each late event fires
+    // handlers exactly once, no handler re-fires for any event across the three rewinds.
+    var streamId = Guid.CreateVersion7();
+    var events = _createSequentialEvents(streamId, count: 10);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+    const string perspectiveName = "Test.ChainedRewindsPerspective";
+
+    // Cursor starts at event 9 (all ahead already processed). Three late arrivals: 1, 3, 5.
+    var cursor = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = eventIds[9],
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = eventIds[1]
+    };
+
+    var coordinator = new _sequentialRewindCoordinator(
+      streamId, perspectiveName, eventIds, lateIndices: [1, 3, 5], baseCursor: cursor);
+
+    var runner = new _rewindTrackingRunner {
+      HighestProcessedIdProvider = () => eventIds[9]
+    };
+    var spy = new _recordingReceptorInvoker();
+    // Each cycle's rewind sees a single is_new event (the trigger for that cycle).
+    var reader = new _cyclicReplayReader(events, coordinator);
+
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: new _rangeFilteringEventStore { EventsPerStream = { [streamId] = [.. events] } },
+      eventTypeProvider: new _fakeEventTypeProvider(),
+      replayReader: reader);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForAllRewindsAsync(TimeSpan.FromSeconds(15));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    var postPerspective = spy.Invocations
+      .Where(i => i.Stage == LifecycleStage.PostPerspectiveInline)
+      .ToList();
+    foreach (var lateIdx in new[] { 1, 3, 5 }) {
+      await Assert.That(postPerspective.Count(i => i.EventId == eventIds[lateIdx])).IsEqualTo(1)
+        .Because($"LOCK-IN: Late event index {lateIdx} must fire PostPerspectiveInline exactly once across three chained rewinds.");
+    }
+
+    // LOCK-IN: Every other event (0, 2, 4, 6..9) must NOT fire — they were already processed.
+    var alreadyProcessedIdx = new[] { 0, 2, 4, 6, 7, 8, 9 };
+    foreach (var idx in alreadyProcessedIdx) {
+      await Assert.That(postPerspective.Count(i => i.EventId == eventIds[idx])).IsEqualTo(0)
+        .Because($"LOCK-IN: Already-processed event index {idx} must NOT fire during any of the three chained rewinds.");
+    }
+
+    await Assert.That(runner.RewindTriggerEventIds.Count).IsEqualTo(3)
+      .Because("LOCK-IN: Exactly three rewinds must fire, one per late arrival.");
+  }
+
+  // ==================== CONTRACT: stage-level idempotency per event ====================
+
+  [Test]
+  public async Task Rewind_StageLevelIdempotency_EachStageFiresOncePerEvent_Async() {
+    // For the rewind trigger event, every PostPerspective* stage fires exactly once.
+    // (Detached, Inline, AllPerspectivesDetached, AllPerspectivesInline, LifecycleDetached,
+    // LifecycleInline — whatever the worker emits for this event.)
+    var streamId = Guid.CreateVersion7();
+    var events = _createSequentialEvents(streamId, count: 5);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+    const string perspectiveName = "Test.StageIdempotencyPerspective";
+
+    var cursor = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = eventIds[4],
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = eventIds[2]
+    };
+
+    var coordinator = new _cursorAwareCoordinator {
+      CursorPerStream = { [(streamId, perspectiveName)] = cursor }
+    };
+    coordinator.WorkPerCycle.Add([_lateWork(streamId, perspectiveName, eventIds[4])]);
+
+    var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[4] };
+    var spy = new _recordingReceptorInvoker();
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: new _rangeFilteringEventStore { EventsPerStream = { [streamId] = [.. events] } },
+      eventTypeProvider: new _fakeEventTypeProvider(),
+      replayReader: new _scriptedReplayReader(events, new HashSet<Guid> { eventIds[2] }));
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // The once-per-event stages are the "Inline" variants of each logical phase.
+    // ImmediateDetached / other Detached variants are fire-and-forget auxiliary hooks
+    // that may fire multiple times as a consequence of how stages chain through the
+    // worker pipeline — they are not under the once-per-event contract here.
+    var onceStages = new[] {
+      LifecycleStage.PrePerspectiveInline,
+      LifecycleStage.PostPerspectiveInline,
+      LifecycleStage.PostAllPerspectivesInline,
+      LifecycleStage.PostLifecycleInline,
+    };
+    var triggerInvocations = spy.Invocations.Where(i => i.EventId == eventIds[2]).ToList();
+    foreach (var stage in onceStages) {
+      var count = triggerInvocations.Count(i => i.Stage == stage);
+      await Assert.That(count).IsLessThanOrEqualTo(1)
+        .Because($"LOCK-IN: Stage {stage} must fire at most once for a given event, even on the rewind path.");
+    }
+
+    // Must have fired at least one PostPerspective* stage for the trigger event.
+    await Assert.That(triggerInvocations.Any(i => i.Stage == LifecycleStage.PostPerspectiveInline))
+      .IsTrue()
+      .Because("LOCK-IN: PostPerspectiveInline must fire for the rewind trigger event.");
+  }
+
+  // ==================== CONTRACT: PostAllPerspectives / PostLifecycle fire once per is_new event ====================
+
+  [Test]
+  public async Task Rewind_PostAllPerspectivesAndLifecycle_FireOncePerIsNewEvent_Async() {
+    // PostAllPerspectives + PostLifecycle are gated by the LifecycleCoordinator's WhenAll.
+    // This test asserts: on the rewind path, they fire for is_new events only, exactly once,
+    // and never for already-processed events.
+    var streamId = Guid.CreateVersion7();
+    var events = _createSequentialEvents(streamId, count: 8);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+    const string perspectiveName = "Test.PostLifecycleRewindPerspective";
+
+    var cursor = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = eventIds[5],
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = eventIds[2]
+    };
+    var isNewSet = new HashSet<Guid> { eventIds[2], eventIds[6], eventIds[7] };
+
+    var coordinator = new _cursorAwareCoordinator {
+      CursorPerStream = { [(streamId, perspectiveName)] = cursor }
+    };
+    coordinator.WorkPerCycle.Add([_lateWork(streamId, perspectiveName, eventIds[5])]);
+
+    var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[7] };
+    var spy = new _recordingReceptorInvoker();
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: new _rangeFilteringEventStore { EventsPerStream = { [streamId] = [.. events] } },
+      eventTypeProvider: new _fakeEventTypeProvider(),
+      replayReader: new _scriptedReplayReader(events, isNewSet));
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Every stage that appears in the log for an already-processed event is a violation.
+    var processedIds = new HashSet<Guid> {
+      eventIds[0], eventIds[1], eventIds[3], eventIds[4], eventIds[5]
+    };
+    var violations = spy.Invocations.Where(i => processedIds.Contains(i.EventId)).ToList();
+    await Assert.That(violations.Count).IsEqualTo(0)
+      .Because("LOCK-IN: PostAllPerspectives / PostLifecycle must not fire for already-processed events during rewind.");
+
+    // PostPerspectiveInline fires for is_new events.
+    foreach (var id in isNewSet) {
+      var fires = spy.Invocations.Count(i => i.EventId == id && i.Stage == LifecycleStage.PostPerspectiveInline);
+      await Assert.That(fires).IsEqualTo(1)
+        .Because($"LOCK-IN: PostPerspectiveInline must fire exactly once for is_new event {id}.");
+    }
+  }
+
   // ==================== Helpers ====================
 
   private static List<MessageEnvelope<IEvent>> _createSequentialEvents(Guid streamId, int count) {
@@ -887,6 +1201,110 @@ public class RewindScenarioTests {
   // because of how Guid packs its fields. Keeping Comparer<Guid>.Default aligns the
   // test fakes with how Whizbang's generated identity types actually order themselves.
   internal static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Default;
+
+  /// <summary>
+  /// Coordinator for the chained-rewinds scenario. Emits three distinct rewind cycles in
+  /// sequence — each cycle returns a cursor with RewindTriggerEventId set to the next late
+  /// index, and a single pending work item. On completion the cursor clears and advances.
+  /// The worker sees three separate rewinds rather than a single collapsed one.
+  /// </summary>
+  private sealed class _sequentialRewindCoordinator : IWorkCoordinator {
+    private readonly Guid _streamId;
+    private readonly string _perspectiveName;
+    private readonly Guid[] _eventIds;
+    private readonly int[] _lateIndices;
+    private int _currentLateIdx;
+    private readonly PerspectiveCursorInfo _baseCursor;
+    private PerspectiveCursorInfo _cursor;
+    private readonly TaskCompletionSource _allRewinds = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public _sequentialRewindCoordinator(
+      Guid streamId, string perspectiveName,
+      Guid[] eventIds, int[] lateIndices,
+      PerspectiveCursorInfo baseCursor) {
+      _streamId = streamId;
+      _perspectiveName = perspectiveName;
+      _eventIds = eventIds;
+      _lateIndices = lateIndices;
+      _baseCursor = baseCursor;
+      _cursor = baseCursor;
+    }
+
+    public int CurrentLateIndex => _currentLateIdx < _lateIndices.Length ? _lateIndices[_currentLateIdx] : -1;
+
+    public Task WaitForAllRewindsAsync(TimeSpan timeout) => _allRewinds.Task.WaitAsync(timeout);
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+      if (_currentLateIdx >= _lateIndices.Length) {
+        return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+      }
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = [new PerspectiveWork {
+          WorkId = Guid.CreateVersion7(),
+          StreamId = _streamId,
+          PerspectiveName = _perspectiveName,
+          LastProcessedEventId = _baseCursor.LastEventId,
+          PartitionNumber = 1
+        }]
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
+      if (completion.Status.HasFlag(PerspectiveProcessingStatus.Completed)) {
+        _currentLateIdx++;
+        if (_currentLateIdx < _lateIndices.Length) {
+          // Set cursor for the NEXT rewind.
+          _cursor = _baseCursor with {
+            Status = PerspectiveProcessingStatus.RewindRequired,
+            RewindTriggerEventId = _eventIds[_lateIndices[_currentLateIdx]]
+          };
+        } else {
+          _cursor = _baseCursor with {
+            Status = PerspectiveProcessingStatus.None,
+            RewindTriggerEventId = null
+          };
+          _allRewinds.TrySetResult();
+        }
+      }
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(streamId == _streamId && perspectiveName == _perspectiveName ? _cursor : null);
+  }
+
+  /// <summary>
+  /// Replay reader that, each time it's called, returns the CURRENT rewind's trigger event
+  /// as is_new. Simulates the LEFT JOIN behavior in a sequence of rewinds: each cycle sees
+  /// exactly one is_new event (the late arrival that triggered that cycle).
+  /// </summary>
+  private sealed class _cyclicReplayReader : IPerspectiveReplayReader {
+    private readonly List<MessageEnvelope<IEvent>> _events;
+    private readonly _sequentialRewindCoordinator _coordinator;
+
+    public _cyclicReplayReader(List<MessageEnvelope<IEvent>> events, _sequentialRewindCoordinator coordinator) {
+      _events = events;
+      _coordinator = coordinator;
+    }
+
+    public async IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(
+      Guid streamId, string perspectiveName, int fromVersionExclusive,
+      IReadOnlyCollection<Type> eventTypes, [EnumeratorCancellation] CancellationToken cancellationToken) {
+      await Task.CompletedTask;
+      var lateIdx = _coordinator.CurrentLateIndex;
+      foreach (var env in _events) {
+        var isNew = lateIdx >= 0 && env.MessageId.Value == _events[lateIdx].MessageId.Value;
+        yield return new ReplayEventEnvelope(env, isNew);
+      }
+    }
+  }
 
   /// <summary>
   /// Replay reader that returns the provided envelopes, each annotated with IsNew=true
