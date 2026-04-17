@@ -37,15 +37,12 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
   private const string THIS_SERVICE = "ChatService";
   private const string OTHER_SERVICE = "BffService";
-
-  // Compute type names from actual types — must match what EventTypeMatchingHelper.NormalizeTypeName produces.
-  // FakeOwnedEvent lives in namespace Whizbang.Core.Tests.Workers (nested in this test class).
-  private static string __OwnedNamespace => typeof(FakeOwnedEvent).Namespace!;
-  private static string __OwnedEventType => typeof(FakeOwnedEvent).FullName + ", " + typeof(FakeOwnedEvent).Assembly.GetName().Name;
-  private static string __OwnedCommandType => typeof(FakeOwnedCommand).FullName + ", " + typeof(FakeOwnedCommand).Assembly.GetName().Name;
-
-  // Unowned: a namespace NOT in the owned set
   private const string UNOWNED_EVENT_TYPE = "Some.Other.Namespace.SomeEvent, SomeAssembly";
+
+  // Compute type names from actual types so they match EventTypeMatchingHelper normalization.
+  private static readonly string _ownedNamespace = typeof(FakeOwnedEvent).Namespace!;
+  private static readonly string _ownedEventType = typeof(FakeOwnedEvent).FullName + ", " + typeof(FakeOwnedEvent).Assembly.GetName().Name;
+  private static readonly string _ownedCommandType = typeof(FakeOwnedCommand).FullName + ", " + typeof(FakeOwnedCommand).Assembly.GetName().Name;
 
   // ========================================
   // Owned Event Echo Suppression
@@ -58,13 +55,13 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedEvent_FromThisService_IsDiscardedUnconditionallyAsync() {
-    var worker = _createWorker(ownedDomains: [_OwnedNamespace], serviceName: THIS_SERVICE);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: THIS_SERVICE);
 
     try {
-      await worker.SimulateMessageAsync(envelope, _OwnedEventType);
+      await worker.SimulateMessageAsync(envelope, _ownedEventType);
     } catch {
       // Processing may throw after discard check — we only care about inbox write
     }
@@ -81,14 +78,14 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedEvent_FromOtherService_IsStillDiscardedAsync() {
-    var worker = _createWorker(ownedDomains: [_OwnedNamespace], serviceName: THIS_SERVICE);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
     // Event with hop claiming it came from BffService — still echo for owned events
     var envelope = _createEventEnvelope(sourceServiceName: OTHER_SERVICE);
 
     try {
-      await worker.SimulateMessageAsync(envelope, _OwnedEventType);
+      await worker.SimulateMessageAsync(envelope, _ownedEventType);
     } catch {
       // Processing may throw after discard check — we only care about inbox write
     }
@@ -109,13 +106,13 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedCommand_FromThisService_IsDiscardedAsync() {
-    var worker = _createWorker(ownedDomains: [_OwnedNamespace], serviceName: THIS_SERVICE);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
     var envelope = _createCommandEnvelope(sourceServiceName: THIS_SERVICE);
 
     try {
-      await worker.SimulateMessageAsync(envelope, _OwnedCommandType);
+      await worker.SimulateMessageAsync(envelope, _ownedCommandType);
     } catch {
       // Processing may throw after discard check — we only care about inbox write
     }
@@ -132,13 +129,13 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedCommand_FromOtherService_IsProcessedAsync() {
-    var worker = _createWorker(ownedDomains: [_OwnedNamespace], serviceName: THIS_SERVICE);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
     var envelope = _createCommandEnvelope(sourceServiceName: OTHER_SERVICE);
 
     try {
-      await worker.SimulateMessageAsync(envelope, _OwnedCommandType);
+      await worker.SimulateMessageAsync(envelope, _ownedCommandType);
     } catch {
       // Serialization will fail (no real serializer) — that's fine, we passed the discard check
     }
@@ -160,7 +157,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task NonOwnedEvent_IsNotDiscardedAsync() {
-    var worker = _createWorker(ownedDomains: [_OwnedNamespace], serviceName: THIS_SERVICE);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: OTHER_SERVICE);
@@ -190,7 +187,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     var envelope = _createEventEnvelope(sourceServiceName: THIS_SERVICE);
 
     try {
-      await worker.SimulateMessageAsync(envelope, _OwnedEventType);
+      await worker.SimulateMessageAsync(envelope, _ownedEventType);
     } catch {
       // Serialization will fail — we only care about the echo check
     }
@@ -290,7 +287,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
   // -- Fake message types --
   // These must be internal (not private) so typeof().FullName includes the enclosing class.
-  // The namespace (Whizbang.Core.Tests.Workers) is used as _OwnedNamespace for routing.
+  // The namespace (Whizbang.Core.Tests.Workers) is used as _ownedNamespace for routing.
 
   /// <summary>Fake event implementing IEvent — registered in <see cref="StubEventTypeProvider"/>.</summary>
   internal sealed class FakeOwnedEvent : IEvent;
