@@ -75,13 +75,32 @@ public sealed partial class PerspectiveRebuilder(
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
       var pendingCompletions = completer != null ? new List<PerspectiveCursorCompletion>(64) : null;
 
-      // Get stream IDs to process
+      // Get stream IDs to process. When the caller didn't supply an explicit list we narrow
+      // to streams that actually contain events of types this perspective handles — otherwise
+      // we'd iterate every stream in wh_event_store for every perspective (most RunAsync calls
+      // end up as no-ops because the stream has no matching events). The perspective's event
+      // types come from the source-generated registry.
       if (streamIds == null) {
         var eventStoreQuery = sp.GetRequiredService<IEventStoreQuery>();
-        streamIds = await eventStoreQuery.Query
-            .Select(e => e.StreamId)
-            .Distinct()
-            .ToListAsync(ct);
+        var perspectiveInfo = registry.GetRegisteredPerspectives()
+            .FirstOrDefault(p => p.ClrTypeName == perspectiveName);
+        var relevantEventTypes = perspectiveInfo?.EventTypes;
+        if (relevantEventTypes is { Count: > 0 }) {
+          streamIds = await eventStoreQuery.Query
+              .Where(e => relevantEventTypes.Contains(e.EventType))
+              .Select(e => e.StreamId)
+              .Distinct()
+              .ToListAsync(ct);
+          LogStreamScoping(logger, perspectiveName, streamIds.Count, relevantEventTypes.Count);
+        } else {
+          // No event-type metadata — fall back to all streams. Rare, but possible if a
+          // perspective's registration info is incomplete.
+          streamIds = await eventStoreQuery.Query
+              .Select(e => e.StreamId)
+              .Distinct()
+              .ToListAsync(ct);
+          LogStreamScopingFallback(logger, perspectiveName, streamIds.Count);
+        }
       }
 
       var totalStreams = streamIds.Count;
@@ -192,6 +211,16 @@ public sealed partial class PerspectiveRebuilder(
       Message = "Rebuild {Perspective}: persisted {Count} cursor checkpoint(s) in {ElapsedMs}ms at {Processed}/{Total} streams")]
   private static partial void LogCursorFlushed(ILogger logger, string perspective, int count,
       long elapsedMs, int processed, int total);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Rebuild {Perspective}: scoped to {StreamCount} stream(s) across {EventTypeCount} event type(s)")]
+  private static partial void LogStreamScoping(ILogger logger, string perspective, int streamCount,
+      int eventTypeCount);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild {Perspective}: no event-type metadata in runner registry; falling back to iterating all {StreamCount} streams")]
+  private static partial void LogStreamScopingFallback(ILogger logger, string perspective,
+      int streamCount);
 }
 
 /// <summary>
