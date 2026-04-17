@@ -78,9 +78,9 @@ public class RewindScenarioTests {
     };
 
     var coordinator = new _cursorAwareCoordinator {
-      CursorPerStream = { [(streamId, perspectiveName)] = cursor },
-      FirstCycleWork = [workForEvent3]
+      CursorPerStream = { [(streamId, perspectiveName)] = cursor }
     };
+    coordinator.WorkPerCycle.Add([workForEvent3]);
 
     var runner = new _rewindTrackingRunner { RewindResultEventId = event5Id };
     var eventStore = new _rangeFilteringEventStore();
@@ -126,13 +126,125 @@ public class RewindScenarioTests {
                "handlers re-fire during rewind. Idempotency per event id.");
   }
 
+  // ==================== CONTRACT: events arriving after rewind fire in Live mode ====================
+
+  [Test]
+  public async Task PostRewind_EventsArrivingAfterRewindCycle_FireInLiveModeExactlyOnce_Async() {
+    // Scenario: event 3 triggers rewind in cycle 1. In cycle 2, new events 6 and 7 arrive
+    // (they weren't present during the rewind). They must process in Live mode (not Replay)
+    // and fire handlers exactly once each. Already-processed events (1,2,4,5) and the
+    // rewind trigger (3) must not fire again.
+    var streamId = Guid.CreateVersion7();
+    var events = _createSequentialEvents(streamId, count: 7);
+    var event3Id = events[2].MessageId.Value;
+    var event5Id = events[4].MessageId.Value;
+    var event6Id = events[5].MessageId.Value;
+    var event7Id = events[6].MessageId.Value;
+
+    var perspectiveName = "Test.PostRewindPerspective";
+
+    // Pre-rewind cursor: 1,2,4,5 processed, event 3 flagged out-of-order.
+    var preRewindCursor = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = event5Id,
+      Status = PerspectiveProcessingStatus.RewindRequired,
+      RewindTriggerEventId = event3Id
+    };
+
+    var workForRewind = new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = event5Id,
+      PartitionNumber = 1
+    };
+    var workForEvents6_7 = new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = event5Id,
+      PartitionNumber = 1
+    };
+
+    var coordinator = new _cursorAwareCoordinator {
+      CursorPerStream = { [(streamId, perspectiveName)] = preRewindCursor }
+    };
+    coordinator.WorkPerCycle.Add([workForRewind]);
+    coordinator.WorkPerCycle.Add([workForEvents6_7]);
+
+    var runner = new _rewindTrackingRunner {
+      RewindResultEventId = event5Id,
+      NormalRunResultEventId = event7Id
+    };
+    var eventStore = new _rangeFilteringEventStore();
+    eventStore.EventsPerStream[streamId] = [.. events];
+    var spy = new _recordingReceptorInvoker();
+    var eventTypeProvider = new _fakeEventTypeProvider();
+
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: eventStore,
+      eventTypeProvider: eventTypeProvider);
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    // Wait enough cycles for cycle 2's work batch to be delivered and processed.
+    await coordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: Cycle 2 ran the normal (non-rewind) path.
+    await Assert.That(runner.NormalRunCount).IsGreaterThanOrEqualTo(1)
+      .Because("After rewind completes the cursor must clear RewindRequired and route to RunAsync.");
+
+    // LOCK-IN: Events 6 and 7 fired PostPerspectiveInline in Live mode, exactly once each.
+    var postPerspectiveInvocations = spy.Invocations
+      .Where(i => i.Stage == LifecycleStage.PostPerspectiveInline)
+      .ToList();
+    var event6Invocations = postPerspectiveInvocations.Where(i => i.EventId == event6Id).ToList();
+    var event7Invocations = postPerspectiveInvocations.Where(i => i.EventId == event7Id).ToList();
+
+    await Assert.That(event6Invocations.Count).IsEqualTo(1)
+      .Because("LOCK-IN: Event 6 arriving after rewind must fire PostPerspectiveInline exactly once.");
+    await Assert.That(event7Invocations.Count).IsEqualTo(1)
+      .Because("LOCK-IN: Event 7 arriving after rewind must fire PostPerspectiveInline exactly once.");
+    await Assert.That(event6Invocations[0].ProcessingMode).IsNotEqualTo(ProcessingMode.Replay)
+      .Because("LOCK-IN: New events post-rewind must be invoked in Live mode, not Replay.");
+    await Assert.That(event7Invocations[0].ProcessingMode).IsNotEqualTo(ProcessingMode.Replay)
+      .Because("LOCK-IN: New events post-rewind must be invoked in Live mode, not Replay.");
+
+    // LOCK-IN: Already-processed events (1,2,4,5) must never fire PostPerspective.
+    var alreadyProcessedIds = new HashSet<Guid> {
+      events[0].MessageId.Value, events[1].MessageId.Value,
+      events[3].MessageId.Value, event5Id
+    };
+    var wrongFires = postPerspectiveInvocations
+      .Where(i => alreadyProcessedIds.Contains(i.EventId))
+      .ToList();
+    await Assert.That(wrongFires.Count).IsEqualTo(0)
+      .Because("LOCK-IN: Already-processed events must not re-fire after rewind + new events.");
+
+    // LOCK-IN: The rewind trigger event (3) fires exactly once (in cycle 1).
+    var event3Invocations = postPerspectiveInvocations.Where(i => i.EventId == event3Id).ToList();
+    await Assert.That(event3Invocations.Count).IsEqualTo(1)
+      .Because("LOCK-IN: Rewind trigger event must fire exactly once on the rewind cycle.");
+  }
+
   // ==================== Helpers ====================
 
   private static List<MessageEnvelope<IEvent>> _createSequentialEvents(Guid streamId, int count) {
+    // TrackedGuid.NewMedo() wraps Medo.Uuid7 which has sub-millisecond precision and
+    // guaranteed monotonicity within a tight loop — preferred throughout Whizbang over
+    // Guid.CreateVersion7() (ms precision only).
     var list = new List<MessageEnvelope<IEvent>>(count);
     for (var i = 0; i < count; i++) {
       list.Add(new MessageEnvelope<IEvent> {
-        MessageId = MessageId.From(Guid.CreateVersion7()),
+        MessageId = MessageId.From(TrackedGuid.NewMedo().Value),
         Payload = new _fakeEvent(i + 1),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
@@ -150,7 +262,9 @@ public class RewindScenarioTests {
 
     var instanceProvider = new _fakeInstanceProvider();
     var databaseReadiness = new _fakeDatabaseReadiness();
-    IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
+    // Use Instant strategy so completion flows through to the coordinator immediately,
+    // making cursor-state transitions deterministic between cycles.
+    IPerspectiveCompletionStrategy strategy = new InstantCompletionStrategy();
 
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
@@ -183,15 +297,18 @@ public class RewindScenarioTests {
   private sealed record _fakeEvent(int Sequence) : IEvent;
 
   /// <summary>
-  /// Coordinator that serves a configured cursor per (stream, perspective) and a single batch
-  /// of work on the first cycle, then empty.
+  /// Coordinator that serves a configured cursor per (stream, perspective) and a configurable
+  /// batch of work per cycle. After cycle 1 completes successfully the RewindRequired flag is
+  /// cleared on the cursor to simulate the real completion flow.
   /// </summary>
   private sealed class _cursorAwareCoordinator : IWorkCoordinator {
     private int _cycleCount;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _cycleWaiters = new();
 
+    public int CycleCount => _cycleCount;
     public Dictionary<(Guid StreamId, string PerspectiveName), PerspectiveCursorInfo> CursorPerStream { get; } = new();
-    public List<PerspectiveWork> FirstCycleWork { get; set; } = [];
+    /// <summary>One list per cycle, in order. Cycles beyond this return empty work.</summary>
+    public List<List<PerspectiveWork>> WorkPerCycle { get; } = [];
 
     public Task WaitForCyclesAsync(int count, TimeSpan timeout) {
       var waiter = _cycleWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
@@ -205,11 +322,28 @@ public class RewindScenarioTests {
           kvp.Value.TrySetResult();
         }
       }
-      var work = current == 1 ? [.. FirstCycleWork] : new List<PerspectiveWork>();
+      var idx = current - 1;
+      var work = idx < WorkPerCycle.Count ? [.. WorkPerCycle[idx]] : new List<PerspectiveWork>();
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = work });
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
+      // Mirror the real coordinator: on any successful completion (Completed flag set), clear
+      // RewindRequired and advance LastEventId so the next cycle routes through the normal path.
+      var key = (completion.StreamId, completion.PerspectiveName);
+      if (CursorPerStream.TryGetValue(key, out var existing)
+          && completion.Status.HasFlag(PerspectiveProcessingStatus.Completed)) {
+        var advancedEventId = completion.LastEventId != Guid.Empty
+          ? completion.LastEventId
+          : existing.LastEventId;
+        CursorPerStream[key] = existing with {
+          LastEventId = advancedEventId,
+          Status = PerspectiveProcessingStatus.None,
+          RewindTriggerEventId = null
+        };
+      }
+      return Task.CompletedTask;
+    }
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -220,27 +354,48 @@ public class RewindScenarioTests {
   }
 
   /// <summary>
-  /// Runner that records every RewindAndRunAsync call so tests can assert the triggering event id.
-  /// RunAsync returns an empty completion — the normal path isn't exercised by the rewind scenario.
+  /// Runner that records every RewindAndRunAsync and RunAsync call so tests can assert
+  /// which code path exercised each cycle and what was processed.
   /// </summary>
   private sealed class _rewindTrackingRunner : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
     private readonly ConcurrentBag<Guid> _rewindTriggers = [];
     private readonly TaskCompletionSource _firstRewind = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _firstNormalRun = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _normalRunCount;
 
     public Guid RewindResultEventId { get; set; }
+    /// <summary>
+    /// When set and non-empty, RunAsync returns Status=Completed with this as LastEventId.
+    /// Otherwise it returns Status=None (no events to process on this cycle).
+    /// </summary>
+    public Guid NormalRunResultEventId { get; set; }
     public IReadOnlyCollection<Guid> RewindTriggerEventIds => [.. _rewindTriggers];
+    public int NormalRunCount => _normalRunCount;
 
     public Task WaitForRewindAsync(TimeSpan timeout) => _firstRewind.Task.WaitAsync(timeout);
+    public Task WaitForNormalRunAsync(TimeSpan timeout) => _firstNormalRun.Task.WaitAsync(timeout);
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
-      Task.FromResult(new PerspectiveCursorCompletion {
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      Interlocked.Increment(ref _normalRunCount);
+      if (NormalRunResultEventId != Guid.Empty) {
+        _firstNormalRun.TrySetResult();
+        return Task.FromResult(new PerspectiveCursorCompletion {
+          StreamId = streamId,
+          PerspectiveName = perspectiveName,
+          LastEventId = NormalRunResultEventId,
+          Status = PerspectiveProcessingStatus.Completed,
+          EventsProcessed = 1
+        });
+      }
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = lastProcessedEventId ?? Guid.Empty,
         Status = PerspectiveProcessingStatus.None
       });
+    }
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
       Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
@@ -301,12 +456,29 @@ public class RewindScenarioTests {
       var filtered = list
         .Where(e => (afterEventId is null || _compare(e.MessageId.Value, afterEventId.Value) > 0)
                  && (upToEventId == Guid.Empty || _compare(e.MessageId.Value, upToEventId) <= 0))
-        .OrderBy(e => e.MessageId.Value, Comparer<Guid>.Default)
+        .OrderBy(e => e.MessageId.Value, _uuidV7Comparer)
         .ToList();
       return Task.FromResult(filtered);
     }
 
-    private static int _compare(Guid a, Guid b) => a.CompareTo(b);
+    // Bytewise big-endian comparison matches UUIDv7 time-ordering semantics.
+    // Guid.CompareTo compares underlying fields in a struct-specific order which does NOT
+    // match the natural v7 ordering.
+    private static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Create(_compare);
+
+    private static int _compare(Guid a, Guid b) {
+      Span<byte> ab = stackalloc byte[16];
+      Span<byte> bb = stackalloc byte[16];
+      a.TryWriteBytes(ab, bigEndian: true, out _);
+      b.TryWriteBytes(bb, bigEndian: true, out _);
+      for (var i = 0; i < 16; i++) {
+        var d = ab[i].CompareTo(bb[i]);
+        if (d != 0) {
+          return d;
+        }
+      }
+      return 0;
+    }
 
     // Drain-mode deserialization — not exercised by these tests; return empty.
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
