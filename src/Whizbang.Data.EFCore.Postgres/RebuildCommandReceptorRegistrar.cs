@@ -14,9 +14,19 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// needs runtime registration to participate in the dispatch pipeline.
 /// </summary>
 /// <remarks>
-/// Registered at <see cref="LifecycleStage.PostInboxInline"/> — the stage where distributed
-/// commands are invoked after arriving through the inbox. This matches the default-stage
-/// behavior documented on <see cref="IReceptorInvoker"/>.
+/// <para>
+/// Registered at the three default lifecycle stages that receptors without <c>[FireAt]</c>
+/// fire at: <see cref="LifecycleStage.LocalImmediateInline"/> (same-process dispatch),
+/// <see cref="LifecycleStage.PreOutboxInline"/> (distributed sender), and
+/// <see cref="LifecycleStage.PostInboxInline"/> (distributed receiver). This matches the
+/// compile-time behavior documented on <see cref="IReceptorInvoker"/> so that a caller
+/// running <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c> hits the
+/// receptor regardless of whether the dispatch is local or distributed.
+/// </para>
+/// <para>
+/// The invoker's same-service dedup (<c>ReceptorInvoker</c>) already prevents double-firing
+/// when a service dispatches the command to itself — no extra dedup is needed here.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
 internal sealed class RebuildCommandReceptorRegistrar(
@@ -26,6 +36,11 @@ internal sealed class RebuildCommandReceptorRegistrar(
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var receptor = new RebuildPerspectiveCommandReceptor(scopeFactory, receptorLogger);
+    // Match the compile-time default-stage behavior of receptors without [FireAt]. Registering
+    // only PostInboxInline misses the common case where a service dispatches the command to
+    // itself via IDispatcher.SendAsync (that path fires LocalImmediateInline only).
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.LocalImmediateInline);
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PreOutboxInline);
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PostInboxInline);
     return Task.CompletedTask;
   }

@@ -155,6 +155,8 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddSingleton(typeof(IPerspectiveRunnerRegistry), registryType);
 
     // Recording invoker — observes ProcessingMode seen by lifecycle receptor invocation.
+    // The dispatch-pipeline test uses _buildDispatchServices() instead, which swaps this for
+    // the real ReceptorInvoker backed by the source-generated IReceptorRegistry.
     services.AddScoped<IReceptorInvoker>(_ => new RecordingReceptorInvoker(_receptorInvocations, _receptorInvocationsLock));
 
     // Cursor persistence: matches what PostgresDriverExtensions.Postgres registers.
@@ -164,6 +166,69 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
     // IPerspectiveRebuilder — normally registered by AddWhizbang, re-added here because
     // the hand-built DI container skips AddWhizbang.
+    services.AddSingleton<IPerspectiveRebuilder, PerspectiveRebuilder>();
+
+    return services.BuildServiceProvider();
+  }
+
+  /// <summary>
+  /// Variant of the rebuild DI container that swaps the RecordingReceptorInvoker for the real
+  /// <see cref="ReceptorInvoker"/> backed by the source-generated <c>GeneratedReceptorRegistry</c>.
+  /// Used by the dispatch-pipeline test to exercise the same path the JDX BFF's admin endpoint
+  /// uses: <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>, which fans out to
+  /// <see cref="IReceptorInvoker.InvokeAsync"/> at <see cref="LifecycleStage.LocalImmediateInline"/>
+  /// for same-process dispatch. The runtime-registered receptor must be present at that stage or
+  /// the cursor never updates.
+  /// </summary>
+  private ServiceProvider _buildDispatchServices() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+
+    services.AddScoped<WorkCoordinationDbContext>(_ => new WorkCoordinationDbContext(DbContextOptions));
+    services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
+
+    services.AddScoped<IEventStore>(sp =>
+        new PoisonEventStore(
+            new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()),
+            _poisonStreams));
+
+    services.AddScoped<IEventStoreQuery>(sp =>
+        new EFCoreFilterableEventStoreQuery(sp.GetRequiredService<WorkCoordinationDbContext>()));
+
+    services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
+        new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
+            sp.GetRequiredService<WorkCoordinationDbContext>(),
+            "rebuild_balance"));
+    services.AddScoped<IPerspectiveStore<RebuildInventoryModel>>(sp =>
+        new EFCorePostgresPerspectiveStore<RebuildInventoryModel>(
+            sp.GetRequiredService<WorkCoordinationDbContext>(),
+            "rebuild_inventory"));
+
+    services.AddScoped<RebuildBalancePerspective>();
+    services.AddScoped<RebuildInventoryPerspective>();
+
+    var asm = typeof(PerspectiveRebuilderIntegrationTests).Assembly;
+    services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildBalancePerspectiveRunner"));
+    services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildInventoryPerspectiveRunner"));
+
+    var runnerRegistryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
+        t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
+    services.AddSingleton(typeof(IPerspectiveRunnerRegistry), runnerRegistryType);
+
+    // REAL IReceptorRegistry — source-generated per-assembly. This is the one the runtime
+    // IReceptorRegistry.Register call writes to, and the one ReceptorInvoker reads from.
+    var receptorRegistryType = asm.GetTypes().Single(t => t.Name == "GeneratedReceptorRegistry" &&
+        t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
+    services.AddSingleton(typeof(IReceptorRegistry), receptorRegistryType);
+
+    // REAL IReceptorInvoker — routes messages to the receptors registered in IReceptorRegistry.
+    services.AddScoped<IReceptorInvoker>(sp =>
+        new ReceptorInvoker(sp.GetRequiredService<IReceptorRegistry>(), sp));
+
+    services.AddScoped<IPerspectiveCheckpointCompleter>(sp =>
+        new EFCorePostgresPerspectiveCheckpointCompleter(
+            sp.GetRequiredService<WorkCoordinationDbContext>()));
+
     services.AddSingleton<IPerspectiveRebuilder, PerspectiveRebuilder>();
 
     return services.BuildServiceProvider();
@@ -1125,5 +1190,62 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
     await Assert.That(cursor).IsNotNull();
     await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+  }
+
+  /// <summary>
+  /// Reproduces the JDX BFF's admin endpoint path:
+  /// <c>POST /api/admin/rebuild-perspective</c> → <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>
+  /// → same-process routing → <see cref="IReceptorInvoker.InvokeAsync"/> at
+  /// <see cref="LifecycleStage.LocalImmediateInline"/> → runtime-registered receptor.
+  ///
+  /// This is the test that would have caught the original production bug: the receptor was
+  /// registered only at <see cref="LifecycleStage.PostInboxInline"/>, so local dispatch never
+  /// hit it and cursors never updated. Registering at all three default stages fixes it.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_DispatchedViaInvoker_UpdatesCursorAsync() {
+    var streamId = Guid.NewGuid();
+    Guid lastEventId;
+    await using var sp = _buildDispatchServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 123m });
+    }
+
+    // Mirror what RebuildCommandReceptorRegistrar.StartAsync does in production — register
+    // the receptor at the default-stage set. The registrar's bug was that it only registered
+    // at PostInboxInline; this test invokes at LocalImmediateInline which fails unless the
+    // registrar also registers there.
+    var registry = sp.GetRequiredService<IReceptorRegistry>();
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.LocalImmediateInline);
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PreOutboxInline);
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PostInboxInline);
+
+    // Build an envelope and drive the receptor via IReceptorInvoker.InvokeAsync — the same
+    // path IDispatcher.SendAsync uses internally for local dispatch.
+    var command = new RebuildPerspectiveCommand(PerspectiveNames: [RebuildBalancePerspectiveName]);
+    var envelope = new MessageEnvelope<RebuildPerspectiveCommand> {
+      MessageId = MessageId.New(),
+      Payload = command,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+
+    await using var invokerScope = sp.CreateAsyncScope();
+    var invoker = invokerScope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+    await invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId);
   }
 }
