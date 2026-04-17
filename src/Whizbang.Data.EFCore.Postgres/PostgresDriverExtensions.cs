@@ -78,7 +78,8 @@ public static class PostgresDriverExtensions {
         var dbContextType = selector.DbContextType;
         selector.Services.TryAddScoped<IPerspectiveCheckpointCompleter>(sp =>
             new EFCorePostgresPerspectiveCheckpointCompleter(
-                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType)));
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
 
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand

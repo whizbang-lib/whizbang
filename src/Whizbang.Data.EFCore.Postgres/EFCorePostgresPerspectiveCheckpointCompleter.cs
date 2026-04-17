@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -24,7 +25,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
-public sealed class EFCorePostgresPerspectiveCheckpointCompleter(DbContext dbContext)
+public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
+    DbContext dbContext,
+    ILogger<EFCorePostgresPerspectiveCheckpointCompleter>? logger = null)
     : IPerspectiveCheckpointCompleter {
 
   private const string DEFAULT_SCHEMA = "public";
@@ -64,6 +67,8 @@ public sealed class EFCorePostgresPerspectiveCheckpointCompleter(DbContext dbCon
       transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
     }
 
+    var persisted = 0;
+    var skippedEmpty = 0;
     try {
       foreach (var completion in completions) {
         // Skip completions with no event processed. A cursor row whose last_event_id references
@@ -71,6 +76,10 @@ public sealed class EFCorePostgresPerspectiveCheckpointCompleter(DbContext dbCon
         // wh_event_store.event_id rejects Guid.Empty. This matches the "No events processed —
         // skip checkpoint" branch in the live work coordinator path.
         if (completion.LastEventId == Guid.Empty) {
+          skippedEmpty++;
+          if (logger?.IsEnabled(LogLevel.Debug) == true) {
+            LogSkippedEmptyLastEventId(logger, completion.StreamId, completion.PerspectiveName);
+          }
           continue;
         }
 
@@ -83,14 +92,27 @@ public sealed class EFCorePostgresPerspectiveCheckpointCompleter(DbContext dbCon
               (short)completion.Status
             ],
             cancellationToken);
+        persisted++;
+
+        if (logger?.IsEnabled(LogLevel.Debug) == true) {
+          LogCursorUpsert(logger, completion.StreamId, completion.PerspectiveName,
+              completion.LastEventId, completion.Status);
+        }
       }
 
       if (ownsTransaction && transaction != null) {
         await transaction.CommitAsync(cancellationToken);
       }
-    } catch {
+
+      if (logger?.IsEnabled(LogLevel.Information) == true && (persisted > 0 || skippedEmpty > 0)) {
+        LogBatchPersisted(logger, persisted, skippedEmpty, completions.Count);
+      }
+    } catch (Exception ex) {
       if (ownsTransaction && transaction != null) {
         await transaction.RollbackAsync(cancellationToken);
+      }
+      if (logger != null) {
+        LogBatchFailed(logger, ex, persisted, completions.Count);
       }
       throw;
     } finally {
@@ -99,6 +121,25 @@ public sealed class EFCorePostgresPerspectiveCheckpointCompleter(DbContext dbCon
       }
     }
   }
+
+  [LoggerMessage(Level = LogLevel.Debug,
+      Message = "Checkpoint completer: upserted cursor stream_id={StreamId} perspective={PerspectiveName} last_event_id={LastEventId} status={Status}")]
+  private static partial void LogCursorUpsert(ILogger logger, Guid streamId, string perspectiveName,
+      Guid lastEventId, PerspectiveProcessingStatus status);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+      Message = "Checkpoint completer: skipped stream_id={StreamId} perspective={PerspectiveName} — last_event_id is Guid.Empty (no events processed)")]
+  private static partial void LogSkippedEmptyLastEventId(ILogger logger, Guid streamId,
+      string perspectiveName);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Checkpoint completer: persisted {Persisted} cursor(s), skipped {SkippedEmpty} empty, total batch {Total}")]
+  private static partial void LogBatchPersisted(ILogger logger, int persisted, int skippedEmpty,
+      int total);
+
+  [LoggerMessage(Level = LogLevel.Error,
+      Message = "Checkpoint completer: batch failed after {Persisted}/{Total} cursor(s); transaction rolled back")]
+  private static partial void LogBatchFailed(ILogger logger, Exception ex, int persisted, int total);
 
   private string _resolveSchema() {
     // Use the same entity as the cursor rows so we pick up whatever schema the DbContext

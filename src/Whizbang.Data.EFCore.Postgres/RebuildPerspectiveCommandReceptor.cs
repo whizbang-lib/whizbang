@@ -43,6 +43,18 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
 
+#pragma warning disable CA1873 // string.Join guarded by IsEnabled check.
+    if (logger.IsEnabled(LogLevel.Information)) {
+      LogCommandReceived(
+          logger,
+          message.Mode,
+          message.PerspectiveNames is null ? "<all-registered>" : string.Join(",", message.PerspectiveNames),
+          message.IncludeStreamIds?.Length ?? 0,
+          message.ExcludeStreamIds?.Length ?? 0,
+          message.FromEventId);
+    }
+#pragma warning restore CA1873
+
     if (message.FromEventId.HasValue) {
       LogFromEventIdUnsupported(logger, message.FromEventId.Value);
     }
@@ -55,16 +67,41 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     var rebuilder = sp.GetRequiredService<IPerspectiveRebuilder>();
     var runnerRegistry = sp.GetRequiredService<IPerspectiveRunnerRegistry>();
 
-    var perspectiveNames = _resolvePerspectiveNames(message.PerspectiveNames, runnerRegistry);
+    var registeredNames = runnerRegistry.GetRegisteredPerspectives().Select(p => p.ClrTypeName).ToArray();
+    var perspectiveNames = _resolvePerspectiveNames(message.PerspectiveNames, registeredNames);
+
+#pragma warning disable CA1873 // string.Join calls are guarded by explicit IsEnabled checks above each LogXxx call.
+    if (message.PerspectiveNames is { Length: > 0 } && logger.IsEnabled(LogLevel.Information)) {
+      var skipped = message.PerspectiveNames.Except(perspectiveNames).ToArray();
+      if (skipped.Length > 0) {
+        LogPerspectivesSkippedNotOwned(logger, string.Join(",", skipped),
+            string.Join(",", registeredNames));
+      }
+    }
+
     if (perspectiveNames.Length == 0) {
-      LogNoPerspectivesRegistered(logger);
+      if (logger.IsEnabled(LogLevel.Warning)) {
+        LogNoPerspectivesToRebuild(logger, message.PerspectiveNames is null,
+            string.Join(",", registeredNames));
+      }
       return;
     }
 
+    if (logger.IsEnabled(LogLevel.Information)) {
+      LogPerspectivesSelected(logger, perspectiveNames.Length, string.Join(",", perspectiveNames));
+    }
+#pragma warning restore CA1873
+
     var streamFilter = await _resolveStreamFilterAsync(message, sp, cancellationToken);
+    if (streamFilter is not null) {
+      LogStreamFilterApplied(logger, streamFilter.Count,
+          message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
+    }
 
     foreach (var perspectiveName in perspectiveNames) {
       cancellationToken.ThrowIfCancellationRequested();
+
+      LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
 
       RebuildResult result;
       if (streamFilter is not null) {
@@ -87,20 +124,18 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
   }
 
   private static string[] _resolvePerspectiveNames(
-      string[]? requested, IPerspectiveRunnerRegistry runnerRegistry) {
+      string[]? requested, string[] registeredNames) {
     // System commands broadcast to every service via SharedTopicInboxStrategy — each service
     // receives this command and independently decides which perspectives IT owns. The
     // receptor always intersects the requested set with the local registry so a service only
     // rebuilds what it actually hosts. No central ownership / dispatch is required.
-    var localNames = runnerRegistry.GetRegisteredPerspectives().Select(p => p.ClrTypeName);
-
     if (requested is { Length: > 0 }) {
       var requestedSet = new HashSet<string>(requested);
-      return [.. localNames.Where(requestedSet.Contains)];
+      return [.. registeredNames.Where(requestedSet.Contains)];
     }
 
     // Null / empty → fan out to every locally registered perspective.
-    return [.. localNames];
+    return registeredNames;
   }
 
   private static async Task<IReadOnlyList<Guid>?> _resolveStreamFilterAsync(
@@ -130,13 +165,35 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     return null;
   }
 
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "RebuildPerspectiveCommand received: Mode={Mode}, PerspectiveNames=[{RequestedNames}], IncludeStreamIds count={IncludeCount}, ExcludeStreamIds count={ExcludeCount}, FromEventId={FromEventId}")]
+  private static partial void LogCommandReceived(ILogger logger, RebuildMode mode,
+      string requestedNames, int includeCount, int excludeCount, long? fromEventId);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Perspectives skipped (not locally owned by this service): [{Skipped}]. Locally registered: [{Registered}]")]
+  private static partial void LogPerspectivesSkippedNotOwned(ILogger logger, string skipped, string registered);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Selected {Count} perspective(s) to rebuild: [{Names}]")]
+  private static partial void LogPerspectivesSelected(ILogger logger, int count, string names);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "RebuildPerspectiveCommand has nothing to rebuild on this service (fanout={FanOut}). Locally registered perspectives: [{Registered}]")]
+  private static partial void LogNoPerspectivesToRebuild(ILogger logger, bool fanOut, string registered);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Applying stream filter: {Count} stream(s) ({Source})")]
+  private static partial void LogStreamFilterApplied(ILogger logger, int count, string source);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Starting rebuild of perspective {PerspectiveName} (Mode={Mode}, StreamFilterCount={StreamFilterCount})")]
+  private static partial void LogPerspectiveRebuildStarting(ILogger logger, string perspectiveName,
+      RebuildMode mode, int? streamFilterCount);
+
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "RebuildPerspectiveCommand.FromEventId={FromEventId} is set but IPerspectiveRebuilder has no partial-range replay API; the value is ignored and the rebuild replays from event zero.")]
   private static partial void LogFromEventIdUnsupported(ILogger logger, long fromEventId);
-
-  [LoggerMessage(Level = LogLevel.Warning,
-      Message = "RebuildPerspectiveCommand received but no perspectives are registered — nothing to rebuild.")]
-  private static partial void LogNoPerspectivesRegistered(ILogger logger);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Rebuilt perspective {PerspectiveName}: {StreamsProcessed} streams in {ElapsedMs}ms")]
