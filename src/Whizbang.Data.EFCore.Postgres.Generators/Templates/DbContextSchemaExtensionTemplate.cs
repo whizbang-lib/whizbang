@@ -1118,7 +1118,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
         if (vacuumConn != null) {
           await vacuumConn.OpenAsync(cancellationToken);
-          var tables = new[] { "wh_outbox", "wh_inbox", "wh_perspective_events" };
+          var tables = new[] { "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_message_deduplication" };
           foreach (var table in tables) {
             await using var cmd = vacuumConn.CreateCommand();
             cmd.CommandTimeout = 120;

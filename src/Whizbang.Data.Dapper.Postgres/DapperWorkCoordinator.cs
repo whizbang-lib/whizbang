@@ -733,6 +733,28 @@ public partial class DapperWorkCoordinator(
     }
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT * FROM public.perform_maintenance()";
+    command.CommandTimeout = 30;
+
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var results = new List<MaintenanceResult>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new MaintenanceResult(
+        reader.GetString(0),
+        reader.GetInt64(1),
+        reader.GetDouble(2),
+        reader.GetString(3)
+      ));
+    }
+    return results;
+  }
+
   #region LoggerMessage Declarations
 
   [LoggerMessage(
