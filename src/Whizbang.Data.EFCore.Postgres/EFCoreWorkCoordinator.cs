@@ -809,12 +809,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var now = DateTime.UtcNow;
 
-    Console.WriteLine($"[STORE-DIAG] Calling {functionName} with {messages.Length} messages. Schema={schema}. JSON preview: {json[..Math.Min(200, json.Length)]}");
     await _dbContext.Database.ExecuteSqlRawAsync(
       sql,
       [json, now, partitionCount],
       cancellationToken);
-    Console.WriteLine($"[STORE-DIAG] {functionName} call completed");
   }
 
   public async Task ReportPerspectiveCompletionAsync(
