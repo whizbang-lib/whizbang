@@ -435,9 +435,12 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // Project inventory first so it has a baseline row, then mutate that row to a value
     // the event log would never produce. If the subsequent balance rebuild touches inventory,
     // this drift will be overwritten; if rebuild is properly isolated, it stays drifted.
+    // The rebuilder narrows to streams with events matching the perspective's event types,
+    // so the inventory rebuild only sees inventoryStream (balanceStream has no stock-adjusted
+    // events).
     var inventoryBaseline = await rebuilder.RebuildInPlaceAsync(RebuildInventoryPerspectiveName, CancellationToken.None);
     await Assert.That(inventoryBaseline.Success).IsTrue();
-    await Assert.That(inventoryBaseline.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(inventoryBaseline.StreamsProcessed).IsEqualTo(1);
 
     const int driftedValue = -12345;
     await using (var corruptContext = CreateDbContext()) {
@@ -451,9 +454,10 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // Act: rebuild ONLY the balance perspective.
     var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
 
-    // Assert: balance rebuild reports success for the two streams that exist in the store.
+    // Assert: balance rebuild reports success for the one stream with credited events
+    // (the other stream has only stock-adjusted events, which the balance perspective ignores).
     await Assert.That(result.Success).IsTrue();
-    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
 
     // Assert: inventory row is still drifted — the balance rebuild did not touch it.
     await using var verifyContext = CreateDbContext();
