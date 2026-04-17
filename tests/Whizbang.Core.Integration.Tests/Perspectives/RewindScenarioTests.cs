@@ -783,20 +783,12 @@ public class RewindScenarioTests {
     }
   }
 
-  // Shared UUIDv7 comparer used by both fakes.
-  internal static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Create((a, b) => {
-    Span<byte> ab = stackalloc byte[16];
-    Span<byte> bb = stackalloc byte[16];
-    a.TryWriteBytes(ab, bigEndian: true, out _);
-    b.TryWriteBytes(bb, bigEndian: true, out _);
-    for (var i = 0; i < 16; i++) {
-      var d = ab[i].CompareTo(bb[i]);
-      if (d != 0) {
-        return d;
-      }
-    }
-    return 0;
-  });
+  // UUIDv7 comparer used by both fakes. Matches the framework: generated EventId /
+  // StreamId CompareTo overloads delegate to Guid.CompareTo, which on little-endian
+  // platforms compares the first 6 bytes (the v7 timestamp) in big-endian byte order
+  // because of how Guid packs its fields. Keeping Comparer<Guid>.Default aligns the
+  // test fakes with how Whizbang's generated identity types actually order themselves.
+  internal static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Default;
 
   private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
