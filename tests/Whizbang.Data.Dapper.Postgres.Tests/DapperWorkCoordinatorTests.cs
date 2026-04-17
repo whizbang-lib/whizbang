@@ -1664,6 +1664,180 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ProcessWorkBatchAsync_StaleInstanceCleanup_ReleasesActiveStreams_AllowsOrphanedInboxClaimingAsync() {
+    // Arrange
+    var staleInstanceId = _idProvider.NewGuid();
+    var activeInstanceId = _instanceId;
+    var streamId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    // Insert both instances
+    await _insertServiceInstanceAsync(staleInstanceId, "StaleService", "stale-host", 999);
+    await _insertServiceInstanceAsync(activeInstanceId, "ActiveService", "active-host", 123);
+
+    // Insert inbox message owned by stale instance with EXPIRED lease
+    await _insertInboxMessageAsync(
+      messageId, "TestHandler", "TestEvent", "{}",
+      status: "Pending", instanceId: staleInstanceId,
+      leaseExpiry: now.AddMinutes(-1), streamId: streamId);
+
+    // Insert wh_active_streams entry assigned to stale instance with FUTURE lease
+    // This is the blocking entry: cleanup_stale_instances should release this
+    await _insertActiveStreamAsync(streamId, staleInstanceId, now.AddMinutes(5));
+
+    // Mark stale instance as stale (heartbeat > threshold)
+    await _markInstanceHeartbeatOldAsync(staleInstanceId, now.AddSeconds(-700));
+
+    // Act — Active instance calls ProcessWorkBatchAsync (triggers cleanup + claiming)
+    var result = await _sut.ProcessWorkBatchAsync(
+          new ProcessWorkBatchRequest {
+            InstanceId = activeInstanceId,
+            ServiceName = "ActiveService",
+            HostName = "active-host",
+            ProcessId = 123,
+            Metadata = null,
+            OutboxCompletions = [],
+            OutboxFailures = [],
+            InboxCompletions = [],
+            InboxFailures = [],
+            ReceptorCompletions = [],
+            ReceptorFailures = [],
+            PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
+            PerspectiveFailures = [],
+            NewOutboxMessages = [],
+            NewInboxMessages = [],
+            RenewOutboxLeaseIds = [],
+            RenewInboxLeaseIds = []
+          });
+
+    // Assert — Stale instance should be deleted
+    var staleExists = await _serviceInstanceExistsAsync(staleInstanceId);
+    await Assert.That(staleExists).IsFalse()
+      .Because("Stale instance should be removed by cleanup_stale_instances");
+
+    // Assert — wh_active_streams entry should be released (assigned_instance_id = NULL)
+    var streamOwner = await _getActiveStreamInstanceIdAsync(streamId);
+    await Assert.That(streamOwner).IsNotEqualTo(staleInstanceId)
+      .Because("cleanup_stale_instances should release wh_active_streams for deleted instances");
+
+    // Assert — Active instance should claim the orphaned inbox message
+    await Assert.That(result.InboxWork.Count).IsGreaterThanOrEqualTo(1)
+      .Because("After stale cleanup releases active streams, orphaned inbox messages should be claimable");
+
+    var claimedMessage = result.InboxWork.FirstOrDefault(w => w.MessageId == messageId);
+    await Assert.That(claimedMessage).IsNotNull()
+      .Because("The specific orphaned message should be claimed by the active instance");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_MultiInstance_InboxMessage_ClaimedByPartitionAssignedInstanceAsync() {
+    // Arrange — Two live instances with 20 messages across different streams.
+    // With 2 instances and consistent hashing, ~50% of partitions map to each instance.
+    // store_inbox_messages sets wh_active_streams.assigned_instance_id = storing instance (A).
+    // The bug: messages whose partition maps to B are stuck because wh_active_streams
+    // blocks B (A owns the stream) and the partition blocks A (wrong partition for A).
+    var instanceA = _idProvider.NewGuid();
+    var instanceB = _idProvider.NewGuid();
+
+    await _insertServiceInstanceAsync(instanceA, "ServiceA", "hostA", 1);
+    await _insertServiceInstanceAsync(instanceB, "ServiceB", "hostB", 2);
+
+    // Instance A stores 20 inbox messages with different stream IDs
+    var messageIds = new List<Guid>();
+    var inboxMessages = new List<InboxMessage>();
+    for (int i = 0; i < 20; i++) {
+      var messageId = _idProvider.NewGuid();
+      messageIds.Add(messageId);
+      inboxMessages.Add(new InboxMessage {
+        MessageId = messageId,
+        HandlerName = "TestHandler",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
+        StreamId = _idProvider.NewGuid(),  // Each message in its own stream
+        IsEvent = false,
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata {
+          MessageId = MessageId.From(messageId),
+          Hops = []
+        }
+      });
+    }
+
+    var sutA = new DapperWorkCoordinator(ConnectionString, _jsonOptions);
+    var resultA = await sutA.ProcessWorkBatchAsync(
+          new ProcessWorkBatchRequest {
+            InstanceId = instanceA,
+            ServiceName = "ServiceA",
+            HostName = "hostA",
+            ProcessId = 1,
+            Metadata = null,
+            OutboxCompletions = [],
+            OutboxFailures = [],
+            InboxCompletions = [],
+            InboxFailures = [],
+            ReceptorCompletions = [],
+            ReceptorFailures = [],
+            PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
+            PerspectiveFailures = [],
+            NewOutboxMessages = [],
+            NewInboxMessages = inboxMessages.ToArray(),
+            RenewOutboxLeaseIds = [],
+            RenewInboxLeaseIds = []
+          });
+
+    var claimedByA = resultA.InboxWork.Select(w => w.MessageId).ToHashSet();
+
+    // Instance B tries to claim the remaining messages
+    var sutB = new DapperWorkCoordinator(ConnectionString, _jsonOptions);
+    var resultB = await sutB.ProcessWorkBatchAsync(
+          new ProcessWorkBatchRequest {
+            InstanceId = instanceB,
+            ServiceName = "ServiceB",
+            HostName = "hostB",
+            ProcessId = 2,
+            Metadata = null,
+            OutboxCompletions = [],
+            OutboxFailures = [],
+            InboxCompletions = [],
+            InboxFailures = [],
+            ReceptorCompletions = [],
+            ReceptorFailures = [],
+            PerspectiveCompletions = [],
+            PerspectiveEventCompletions = [],
+            PerspectiveFailures = [],
+            NewOutboxMessages = [],
+            NewInboxMessages = [],
+            RenewOutboxLeaseIds = [],
+            RenewInboxLeaseIds = []
+          });
+
+    var claimedByB = resultB.InboxWork.Select(w => w.MessageId).ToHashSet();
+
+    var totalClaimed = claimedByA.Count + claimedByB.Count;
+
+    // Assert — ALL 20 messages should be claimed between the two instances
+    // With 20 messages and 2 instances, statistically ~10 should map to each.
+    // If the bug exists, messages whose partition maps to B are stuck (wh_active_streams blocks B).
+    await Assert.That(totalClaimed).IsEqualTo(20)
+      .Because("All inbox messages should be claimed between the two instances — none should be stuck due to wh_active_streams blocking");
+
+    // Verify no messages remain unclaimed in the database
+    var unclaimedCount = 0;
+    foreach (var messageId in messageIds) {
+      var owner = await _getInboxInstanceIdAsync(messageId);
+      if (owner == null) {
+        unclaimedCount++;
+      }
+    }
+
+    await Assert.That(unclaimedCount).IsEqualTo(0)
+      .Because("No inbox messages should remain with instance_id = NULL (stuck unclaimed)");
+  }
+
+  [Test]
   public async Task ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync() {
     // Arrange
     var instance1 = _idProvider.NewGuid();
@@ -2234,5 +2408,30 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       SELECT COUNT(*) FROM wh_service_instances WHERE instance_id = @instanceId",
       new { instanceId });
     return count > 0;
+  }
+
+  private async Task _insertActiveStreamAsync(Guid streamId, Guid instanceId, DateTimeOffset leaseExpiry) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var now = DateTimeOffset.UtcNow;
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_active_streams (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
+      VALUES (@streamId, @instanceId, @leaseExpiry, compute_partition(@streamId, 10000), @now)",
+      new { streamId, instanceId, leaseExpiry, now });
+  }
+
+  private async Task<Guid?> _getActiveStreamInstanceIdAsync(Guid streamId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    return await connection.QueryFirstOrDefaultAsync<Guid?>(@"
+      SELECT assigned_instance_id FROM wh_active_streams WHERE stream_id = @streamId",
+      new { streamId });
+  }
+
+  private async Task _updateInboxLeaseExpiryAsync(Guid messageId, DateTimeOffset leaseExpiry) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      UPDATE wh_inbox
+      SET lease_expiry = @leaseExpiry
+      WHERE message_id = @messageId",
+      new { messageId, leaseExpiry });
   }
 }

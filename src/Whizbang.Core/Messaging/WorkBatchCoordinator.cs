@@ -60,7 +60,7 @@ public class WorkBatchCoordinator(
       Flags = WorkBatchOptions.SkipInboxClaiming,
       PartitionCount = 16,  // FUTURE: Make configurable
       LeaseSeconds = 30,    // FUTURE: Make configurable
-      StaleThresholdSeconds = 300  // FUTURE: Make configurable
+      StaleThresholdSeconds = 30  // FUTURE: Make configurable
     };
     var workBatch = await _workCoordinator.ProcessWorkBatchAsync(request, ct);
 

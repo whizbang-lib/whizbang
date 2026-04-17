@@ -360,6 +360,15 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
   }
 
   [Test]
+  public async Task BulkPublish_MaxBatchSize_DefaultIs300Async() {
+    // Arrange
+    var options = new WorkCoordinatorPublisherOptions();
+
+    // Assert — default should be 300 to match p_max_streams in process_work_batch
+    await Assert.That(options.MaxBulkPublishBatchSize).IsEqualTo(300);
+  }
+
+  [Test]
   public async Task BulkPublish_MaxBatchSize_LimitsDrainCountAsync() {
     // Arrange - Set max batch size to 2, provide 5 items
     var workCoordinator = new TestWorkCoordinator();

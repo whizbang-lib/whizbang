@@ -113,6 +113,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         cancellationToken
     );
 
+    // Track whether the stream already exists in the DB. When it does not, the pre-created
+    // empty default below is scaffolding for Apply input only — it must NOT be persisted
+    // unless Apply actually returns a model. Otherwise ApplyResult.None() on a new stream
+    // would insert a phantom default row.
+    var modelLoadedFromDb = currentModel != null;
+
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
       _logger.LogDebug(
@@ -132,6 +138,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
+    // True once Apply has contributed a concrete model OR the row came from DB.
+    // When false at save time, updatedModel is only the scaffolded default and must not be written.
+    var hasWrittenUpdate = modelLoadedFromDb;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
     var scopeChanged = false;  // Track if an IScopeEvent changed scope (forces scope UPDATE)
@@ -240,6 +249,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // Soft delete: Model should have DeletedAt set by perspective or caller
             // For now, keep the model (it may have been modified by perspective)
             updatedModel = appliedModel ?? updatedModel;
+            hasWrittenUpdate = true;
             break;
           case global::Whizbang.Core.Perspectives.ModelAction.Purge:
             // Hard delete: Mark for purge, skip upsert
@@ -250,8 +260,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // Normal update or no-change
             if (appliedModel != null) {
               updatedModel = appliedModel;
+              hasWrittenUpdate = true;
             }
-            // else: null model with None = no change, keep existing
+            // else: null model with None = no change.
+            // On an existing stream hasWrittenUpdate started true; on a new stream it stays
+            // false until an Apply actually returns a model, which gates the final upsert.
             break;
         }
 
@@ -294,7 +307,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               perspectiveName,
               streamId
           );
-        } else if (updatedModel != null) {
+        } else if (updatedModel != null && hasWrittenUpdate) {
           await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
@@ -319,9 +332,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             lastSuccessfulEventId
         );
 
-        // Create snapshot if configured and threshold reached
+        // Create snapshot if configured and threshold reached.
+        // Require hasWrittenUpdate — a batch of pure ApplyResult.None() on a new stream
+        // produces no persisted row, so there's nothing to snapshot.
         if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-            && !pendingPurge && updatedModel is not null && lastSuccessfulEventId.HasValue) {
+            && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
           _eventsSinceLastSnapshot += eventsProcessed;
           if (_eventsSinceLastSnapshot >= _snapshotOptions.Value.SnapshotEveryNEvents) {
             await _snapshotStore.CreateSnapshotAsync(
@@ -395,8 +410,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         );
 
         try {
-          // Only save if we have a model (skip if purge was pending)
-          if (updatedModel != null) {
+          // Only save if we have a model AND Apply has produced one (skip if purge was pending
+          // or the only events were ApplyResult.None() on a new stream)
+          if (updatedModel != null && hasWrittenUpdate) {
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
