@@ -55,7 +55,10 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherOwnedEventSelfEchoTests.cs
   ///     (SelfEchoCommandHandler, SelfEchoEventReceptor)
   ///
-  /// Total: 112 receptors (includes coverage test types that implement ICommand/IEvent)
+  /// - 2 receptors from DispatcherConcurrentOutboxTests.cs
+  ///     (BlockingTestEventReceptor, ThrowingTestEventReceptor)
+  ///
+  /// Total: 114 receptors (includes coverage test types that implement ICommand/IEvent)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 112;
+  public const int EXPECTED_RECEPTOR_COUNT = 114;
 }

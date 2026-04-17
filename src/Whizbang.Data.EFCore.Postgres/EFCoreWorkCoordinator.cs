@@ -1433,6 +1433,34 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     return results;
   }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA, _logger);
+
+    var connection = _dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await _dbContext.Database.OpenConnectionAsync(cancellationToken);
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"SELECT * FROM \"{schema}\".perform_maintenance()";
+    command.CommandTimeout = 30;
+
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var results = new List<MaintenanceResult>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new MaintenanceResult(
+        reader.GetString(0),
+        reader.GetInt64(1),
+        reader.GetDouble(2),
+        reader.GetString(3)
+      ));
+    }
+    return results;
+  }
 }
 
 /// <summary>

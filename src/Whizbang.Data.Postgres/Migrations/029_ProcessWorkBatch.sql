@@ -50,7 +50,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   p_flags INTEGER DEFAULT 0,
 
   -- Thresholds
-  p_stale_threshold_seconds INTEGER DEFAULT 600,
+  p_stale_threshold_seconds INTEGER DEFAULT 30,
 
   -- Sync inquiries (for perspective sync awaiter)
   p_sync_inquiries JSONB DEFAULT '[]'::JSONB,
@@ -92,7 +92,7 @@ DECLARE
   v_completed_events JSONB;
   v_completion RECORD;
 
-  -- Batch limits from wh_settings (read once per tick, defaults if not configured)
+  -- Batch limits: derived from p_max_streams parameter (no longer read from wh_settings)
   v_max_work_items INTEGER;
   v_max_work_items_per_stream INTEGER;
 
@@ -121,22 +121,18 @@ DECLARE
   v_tier1_budget_percent INTEGER;
   v_tier1_max INTEGER;
 BEGIN
-  -- Read all settings in a single query (pivoted)
+  -- Set batch limits from p_max_streams parameter (unified budget for total and per-stream)
+  v_max_work_items := p_max_streams;
+  v_max_work_items_per_stream := p_max_streams;
+
+  -- Read remaining settings in a single query (pivoted)
   SELECT
-    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_tick' THEN setting_value::INTEGER END), 300),
-    COALESCE(MAX(CASE WHEN setting_key = 'max_work_items_per_stream' THEN setting_value::INTEGER END), 25),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_debounce_seconds' THEN setting_value::INTEGER END), 5),
     COALESCE(MAX(CASE WHEN setting_key = 'rewind_max_debounce_seconds' THEN setting_value::INTEGER END), 30),
-    COALESCE(MAX(CASE WHEN setting_key = 'stale_threshold_seconds' THEN setting_value::INTEGER END), p_stale_threshold_seconds),
     COALESCE(MAX(CASE WHEN setting_key = 'tier1_budget_percent' THEN setting_value::INTEGER END), 70)
-  INTO v_max_work_items, v_max_work_items_per_stream, v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, p_stale_threshold_seconds, v_tier1_budget_percent
+  INTO v_rewind_debounce_seconds, v_rewind_max_debounce_seconds, v_tier1_budget_percent
   FROM wh_settings
-  WHERE setting_key IN ('max_work_items_per_tick', 'max_work_items_per_stream', 'rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'stale_threshold_seconds', 'tier1_budget_percent');
-
-  -- Override max_work_items from caller parameter if provided (drain mode)
-  IF p_max_streams IS NOT NULL THEN
-    v_max_work_items := p_max_streams;
-  END IF;
+  WHERE setting_key IN ('rewind_debounce_seconds', 'rewind_max_debounce_seconds', 'tier1_budget_percent');
 
   -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
   v_tier1_max := (v_max_work_items * v_tier1_budget_percent) / 100;
@@ -535,6 +531,14 @@ BEGIN
     p_partition_count
   ) AS coo;
 
+  -- Establish stream ownership for claimed outbox messages
+  UPDATE __SCHEMA__.wh_active_streams ast
+  SET assigned_instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry
+  FROM temp_orphaned_outbox too
+  WHERE ast.stream_id = too.stream_id
+    AND too.stream_id IS NOT NULL;
+
   -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
   IF (p_flags & 64) = 0 THEN
     INSERT INTO temp_orphaned_inbox (message_id, stream_id)
@@ -548,6 +552,14 @@ BEGIN
       p_partition_count
     ) AS coi;
   END IF;
+
+  -- Establish stream ownership for claimed inbox messages
+  UPDATE __SCHEMA__.wh_active_streams ast
+  SET assigned_instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry
+  FROM temp_orphaned_inbox toi
+  WHERE ast.stream_id = toi.stream_id
+    AND toi.stream_id IS NOT NULL;
 
   -- Claim orphaned receptor work and track
   INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
@@ -972,6 +984,13 @@ BEGIN
       SELECT (elem::TEXT)::UUID
       FROM jsonb_array_elements_text(p_renew_perspective_event_lease_ids) as elem
     );
+
+  -- Renew active stream ownership for all streams owned by this instance.
+  -- Keeps stream stickiness alive as long as the instance is heartbeating (~1s ticks).
+  -- Without this, streams with no new messages would lose ownership after lease expiry.
+  UPDATE __SCHEMA__.wh_active_streams
+  SET lease_expiry = v_lease_expiry
+  WHERE assigned_instance_id = p_instance_id;
 
   -- ========================================
   -- Phase 7: Return Results
