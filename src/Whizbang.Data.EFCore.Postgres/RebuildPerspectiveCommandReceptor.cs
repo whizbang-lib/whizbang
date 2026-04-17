@@ -88,11 +88,19 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
 
   private static string[] _resolvePerspectiveNames(
       string[]? requested, IPerspectiveRunnerRegistry runnerRegistry) {
+    // System commands broadcast to every service via SharedTopicInboxStrategy — each service
+    // receives this command and independently decides which perspectives IT owns. The
+    // receptor always intersects the requested set with the local registry so a service only
+    // rebuilds what it actually hosts. No central ownership / dispatch is required.
+    var localNames = runnerRegistry.GetRegisteredPerspectives().Select(p => p.ClrTypeName);
+
     if (requested is { Length: > 0 }) {
-      return requested;
+      var requestedSet = new HashSet<string>(requested);
+      return [.. localNames.Where(requestedSet.Contains)];
     }
-    // Null / empty → fan out to every registered perspective.
-    return [.. runnerRegistry.GetRegisteredPerspectives().Select(p => p.ClrTypeName)];
+
+    // Null / empty → fan out to every locally registered perspective.
+    return [.. localNames];
   }
 
   private static async Task<IReadOnlyList<Guid>?> _resolveStreamFilterAsync(
