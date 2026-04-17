@@ -246,6 +246,13 @@ public static class ServiceCollectionExtensions {
 
     // Cross-worker dedup: prevents same message+stage from firing twice
     services.TryAddSingleton<Messaging.LifecycleStageTracker>();
+
+    // Register IPerspectiveRebuilder so callers (PerspectiveMigrationWorker, the
+    // RebuildPerspectiveCommand receptor) can resolve it. The rebuilder itself only depends
+    // on IServiceScopeFactory + ILogger — Core-level services — so registration lives here.
+    // Cursor persistence is routed through IPerspectiveCheckpointCompleter, which is
+    // registered by the storage driver extension (.WithDriver.Postgres or AddWhizbangPostgres).
+    services.TryAddSingleton<Perspectives.IPerspectiveRebuilder, Perspectives.PerspectiveRebuilder>();
   }
 
   /// <summary>
