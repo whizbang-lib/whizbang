@@ -71,6 +71,22 @@ public static class PostgresDriverExtensions {
         // before they reach the database (cross-scope sync support)
         selector.Services.DecorateEventStoreWithSyncTracking();
 
+        // TURNKEY: Register IPerspectiveCheckpointCompleter so PerspectiveRebuilder can
+        // persist cursor checkpoints after rebuild. Without this, rebuild would still update
+        // projection tables but wh_perspective_cursors would stay at whatever live processing
+        // last wrote. Resolves the consumer's DbContext via the captured DbContextType.
+        var dbContextType = selector.DbContextType;
+        selector.Services.TryAddScoped<IPerspectiveCheckpointCompleter>(sp =>
+            new EFCorePostgresPerspectiveCheckpointCompleter(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
+
+        // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
+        // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
+        // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
+        // so a built-in receptor shipped from this assembly needs runtime registration.
+        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema before workers start
         // Registered before PerspectiveWorker to ensure StartAsync ordering
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
