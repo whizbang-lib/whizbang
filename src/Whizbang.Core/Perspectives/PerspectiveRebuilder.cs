@@ -75,13 +75,32 @@ public sealed partial class PerspectiveRebuilder(
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
       var pendingCompletions = completer != null ? new List<PerspectiveCursorCompletion>(64) : null;
 
-      // Get stream IDs to process
+      // Get stream IDs to process. When the caller didn't supply an explicit list we narrow
+      // to streams that actually contain events of types this perspective handles — otherwise
+      // we'd iterate every stream in wh_event_store for every perspective (most RunAsync calls
+      // end up as no-ops because the stream has no matching events). The perspective's event
+      // types come from the source-generated registry.
       if (streamIds == null) {
         var eventStoreQuery = sp.GetRequiredService<IEventStoreQuery>();
-        streamIds = await eventStoreQuery.Query
-            .Select(e => e.StreamId)
-            .Distinct()
-            .ToListAsync(ct);
+        var perspectiveInfo = registry.GetRegisteredPerspectives()
+            .FirstOrDefault(p => p.ClrTypeName == perspectiveName);
+        var relevantEventTypes = perspectiveInfo?.EventTypes;
+        if (relevantEventTypes is { Count: > 0 }) {
+          streamIds = await eventStoreQuery.Query
+              .Where(e => relevantEventTypes.Contains(e.EventType))
+              .Select(e => e.StreamId)
+              .Distinct()
+              .ToListAsync(ct);
+          LogStreamScoping(logger, perspectiveName, streamIds.Count, relevantEventTypes.Count);
+        } else {
+          // No event-type metadata — fall back to all streams. Rare, but possible if a
+          // perspective's registration info is incomplete.
+          streamIds = await eventStoreQuery.Query
+              .Select(e => e.StreamId)
+              .Distinct()
+              .ToListAsync(ct);
+          LogStreamScopingFallback(logger, perspectiveName, streamIds.Count);
+        }
       }
 
       var totalStreams = streamIds.Count;
@@ -90,7 +109,7 @@ public sealed partial class PerspectiveRebuilder(
       var status = new RebuildStatus(perspectiveName, mode, totalStreams, 0, DateTimeOffset.UtcNow);
       _activeRebuilds[perspectiveName] = status;
 
-      LogRebuildStarting(logger, mode, perspectiveName, totalStreams);
+      LogRebuildStarting(logger, mode, perspectiveName, totalStreams, completer != null);
 
       // Set ambient processing mode so lifecycle receptors are suppressed during rebuild
       // unless they opt in with [FireDuringReplay]
@@ -101,30 +120,48 @@ public sealed partial class PerspectiveRebuilder(
         foreach (var streamId in streamIds) {
           ct.ThrowIfCancellationRequested();
 
+          var streamSw = Stopwatch.StartNew();
           try {
             var completion = await runner.RunAsync(streamId, perspectiveName, null, ct);
+            streamSw.Stop();
             streamsProcessed++;
             eventsReplayed++;
+
+            LogStreamReplayed(logger, perspectiveName, streamId, completion.LastEventId,
+                completion.Status, streamSw.ElapsedMilliseconds, streamsProcessed, totalStreams);
 
             if (pendingCompletions != null) {
               pendingCompletions.Add(completion);
               if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+                var flushSw = Stopwatch.StartNew();
+                var flushCount = pendingCompletions.Count;
                 await completer!.CompleteAsync(pendingCompletions, ct);
+                flushSw.Stop();
+                LogCursorFlushed(logger, perspectiveName, flushCount, flushSw.ElapsedMilliseconds,
+                    streamsProcessed, totalStreams);
                 pendingCompletions.Clear();
               }
             }
 
             if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
               _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
+              LogRebuildProgress(logger, perspectiveName, streamsProcessed, totalStreams,
+                  sw.ElapsedMilliseconds);
             }
           } catch (Exception ex) {
+            streamSw.Stop();
             LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
           }
         }
 
         // Flush any remaining completions at the end of the rebuild.
         if (pendingCompletions is { Count: > 0 }) {
+          var flushSw = Stopwatch.StartNew();
+          var flushCount = pendingCompletions.Count;
           await completer!.CompleteAsync(pendingCompletions, ct);
+          flushSw.Stop();
+          LogCursorFlushed(logger, perspectiveName, flushCount, flushSw.ElapsedMilliseconds,
+              streamsProcessed, totalStreams);
           pendingCompletions.Clear();
         }
       } finally {
@@ -145,8 +182,8 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   [LoggerMessage(Level = LogLevel.Information,
-      Message = "Starting {Mode} rebuild of perspective {Perspective} — {StreamCount} streams")]
-  private static partial void LogRebuildStarting(ILogger logger, RebuildMode mode, string perspective, int streamCount);
+      Message = "Starting {Mode} rebuild of perspective {Perspective} — {StreamCount} streams; cursor persistence enabled={CursorPersistence}")]
+  private static partial void LogRebuildStarting(ILogger logger, RebuildMode mode, string perspective, int streamCount, bool cursorPersistence);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Completed {Mode} rebuild of perspective {Perspective} — {Streams} streams in {ElapsedMs}ms")]
@@ -159,6 +196,31 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Rebuild {Perspective}: failed on stream {StreamId} ({Processed}/{Total})")]
   private static partial void LogStreamFailed(ILogger logger, Exception ex, string perspective, Guid streamId, int processed, int total);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+      Message = "Rebuild {Perspective}: stream {StreamId} replayed to event {LastEventId} (status {Status}) in {ElapsedMs}ms ({Processed}/{Total})")]
+  private static partial void LogStreamReplayed(ILogger logger, string perspective, Guid streamId,
+      Guid lastEventId, PerspectiveProcessingStatus status, long elapsedMs, int processed, int total);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Rebuild {Perspective}: progress {Processed}/{Total} streams, elapsed {ElapsedMs}ms")]
+  private static partial void LogRebuildProgress(ILogger logger, string perspective, int processed,
+      int total, long elapsedMs);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Rebuild {Perspective}: persisted {Count} cursor checkpoint(s) in {ElapsedMs}ms at {Processed}/{Total} streams")]
+  private static partial void LogCursorFlushed(ILogger logger, string perspective, int count,
+      long elapsedMs, int processed, int total);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Rebuild {Perspective}: scoped to {StreamCount} stream(s) across {EventTypeCount} event type(s)")]
+  private static partial void LogStreamScoping(ILogger logger, string perspective, int streamCount,
+      int eventTypeCount);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild {Perspective}: no event-type metadata in runner registry; falling back to iterating all {StreamCount} streams")]
+  private static partial void LogStreamScopingFallback(ILogger logger, string perspective,
+      int streamCount);
 }
 
 /// <summary>
