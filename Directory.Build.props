@@ -41,7 +41,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.91.0-local.167</Version>
+    <Version>0.91.0-local.169</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
