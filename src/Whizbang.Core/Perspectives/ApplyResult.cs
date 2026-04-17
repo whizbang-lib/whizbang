@@ -32,8 +32,6 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// </remarks>
 /// <typeparam name="TModel">The perspective model type.</typeparam>
-/// <docs>fundamentals/perspectives/model-action</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs</tests>
 /// <example>
 /// <para><strong>Using static factory methods:</strong></para>
 /// <code>
@@ -68,6 +66,9 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <param name="model">The model to update, or null.</param>
 /// <param name="action">The action to perform. Defaults to <see cref="ModelAction.None"/>.</param>
+/// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRunnerModelActionTests.cs</tests>
 public readonly struct ApplyResult<TModel>(TModel? model, ModelAction action = ModelAction.None) where TModel : class {
   /// <summary>
   /// Gets the model to update, or null if no update is needed or deletion is requested.

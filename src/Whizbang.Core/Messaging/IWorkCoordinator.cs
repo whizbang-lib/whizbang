@@ -362,6 +362,7 @@ public interface IWorkCoordinator {
   /// <param name="streamIds">Stream IDs to fetch cursors for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of cursor info for all streams that have checkpoints</returns>
+  /// <docs>fundamentals/perspectives/drain-mode#batch-cursor-fetch</docs>
   Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
     Guid[] streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
@@ -442,7 +443,28 @@ public interface IWorkCoordinator {
     Guid instanceId,
     Guid[] streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
+
+  /// <summary>
+  /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
+  /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Results for each maintenance task with row counts and durations.</returns>
+  /// <docs>operations/maintenance</docs>
+  Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 }
+
+/// <summary>
+/// Result of a single maintenance task executed by <see cref="IWorkCoordinator.PerformMaintenanceAsync"/>.
+/// </summary>
+/// <param name="TaskName">Name of the maintenance task (e.g., "purge_completed_outbox").</param>
+/// <param name="RowsAffected">Number of rows affected by the task.</param>
+/// <param name="DurationMs">Duration of the task in milliseconds.</param>
+/// <param name="Status">Status of the task (e.g., "ok").</param>
+/// <docs>operations/maintenance</docs>
+public sealed record MaintenanceResult(string TaskName, long RowsAffected, double DurationMs, string Status);
 
 /// <summary>
 /// <summary>

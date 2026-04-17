@@ -120,7 +120,7 @@ public partial class DapperWorkCoordinator(
         @p_flags::int,
         @p_stale_threshold_seconds::int,
         @p_sync_inquiries::jsonb,
-        @p_max_perspective_streams::int
+        @p_max_streams::int
       )";
 
     var parameters = new {
@@ -731,6 +731,28 @@ public partial class DapperWorkCoordinator(
     } catch {
       return null;
     }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT * FROM public.perform_maintenance()";
+    command.CommandTimeout = 30;
+
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var results = new List<MaintenanceResult>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new MaintenanceResult(
+        reader.GetString(0),
+        reader.GetInt64(1),
+        reader.GetDouble(2),
+        reader.GetString(3)
+      ));
+    }
+    return results;
   }
 
   #region LoggerMessage Declarations

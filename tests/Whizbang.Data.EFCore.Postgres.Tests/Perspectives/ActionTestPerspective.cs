@@ -14,7 +14,8 @@ public class ActionTestPerspective :
     IPerspectiveFor<ActionTestModel, ActionTestCreatedEvent>,
     IPerspectiveFor<ActionTestModel, ActionTestUpdatedEvent>,
     IPerspectiveWithActionsFor<ActionTestModel, ActionTestSoftDeletedEvent>,
-    IPerspectiveWithActionsFor<ActionTestModel, ActionTestPurgedEvent> {
+    IPerspectiveWithActionsFor<ActionTestModel, ActionTestPurgedEvent>,
+    IPerspectiveWithActionsFor<ActionTestModel, ActionTestIgnoredEvent> {
 
   /// <summary>
   /// Parameterless constructor for generator-based Apply calls.
@@ -51,6 +52,10 @@ public class ActionTestPerspective :
 
   public ApplyResult<ActionTestModel> Apply(ActionTestModel currentData, ActionTestPurgedEvent @event) {
     return ApplyResult<ActionTestModel>.Purge();
+  }
+
+  public ApplyResult<ActionTestModel> Apply(ActionTestModel currentData, ActionTestIgnoredEvent @event) {
+    return ApplyResult<ActionTestModel>.None();
   }
 }
 
@@ -97,6 +102,16 @@ public record ActionTestSoftDeletedEvent : IEvent {
 /// Event that triggers a hard delete (removes the row entirely).
 /// </summary>
 public record ActionTestPurgedEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+}
+
+/// <summary>
+/// Event the perspective opts out of via <see cref="ApplyResult{TModel}.None"/>.
+/// No write should occur — on a new stream no phantom default row should be inserted;
+/// on an existing stream the row should be left unchanged.
+/// </summary>
+public record ActionTestIgnoredEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
 }

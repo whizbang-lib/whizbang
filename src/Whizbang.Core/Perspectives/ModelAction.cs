@@ -24,8 +24,6 @@ namespace Whizbang.Core.Perspectives;
 /// Use this only when data retention is not required.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/model-action</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/ModelActionTests.cs</tests>
 /// <example>
 /// <para><strong>Returning ModelAction from Apply:</strong></para>
 /// <code>
@@ -36,6 +34,9 @@ namespace Whizbang.Core.Perspectives;
 /// }
 /// </code>
 /// </example>
+/// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/ModelActionTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRunnerModelActionTests.cs</tests>
 public enum ModelAction {
   /// <summary>
   /// No action - keep the model as-is or use the returned model.

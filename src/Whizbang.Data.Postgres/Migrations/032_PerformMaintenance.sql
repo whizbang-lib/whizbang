@@ -16,6 +16,8 @@ RETURNS TABLE(
 DECLARE
   v_start TIMESTAMPTZ;
   v_rows BIGINT;
+  v_dedup_retention_days INTEGER;
+  v_stuck_inbox_retention_days INTEGER;
 BEGIN
   -- ========================================
   -- Task 1: Purge completed outbox messages
@@ -54,17 +56,56 @@ BEGIN
     'ok'::TEXT;
 
   -- ========================================
-  -- Future tasks go here
+  -- Task 4: Purge old deduplication entries
   -- ========================================
-  -- Examples:
-  -- - Purge orphaned active_streams older than X days
-  -- - Archive old event_store entries
-  -- - Clean up stale service_instances
-  -- - Rebuild bloated indexes (REINDEX)
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'dedup_retention_days'),
+    30
+  ) INTO v_dedup_retention_days;
+
+  v_start := clock_timestamp();
+  DELETE FROM wh_message_deduplication
+  WHERE first_seen_at < NOW() - (v_dedup_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_old_deduplication'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 5: Purge ancient stuck inbox messages
+  -- ========================================
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
+    7
+  ) INTO v_stuck_inbox_retention_days;
+
+  v_start := clock_timestamp();
+  DELETE FROM wh_inbox
+  WHERE processed_at IS NULL
+    AND lease_expiry IS NULL
+    AND instance_id IS NULL
+    AND received_at < NOW() - (v_stuck_inbox_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_stuck_inbox'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
 END;
 $$ LANGUAGE plpgsql;
 
+-- Seed default retention settings
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('dedup_retention_days', '30', 'integer', 'Days to retain message deduplication entries')
+ON CONFLICT (setting_key) DO NOTHING;
+
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('stuck_inbox_retention_days', '7', 'integer', 'Days to retain inbox messages that were never processed')
+ON CONFLICT (setting_key) DO NOTHING;
+
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance IS
-'Runs startup maintenance tasks: purges completed messages, reclaims space.
+'Runs maintenance tasks: purges completed messages, old deduplication entries, and stuck inbox messages.
 Returns a result set with task name, rows affected, duration, and status.
-Extensible — add new maintenance operations as needed.';
+Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days).';

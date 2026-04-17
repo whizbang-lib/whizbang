@@ -331,6 +331,114 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Regression for the phantom-row bug: when a perspective returns <see cref="ApplyResult{TModel}.None"/>
+  /// as the first (and only) event on a brand-new stream, the runner must NOT insert
+  /// the pre-created default model. ApplyResult.None() means "skip write".
+  /// </summary>
+  [Test]
+  public async Task RunAsync_WithIgnoredEventOnNewStream_InsertsNoRowAsync() {
+    // Arrange
+    var streamId = Guid.NewGuid();
+    var eventStore = new InMemoryEventStore();
+    await AppendEventAsync(eventStore, streamId, new ActionTestIgnoredEvent {
+      StreamId = streamId
+    });
+
+    await using var storeContext = CreateDbContext();
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
+
+    // Act
+    await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+
+    // Assert: no phantom default row
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<ActionTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNull();
+  }
+
+  /// <summary>
+  /// Guards against the naive fix where <c>updatedModel = null</c> unconditionally on None:
+  /// Event 1 returns an updated model, Event 2 returns <see cref="ApplyResult{TModel}.None"/>.
+  /// The batch must still persist Event 1's update. None means "I don't touch this event",
+  /// not "discard everything accumulated so far in the batch".
+  /// </summary>
+  [Test]
+  public async Task RunAsync_WithUpdateThenIgnoredOnNewStream_PersistsFirstUpdateAsync() {
+    // Arrange
+    var streamId = Guid.NewGuid();
+    var eventStore = new InMemoryEventStore();
+    await AppendEventAsync(eventStore, streamId, new ActionTestCreatedEvent {
+      StreamId = streamId,
+      Name = "Created",
+      Value = 7
+    });
+    await AppendEventAsync(eventStore, streamId, new ActionTestIgnoredEvent {
+      StreamId = streamId
+    });
+
+    await using var storeContext = CreateDbContext();
+    var perspectiveStore = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext, "action_test");
+    var runner = await CreateRunnerAsync(eventStore, perspectiveStore);
+
+    // Act
+    await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+
+    // Assert: Create is persisted; Ignored is a no-op that doesn't undo it
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<ActionTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Name).IsEqualTo("Created");
+    await Assert.That(row.Data.Value).IsEqualTo(7);
+  }
+
+  /// <summary>
+  /// <see cref="ApplyResult{TModel}.None"/> on an existing row must leave it unchanged —
+  /// no upsert overwriting to the default, no deletion.
+  /// </summary>
+  [Test]
+  public async Task RunAsync_WithIgnoredEventOnExistingStream_LeavesRowUnchangedAsync() {
+    // Arrange: two-phase to simulate a row that already exists in DB
+    var streamId = Guid.NewGuid();
+    var eventStore = new InMemoryEventStore();
+    await AppendEventAsync(eventStore, streamId, new ActionTestCreatedEvent {
+      StreamId = streamId,
+      Name = "Pre-existing",
+      Value = 123
+    });
+
+    await using var storeContext1 = CreateDbContext();
+    var perspectiveStore1 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext1, "action_test");
+    var runner1 = await CreateRunnerAsync(eventStore, perspectiveStore1);
+    var result1 = await runner1.RunAsync(streamId, "action_test", null, CancellationToken.None);
+
+    // Second batch: a single Ignored event against the existing row
+    await AppendEventAsync(eventStore, streamId, new ActionTestIgnoredEvent {
+      StreamId = streamId
+    });
+
+    await using var storeContext2 = CreateDbContext();
+    var perspectiveStore2 = new EFCorePostgresPerspectiveStore<ActionTestModel>(storeContext2, "action_test");
+    var runner2 = await CreateRunnerAsync(eventStore, perspectiveStore2);
+
+    // Act
+    await runner2.RunAsync(streamId, "action_test", result1.LastEventId, CancellationToken.None);
+
+    // Assert: row unchanged
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<ActionTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Name).IsEqualTo("Pre-existing");
+    await Assert.That(row.Data.Value).IsEqualTo(123);
+  }
+
+  /// <summary>
   /// Similar to the zombie bug but with a create event after purge.
   /// If the same stream gets a new CreatedEvent after Purge (e.g., session re-created),
   /// the runner should handle it gracefully — purge takes precedence since it was set.

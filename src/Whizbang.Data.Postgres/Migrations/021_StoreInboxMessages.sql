@@ -88,9 +88,11 @@ BEGIN
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
-      -- Update active streams for stream ownership tracking
-      -- Skip when instance_id is NULL (direct inbox INSERT path — claiming handles this later)
-      IF v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
+      -- Update active streams for stream tracking (without claiming ownership)
+      -- Ownership is established during the claiming phase in process_work_batch,
+      -- not during storage. This prevents the storing instance from blocking the
+      -- partition-assigned instance from claiming in multi-instance deployments.
+      IF v_msg.stream_id IS NOT NULL THEN
         INSERT INTO __SCHEMA__.wh_active_streams (
           stream_id,
           assigned_instance_id,
@@ -99,15 +101,15 @@ BEGIN
           last_activity_at
         ) VALUES (
           v_msg.stream_id,
-          p_instance_id,
+          NULL,           -- Don't claim ownership during storage; claiming assigns ownership
           p_lease_expiry,
           v_partition,
           p_now
         )
         ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
-          assigned_instance_id = p_instance_id,
-          lease_expiry = p_lease_expiry,
+          lease_expiry = GREATEST(__SCHEMA__.wh_active_streams.lease_expiry, p_lease_expiry),
           last_activity_at = p_now;
+        -- Don't touch assigned_instance_id on conflict: preserve existing stream stickiness
       END IF;
 
       -- Return message as newly created (deduplication succeeded)
