@@ -69,18 +69,21 @@ public partial class DapperWorkCoordinator(
         request.NewOutboxMessages.Length, request.NewInboxMessages.Length, request.Flags);
     }
 
-    await using var connection = new NpgsqlConnection(_connectionString);
-
-    // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
-    // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
-    connection.Notice += _onNotice;
-
-    await connection.OpenAsync(cancellationToken);
-
     var commandDefinition = _buildCommandDefinition(request, cancellationToken);
-    var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
 
-    return _categorizeResults(resultList);
+    return await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var connection = new NpgsqlConnection(_connectionString);
+
+      // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
+      // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
+      connection.Notice += _onNotice;
+
+      await connection.OpenAsync(cancellationToken);
+
+      var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
+
+      return _categorizeResults(resultList);
+    }, logger: _logger, cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -498,19 +501,21 @@ public partial class DapperWorkCoordinator(
       return;
     }
 
-    await using var connection = new NpgsqlConnection(_connectionString);
-    await connection.OpenAsync(cancellationToken);
-
     var json = _serializeNewInboxMessages(messages);
-    var now = DateTimeOffset.UtcNow;
 
-    await connection.ExecuteAsync(
-      "SELECT * FROM store_inbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
-      new {
-        messages = json,
-        now,
-        partitionCount
-      });
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var connection = new NpgsqlConnection(_connectionString);
+      await connection.OpenAsync(cancellationToken);
+
+      var now = DateTimeOffset.UtcNow;
+      await connection.ExecuteAsync(
+        "SELECT * FROM store_inbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
+        new {
+          messages = json,
+          now,
+          partitionCount
+        });
+    }, logger: _logger, cancellationToken: cancellationToken);
   }
 
   public async Task ReportPerspectiveCompletionAsync(
