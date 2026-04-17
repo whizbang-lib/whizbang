@@ -235,6 +235,87 @@ public class RewindScenarioTests {
       .Because("LOCK-IN: Rewind trigger event must fire exactly once on the rewind cycle.");
   }
 
+  // ==================== CONTRACT: 30-event burst with 8 out-of-order arrivals — per-event idempotency ====================
+
+  [Test]
+  public async Task Burst_30EventsWith8OutOfOrderArrivals_EachHandlerFiresExactlyOnce_Async() {
+    // Large-scale lock-in: across 30 events delivered across many cycles, with 8 of them
+    // arriving out-of-order (each triggering its own rewind), every event's PostPerspective
+    // handler must fire exactly once. No over-fires, no misses.
+    //
+    // Delivery script — event indices in logical order; parenthesised entries arrive LATE
+    // (below the current cursor when they appear):
+    //   0,1,2, 4,5,(3), 6,7,8, 10,11,(9), 12,13, 15,(14), 16,17, 19,20,(18), 21, 24,(22),
+    //   (23), 25, 27,(26), 28,29
+    var streamId = Guid.CreateVersion7();
+    const int total = 30;
+    var events = _createSequentialEvents(streamId, total);
+    var eventIds = events.Select(e => e.MessageId.Value).ToArray();
+
+    // Delivery order by index (late arrivals marked with logical position but delivered here):
+    int[] deliveryOrder = [
+      0, 1, 2,
+      4, 5, 3,
+      6, 7, 8,
+      10, 11, 9,
+      12, 13,
+      15, 14,
+      16, 17,
+      19, 20, 18,
+      21,
+      24, 22, 23,
+      25,
+      27, 26,
+      28, 29
+    ];
+    var lateIndices = new HashSet<int> { 3, 9, 14, 18, 22, 23, 26 };
+    const string perspectiveName = "Test.BurstPerspective";
+
+    var coordinator = new _arrivalScriptCoordinator(perspectiveName, streamId, eventIds, deliveryOrder, lateIndices);
+    var runner = new _rewindTrackingRunner {
+      HighestProcessedIdProvider = () => coordinator.HighestArrivedNonLateId
+    };
+    var eventStore = new _arrivalAwareEventStore(events, coordinator);
+    var spy = new _recordingReceptorInvoker();
+    var eventTypeProvider = new _fakeEventTypeProvider();
+
+    var worker = _createWorker(
+      coordinator,
+      new _singleRunnerRegistry(runner, perspectiveName),
+      receptorInvoker: spy,
+      eventStore: eventStore,
+      eventTypeProvider: eventTypeProvider);
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForAllArrivalsProcessedAsync(TimeSpan.FromSeconds(20));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: Each of the 30 events fired PostPerspectiveInline exactly once.
+    var postPerspective = spy.Invocations
+      .Where(i => i.Stage == LifecycleStage.PostPerspectiveInline)
+      .ToList();
+    for (var i = 0; i < total; i++) {
+      var id = eventIds[i];
+      var fires = postPerspective.Count(inv => inv.EventId == id);
+      await Assert.That(fires).IsEqualTo(1)
+        .Because($"LOCK-IN: Event index {i} must fire PostPerspectiveInline exactly once across the whole burst (late={lateIndices.Contains(i)}).");
+    }
+
+    // LOCK-IN: Every rewind corresponded to a late arrival. No spurious rewinds.
+    await Assert.That(runner.RewindTriggerEventIds.Count).IsEqualTo(lateIndices.Count)
+      .Because($"LOCK-IN: Expected exactly {lateIndices.Count} rewinds (one per late arrival).");
+
+    // LOCK-IN: Each late arrival's id was the trigger of exactly one rewind.
+    foreach (var lateIdx in lateIndices) {
+      var triggerMatches = runner.RewindTriggerEventIds.Count(t => t == eventIds[lateIdx]);
+      await Assert.That(triggerMatches).IsEqualTo(1)
+        .Because($"LOCK-IN: Late event index {lateIdx} must have been the trigger of exactly one rewind.");
+    }
+  }
+
   // ==================== Helpers ====================
 
   private static List<MessageEnvelope<IEvent>> _createSequentialEvents(Guid streamId, int count) {
@@ -370,6 +451,13 @@ public class RewindScenarioTests {
     /// Otherwise it returns Status=None (no events to process on this cycle).
     /// </summary>
     public Guid NormalRunResultEventId { get; set; }
+    /// <summary>
+    /// When set, both RunAsync and RewindAndRunAsync use the returned value as LastEventId.
+    /// Takes precedence over NormalRunResultEventId/RewindResultEventId and simulates a
+    /// real runner that processes up to the highest known event. Returns null/empty when
+    /// nothing new is available, yielding Status=None on the normal path.
+    /// </summary>
+    public Func<Guid?>? HighestProcessedIdProvider { get; set; }
     public IReadOnlyCollection<Guid> RewindTriggerEventIds => [.. _rewindTriggers];
     public int NormalRunCount => _normalRunCount;
 
@@ -379,6 +467,26 @@ public class RewindScenarioTests {
     public Task<PerspectiveCursorCompletion> RunAsync(
       Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _normalRunCount);
+      if (HighestProcessedIdProvider is not null) {
+        var latest = HighestProcessedIdProvider();
+        if (latest is { } id
+            && (lastProcessedEventId is null || _uuidV7Comparer.Compare(id, lastProcessedEventId.Value) > 0)) {
+          _firstNormalRun.TrySetResult();
+          return Task.FromResult(new PerspectiveCursorCompletion {
+            StreamId = streamId,
+            PerspectiveName = perspectiveName,
+            LastEventId = id,
+            Status = PerspectiveProcessingStatus.Completed,
+            EventsProcessed = 1
+          });
+        }
+        return Task.FromResult(new PerspectiveCursorCompletion {
+          StreamId = streamId,
+          PerspectiveName = perspectiveName,
+          LastEventId = lastProcessedEventId ?? Guid.Empty,
+          Status = PerspectiveProcessingStatus.None
+        });
+      }
       if (NormalRunResultEventId != Guid.Empty) {
         _firstNormalRun.TrySetResult();
         return Task.FromResult(new PerspectiveCursorCompletion {
@@ -401,10 +509,11 @@ public class RewindScenarioTests {
       Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
       _rewindTriggers.Add(triggeringEventId);
       _firstRewind.TrySetResult();
+      var resultEventId = HighestProcessedIdProvider?.Invoke() ?? RewindResultEventId;
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
-        LastEventId = RewindResultEventId,
+        LastEventId = resultEventId,
         Status = PerspectiveProcessingStatus.Completed,
         EventsProcessed = 5
       });
@@ -454,31 +563,13 @@ public class RewindScenarioTests {
         return Task.FromResult(new List<MessageEnvelope<IEvent>>());
       }
       var filtered = list
-        .Where(e => (afterEventId is null || _compare(e.MessageId.Value, afterEventId.Value) > 0)
-                 && (upToEventId == Guid.Empty || _compare(e.MessageId.Value, upToEventId) <= 0))
+        .Where(e => (afterEventId is null || _uuidV7Comparer.Compare(e.MessageId.Value, afterEventId.Value) > 0)
+                 && (upToEventId == Guid.Empty || _uuidV7Comparer.Compare(e.MessageId.Value, upToEventId) <= 0))
         .OrderBy(e => e.MessageId.Value, _uuidV7Comparer)
         .ToList();
       return Task.FromResult(filtered);
     }
 
-    // Bytewise big-endian comparison matches UUIDv7 time-ordering semantics.
-    // Guid.CompareTo compares underlying fields in a struct-specific order which does NOT
-    // match the natural v7 ordering.
-    private static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Create(_compare);
-
-    private static int _compare(Guid a, Guid b) {
-      Span<byte> ab = stackalloc byte[16];
-      Span<byte> bb = stackalloc byte[16];
-      a.TryWriteBytes(ab, bigEndian: true, out _);
-      b.TryWriteBytes(bb, bigEndian: true, out _);
-      for (var i = 0; i < 16; i++) {
-        var d = ab[i].CompareTo(bb[i]);
-        if (d != 0) {
-          return d;
-        }
-      }
-      return 0;
-    }
 
     // Drain-mode deserialization — not exercised by these tests; return empty.
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
@@ -511,6 +602,201 @@ public class RewindScenarioTests {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(_fakeEvent)];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
+
+  /// <summary>
+  /// Coordinator that drives a scripted arrival sequence for one (stream, perspective) pair.
+  /// Each poll advances one step in the delivery order. Out-of-order detection is simulated
+  /// by comparing the arriving event id to the current cursor's LastEventId — if it is below,
+  /// RewindRequired is flipped with that event as the trigger.
+  /// Completion report advances the cursor to the reported LastEventId and clears the flag.
+  /// </summary>
+  private sealed class _arrivalScriptCoordinator : IWorkCoordinator {
+    private readonly string _perspectiveName;
+    private readonly Guid _streamId;
+    private readonly Guid[] _eventIds;
+    private readonly int[] _deliveryOrder;
+    private readonly HashSet<int> _lateIndices;
+    private int _nextArrivalIdx;
+    private readonly TaskCompletionSource _allProcessed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private PerspectiveCursorInfo _cursor;
+    private readonly IComparer<Guid> _cmp = _uuidV7Comparer;
+    private readonly HashSet<Guid> _arrived = [];
+
+    public IReadOnlySet<Guid> Arrived => _arrived;
+
+    /// <summary>
+    /// Highest arrived event id (by UUIDv7 time order) that is NOT itself a late arrival —
+    /// i.e., the cursor head that the runner should return from RunAsync / RewindAndRunAsync.
+    /// Returns null until at least one non-late event has arrived.
+    /// </summary>
+    public Guid? HighestArrivedNonLateId {
+      get {
+        Guid? best = null;
+        for (var i = 0; i < _nextArrivalIdx; i++) {
+          var idx = _deliveryOrder[i];
+          if (_lateIndices.Contains(idx)) {
+            continue;
+          }
+          var id = _eventIds[idx];
+          if (best is null || _uuidV7Comparer.Compare(id, best.Value) > 0) {
+            best = id;
+          }
+        }
+        return best;
+      }
+    }
+
+    public _arrivalScriptCoordinator(
+      string perspectiveName,
+      Guid streamId,
+      Guid[] eventIds,
+      int[] deliveryOrder,
+      HashSet<int> lateIndices) {
+      _perspectiveName = perspectiveName;
+      _streamId = streamId;
+      _eventIds = eventIds;
+      _deliveryOrder = deliveryOrder;
+      _lateIndices = lateIndices;
+      _cursor = new PerspectiveCursorInfo {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = null,
+        Status = PerspectiveProcessingStatus.None
+      };
+    }
+
+    public Task WaitForAllArrivalsProcessedAsync(TimeSpan timeout) =>
+      _allProcessed.Task.WaitAsync(timeout);
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+      // If there's a pending rewind, keep returning the triggering work item until the
+      // worker reports completion. Otherwise deliver the next scripted arrival.
+      if (_cursor.Status.HasFlag(PerspectiveProcessingStatus.RewindRequired)) {
+        return Task.FromResult(new WorkBatch {
+          OutboxWork = [],
+          InboxWork = [],
+          PerspectiveWork = [_makeWork()]
+        });
+      }
+
+      if (_nextArrivalIdx >= _deliveryOrder.Length) {
+        if (_arrived.Count == _eventIds.Length) {
+          _allProcessed.TrySetResult();
+        }
+        return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+      }
+
+      var idx = _deliveryOrder[_nextArrivalIdx++];
+      var arrivingId = _eventIds[idx];
+      _arrived.Add(arrivingId);
+
+      // Out-of-order detection: incoming id < cursor.LastEventId → rewind required.
+      if (_cursor.LastEventId is { } last && _cmp.Compare(arrivingId, last) < 0) {
+        _cursor = _cursor with {
+          Status = PerspectiveProcessingStatus.RewindRequired,
+          RewindTriggerEventId = arrivingId
+        };
+      }
+
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = [_makeWork()]
+      });
+    }
+
+    private PerspectiveWork _makeWork() => new() {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = _streamId,
+      PerspectiveName = _perspectiveName,
+      LastProcessedEventId = _cursor.LastEventId,
+      PartitionNumber = 1
+    };
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
+      if (completion.Status.HasFlag(PerspectiveProcessingStatus.Completed)) {
+        var advancedId = completion.LastEventId != Guid.Empty
+          ? completion.LastEventId
+          : _cursor.LastEventId;
+        _cursor = _cursor with {
+          LastEventId = advancedId,
+          Status = PerspectiveProcessingStatus.None,
+          RewindTriggerEventId = null
+        };
+        if (_nextArrivalIdx >= _deliveryOrder.Length && _arrived.Count == _eventIds.Length) {
+          _allProcessed.TrySetResult();
+        }
+      }
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(streamId == _streamId && perspectiveName == _perspectiveName ? _cursor : null);
+  }
+
+  /// <summary>
+  /// Event store fake that only returns envelopes for event ids that have already arrived
+  /// via the coordinator — mirrors real-world behavior where the store does not contain
+  /// events that have not yet been appended.
+  /// </summary>
+  private sealed class _arrivalAwareEventStore : IEventStore {
+    private readonly List<MessageEnvelope<IEvent>> _allEvents;
+    private readonly _arrivalScriptCoordinator _coordinator;
+
+    public _arrivalAwareEventStore(List<MessageEnvelope<IEvent>> allEvents, _arrivalScriptCoordinator coordinator) {
+      _allEvents = allEvents;
+      _coordinator = coordinator;
+    }
+
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId, Guid? afterEventId, Guid upToEventId,
+      IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+      var arrived = _coordinator.Arrived;
+      var filtered = _allEvents
+        .Where(e => arrived.Contains(e.MessageId.Value))
+        .Where(e => (afterEventId is null || _uuidV7Comparer.Compare(e.MessageId.Value, afterEventId.Value) > 0)
+                 && (upToEventId == Guid.Empty || _uuidV7Comparer.Compare(e.MessageId.Value, upToEventId) <= 0))
+        .OrderBy(e => e.MessageId.Value, _uuidV7Comparer)
+        .ToList();
+      return Task.FromResult(filtered);
+    }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+      IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
+
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) => _empty<IEvent>(cancellationToken);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
+
+    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>([EnumeratorCancellation] CancellationToken ct = default) {
+      await Task.CompletedTask;
+      yield break;
+    }
+  }
+
+  // Shared UUIDv7 comparer used by both fakes.
+  internal static readonly IComparer<Guid> _uuidV7Comparer = Comparer<Guid>.Create((a, b) => {
+    Span<byte> ab = stackalloc byte[16];
+    Span<byte> bb = stackalloc byte[16];
+    a.TryWriteBytes(ab, bigEndian: true, out _);
+    b.TryWriteBytes(bb, bigEndian: true, out _);
+    for (var i = 0; i < 16; i++) {
+      var d = ab[i].CompareTo(bb[i]);
+      if (d != 0) {
+        return d;
+      }
+    }
+    return 0;
+  });
 
   private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
