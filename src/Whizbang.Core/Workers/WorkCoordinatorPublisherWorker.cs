@@ -173,6 +173,9 @@ public partial class WorkCoordinatorPublisherWorker(
   private int _consecutiveEmptyPolls;
   private bool _isIdle = true;  // Start in idle state
 
+  // Periodic maintenance tracking (startup maintenance already runs during initialization)
+  private DateTimeOffset _lastMaintenanceRun = DateTimeOffset.UtcNow;
+
   // Wake signal: allows external callers to interrupt the polling delay
   // so the coordinator loop processes new work immediately.
   private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
@@ -328,6 +331,12 @@ public partial class WorkCoordinatorPublisherWorker(
         LogErrorProcessingWorkBatch(_logger, ex);
       }
 
+      // Periodic maintenance check (dedup cleanup, stuck inbox purge)
+      if (_options.MaintenanceInterval > TimeSpan.Zero &&
+          DateTimeOffset.UtcNow - _lastMaintenanceRun > _options.MaintenanceInterval) {
+        await _runPeriodicMaintenanceAsync(stoppingToken);
+      }
+
       try {
         // Wait for either the polling interval OR an external wake signal (whichever comes first).
         // RequestImmediatePoll() releases the semaphore, waking this loop early.
@@ -369,6 +378,20 @@ public partial class WorkCoordinatorPublisherWorker(
       LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
     }
     return false;
+  }
+
+  private async Task _runPeriodicMaintenanceAsync(CancellationToken stoppingToken) {
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var results = await workCoordinator.PerformMaintenanceAsync(stoppingToken);
+      foreach (var result in results) {
+        LogMaintenanceTaskResult(_logger, result.TaskName, result.RowsAffected, result.DurationMs);
+      }
+      _lastMaintenanceRun = DateTimeOffset.UtcNow;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogMaintenanceError(_logger, ex);
+    }
   }
 
   private async Task _publisherLoopAsync(CancellationToken stoppingToken) {
@@ -1478,6 +1501,18 @@ public partial class WorkCoordinatorPublisherWorker(
   )]
   static partial void LogInboxCompletionsSending(ILogger logger, int count);
 
+  [LoggerMessage(
+    Level = LogLevel.Information,
+    Message = "Periodic maintenance task {TaskName}: {RowsAffected} rows affected in {DurationMs:F1}ms"
+  )]
+  static partial void LogMaintenanceTaskResult(ILogger logger, string taskName, long rowsAffected, double durationMs);
+
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Periodic maintenance failed (non-fatal, will retry on next interval)"
+  )]
+  static partial void LogMaintenanceError(ILogger logger, Exception ex);
+
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.
   /// AOT-safe: uses JsonNode, no reflection or Type.GetType().
@@ -1575,12 +1610,22 @@ public class WorkCoordinatorPublisherOptions {
   public WorkerRetryOptions RetryOptions { get; set; } = new();
 
   /// <summary>
+  /// Interval between periodic maintenance runs (dedup cleanup, stuck inbox purge).
+  /// Set to TimeSpan.Zero to disable periodic maintenance (startup-only).
+  /// Default: 6 hours.
+  /// </summary>
+  /// <docs>operations/maintenance</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMaintenanceTests.cs</tests>
+  public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromHours(6);
+
+  /// <summary>
   /// Maximum number of messages to include in a single bulk publish batch.
   /// Only applies when the transport supports the BulkPublish capability.
-  /// Default: 50.
+  /// Default: 300 (matches p_max_streams in process_work_batch).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_LimitsDrainCountAsync</tests>
-  public int MaxBulkPublishBatchSize { get; set; } = 50;
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_DefaultIs300Async</tests>
+  public int MaxBulkPublishBatchSize { get; set; } = 300;
 }
 
 /// <summary>

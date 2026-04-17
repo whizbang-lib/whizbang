@@ -160,9 +160,11 @@ public class WorkCoordinatorOptions {
   public int LeaseSeconds { get; set; } = 300;
 
   /// <summary>
-  /// Stale instance threshold in seconds (default 600 = 10 minutes).
+  /// Stale instance threshold in seconds (default 30).
+  /// With ~1s ticks, 30 missed heartbeats proves an instance is dead.
+  /// All leases are released when a stale instance is cleaned up.
   /// </summary>
-  public int StaleThresholdSeconds { get; set; } = 600;
+  public int StaleThresholdSeconds { get; set; } = 30;
 
   /// <summary>
   /// Coalescing window in milliseconds for Required flushes on Interval strategy.

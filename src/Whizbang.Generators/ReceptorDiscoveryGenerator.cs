@@ -1461,14 +1461,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Builds per-receptor keyed invocations for the typed GetReceptorPublisher (PublishAsync path).
-  /// All receptors fire (no IsDefaultDispatch filtering). No cancellationToken parameter.
+  /// Default-stage receptors fire immediately. Explicit [FireAt] receptors are gated by
+  /// isDefaultDispatch=true (declared in the PUBLISH_ROUTING_SNIPPET), so they are deferred
+  /// to their declared lifecycle stage — fired by ReceptorInvoker against the registry.
+  /// No cancellationToken parameter (PublishAsync signature doesn't thread one through).
   /// </summary>
   private static string _buildPublishReceptorInvocations(
       string messageType,
       Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
       string receptorInterface) {
     return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
-      useCancellationToken: false, useStageFiltering: false);
+      useCancellationToken: false, useStageFiltering: true);
   }
 
   private static string _buildReceptorInvocationsCore(
@@ -1479,6 +1482,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       bool useStageFiltering) {
     var sb = new StringBuilder();
     var handleArgs = useCancellationToken ? "typedEvt, cancellationToken" : "typedEvt";
+    // Publish path (no cancellation token) has no outer isDefaultDispatch declaration;
+    // the cascade path's snippet declares it from sourceEnvelope. When emitting the
+    // [FireAt] guard from the publish path we must declare the local ourselves, and
+    // only when there are explicit receptors to gate (otherwise CS0219 fires).
+    var publishPathDeclaresIsDefaultDispatch = !useCancellationToken && useStageFiltering;
 
     if (receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
       // Separate typed (with response) and void receptors
@@ -1506,8 +1514,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           sb.AppendLine($"          }}");
         }
 
-        // Explicit [FireAt] void receptors — skip when IsDefaultDispatch=true
-        if (explicitVoidReceptors.Count > 0) {
+        // Explicit [FireAt] void receptors. Behavior depends on path:
+        //  - Cascade path: emit `if (!isDefaultDispatch)` gate; receptors fire only when
+        //    sourceEnvelope.DispatchContext.IsDefaultDispatch is false (explicit invoke).
+        //  - Publish path: do not emit at all; [FireAt] receptors fire later via
+        //    ReceptorInvoker at their declared lifecycle stage. Emitting them here
+        //    would cause double-fire (the engineer's reported bug).
+        if (explicitVoidReceptors.Count > 0 && !publishPathDeclaresIsDefaultDispatch) {
           sb.AppendLine($"          if (!isDefaultDispatch) {{");
           foreach (var receptor in explicitVoidReceptors) {
             sb.AppendLine($"            {{");
