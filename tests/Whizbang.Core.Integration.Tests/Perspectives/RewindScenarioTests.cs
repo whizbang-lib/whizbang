@@ -159,8 +159,12 @@ public class RewindScenarioTests {
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddLogging();
 
-    if (receptorInvoker is not null) services.AddSingleton(receptorInvoker);
-    if (eventStore is not null) services.AddSingleton(eventStore);
+    if (receptorInvoker is not null) {
+      services.AddSingleton(receptorInvoker);
+    }
+    if (eventStore is not null) {
+      services.AddSingleton(eventStore);
+    }
 
     var serviceProvider = services.BuildServiceProvider();
 
@@ -197,7 +201,9 @@ public class RewindScenarioTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       foreach (var kvp in _cycleWaiters) {
-        if (current >= kvp.Key) kvp.Value.TrySetResult();
+        if (current >= kvp.Key) {
+          kvp.Value.TrySetResult();
+        }
       }
       var work = current == 1 ? [.. FirstCycleWork] : new List<PerspectiveWork>();
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = work });
@@ -230,7 +236,8 @@ public class RewindScenarioTests {
     public Task<PerspectiveCursorCompletion> RunAsync(
       Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
       Task.FromResult(new PerspectiveCursorCompletion {
-        StreamId = streamId, PerspectiveName = perspectiveName,
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
         LastEventId = lastProcessedEventId ?? Guid.Empty,
         Status = PerspectiveProcessingStatus.None
       });
@@ -288,7 +295,9 @@ public class RewindScenarioTests {
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId, Guid? afterEventId, Guid upToEventId,
       IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
-      if (!EventsPerStream.TryGetValue(streamId, out var list)) return Task.FromResult(new List<MessageEnvelope<IEvent>>());
+      if (!EventsPerStream.TryGetValue(streamId, out var list)) {
+        return Task.FromResult(new List<MessageEnvelope<IEvent>>());
+      }
       var filtered = list
         .Where(e => (afterEventId is null || _compare(e.MessageId.Value, afterEventId.Value) > 0)
                  && (upToEventId == Guid.Empty || _compare(e.MessageId.Value, upToEventId) <= 0))
@@ -298,6 +307,10 @@ public class RewindScenarioTests {
     }
 
     private static int _compare(Guid a, Guid b) => a.CompareTo(b);
+
+    // Drain-mode deserialization — not exercised by these tests; return empty.
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+      IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
 
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
@@ -324,6 +337,7 @@ public class RewindScenarioTests {
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo(perspectiveName, $"global::{perspectiveName}", "global::Test.Model", ["global::Test.Event"])];
     public IReadOnlyList<Type> GetEventTypes() => [typeof(_fakeEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
