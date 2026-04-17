@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Commands.System;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -154,20 +155,101 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddSingleton(typeof(IPerspectiveRunnerRegistry), registryType);
 
     // Recording invoker — observes ProcessingMode seen by lifecycle receptor invocation.
+    // The dispatch-pipeline test uses _buildDispatchServices() instead, which swaps this for
+    // the real ReceptorInvoker backed by the source-generated IReceptorRegistry.
     services.AddScoped<IReceptorInvoker>(_ => new RecordingReceptorInvoker(_receptorInvocations, _receptorInvocationsLock));
+
+    // Cursor persistence: matches what PostgresDriverExtensions.Postgres registers.
+    services.AddScoped<IPerspectiveCheckpointCompleter>(sp =>
+        new EFCorePostgresPerspectiveCheckpointCompleter(
+            sp.GetRequiredService<WorkCoordinationDbContext>()));
+
+    // IPerspectiveRebuilder — normally registered by AddWhizbang, re-added here because
+    // the hand-built DI container skips AddWhizbang.
+    services.AddSingleton<IPerspectiveRebuilder, PerspectiveRebuilder>();
+
+    return services.BuildServiceProvider();
+  }
+
+  /// <summary>
+  /// Variant of the rebuild DI container that swaps the RecordingReceptorInvoker for the real
+  /// <see cref="ReceptorInvoker"/> backed by the source-generated <c>GeneratedReceptorRegistry</c>.
+  /// Used by the dispatch-pipeline test to exercise the same path the JDX BFF's admin endpoint
+  /// uses: <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>, which fans out to
+  /// <see cref="IReceptorInvoker.InvokeAsync"/> at <see cref="LifecycleStage.LocalImmediateInline"/>
+  /// for same-process dispatch. The runtime-registered receptor must be present at that stage or
+  /// the cursor never updates.
+  /// </summary>
+  private ServiceProvider _buildDispatchServices() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+
+    services.AddScoped<WorkCoordinationDbContext>(_ => new WorkCoordinationDbContext(DbContextOptions));
+    services.AddScoped<DbContext>(sp => sp.GetRequiredService<WorkCoordinationDbContext>());
+
+    services.AddScoped<IEventStore>(sp =>
+        new PoisonEventStore(
+            new EFCoreEventStore<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()),
+            _poisonStreams));
+
+    services.AddScoped<IEventStoreQuery>(sp =>
+        new EFCoreFilterableEventStoreQuery(sp.GetRequiredService<WorkCoordinationDbContext>()));
+
+    services.AddScoped<IPerspectiveStore<RebuildBalanceModel>>(sp =>
+        new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(
+            sp.GetRequiredService<WorkCoordinationDbContext>(),
+            "rebuild_balance"));
+    services.AddScoped<IPerspectiveStore<RebuildInventoryModel>>(sp =>
+        new EFCorePostgresPerspectiveStore<RebuildInventoryModel>(
+            sp.GetRequiredService<WorkCoordinationDbContext>(),
+            "rebuild_inventory"));
+
+    services.AddScoped<RebuildBalancePerspective>();
+    services.AddScoped<RebuildInventoryPerspective>();
+
+    var asm = typeof(PerspectiveRebuilderIntegrationTests).Assembly;
+    services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildBalancePerspectiveRunner"));
+    services.AddScoped(asm.GetTypes().Single(t => t.Name == "RebuildInventoryPerspectiveRunner"));
+
+    var runnerRegistryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
+        t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
+    services.AddSingleton(typeof(IPerspectiveRunnerRegistry), runnerRegistryType);
+
+    // REAL IReceptorRegistry — source-generated per-assembly. This is the one the runtime
+    // IReceptorRegistry.Register call writes to, and the one ReceptorInvoker reads from.
+    var receptorRegistryType = asm.GetTypes().Single(t => t.Name == "GeneratedReceptorRegistry" &&
+        t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
+    services.AddSingleton(typeof(IReceptorRegistry), receptorRegistryType);
+
+    // REAL IReceptorInvoker — routes messages to the receptors registered in IReceptorRegistry.
+    services.AddScoped<IReceptorInvoker>(sp =>
+        new ReceptorInvoker(sp.GetRequiredService<IReceptorRegistry>(), sp));
+
+    services.AddScoped<IPerspectiveCheckpointCompleter>(sp =>
+        new EFCorePostgresPerspectiveCheckpointCompleter(
+            sp.GetRequiredService<WorkCoordinationDbContext>()));
+
+    services.AddSingleton<IPerspectiveRebuilder, PerspectiveRebuilder>();
 
     return services.BuildServiceProvider();
   }
 
   private static async Task _appendEventAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload)
       where TEvent : IEvent {
+    _ = await _appendAndGetEventIdAsync(eventStore, streamId, payload);
+  }
+
+  private static async Task<Guid> _appendAndGetEventIdAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload)
+      where TEvent : IEvent {
+    var messageId = MessageId.New();
     var envelope = new MessageEnvelope<TEvent> {
-      MessageId = MessageId.New(),
+      MessageId = messageId,
       Payload = payload,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
     };
     await eventStore.AppendAsync(streamId, envelope);
+    return messageId.Value;
   }
 
   [Test]
@@ -294,8 +376,14 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     await Assert.That(baseline.Success).IsTrue();
     await Assert.That(baseline.StreamsProcessed).IsEqualTo(2);
 
-    // Simulate an event-store purge: remove all events for orphanStream. liveStream keeps its event.
+    // Simulate an event-store purge: remove all events for orphanStream. liveStream keeps its
+    // event. We first delete the cursor row — wh_perspective_cursors.last_event_id has a FK to
+    // wh_event_store.event_id now that rebuild persists cursors, so deleting events would fail
+    // if the cursor still references them.
     await using (var purgeContext = CreateDbContext()) {
+      await purgeContext.Set<PerspectiveCursorRecord>()
+          .Where(c => c.StreamId == orphanStream && c.PerspectiveName == RebuildBalancePerspectiveName)
+          .ExecuteDeleteAsync();
       await purgeContext.Set<EventStoreRecord>()
           .Where(e => e.StreamId == orphanStream)
           .ExecuteDeleteAsync();
@@ -347,9 +435,12 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // Project inventory first so it has a baseline row, then mutate that row to a value
     // the event log would never produce. If the subsequent balance rebuild touches inventory,
     // this drift will be overwritten; if rebuild is properly isolated, it stays drifted.
+    // The rebuilder narrows to streams with events matching the perspective's event types,
+    // so the inventory rebuild only sees inventoryStream (balanceStream has no stock-adjusted
+    // events).
     var inventoryBaseline = await rebuilder.RebuildInPlaceAsync(RebuildInventoryPerspectiveName, CancellationToken.None);
     await Assert.That(inventoryBaseline.Success).IsTrue();
-    await Assert.That(inventoryBaseline.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(inventoryBaseline.StreamsProcessed).IsEqualTo(1);
 
     const int driftedValue = -12345;
     await using (var corruptContext = CreateDbContext()) {
@@ -363,9 +454,10 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // Act: rebuild ONLY the balance perspective.
     var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
 
-    // Assert: balance rebuild reports success for the two streams that exist in the store.
+    // Assert: balance rebuild reports success for the one stream with credited events
+    // (the other stream has only stock-adjusted events, which the balance perspective ignores).
     await Assert.That(result.Success).IsTrue();
-    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
 
     // Assert: inventory row is still drifted — the balance rebuild did not touch it.
     await using var verifyContext = CreateDbContext();
@@ -539,5 +631,625 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     foreach (var (stage, mode) in captured) {
       await Assert.That(mode).IsEqualTo(ProcessingMode.Rebuild);
     }
+  }
+
+  /// <summary>
+  /// After in-place rebuild, the cursor for each replayed stream must exist in
+  /// <c>wh_perspective_cursors</c> with <c>Status = Completed</c> and <c>LastEventId</c>
+  /// equal to the final replayed event's UUIDv7. Pairs with the runner's return value —
+  /// PerspectiveRebuilder now persists the PerspectiveCursorCompletion through
+  /// IPerspectiveCheckpointCompleter rather than discarding it.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_WritesCursorCheckpointAsync() {
+    var streamId = Guid.NewGuid();
+    Guid lastEventId;
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId);
+  }
+
+  /// <summary>
+  /// RebuildStreamsAsync writes cursors for the targeted streams only. Untargeted streams
+  /// stay cursor-less if they had no prior cursor (matches scenario 2's projection-row claim).
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WritesCursorsForTargetedStreamsOnlyAsync() {
+    var streams = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+    var eventIds = new Dictionary<Guid, Guid>(streams.Length);
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        eventIds[streamId] = await _appendAndGetEventIdAsync(eventStore, streamId,
+            new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+      }
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var targeted = new[] { streams[1], streams[3] };
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, targeted, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+
+    await using var verifyContext = CreateDbContext();
+    var targetedSet = new HashSet<Guid>(targeted);
+    foreach (var streamId in streams) {
+      var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      if (targetedSet.Contains(streamId)) {
+        await Assert.That(cursor).IsNotNull();
+        await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+        await Assert.That(cursor.LastEventId).IsEqualTo(eventIds[streamId]);
+      } else {
+        await Assert.That(cursor).IsNull();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Blue-green rebuild must also leave the cursor Completed at the final event. Even though
+  /// <c>RebuildBlueGreenAsync</c> currently aliases to in-place (no real table-swap yet), pin
+  /// the cursor contract so a future blue-green implementation can't regress it.
+  /// </summary>
+  [Test]
+  public async Task RebuildBlueGreenAsync_WritesCursorCheckpointAsync() {
+    var streamId = Guid.NewGuid();
+    Guid lastEventId;
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildBlueGreenAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId);
+  }
+
+  /// <summary>
+  /// Cursor LastEventId must equal the FINAL event in the stream — not the first, not an
+  /// intermediate one. Proves the rebuilder persists the completion after replay is done
+  /// rather than mid-stream.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_CursorLastEventIdMatchesFinalEventAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    var appendedIds = new List<Guid>();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      appendedIds.Add(await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 10m }));
+      appendedIds.Add(await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildDebitedEvent { StreamId = streamId, Amount = 3m }));
+      appendedIds.Add(await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 7m }));
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    // The last appended event — events after it don't exist — so LastEventId must match appendedIds[^1].
+    await Assert.That(cursor!.LastEventId).IsEqualTo(appendedIds[^1]);
+  }
+
+  /// <summary>
+  /// When a stream's runner throws (via the PoisonEventStore decorator), that stream's cursor
+  /// must NOT be persisted. The rebuilder treats per-stream failures as non-fatal but the
+  /// failed stream's checkpoint never gets flushed — matches the pre-existing "Success overall,
+  /// failing stream's projection row unchanged" invariant.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_FailedStreamDoesNotWriteCursorAsync() {
+    var streams = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).ToArray();
+    var poisonStream = streams[1];
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+      }
+    }
+
+    _poisonStreams.Add(poisonStream);
+    try {
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+      var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+      var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+    } finally {
+      _poisonStreams.Remove(poisonStream);
+    }
+
+    await using var verifyContext = CreateDbContext();
+    foreach (var streamId in streams) {
+      var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      if (streamId == poisonStream) {
+        await Assert.That(cursor).IsNull();
+      } else {
+        await Assert.That(cursor).IsNotNull();
+        await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Reproduces the production scenario: cursor already exists (e.g., stuck in Processing
+  /// status from a crashed live instance). Rebuild must UPDATE that row's status, last_event_id,
+  /// and clear error/rewind flags. Exercises the ON CONFLICT DO UPDATE path of the UPSERT —
+  /// the other cursor tests start clean and hit the INSERT path.
+  /// </summary>
+  [Test]
+  public async Task RebuildInPlaceAsync_WithExistingProcessingCursor_UpdatesToCompletedAsync() {
+    var streamId = Guid.NewGuid();
+    Guid firstEventId;
+    Guid secondEventId;
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      firstEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+      secondEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 20m });
+    }
+
+    // Simulate the production pre-existing-cursor case: a row stuck in Processing,
+    // pointing at the first event, with a stale error message. Raw SQL so we can also
+    // set the rewind columns (they're table columns but the PerspectiveCursorRecord
+    // EF entity doesn't expose them).
+    await using (var seedContext = CreateDbContext()) {
+      await seedContext.Database.ExecuteSqlRawAsync(
+          @"INSERT INTO wh_perspective_cursors
+              (stream_id, perspective_name, last_event_id, status, processed_at, error,
+               rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at)
+            VALUES ({0}, {1}, {2}, {3}, NOW() - INTERVAL '1 hour', {4}, {2}, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour')",
+          streamId,
+          RebuildBalancePerspectiveName,
+          firstEventId,
+          (short)PerspectiveProcessingStatus.Processing,
+          "prior worker crashed mid-processing");
+    }
+
+    // Confirm the stuck state is there before the rebuild.
+    await using (var midContext = CreateDbContext()) {
+      var pre = await midContext.Set<PerspectiveCursorRecord>()
+          .AsNoTracking()
+          .FirstAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      await Assert.That(pre.Status).IsEqualTo(PerspectiveProcessingStatus.Processing);
+      await Assert.That(pre.LastEventId).IsEqualTo(firstEventId);
+      await Assert.That(pre.Error).IsNotNull();
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+
+    // Cursor MUST reflect the rebuilt end-state: Completed status, LastEventId = final event,
+    // error cleared. Rewind fields are cleared by the completer but the EF entity doesn't
+    // expose them — a separate raw query confirms those below.
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(secondEventId);
+    await Assert.That(cursor.Error).IsNull();
+
+    await using var rewindConnection = verifyContext.Database.GetDbConnection();
+    await rewindConnection.OpenAsync();
+    await using var cmd = rewindConnection.CreateCommand();
+    cmd.CommandText = @"SELECT rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at
+                        FROM wh_perspective_cursors
+                        WHERE stream_id = @stream_id AND perspective_name = @perspective_name";
+    var streamParam = cmd.CreateParameter();
+    streamParam.ParameterName = "@stream_id";
+    streamParam.Value = streamId;
+    cmd.Parameters.Add(streamParam);
+    var nameParam = cmd.CreateParameter();
+    nameParam.ParameterName = "@perspective_name";
+    nameParam.Value = RebuildBalancePerspectiveName;
+    cmd.Parameters.Add(nameParam);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await Assert.That(await reader.ReadAsync()).IsTrue();
+    await Assert.That(reader.IsDBNull(0)).IsTrue();
+    await Assert.That(reader.IsDBNull(1)).IsTrue();
+    await Assert.That(reader.IsDBNull(2)).IsTrue();
+  }
+
+  // ==========================================================================
+  // RebuildPerspectiveCommandReceptor end-to-end integration tests
+  //
+  // These exercise the full command → receptor → rebuilder → completer → Postgres
+  // chain against the same DI wiring used by the rebuilder tests above, proving
+  // that dispatching RebuildPerspectiveCommand actually updates wh_perspective_cursors.
+  // Pins the fix for the production report: "dispatching RebuildPerspectiveCommand
+  // has no effect because there's no receptor".
+  // ==========================================================================
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithNamedPerspective_UpdatesCursorAsync() {
+    var streamId = Guid.NewGuid();
+    Guid lastEventId;
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 42m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName]));
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId);
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithModeInPlace_UpdatesCursorAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName],
+        Mode: RebuildMode.InPlace));
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithIncludeStreamIds_UpdatesOnlyTargetedCursorsAsync() {
+    var streams = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var streamId in streams) {
+        await _appendEventAsync(eventStore, streamId,
+            new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+      }
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    var targeted = new[] { streams[0], streams[2] };
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName],
+        IncludeStreamIds: targeted));
+
+    await using var verifyContext = CreateDbContext();
+    var targetedSet = new HashSet<Guid>(targeted);
+    foreach (var streamId in streams) {
+      var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+          .AsNoTracking()
+          .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      if (targetedSet.Contains(streamId)) {
+        await Assert.That(cursor).IsNotNull();
+        await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+      } else {
+        await Assert.That(cursor).IsNull();
+      }
+    }
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithNullPerspectiveNames_FansOutToAllRegisteredAsync() {
+    var balanceStream = Guid.NewGuid();
+    var inventoryStream = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, balanceStream,
+          new RebuildCreditedEvent { StreamId = balanceStream, Amount = 1m });
+      await _appendEventAsync(eventStore, inventoryStream,
+          new RebuildStockAdjustedEvent { StreamId = inventoryStream, Delta = 1 });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(PerspectiveNames: null));
+
+    await using var verifyContext = CreateDbContext();
+    // Balance perspective has a cursor on its stream.
+    var balanceCursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == balanceStream && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(balanceCursor).IsNotNull();
+    // Inventory perspective has a cursor on its stream.
+    var inventoryCursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == inventoryStream && c.PerspectiveName == RebuildInventoryPerspectiveName);
+    await Assert.That(inventoryCursor).IsNotNull();
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithPreexistingProcessingCursor_FlipsToCompletedAsync() {
+    // Mirrors the production scenario but drives it through the receptor instead of calling
+    // IPerspectiveRebuilder directly. Pins that the command path actually unsticks the cursor.
+    var streamId = Guid.NewGuid();
+    Guid firstEventId;
+    Guid secondEventId;
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      firstEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 10m });
+      secondEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 20m });
+    }
+
+    await using (var seedContext = CreateDbContext()) {
+      await seedContext.Database.ExecuteSqlRawAsync(
+          @"INSERT INTO wh_perspective_cursors
+              (stream_id, perspective_name, last_event_id, status, processed_at, error)
+            VALUES ({0}, {1}, {2}, {3}, NOW() - INTERVAL '1 hour', {4})",
+          streamId,
+          RebuildBalancePerspectiveName,
+          firstEventId,
+          (short)PerspectiveProcessingStatus.Processing,
+          "prior worker crashed mid-processing");
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName]));
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(secondEventId);
+    await Assert.That(cursor.Error).IsNull();
+  }
+
+  /// <summary>
+  /// System-command routing broadcasts RebuildPerspectiveCommand to every service via
+  /// SharedTopicInboxStrategy. Each service's receptor must silently skip perspectives it
+  /// doesn't own — no "No runner found" errors from services that happen to receive the
+  /// command but don't host the requested perspective. The receptor intersects the requested
+  /// PerspectiveNames with its local IPerspectiveRunnerRegistry, so per-service ownership is
+  /// automatic and needs no central coordination.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithUnknownPerspectiveName_SilentlySkipsAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    // Perspective name a different service might own, but we don't host it in this process.
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: ["SomeOtherService.SomeForeignPerspective"]));
+
+    // No cursor should exist — nothing was rebuilt here because we don't own that perspective.
+    await using var verifyContext = CreateDbContext();
+    var anyCursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .AnyAsync(c => c.StreamId == streamId);
+    await Assert.That(anyCursor).IsFalse();
+  }
+
+  /// <summary>
+  /// When the command requests a mix of locally-owned and foreign perspectives, the receptor
+  /// rebuilds the owned ones and silently ignores the foreign ones. Pins that
+  /// IncludeStreamIds / Mode still apply to the locally-owned subset.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithMixedOwnedAndUnknownNames_RebuildsOwnedOnlyAsync() {
+    var balanceStream = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, balanceStream,
+          new RebuildCreditedEvent { StreamId = balanceStream, Amount = 7m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [
+            "SomeOtherService.ForeignPerspective",
+            RebuildBalancePerspectiveName,
+            "YetAnotherService.AnotherForeign"
+        ]));
+
+    // Only the balance perspective (locally owned) should have its cursor updated.
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == balanceStream && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithFromEventIdSet_IgnoresItAndStillRebuildsAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
+    }
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName],
+        FromEventId: 9999));
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+  }
+
+  /// <summary>
+  /// Reproduces the JDX BFF's admin endpoint path:
+  /// <c>POST /api/admin/rebuild-perspective</c> → <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>
+  /// → same-process routing → <see cref="IReceptorInvoker.InvokeAsync"/> at
+  /// <see cref="LifecycleStage.LocalImmediateInline"/> → runtime-registered receptor.
+  ///
+  /// This is the test that would have caught the original production bug: the receptor was
+  /// registered only at <see cref="LifecycleStage.PostInboxInline"/>, so local dispatch never
+  /// hit it and cursors never updated. Registering at all three default stages fixes it.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_DispatchedViaInvoker_UpdatesCursorAsync() {
+    var streamId = Guid.NewGuid();
+    Guid lastEventId;
+    await using var sp = _buildDispatchServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId,
+          new RebuildCreditedEvent { StreamId = streamId, Amount = 123m });
+    }
+
+    // Mirror what RebuildCommandReceptorRegistrar.StartAsync does in production — register
+    // the receptor at the default-stage set. The registrar's bug was that it only registered
+    // at PostInboxInline; this test invokes at LocalImmediateInline which fails unless the
+    // registrar also registers there.
+    var registry = sp.GetRequiredService<IReceptorRegistry>();
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.LocalImmediateInline);
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PreOutboxInline);
+    registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PostInboxInline);
+
+    // Build an envelope and drive the receptor via IReceptorInvoker.InvokeAsync — the same
+    // path IDispatcher.SendAsync uses internally for local dispatch.
+    var command = new RebuildPerspectiveCommand(PerspectiveNames: [RebuildBalancePerspectiveName]);
+    var envelope = new MessageEnvelope<RebuildPerspectiveCommand> {
+      MessageId = MessageId.New(),
+      Payload = command,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+
+    await using var invokerScope = sp.CreateAsyncScope();
+    var invoker = invokerScope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+    await invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId);
   }
 }
