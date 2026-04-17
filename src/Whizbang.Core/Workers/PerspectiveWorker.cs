@@ -639,6 +639,31 @@ public partial class PerspectiveWorker(
             groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
             lastProcessedEventId, ct);
 
+          // Rewind path: the out-of-order trigger event lives below the pre-rewind cursor,
+          // so the range-based load above excludes it. Fetch up to the trigger and pluck
+          // the matching envelope so its PostPerspective lifecycle fires — event is new
+          // (never processed before, which is why the rewind was triggered).
+          // See plans/we-need-to-double-quiet-fern.md § design. A richer
+          // IPerspectiveReplayReader with LEFT JOIN will replace this crude fetch when
+          // additional scenarios (snapshot replay, multi-late-event batches) come online.
+          if (processingMode == ProcessingMode.Replay
+              && checkpoint?.RewindTriggerEventId is { } triggerId
+              && eventStore is not null
+              && _eventTypeProvider is not null
+              && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
+            var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
+              streamId,
+              afterEventId: null,
+              upToEventId: triggerId,
+              _eventTypeProvider.GetEventTypes(),
+              ct);
+            var triggerEnvelope = envelopesUpToTrigger
+              .FirstOrDefault(e => e.MessageId.Value == triggerId);
+            if (triggerEnvelope is not null) {
+              processedEvents.Insert(0, triggerEnvelope);
+            }
+          }
+
           // Collect processed events for PostLifecycle firing at batch end (deduplicate by event ID)
           foreach (var envelope in processedEvents) {
             batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
