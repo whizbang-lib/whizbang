@@ -896,11 +896,6 @@ public partial class WorkCoordinatorPublisherWorker(
     // 5-8. Extract ack counts, mark acknowledged, clear, and reset stale
     _processAcknowledgements(workBatch);
 
-    // DIAGNOSTIC: Log work batch contents
-    if (workBatch.InboxWork.Count > 0 || workBatch.PerspectiveWork.Count > 0) {
-      Console.WriteLine($"[WCW-DIAG] [{_instanceProvider.ServiceName}] instanceId={_instanceProvider.InstanceId} WorkBatch: InboxWork={workBatch.InboxWork.Count}, PerspectiveWork={workBatch.PerspectiveWork.Count}");
-    }
-
     // Log a summary of message processing activity
     int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length
       + inboxCompletionsToSend.Length + inboxFailuresToSend.Length
