@@ -207,10 +207,44 @@ Without owned-domain routing, every event produced by a service's own receptors 
 2. **Queue backpressure** — downstream queues (e.g., BFF) fill up with events they don't need
 3. **Self-consumption loops** — if subscription filtering has gaps, the service processes its own events again, creating cascading event storms
 
+### Transport Echo Suppression
+
+When a service publishes an event, the transport (RabbitMQ, Service Bus, etc.) broadcasts it to **all** subscribers — including the originating service itself. The `TransportConsumerWorker` suppresses these echo messages at the transport consumer layer, before they reach the inbox.
+
+**Events and commands are suppressed differently:**
+
+| Message Type | Owned Namespace? | Echo Detection | Discard? |
+|--------------|:----------------:|----------------|:--------:|
+| Event | Yes | **Unconditional** — owned events only exist because this service published them | Always |
+| Event | No | None — from another service | Never |
+| Command | Yes | **Hop-based** — check if last hop's service name matches this service | Only if self-echo |
+| Command | No | None — routed to this service intentionally | Never |
+
+**Why the asymmetry?**
+
+- **Events** in an owned namespace can *only* have been published by this service (the namespace owner). When they arrive from the transport, they are always echo — the service already processed them locally via the fast path (`LocalImmediateDetached`). No hop inspection is needed.
+
+- **Commands** in an owned namespace may arrive from other services via cross-service dispatch (e.g., BffService sends a command to ChatService). The transport consumer checks the last hop's service name: if it matches this service, it's self-echo; if it's a different service, the command is legitimate and must be processed.
+
+```
+Event published by ChatService
+  ├── Local fast path: ChatService processes immediately (LocalImmediateDetached)
+  └── Transport broadcast: arrives at ChatService inbox → DISCARDED (owned event echo)
+                           arrives at BffService inbox → PROCESSED (cross-service delivery)
+
+Command sent by BffService to ChatService's namespace
+  └── Transport delivery: arrives at ChatService inbox → PROCESSED (hop says "BffService")
+
+Command sent by ChatService to its own namespace
+  └── Transport delivery: arrives at ChatService inbox → DISCARDED (hop says "ChatService")
+```
+
 ### Related
 
 - **Source code**: [`src/Whizbang.Core/Dispatcher.cs` — `_isOwnedNamespace()`, `_resolveEventTopic()`](../src/Whizbang.Core/Dispatcher.cs)
+- **Source code**: [`src/Whizbang.Core/Workers/TransportConsumerWorker.cs` — echo suppression in batch and single-message handlers](../src/Whizbang.Core/Workers/TransportConsumerWorker.cs)
 - **Tests**: [`tests/Whizbang.Core.Tests/Dispatcher/DispatcherOwnedDomainTests.cs`](../tests/Whizbang.Core.Tests/Dispatcher/DispatcherOwnedDomainTests.cs)
+- **Tests**: [`tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs`](../tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs)
 - **Subscription filtering**: [`src/Whizbang.Core/Routing/EventSubscriptionDiscovery.cs`](../src/Whizbang.Core/Routing/EventSubscriptionDiscovery.cs)
 
 ---
