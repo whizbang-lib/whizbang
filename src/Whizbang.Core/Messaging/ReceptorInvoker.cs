@@ -445,6 +445,14 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <summary>
   /// Invokes a single receptor with tracing, sync awaiting, and event cascading.
   /// </summary>
+  /// <remarks>
+  /// Emits paired structured Debug logs (EventIds 16/17) bracketing the actual receptor
+  /// dispatch so that an operator can observe firing counts per <c>(ReceptorId, MessageId, Stage)</c>
+  /// in Aspire or file sinks. The post-invocation log runs from a <c>finally</c> block so
+  /// exceptions are still reported with <c>IsError=true</c> plus the exception type.
+  /// </remarks>
+  /// <docs>operations/observability/receptor-logging</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerLoggingTests.cs</tests>
   private async ValueTask _invokeReceptorAsync(
       ReceptorInfo receptor,
       ReceptorInvocationContext ctx,
@@ -456,6 +464,27 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
     receptorActivity?.SetTag("whizbang.receptor.message_type", ctx.MessageType.FullName);
     receptorActivity?.SetTag("whizbang.lifecycle.stage", ctx.Stage.ToString());
+
+    // Pre-resolve log fields once per receptor invocation so both the "firing" and "fired" lines
+    // share the same identity tuple. The envelope is single-threaded per message, so these values
+    // do not change between the two log calls.
+    var messageId = ctx.Envelope.MessageId.Value;
+    var streamId = ctx.ExtractedStreamId ?? Guid.Empty;
+    var messageTypeName = ctx.MessageType.FullName ?? ctx.MessageType.Name;
+    Guid correlationId = Guid.Empty;
+    string sourceService = string.Empty;
+    if (ctx.Envelope.Hops is { Count: > 0 } hops) {
+      correlationId = hops[0].CorrelationId?.Value ?? Guid.Empty;
+      sourceService = hops[^1].ServiceInstance.ServiceName ?? string.Empty;
+    }
+
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.ReceptorFiring(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService);
+    }
+    var stopwatch = Stopwatch.StartNew();
+    bool isError = false;
+    string? exceptionTypeName = null;
 
     try {
       // Await perspective sync if needed - returns SyncContext to set in THIS execution context
@@ -486,10 +515,17 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
         await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
       }
     } catch (Exception ex) {
+      isError = true;
+      exceptionTypeName = ex.GetType().FullName;
       receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      receptorActivity?.SetTag("exception.type", ex.GetType().FullName);
+      receptorActivity?.SetTag("exception.type", exceptionTypeName);
       receptorActivity?.SetTag("exception.message", ex.Message);
       throw;
+    } finally {
+      stopwatch.Stop();
+      if (_logger is not null) {
+        Log.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService, stopwatch.ElapsedMilliseconds, isError, exceptionTypeName);
+      }
     }
   }
 
@@ -675,6 +711,37 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Level = LogLevel.Debug,
       Message = "[ReceptorInvoker] No receptors registered for {Stage} / {MessageType} ({MessageId})")]
     public static partial void NoReceptorsRegistered(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 16,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Firing {ReceptorId} at {Stage} for {MessageType} (MessageId={MessageId}, StreamId={StreamId}, CorrelationId={CorrelationId}, SourceService={SourceService})")]
+    public static partial void ReceptorFiring(
+      ILogger logger,
+      string receptorId,
+      LifecycleStage stage,
+      Guid messageId,
+      Guid streamId,
+      string messageType,
+      Guid correlationId,
+      string sourceService);
+
+    [LoggerMessage(
+      EventId = 17,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Fired {ReceptorId} at {Stage} for {MessageType} in {ElapsedMs}ms (MessageId={MessageId}, StreamId={StreamId}, CorrelationId={CorrelationId}, SourceService={SourceService}, IsError={IsError}, ExceptionType={ExceptionType})")]
+    public static partial void ReceptorFired(
+      ILogger logger,
+      string receptorId,
+      LifecycleStage stage,
+      Guid messageId,
+      Guid streamId,
+      string messageType,
+      Guid correlationId,
+      string sourceService,
+      long elapsedMs,
+      bool isError,
+      string? exceptionType);
   }
 }
 
