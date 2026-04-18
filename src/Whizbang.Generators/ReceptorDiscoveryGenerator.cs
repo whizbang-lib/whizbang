@@ -561,17 +561,27 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a class symbol has the [FireDuringReplay] attribute.
-  /// Returns true if the attribute is present, false otherwise.
-  /// Used to generate FireDuringReplay metadata on ReceptorInfo so the invoker can
-  /// suppress non-opted-in receptors during replay and rebuild operations.
+  /// Returns true when the receptor is decorated with <c>[ReceptorIdempotent(AlwaysFire = true)]</c>
+  /// or the legacy <c>[FireDuringReplay]</c> — both mean "fire for every replayed event,
+  /// including already-processed ones". Used to stamp the AlwaysFireOnReplay flag on
+  /// ReceptorInfo so the invoker can branch without runtime reflection.
   /// </summary>
   private static bool _hasFireDuringReplayAttribute(INamedTypeSymbol classSymbol) {
     const string FIRE_DURING_REPLAY_ATTRIBUTE = "Whizbang.Core.Messaging.FireDuringReplayAttribute";
+    const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == FIRE_DURING_REPLAY_ATTRIBUTE) {
+      var fqName = attribute.AttributeClass?.ToDisplayString();
+      if (fqName == FIRE_DURING_REPLAY_ATTRIBUTE) {
         return true;
+      }
+      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
+        // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true.
+        foreach (var arg in attribute.NamedArguments) {
+          if (arg.Key == "AlwaysFire" && arg.Value.Value is bool b && b) {
+            return true;
+          }
+        }
       }
     }
 
