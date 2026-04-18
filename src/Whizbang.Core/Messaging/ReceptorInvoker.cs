@@ -50,6 +50,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly LifecycleStageTracker? _stageTracker;
+  private readonly IReceptorDedupStore? _dedupStore;
+  private readonly Configuration.ReceptorInvocationTracking _invocationTracking;
+  private readonly Configuration.DoubleFireBehavior _onDoubleFire;
   private ILogger? _logger;
 
   /// <summary>
@@ -121,6 +124,17 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Resolve lifecycle stage tracker for cross-worker dedup (singleton)
     _stageTracker = scopedProvider.GetService<LifecycleStageTracker>();
+
+    // Resolve the receptor dedup store (per-message per-receptor guardrail).
+    // Default registration is EnvelopeReceptorDedupStore via AddWhizbangReceptorRegistry();
+    // a consumer may replace it with a DB-backed impl. Null → guardrail disabled.
+    _dedupStore = scopedProvider.GetService<IReceptorDedupStore>();
+
+    // Resolve guardrail options. Defaults: TrackAndEnforce, Warn on double-fire.
+    var whizbangOptions = scopedProvider.GetService<Microsoft.Extensions.Options.IOptions<Configuration.WhizbangOptions>>()?.Value;
+    var guardrails = whizbangOptions?.Guardrails ?? new Configuration.WhizbangGuardrailsOptions();
+    _invocationTracking = guardrails.ReceptorInvocationTracking;
+    _onDoubleFire = guardrails.OnDoubleFire;
   }
 
   /// <inheritdoc/>
@@ -479,6 +493,40 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     _ensureLogger();
+
+    // Guardrail: consult the dedup store for a prior invocation of this receptor against
+    // this envelope. Per-receptor (not per-stage), so a filter bug that lets the same
+    // receptor fire at both LocalImmediateInline AND PreOutboxInline is caught here.
+    // Receptors declared [ReceptorIdempotent] bypass — they've opted in to re-firing.
+    if (_invocationTracking == Configuration.ReceptorInvocationTracking.TrackAndEnforce
+        && _dedupStore is not null
+        && !receptor.IsIdempotent) {
+      var prior = await _dedupStore.TryGetPriorInvocationAsync(ctx.Envelope, receptor.ReceptorId, cancellationToken).ConfigureAwait(false);
+      if (prior is not null) {
+        if (_onDoubleFire == Configuration.DoubleFireBehavior.Throw) {
+          throw new DuplicateReceptorFireException(
+            receptorId: receptor.ReceptorId,
+            currentStage: ctx.Stage,
+            priorStage: prior.Stage,
+            messageId: messageId,
+            priorInvocation: prior);
+        }
+        // Warn + skip. Log first so operators always see the duplicate even if downstream state is suspicious.
+        if (_logger is not null) {
+          Log.ReceptorAlreadyFiredSkip(
+            _logger,
+            receptor.ReceptorId,
+            ctx.Stage,
+            prior.Stage,
+            messageId,
+            streamId,
+            sourceService,
+            prior.CompletedAt);
+        }
+        return;
+      }
+    }
+
     if (_logger is not null) {
       Log.ReceptorFiring(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService);
     }
@@ -513,6 +561,21 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // Cascade any IMessage instances from the receptor's return value
       if (result is not null && _eventCascader is not null) {
         await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+      }
+
+      // Record the invocation on success. Skipped when tracking is Off; the
+      // RecordInvocationAsync call itself is the only mutation of the envelope's
+      // ReceptorInvocations list, so on exception (caught below) nothing is recorded
+      // and a retry can re-fire cleanly.
+      if (_invocationTracking != Configuration.ReceptorInvocationTracking.Off && _dedupStore is not null) {
+        var record = new ReceptorInvocationRecord {
+          ReceptorId = receptor.ReceptorId,
+          Stage = ctx.Stage,
+          CompletedAt = DateTimeOffset.UtcNow,
+          Duration = stopwatch.Elapsed,
+          ServiceName = _serviceName ?? string.Empty
+        };
+        await _dedupStore.RecordInvocationAsync(ctx.Envelope, record, cancellationToken).ConfigureAwait(false);
       }
     } catch (Exception ex) {
       isError = true;
@@ -742,6 +805,20 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       long elapsedMs,
       bool isError,
       string? exceptionType);
+
+    [LoggerMessage(
+      EventId = 18,
+      Level = LogLevel.Warning,
+      Message = "[ReceptorInvoker] Receptor {ReceptorId} already fired at {PriorStage}, skipping duplicate attempt at {CurrentStage} (MessageId={MessageId}, StreamId={StreamId}, SourceService={SourceService}, PriorCompletedAt={PriorCompletedAt})")]
+    public static partial void ReceptorAlreadyFiredSkip(
+      ILogger logger,
+      string receptorId,
+      LifecycleStage currentStage,
+      LifecycleStage priorStage,
+      Guid messageId,
+      Guid streamId,
+      string sourceService,
+      DateTimeOffset priorCompletedAt);
   }
 }
 
