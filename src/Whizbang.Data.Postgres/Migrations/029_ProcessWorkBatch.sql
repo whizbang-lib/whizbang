@@ -531,14 +531,6 @@ BEGIN
     p_partition_count
   ) AS coo;
 
-  -- Establish stream ownership for claimed outbox messages
-  UPDATE __SCHEMA__.wh_active_streams ast
-  SET assigned_instance_id = p_instance_id,
-      lease_expiry = v_lease_expiry
-  FROM temp_orphaned_outbox too
-  WHERE ast.stream_id = too.stream_id
-    AND too.stream_id IS NOT NULL;
-
   -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
   IF (p_flags & 64) = 0 THEN
     INSERT INTO temp_orphaned_inbox (message_id, stream_id)
@@ -552,6 +544,30 @@ BEGIN
       p_partition_count
     ) AS coi;
   END IF;
+
+  -- Deadlock-safety fence: acquire exclusive row locks on every wh_active_streams row
+  -- the two ownership UPDATEs below will touch, in stream_id-sorted order. Without this,
+  -- Postgres picks row-lock order per UPDATE and two concurrent process_work_batch calls
+  -- with overlapping orphaned stream sets can lock A→B vs B→A and deadlock (40P01).
+  -- Observed in production — see plans/we-need-to-double-quiet-fern.md deadlock thread
+  -- and tests/Whizbang.Data.EFCore.Postgres.Tests/ProcessWorkBatchConcurrencyTests.cs.
+  PERFORM 1
+  FROM __SCHEMA__.wh_active_streams
+  WHERE stream_id IN (
+    SELECT stream_id FROM temp_orphaned_outbox WHERE stream_id IS NOT NULL
+    UNION
+    SELECT stream_id FROM temp_orphaned_inbox  WHERE stream_id IS NOT NULL
+  )
+  ORDER BY stream_id
+  FOR UPDATE;
+
+  -- Establish stream ownership for claimed outbox messages
+  UPDATE __SCHEMA__.wh_active_streams ast
+  SET assigned_instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry
+  FROM temp_orphaned_outbox too
+  WHERE ast.stream_id = too.stream_id
+    AND too.stream_id IS NOT NULL;
 
   -- Establish stream ownership for claimed inbox messages
   UPDATE __SCHEMA__.wh_active_streams ast
