@@ -93,29 +93,13 @@ BEGIN
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
-      -- Update active streams for stream tracking (without claiming ownership)
-      -- Ownership is established during the claiming phase in process_work_batch,
-      -- not during storage. This prevents the storing instance from blocking the
-      -- partition-assigned instance from claiming in multi-instance deployments.
-      IF v_msg.stream_id IS NOT NULL THEN
-        INSERT INTO __SCHEMA__.wh_active_streams (
-          stream_id,
-          assigned_instance_id,
-          lease_expiry,
-          partition_number,
-          last_activity_at
-        ) VALUES (
-          v_msg.stream_id,
-          NULL,           -- Don't claim ownership during storage; claiming assigns ownership
-          p_lease_expiry,
-          v_partition,
-          p_now
-        )
-        ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
-          lease_expiry = GREATEST(__SCHEMA__.wh_active_streams.lease_expiry, p_lease_expiry),
-          last_activity_at = p_now;
-        -- Don't touch assigned_instance_id on conflict: preserve existing stream stickiness
-      END IF;
+      -- NOTE: wh_active_streams refresh is deliberately NOT done here. It is driven
+      -- from process_work_batch end-of-tick in a single batched, sorted UPSERT
+      -- covering all four stream sources. Keeping the inbox write path free of
+      -- wh_active_streams means store_inbox_messages never takes a row lock on a
+      -- shared resource — only wh_message_deduplication and wh_inbox per-message-id
+      -- rows, both keyed on unique UUIDv7 message ids. Eliminates the 40P01 cycle
+      -- class observed in JDNext.
 
       -- Return message as newly created (deduplication succeeded)
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, (v_was_new = 1) AS was_newly_created;

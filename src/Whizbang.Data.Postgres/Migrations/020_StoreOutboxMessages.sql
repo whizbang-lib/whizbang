@@ -88,26 +88,13 @@ BEGIN
     -- Check if insert succeeded (ROW_COUNT = 1 means new row)
     GET DIAGNOSTICS v_was_new = ROW_COUNT;
 
-    -- Update active streams for stream ownership tracking
-    IF v_msg.stream_id IS NOT NULL THEN
-      INSERT INTO __SCHEMA__.wh_active_streams (
-        stream_id,
-        assigned_instance_id,
-        lease_expiry,
-        partition_number,
-        last_activity_at
-      ) VALUES (
-        v_msg.stream_id,
-        p_instance_id,
-        p_lease_expiry,
-        v_partition,
-        p_now
-      )
-      ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
-        assigned_instance_id = p_instance_id,
-        lease_expiry = p_lease_expiry,
-        last_activity_at = p_now;
-    END IF;
+    -- NOTE: wh_active_streams refresh is deliberately NOT done here. It is driven
+    -- from process_work_batch end-of-tick in a single batched, sorted UPSERT
+    -- covering all four stream sources (orphan outbox, orphan inbox, new outbox,
+    -- new inbox). Keeping the outbox write path free of wh_active_streams means
+    -- store_outbox_messages never takes a row lock on a shared resource — it only
+    -- writes per-message-id rows to wh_outbox. Eliminates the 40P01 cycle class
+    -- observed in JDNext.
 
     RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
   END LOOP;
@@ -115,4 +102,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages IS
-'Stores new outbox messages with immediate lease to current instance. Calculates partition for load balancing, updates active streams for ownership tracking. Returns message IDs for NewlyStored flag in orchestrator response.';
+'Stores new outbox messages with immediate lease to current instance. Returns message IDs for NewlyStored flag in orchestrator response. Does NOT touch wh_active_streams — that is refreshed in one batched statement at end of process_work_batch tick.';
