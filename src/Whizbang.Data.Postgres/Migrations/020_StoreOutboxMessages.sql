@@ -36,6 +36,11 @@ BEGIN
       (elem->>'StreamId')::UUID as stream_id,
       (elem->>'IsEvent')::BOOLEAN as is_event
     FROM jsonb_array_elements(p_messages) as elem
+    -- Sort by stream_id so the UPSERT on wh_active_streams below acquires row locks in
+    -- a canonical order across all concurrent callers — prevents A→B vs B→A deadlock
+    -- cycles. NULLS FIRST keeps the null-stream path stable. msg_id as tiebreaker for
+    -- determinism within the same stream.
+    ORDER BY (elem->>'StreamId')::UUID NULLS FIRST, (elem->>'MessageId')::UUID
   LOOP
     -- Calculate partition for stream-based load balancing
     IF v_msg.stream_id IS NOT NULL THEN
