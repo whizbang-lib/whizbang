@@ -150,6 +150,14 @@ __PHYSICAL_FIELD_CONFIGS__
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
+    services.AddScoped<global::Whizbang.Core.Perspectives.IPerspectiveReplayReader>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      var eventStore = sp.GetRequiredService<global::Whizbang.Core.Messaging.IEventStore>();
+      return new global::Whizbang.Data.EFCore.Postgres.Perspectives.EFCorePerspectiveReplayReader<__DBCONTEXT_FQN__>(
+        context,
+        eventStore
+      );
+    });
 
     // Register WorkCoordinatorOptions singleton
     // Supports both direct registration AND IOptions<T> pattern (Configure<WorkCoordinatorOptions>())
