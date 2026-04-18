@@ -34,4 +34,11 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
 
   /// <inheritdoc/>
   public ProcessingMode? ProcessingMode { get; init; }
+
+  /// <inheritdoc/>
+  public bool IsReplay =>
+    ProcessingMode is Messaging.ProcessingMode.Replay or Messaging.ProcessingMode.Rebuild;
+
+  /// <inheritdoc/>
+  public bool IsNewEvent { get; init; } = true;
 }

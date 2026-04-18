@@ -230,7 +230,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return;
     }
 
-    // Suppress receptors during replay/rebuild unless they opt in with [FireDuringReplay]
+    // Replay/Rebuild filtering: new events pass through, already-processed events keep
+    // only [ReceptorIdempotent(AlwaysFire = true)] receptors.
     receptors = _filterForReplayMode(receptors, context);
     if (receptors.Count == 0) {
       _ensureLogger();
@@ -394,14 +395,28 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   }
 
   /// <summary>
-  /// Filters receptors during replay/rebuild mode, keeping only those with [FireDuringReplay].
-  /// Returns the original list if not in replay/rebuild mode.
+  /// Filters receptors during Replay/Rebuild based on per-event idempotency semantics.
+  /// <list type="bullet">
+  ///   <item>Live mode → all receptors pass through.</item>
+  ///   <item>Replay/Rebuild + <see cref="ILifecycleContext.IsNewEvent"/> true → all receptors
+  ///   fire (this event has never been processed before).</item>
+  ///   <item>Replay/Rebuild + <c>IsNewEvent</c> false → only receptors declared fully
+  ///   idempotent via <c>[ReceptorIdempotent(AlwaysFire = true)]</c> fire
+  ///   (<see cref="ReceptorInfo.FireDuringReplay"/>).</item>
+  /// </list>
   /// </summary>
   private static IReadOnlyList<ReceptorInfo> _filterForReplayMode(
       IReadOnlyList<ReceptorInfo> receptors,
       ILifecycleContext? context) {
     var processingMode = context?.ProcessingMode;
     if (processingMode is not (ProcessingMode.Replay or ProcessingMode.Rebuild)) {
+      return receptors;
+    }
+
+    // In Replay/Rebuild, new events still fire all receptors — they have never had their
+    // lifecycle invoked before, so there is nothing to be idempotent about. Only
+    // already-processed events need to filter down to AlwaysFire receptors.
+    if (context?.IsNewEvent == true) {
       return receptors;
     }
 
