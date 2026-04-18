@@ -20,4 +20,18 @@ public sealed class EnvelopeMetadata {
   /// </summary>
   [System.Text.Json.Serialization.JsonPropertyName("dc")]
   public MessageDispatchContext? DispatchContext { get; init; }
+
+  /// <summary>
+  /// Per-receptor invocation records captured after each receptor fires. Parallel to
+  /// <see cref="Hops"/>: hops describe the message's journey across services; these records
+  /// describe which receptors ran against this specific message. Nullable for backward
+  /// compatibility with envelopes persisted before this field existed.
+  /// </summary>
+  /// <remarks>
+  /// NOT consulted by security, scope, source-service, or trace-context extraction —
+  /// those walk <see cref="Hops"/> only. This list exists solely for the
+  /// <see cref="Messaging.IReceptorDedupStore">receptor deduplication</see> guardrail.
+  /// </remarks>
+  [System.Text.Json.Serialization.JsonPropertyName("rin")]
+  public List<ReceptorInvocationRecord>? ReceptorInvocations { get; set; }
 }
