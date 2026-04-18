@@ -545,37 +545,64 @@ BEGIN
     ) AS coi;
   END IF;
 
-  -- Deadlock-safety fence: acquire exclusive row locks on every wh_active_streams row
-  -- the two ownership UPDATEs below will touch, in stream_id-sorted order. Without this,
-  -- Postgres picks row-lock order per UPDATE and two concurrent process_work_batch calls
-  -- with overlapping orphaned stream sets can lock A→B vs B→A and deadlock (40P01).
-  -- Observed in production — see plans/we-need-to-double-quiet-fern.md deadlock thread
-  -- and tests/Whizbang.Data.EFCore.Postgres.Tests/ProcessWorkBatchConcurrencyTests.cs.
-  PERFORM 1
-  FROM __SCHEMA__.wh_active_streams
-  WHERE stream_id IN (
-    SELECT stream_id FROM temp_orphaned_outbox WHERE stream_id IS NOT NULL
-    UNION
-    SELECT stream_id FROM temp_orphaned_inbox  WHERE stream_id IS NOT NULL
-  )
-  ORDER BY stream_id
-  FOR UPDATE;
+  -- wh_active_streams refresh for every stream that touched this tick (orphan claims
+  -- + new outbox + new inbox) happens in a single batched, sorted UPSERT below. This
+  -- replaces the previous pattern of several small UPDATEs inside process_work_batch
+  -- AND inside store_outbox_messages / store_inbox_messages, which could deadlock
+  -- when two concurrent ticks held overlapping subsets of rows in different orders.
+  --
+  -- Design: one statement, deterministic stream_id-sorted row-lock acquisition via the
+  -- preceding SELECT … FOR UPDATE fence, instance claims ownership for streams that
+  -- appear in an orphan claim or new outbox, refreshes lease only for new-inbox-only
+  -- streams. See plans/we-need-to-double-quiet-fern.md.
+  CREATE TEMP TABLE IF NOT EXISTS temp_stream_refresh (
+    stream_id UUID PRIMARY KEY,
+    claim_owner BOOLEAN NOT NULL
+  ) ON COMMIT DROP;
+  TRUNCATE temp_stream_refresh;
 
-  -- Establish stream ownership for claimed outbox messages
-  UPDATE __SCHEMA__.wh_active_streams ast
-  SET assigned_instance_id = p_instance_id,
-      lease_expiry = v_lease_expiry
-  FROM temp_orphaned_outbox too
-  WHERE ast.stream_id = too.stream_id
-    AND too.stream_id IS NOT NULL;
+  INSERT INTO temp_stream_refresh (stream_id, claim_owner)
+  SELECT sa.stream_id, bool_or(sa.claim_owner)
+  FROM (
+    SELECT stream_id, true  AS claim_owner FROM temp_orphaned_outbox WHERE stream_id IS NOT NULL
+    UNION ALL
+    SELECT stream_id, true                    FROM temp_orphaned_inbox  WHERE stream_id IS NOT NULL
+    UNION ALL
+    SELECT stream_id, true                    FROM temp_new_outbox      WHERE stream_id IS NOT NULL
+    UNION ALL
+    SELECT stream_id, false                   FROM temp_new_inbox       WHERE stream_id IS NOT NULL
+  ) sa
+  GROUP BY sa.stream_id;
 
-  -- Establish stream ownership for claimed inbox messages
-  UPDATE __SCHEMA__.wh_active_streams ast
-  SET assigned_instance_id = p_instance_id,
-      lease_expiry = v_lease_expiry
-  FROM temp_orphaned_inbox toi
-  WHERE ast.stream_id = toi.stream_id
-    AND toi.stream_id IS NOT NULL;
+  IF EXISTS (SELECT 1 FROM temp_stream_refresh) THEN
+    -- Deadlock-safety fence: pre-acquire row locks on existing wh_active_streams rows
+    -- in stream_id-sorted order. Two concurrent ticks with overlapping refresh sets
+    -- serialize here without cycling.
+    PERFORM 1
+    FROM __SCHEMA__.wh_active_streams
+    WHERE stream_id IN (SELECT stream_id FROM temp_stream_refresh)
+    ORDER BY stream_id
+    FOR UPDATE;
+
+    -- One batched, sorted UPSERT. assigned_instance_id semantics:
+    --   claim_owner = true  → this instance claims (orphan claim or new outbox).
+    --   claim_owner = false → preserve existing ownership (new-inbox-only stream).
+    -- lease_expiry is always bumped to GREATEST(existing, this tick's).
+    INSERT INTO __SCHEMA__.wh_active_streams
+      (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
+    SELECT
+      tsr.stream_id,
+      CASE WHEN tsr.claim_owner THEN p_instance_id ELSE NULL END,
+      v_lease_expiry,
+      __SCHEMA__.compute_partition(tsr.stream_id, p_partition_count),
+      p_now
+    FROM temp_stream_refresh tsr
+    ORDER BY tsr.stream_id
+    ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
+      assigned_instance_id = COALESCE(EXCLUDED.assigned_instance_id, __SCHEMA__.wh_active_streams.assigned_instance_id),
+      lease_expiry         = GREATEST(__SCHEMA__.wh_active_streams.lease_expiry, EXCLUDED.lease_expiry),
+      last_activity_at     = EXCLUDED.last_activity_at;
+  END IF;
 
   -- Claim orphaned receptor work and track
   INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
