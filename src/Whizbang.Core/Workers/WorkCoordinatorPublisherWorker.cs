@@ -883,7 +883,8 @@ public partial class WorkCoordinatorPublisherWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
+        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds,
+        MaxStreamsPerBatch = _options.MaxStreamsPerBatch
       };
       workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
     } catch (Exception ex) {
@@ -1626,6 +1627,14 @@ public class WorkCoordinatorPublisherOptions {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_LimitsDrainCountAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_DefaultIs1000Async</tests>
   public int MaxBulkPublishBatchSize { get; set; } = 1000;
+
+  /// <summary>
+  /// Maximum number of streams/events the SQL process_work_batch call returns per claim.
+  /// Maps to p_max_streams in the migration. Default: 1000. Aligned with
+  /// MaxBulkPublishBatchSize so a single poll cycle can claim + publish + mark-processed
+  /// in one shot instead of draining the burst across many polling cycles.
+  /// </summary>
+  public int MaxStreamsPerBatch { get; set; } = 1000;
 }
 
 /// <summary>
