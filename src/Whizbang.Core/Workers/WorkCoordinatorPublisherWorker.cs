@@ -1619,11 +1619,13 @@ public class WorkCoordinatorPublisherOptions {
   /// <summary>
   /// Maximum number of messages to include in a single bulk publish batch.
   /// Only applies when the transport supports the BulkPublish capability.
-  /// Default: 300 (matches p_max_streams in process_work_batch).
+  /// Default: 1000. Sized larger than p_max_streams (300) so a burst spanning
+  /// multiple SQL poll cycles can drain in a single publish pass once the
+  /// work channel has accumulated events.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_LimitsDrainCountAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_DefaultIs300Async</tests>
-  public int MaxBulkPublishBatchSize { get; set; } = 300;
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_DefaultIs1000Async</tests>
+  public int MaxBulkPublishBatchSize { get; set; } = 1000;
 }
 
 /// <summary>
