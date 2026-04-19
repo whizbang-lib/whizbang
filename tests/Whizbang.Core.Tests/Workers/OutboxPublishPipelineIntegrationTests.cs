@@ -115,7 +115,7 @@ public class OutboxPublishPipelineIntegrationTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var messageId = Guid.CreateVersion7();
@@ -171,7 +171,7 @@ public class OutboxPublishPipelineIntegrationTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var messageId = Guid.CreateVersion7();

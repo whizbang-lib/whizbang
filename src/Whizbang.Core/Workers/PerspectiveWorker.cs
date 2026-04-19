@@ -1057,7 +1057,7 @@ public partial class PerspectiveWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds,
+        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds,
         MaxStreamsPerBatch = _options.MaxStreamsPerBatch
       };
       var claimSw = System.Diagnostics.Stopwatch.StartNew();
@@ -2753,11 +2753,13 @@ public class PerspectiveWorkerOptions {
   public int LeaseSeconds { get; set; } = 300;
 
   /// <summary>
-  /// Stale instance threshold in seconds.
-  /// Instances that haven't sent a heartbeat for this duration will be removed.
-  /// Default: 600 (10 minutes)
+  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
+  /// After this, the instance's message leases are released and its stream ownership no longer
+  /// blocks other instances from claiming fresh work. See
+  /// <see cref="WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds"/> for
+  /// the full rationale and tuning guidance.
   /// </summary>
-  public int StaleThresholdSeconds { get; set; } = 600;
+  public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 
   /// <summary>
   /// Optional metadata to attach to this service instance.

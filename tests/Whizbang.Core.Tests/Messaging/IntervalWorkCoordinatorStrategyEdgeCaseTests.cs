@@ -65,7 +65,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       CoalesceWindowMilliseconds = coalesceMs,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
   }

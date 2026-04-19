@@ -69,7 +69,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
       RenewOutboxLeaseIds: [messageId1, messageId2],  // NEW PARAMETER
       RenewInboxLeaseIds: [],
       LeaseSeconds: 300,  // 5 minutes
-      StaleThresholdSeconds: 600
+      AbandonStaleInstanceThresholdSeconds: 600
     ));
 
     // Assert - Verify leases were renewed
@@ -140,7 +140,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
       RenewOutboxLeaseIds: [],
       RenewInboxLeaseIds: [messageId],  // NEW PARAMETER
       LeaseSeconds: 300,
-      StaleThresholdSeconds: 600
+      AbandonStaleInstanceThresholdSeconds: 600
     ));
 
     // Assert
@@ -212,7 +212,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
       RenewOutboxLeaseIds: [messageId],
       RenewInboxLeaseIds: [],
       LeaseSeconds: 300,
-      StaleThresholdSeconds: 600
+      AbandonStaleInstanceThresholdSeconds: 600
     ));
 
     // Assert - Lease-renewed message must be returned as work with Orphaned flag

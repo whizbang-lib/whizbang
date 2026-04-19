@@ -37,7 +37,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 100,  // 100ms interval for fast test
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -83,7 +83,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 1000,  // 1 second interval (longer to avoid races)
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -152,7 +152,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 1000,  // 1 second interval
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -206,7 +206,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,  // 5 second interval (long)
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -258,7 +258,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -305,7 +305,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -339,7 +339,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -373,7 +373,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -408,7 +408,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -447,7 +447,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -478,7 +478,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -515,7 +515,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -541,7 +541,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -812,7 +812,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var sut = new IntervalWorkCoordinatorStrategy(
@@ -866,7 +866,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var sut = new IntervalWorkCoordinatorStrategy(
@@ -916,7 +916,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var sut = new IntervalWorkCoordinatorStrategy(

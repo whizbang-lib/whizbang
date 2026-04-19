@@ -146,7 +146,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.Configure<WorkCoordinatorPublisherOptions>(options => {
           options.PollingIntervalMilliseconds = 100; // Fast polling for tests
           options.LeaseSeconds = 300;
-          options.StaleThresholdSeconds = 600;
+          options.AbandonStaleInstanceThresholdSeconds = 600;
           options.DebugMode = true; // Keep completed messages for verification
           options.PartitionCount = 10000;
         });

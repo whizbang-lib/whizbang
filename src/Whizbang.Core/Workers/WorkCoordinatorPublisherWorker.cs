@@ -883,7 +883,7 @@ public partial class WorkCoordinatorPublisherWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds
+        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
       };
       workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
     } catch (Exception ex) {
@@ -988,7 +988,7 @@ public partial class WorkCoordinatorPublisherWorker(
               Flags = WorkBatchOptions.SkipInboxClaiming,
               PartitionCount = _options.PartitionCount,
               LeaseSeconds = _options.LeaseSeconds,
-              StaleThresholdSeconds = _options.StaleThresholdSeconds
+              AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
             }, cancellationToken);
             _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
           } catch (Exception ex) {
@@ -1555,12 +1555,15 @@ public class WorkCoordinatorPublisherOptions {
   public int LeaseSeconds { get; set; } = 300;
 
   /// <summary>
-  /// Stale instance threshold in seconds.
-  /// Instances that haven't sent a heartbeat for this duration will be removed.
-  /// Default: 600 (10 minutes)
+  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
+  /// After this, the instance's message leases are released and its stream ownership no longer
+  /// blocks other instances from claiming fresh work. Heartbeats occur every
+  /// <see cref="PollingIntervalMilliseconds"/> (default 1 s); 30 s = 30 missed heartbeats.
+  /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
+  /// (GC, disk stalls, network blips) without triggering work reassignment.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
-  public int StaleThresholdSeconds { get; set; } = 600;
+  public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 
   /// <summary>
   /// Optional metadata to attach to this service instance.

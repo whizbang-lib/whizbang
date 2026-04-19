@@ -150,7 +150,7 @@ public partial class DapperWorkCoordinator(
       p_renew_inbox_lease_ids = serializedData.RenewInboxLeaseIds,
       p_renew_perspective_event_lease_ids = "[]",
       p_flags = (int)request.Flags,
-      p_stale_threshold_seconds = request.StaleThresholdSeconds,
+      p_stale_threshold_seconds = request.AbandonStaleInstanceThresholdSeconds,
       p_sync_inquiries = serializedData.SyncInquiries,
       p_max_streams = request.MaxStreamsPerBatch
     };
