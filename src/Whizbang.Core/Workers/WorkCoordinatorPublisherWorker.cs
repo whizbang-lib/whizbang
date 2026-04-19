@@ -337,6 +337,15 @@ public partial class WorkCoordinatorPublisherWorker(
         await _runPeriodicMaintenanceAsync(stoppingToken);
       }
 
+      // Drain pattern: if the last claim returned a full batch, there's more work
+      // waiting — loop immediately without a poll wait. Clears the flag so the next
+      // iteration re-evaluates based on what it claims.
+      if (_lastBatchWasFull) {
+        _lastBatchWasFull = false;
+        Interlocked.Exchange(ref _wakeSignaled, 0);
+        continue;
+      }
+
       try {
         // Wait for either the polling interval OR an external wake signal (whichever comes first).
         // RequestImmediatePoll() releases the semaphore, waking this loop early.
@@ -816,6 +825,11 @@ public partial class WorkCoordinatorPublisherWorker(
     }
   }
 
+  // Set by _processWorkBatchAsync when the last claim returned a full batch,
+  // meaning there's almost certainly more work waiting and we should drain
+  // immediately instead of sleeping for PollingIntervalMilliseconds.
+  private bool _lastBatchWasFull;
+
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
     // Create a scope to resolve scoped IWorkCoordinator
     using var scope = _scopeFactory.CreateScope();
@@ -896,6 +910,12 @@ public partial class WorkCoordinatorPublisherWorker(
 
     // 5-8. Extract ack counts, mark acknowledged, clear, and reset stale
     _processAcknowledgements(workBatch);
+
+    // Drain signal: if the SQL claim came back full on either axis, there's almost
+    // certainly more work waiting. Skip the next poll wait and claim again immediately.
+    _lastBatchWasFull =
+      workBatch.OutboxWork.Count >= _options.MaxStreamsPerBatch ||
+      workBatch.InboxWork.Count >= _options.MaxStreamsPerBatch;
 
     // Log a summary of message processing activity
     int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length
