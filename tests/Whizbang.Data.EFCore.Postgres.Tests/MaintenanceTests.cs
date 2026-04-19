@@ -261,4 +261,101 @@ public class MaintenanceTests : EFCoreTestBase {
       $"SELECT COUNT(*) FROM wh_inbox WHERE message_id = '{stuckId}'");
     await Assert.That(remaining).IsEqualTo(0);
   }
+
+  // ================================================================
+  // Task 6: Abandoned active-stream ownership cleanup
+  // ================================================================
+
+  [Test]
+  public async Task PerformMaintenance_PrunesActiveStreamsWhenInstanceIsMissing_DeletesAbandonedRowsAsync() {
+    // Arrange — one live instance with its stream, one abandoned row, one NULL-owner row.
+    await using var conn = await _openConnectionAsync();
+
+    var liveId = Guid.CreateVersion7();
+    var liveStream = Guid.CreateVersion7();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES ('{liveId}', 'test', 'host', 1, NOW(), NOW())");
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry, last_activity_at)
+      VALUES ('{liveStream}', 0, '{liveId}', NOW() + INTERVAL '5 minutes', NOW())");
+
+    var missingId = Guid.CreateVersion7();  // NOT inserted into wh_service_instances
+    var abandonedStream = Guid.CreateVersion7();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry, last_activity_at)
+      VALUES ('{abandonedStream}', 0, '{missingId}', NOW() + INTERVAL '5 minutes', NOW())");
+
+    var unownedStream = Guid.CreateVersion7();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry, last_activity_at)
+      VALUES ('{unownedStream}', 0, NULL, NULL, NOW())");
+
+    // Act
+    var results = await _runMaintenanceAsync(conn);
+
+    // Assert — task reports 1 row deleted.
+    var task6 = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(task6.TaskName).IsNotNull();
+    await Assert.That(task6.RowsAffected).IsEqualTo(1L);
+    await Assert.That(task6.Status).IsEqualTo("ok");
+
+    // Abandoned row is gone.
+    var abandoned = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{abandonedStream}'");
+    await Assert.That(abandoned).IsEqualTo(0);
+
+    // Live-owner row survives.
+    var live = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{liveStream}'");
+    await Assert.That(live).IsEqualTo(1);
+
+    // NULL-owner row survives (not touched by this task).
+    var unowned = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{unownedStream}'");
+    await Assert.That(unowned).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_PreservesLiveOwnerActiveStreamsEvenWithExpiredLeaseAsync() {
+    // A live instance's lease can expire without the instance itself being dead — e.g.,
+    // if the instance paused briefly. Liveness is per-instance (heartbeat), not per-lease.
+    // Task 6 must not prune these; that's claim_orphaned_inbox's job.
+    await using var conn = await _openConnectionAsync();
+
+    var liveId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES ('{liveId}', 'test', 'host', 1, NOW(), NOW())");
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry, last_activity_at)
+      VALUES ('{streamId}', 0, '{liveId}', NOW() - INTERVAL '1 hour', NOW())");
+
+    // Act
+    var results = await _runMaintenanceAsync(conn);
+
+    // Assert — row survives because the owner still heartbeats.
+    var task6 = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(task6.RowsAffected).IsEqualTo(0L);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{streamId}'");
+    await Assert.That(remaining).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_WithNoAbandonedStreams_ReportsZeroRowsAffectedAsync() {
+    // Empty-state guard: no rows to clean up should still return a result record.
+    await using var conn = await _openConnectionAsync();
+
+    // Act
+    var results = await _runMaintenanceAsync(conn);
+
+    // Assert — task is present with ok status and 0 rows.
+    var task6 = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(task6.TaskName).IsNotNull();
+    await Assert.That(task6.RowsAffected).IsEqualTo(0L);
+    await Assert.That(task6.Status).IsEqualTo("ok");
+  }
 }
