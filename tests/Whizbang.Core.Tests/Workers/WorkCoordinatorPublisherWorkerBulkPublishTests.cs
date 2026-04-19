@@ -360,12 +360,13 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
   }
 
   [Test]
-  public async Task BulkPublish_MaxBatchSize_DefaultIs300Async() {
+  public async Task BulkPublish_MaxBatchSize_DefaultIs1000Async() {
     // Arrange
     var options = new WorkCoordinatorPublisherOptions();
 
-    // Assert — default should be 300 to match p_max_streams in process_work_batch
-    await Assert.That(options.MaxBulkPublishBatchSize).IsEqualTo(300);
+    // Assert — default 1000: sized larger than p_max_streams (300) so a burst spanning
+    // multiple SQL poll cycles can drain in a single publish pass.
+    await Assert.That(options.MaxBulkPublishBatchSize).IsEqualTo(1000);
   }
 
   [Test]
