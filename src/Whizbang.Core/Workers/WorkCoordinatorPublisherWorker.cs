@@ -911,7 +911,7 @@ public partial class WorkCoordinatorPublisherWorker(
         inboxFailuresToSend.Length
       );
     } else {
-      LogNoWorkClaimed(_logger);
+      LogNoWorkClaimed(_logger, _options.PartitionCount, _instanceProvider.InstanceId);
     }
 
     // Write outbox work to channel for publisher loop
@@ -1422,9 +1422,9 @@ public partial class WorkCoordinatorPublisherWorker(
   [LoggerMessage(
     EventId = 21,
     Level = LogLevel.Debug,
-    Message = "Work batch processing: no work claimed (all partitions assigned to other instances or no pending messages)"
+    Message = "Work batch processing: empty result (outbox=0, inbox=0; no completions/failures/renewals sent). PartitionCount={PartitionCount}, InstanceId={InstanceId}. Cause not determinable from publisher; inspect wh_outbox/wh_inbox/wh_service_instances directly."
   )]
-  static partial void LogNoWorkClaimed(ILogger logger);
+  static partial void LogNoWorkClaimed(ILogger logger, int partitionCount, Guid instanceId);
 
   [LoggerMessage(
     EventId = 22,
