@@ -520,6 +520,9 @@ BEGIN
   -- only INSERTs into wh_inbox, and the next tick's claiming + event storage handles the rest.
 
   -- Claim orphaned outbox and track
+  -- v_stale_cutoff (computed above from p_stale_threshold_seconds) is passed so the claim
+  -- treats non-heartbeating instances as abandoned; their wh_active_streams leases no
+  -- longer block cross-instance claims. See migration 025 comment for the full rationale.
   INSERT INTO temp_orphaned_outbox (message_id, stream_id)
   SELECT coo.message_id, coo.stream_id
   FROM __SCHEMA__.claim_orphaned_outbox(
@@ -528,7 +531,8 @@ BEGIN
     v_count,
     v_lease_expiry,
     p_now,
-    p_partition_count
+    p_partition_count,
+    v_stale_cutoff
   ) AS coo;
 
   -- Claim orphaned inbox and track (skip when SkipInboxClaiming flag is set — bit 6 = 64)
@@ -541,7 +545,8 @@ BEGIN
       v_count,
       v_lease_expiry,
       p_now,
-      p_partition_count
+      p_partition_count,
+      v_stale_cutoff
     ) AS coi;
   END IF;
 
