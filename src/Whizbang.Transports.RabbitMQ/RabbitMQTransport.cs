@@ -291,12 +291,20 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Declare exchange (cached — only first call per exchange hits the broker)
       await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
 
-      // Publish each item in the batch using the same channel
+      // Pipeline publishes: issue all calls on the channel sequentially without awaiting each,
+      // then await completions in a second pass. RabbitMQ channels are not thread-safe, so
+      // issuance stays single-threaded; only the broker-confirm round-trips overlap.
+      var pendingPublishes = new List<(BulkPublishItem Item, Task PublishTask)>(items.Count);
       foreach (var item in items) {
+        var publishTask = _publishSingleBatchItemAsync(channel, item, destination, exchangeName, cancellationToken);
+        pendingPublishes.Add((item, publishTask));
+      }
+
+      foreach (var (item, publishTask) in pendingPublishes) {
         try {
-          await _publishSingleBatchItemAsync(channel, item, destination, exchangeName, cancellationToken);
+          await publishTask;
           results.Add(new BulkPublishItemResult { MessageId = item.MessageId, Success = true });
-        } catch (Exception ex) {
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
           results.Add(new BulkPublishItemResult {
             MessageId = item.MessageId,
             Success = false,
