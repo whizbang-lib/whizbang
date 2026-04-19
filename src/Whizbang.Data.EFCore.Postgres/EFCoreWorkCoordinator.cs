@@ -283,7 +283,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           renewInboxParam,
           renewPerspectiveEventLeaseIdsParam,
           new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
-          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds),
+          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.AbandonStaleInstanceThresholdSeconds),
           syncInquiriesParam,
           maxStreamsParam
         )

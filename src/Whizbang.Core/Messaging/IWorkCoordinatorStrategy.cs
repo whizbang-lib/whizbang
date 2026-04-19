@@ -160,11 +160,13 @@ public class WorkCoordinatorOptions {
   public int LeaseSeconds { get; set; } = 300;
 
   /// <summary>
-  /// Stale instance threshold in seconds (default 30).
-  /// With ~1s ticks, 30 missed heartbeats proves an instance is dead.
-  /// All leases are released when a stale instance is cleaned up.
+  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
+  /// With ~1 s ticks, 30 missed heartbeats prove an instance is dead. After this, the instance's
+  /// message leases are released and its stream ownership no longer blocks cross-instance claims.
+  /// See <see cref="Whizbang.Core.Workers.WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds"/>
+  /// for the full rationale and tuning guidance.
   /// </summary>
-  public int StaleThresholdSeconds { get; set; } = 30;
+  public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 
   /// <summary>
   /// Coalescing window in milliseconds for Required flushes on Interval strategy.

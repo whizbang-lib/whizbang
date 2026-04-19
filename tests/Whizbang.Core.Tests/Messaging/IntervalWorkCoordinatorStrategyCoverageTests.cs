@@ -59,7 +59,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       IntervalMilliseconds = intervalMs,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
   }

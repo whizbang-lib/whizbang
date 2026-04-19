@@ -162,10 +162,14 @@ public sealed record ProcessWorkBatchRequest {
   public int LeaseSeconds { get; init; } = 300;
 
   /// <summary>
-  /// How long before an instance is considered stale in seconds (default: 600 = 10 minutes).
-  /// Instances with expired heartbeats are cleaned up and their work redistributed.
+  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
+  /// After this, the instance's message leases are released and its stream ownership no longer
+  /// blocks other instances from claiming fresh work. Heartbeats occur every
+  /// PollingIntervalMilliseconds (default 1 s); 30 s = 30 missed heartbeats.
+  /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
+  /// (GC, disk stalls, network blips) without triggering work reassignment.
   /// </summary>
-  public int StaleThresholdSeconds { get; init; } = 30;
+  public int AbandonStaleInstanceThresholdSeconds { get; init; } = 30;
 
   /// <summary>
   /// Maximum number of streams to return per batch for perspective processing.
@@ -1171,7 +1175,7 @@ public readonly record struct ProcessWorkBatchContext(
   WorkBatchOptions Flags = WorkBatchOptions.None,
   int PartitionCount = 10_000,
   int LeaseSeconds = 300,
-  int StaleThresholdSeconds = 30);
+  int AbandonStaleInstanceThresholdSeconds = 30);
 
 /// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
@@ -1208,7 +1212,7 @@ public static class WorkCoordinatorExtensions {
       Flags = context.Flags,
       PartitionCount = context.PartitionCount,
       LeaseSeconds = context.LeaseSeconds,
-      StaleThresholdSeconds = context.StaleThresholdSeconds
+      AbandonStaleInstanceThresholdSeconds = context.AbandonStaleInstanceThresholdSeconds
     };
     return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
   }

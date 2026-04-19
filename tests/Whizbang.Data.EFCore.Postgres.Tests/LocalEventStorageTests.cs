@@ -527,7 +527,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
       var logger = sp.GetService<ILogger<ScopedWorkCoordinatorStrategy>>();
       var options = new WorkCoordinatorOptions {
         LeaseSeconds = 30,
-        StaleThresholdSeconds = 300,
+        AbandonStaleInstanceThresholdSeconds = 300,
         PartitionCount = 4
       };
       return new ScopedWorkCoordinatorStrategy(
