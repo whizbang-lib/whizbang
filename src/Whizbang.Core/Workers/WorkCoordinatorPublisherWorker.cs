@@ -1541,11 +1541,14 @@ public partial class WorkCoordinatorPublisherWorker(
 public class WorkCoordinatorPublisherOptions {
   /// <summary>
   /// Milliseconds to wait between polling for work.
-  /// Default: 1000 (1 second)
+  /// Default: 250 (1/4 second). This is also the heartbeat cadence — lower values
+  /// trade idle DB load (4x writes vs 1000ms) for faster burst drain and faster
+  /// instance-failure detection. For a ~6s burst of N events with per-cycle
+  /// drain time D, tail ≈ (PollingInterval + D) × ceil(N / MaxStreamsPerBatch).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_MultipleInstances_NoDuplicatePublishingAsync</tests>
-  public int PollingIntervalMilliseconds { get; set; } = 1000;
+  public int PollingIntervalMilliseconds { get; set; } = 250;
 
   /// <summary>
   /// Lease duration in seconds.
