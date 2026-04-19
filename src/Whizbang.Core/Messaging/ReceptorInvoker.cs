@@ -53,6 +53,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorDedupStore? _dedupStore;
   private readonly Configuration.ReceptorInvocationTracking _invocationTracking;
   private readonly Configuration.DoubleFireBehavior _onDoubleFire;
+  private readonly IReceptorFiringObserver? _firingObserver;
   private ILogger? _logger;
 
   /// <summary>
@@ -135,6 +136,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var guardrails = whizbangOptions?.Guardrails ?? new Configuration.WhizbangGuardrailsOptions();
     _invocationTracking = guardrails.ReceptorInvocationTracking;
     _onDoubleFire = guardrails.OnDoubleFire;
+
+    // Optional test-only observer. Null in production when nothing is registered.
+    _firingObserver = scopedProvider.GetService<IReceptorFiringObserver>();
   }
 
   /// <inheritdoc/>
@@ -530,9 +534,13 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (_logger is not null) {
       Log.ReceptorFiring(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService);
     }
+    if (_firingObserver is not null) {
+      await _firingObserver.OnReceptorFiringAsync(receptor.ReceptorId, ctx.Stage, messageId, ctx.Envelope, cancellationToken).ConfigureAwait(false);
+    }
     var stopwatch = Stopwatch.StartNew();
     bool isError = false;
     string? exceptionTypeName = null;
+    Exception? capturedException = null;
 
     try {
       // Await perspective sync if needed - returns SyncContext to set in THIS execution context
@@ -580,6 +588,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     } catch (Exception ex) {
       isError = true;
       exceptionTypeName = ex.GetType().FullName;
+      capturedException = ex;
       receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       receptorActivity?.SetTag("exception.type", exceptionTypeName);
       receptorActivity?.SetTag("exception.message", ex.Message);
@@ -588,6 +597,18 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       stopwatch.Stop();
       if (_logger is not null) {
         Log.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService, stopwatch.ElapsedMilliseconds, isError, exceptionTypeName);
+      }
+      if (_firingObserver is not null) {
+        // ConfigureAwait to the same context — finally block may run on any sync context.
+        // The observer's exception, if any, rides out with whatever is already propagating.
+        await _firingObserver.OnReceptorFiredAsync(
+          receptor.ReceptorId,
+          ctx.Stage,
+          messageId,
+          ctx.Envelope,
+          stopwatch.Elapsed,
+          capturedException,
+          cancellationToken).ConfigureAwait(false);
       }
     }
   }

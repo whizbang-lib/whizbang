@@ -76,6 +76,15 @@ public class WhizbangGuardrailsOptions {
   /// <c>Envelope</c> unless a consumer has wired a custom DB-backed store.
   /// </summary>
   public InvocationPersistence PersistInvocations { get; set; } = InvocationPersistence.Envelope;
+
+  /// <summary>
+  /// When true, framework workers (<c>PerspectiveWorker</c>, <c>TransportConsumerWorker</c>,
+  /// outbox drain, inbox commit) call into <see cref="Messaging.IChaosInjector"/> at named
+  /// checkpoints. Default is false — production pays zero cost. Test projects flip this on
+  /// and register an <c>IChaosInjector</c> to deterministically inject faults at boundaries
+  /// that would otherwise require real crashes or external timing manipulation to exercise.
+  /// </summary>
+  public bool EnableChaosHooks { get; set; }
 }
 
 /// <summary>
