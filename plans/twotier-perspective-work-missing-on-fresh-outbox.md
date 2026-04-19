@@ -1,60 +1,40 @@
-# Pre-existing failure: `ProcessWorkBatch_TwoTier_*` tests return empty `PerspectiveWork`
+# Resolved: `ProcessWorkBatch_TwoTier_*` tests were asserting on stale result shape
 
-**Status**: open, pre-existing on `feature/receptor-firing-debug-logging` as of 2026-04-19
-**Scope**: isolated — six consecutive `TwoTier_*` tests in `EFCoreRewindDetectionTests`, same signature
-**Observed during**: dead-instance-tolerance fix (plan file `polymorphic-tumbling-moonbeam.md`) — the failure predates and is unrelated to that work; confirmed by running against a fully-unstashed baseline.
+**Status**: resolved 2026-04-19 on `feature/receptor-firing-debug-logging`
+**Original symptom**: six consecutive `TwoTier_*` tests in `EFCoreRewindDetectionTests` failed deterministically with `result.PerspectiveWork` empty when it should contain stream ids.
 
 ---
 
-## Symptom
+## What the failure actually was
 
-Every `ProcessWorkBatch_TwoTier_*` test in `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRewindDetectionTests.cs` fails deterministically in isolation:
+Not a bug in the SQL pipeline. The drain-mode refactor moved the canonical result from `WorkBatch.PerspectiveWork` (per-event rows) to `WorkBatch.PerspectiveStreamIds` (distinct stream ids). `EFCoreWorkCoordinator` intentionally leaves `PerspectiveWork` empty when `perspective_stream` rows are present.
+
+The six failing tests still asserted against the legacy `PerspectiveWork.Select(w => w.StreamId)` shape. Once they read from `PerspectiveStreamIds` instead, they all pass.
+
+### Evidence
+
+- `src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs:360-376` — when `perspective_stream` rows arrive, `perspectiveWork = new List<PerspectiveWork>()` and stream ids flow through `perspectiveStreamIds` (returned via `WorkBatch.PerspectiveStreamIds` ~line 410).
+- `src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:1203-1288` — Phase 7 emits `'perspective_stream'` rows with `work_id=NULL`, `perspective_name=NULL`, Tier 1 preceding Tier 2.
+- `src/Whizbang.Core/Messaging/IWorkCoordinator.cs:568-575` — both `PerspectiveWork` (legacy per-event) and `PerspectiveStreamIds` (drain mode canonical) exist on `WorkBatch`.
+- `src/Whizbang.Core/Workers/PerspectiveWorker.cs:558-567` — the real worker already consumes `PerspectiveStreamIds`.
+- Sibling `ProcessWorkBatch_WithOutOfOrderEvent_SetsRewindRequiredOnCursorAsync` passed because it inspects the cursor table directly and never touches the drain-mode result.
+
+## Fix
+
+Test-only edit to `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRewindDetectionTests.cs`:
+- `result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList()` → `result.PerspectiveStreamIds`
+- `result.PerspectiveWork.Count` → `streamIds.Count`
+- Tier-ordering reads positional index from `streamIds.IndexOf(...)`
+
+## Verification
 
 ```
-TUnit.Engine.Exceptions.TestFailedException: AssertionException:
-  Expected to contain <streamId>, because Small stream should be in the returned assignments
-  but the item was not found in the collection
-  at Assert.That(streamIds).Contains(streamId)
-```
-
-Each test:
-- Registers a perspective association via `_registerMessageAssociationAsync("TestApp.Events.OrderCreatedEvent, TestApp", "perspective", "OrderListPerspective", "TestService")`.
-- Dispatches N event outbox messages for a fresh stream via `NewOutboxMessages: [...]`.
-- Expects `result.PerspectiveWork` to contain the stream.
-
-Returns empty `PerspectiveWork`. So either Phase 4.5A isn't storing to `wh_event_store`, Phase 4.6 isn't creating `wh_perspective_events` rows, or Phase 7 isn't returning them.
-
-Failed tests (all same signature):
-
-- `ProcessWorkBatch_TwoTier_SmallStreamServedBeforeLargeStreamAsync`
-- `ProcessWorkBatch_TwoTier_SmallStreamCompletesInOneTickAsync`
-- `ProcessWorkBatch_TwoTier_LargeStreamStillServedAsync`
-- `ProcessWorkBatch_TwoTier_LargeStreamCappedAtPerStreamLimitAsync`
-- `ProcessWorkBatch_TwoTier_MultipleSmallStreamsFillFirstAsync`
-- `ProcessWorkBatch_TwoTier_AllSmallStreams_NoTier2NeededAsync`
-
-In-isolation run (3x): 3/3 fail. Full-suite run: the first TwoTier to run stops fail-fast.
-
-## Why this is NOT the dead-instance-tolerance bug
-
-Reproduced on a fully-unstashed working tree (no SQL edits, no C# rename) — same failure. So this is a separate pre-existing defect that lives on the branch. Confirming command:
-
-```bash
-git stash push -m "clean-baseline-check"
-dotnet build tests/Whizbang.Data.EFCore.Postgres.Tests --force
 cd tests/Whizbang.Data.EFCore.Postgres.Tests
-dotnet run --no-build -- --treenode-filter '/*/*/*/ProcessWorkBatch_TwoTier*'
-# expect: 6 failed, 0 passed
-git stash pop
+dotnet run --no-build -- --treenode-filter '/*/*/EFCoreRewindDetectionTests/ProcessWorkBatch_TwoTier*'
+# 6 / 6 passed
+
+dotnet run --no-build -- --treenode-filter '/*/*/EFCoreRewindDetectionTests/*'
+# 14 / 14 passed — no regression on cursor/rewind/debounce tests
 ```
 
-## Next-session starting points
-
-1. **Is Phase 4.5A storing the event?** Instrument `wh_event_store` after the `ProcessWorkBatchAsync` call — expect 1 row per stream. If missing, the message_type may not pass the `is_event` check or normalization is producing an unexpected aggregate_type.
-2. **Is Phase 4.6 creating the perspective event?** Check `wh_perspective_events` — expect 1 row per (stream, perspective). If missing, the join `es.event_type = ma.normalized_message_type` isn't matching — inspect what `normalize_event_type(...)` produces for `"TestApp.Events.OrderCreatedEvent, TestApp"` versus what `_registerMessageAssociationAsync` wrote into `wh_message_associations.normalized_message_type`.
-3. **Is Phase 7 returning it?** If `wh_perspective_events` has the row but `result.PerspectiveWork` is empty, the Phase 7 return query is filtering it out — likely a mismatch between the test's `LeaseSeconds` (300) interacting with `v_lease_expiry`, or a `partition_number` / instance-rank check.
-4. Compare against a known-passing perspective test (e.g., `ProcessWorkBatch_WithOutOfOrderEvent_SetsRewindRequiredOnCursorAsync`) which also uses `_registerMessageAssociationAsync` + `_createEventOutboxMessage` — it asserts on the cursor, not the returned work, so it may be passing because it never touches Phase 7.
-
-## Scope boundary
-
-This is a real bug, NOT a flake (consistent failure, no timing dependency). It needs its own plan. Don't try to fix it as part of the dead-instance-tolerance PR — that PR's tests (`ProcessWorkBatchAsync_FreshInboxOrphanedByDeadInstance_ClaimsOnNextTickAsync`, `ProcessWorkBatchAsync_FreshInboxWithLiveOwnerOnDifferentInstance_DoesNotClaimAsync`) pass cleanly in isolation.
+No SQL or C# production code was changed. Migrations 022 / 029, `EFCoreWorkCoordinator`, and `IWorkCoordinator` are untouched.
