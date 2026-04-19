@@ -459,6 +459,140 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await Assert.That(newInstanceId).IsEqualTo(_instanceId);
   }
 
+  /// <summary>
+  /// Regression guard: when a previous instance died non-gracefully (SIGKILL / crash),
+  /// its wh_active_streams lease remains with lease_expiry up to lease_duration_seconds
+  /// (300 s default) in the future. Without dead-instance tolerance, this blocks fresh
+  /// cross-instance claims on the same stream for up to 5 minutes. With the tolerance,
+  /// the claim succeeds on the next tick because the dead instance is no longer in
+  /// wh_service_instances with a fresh heartbeat.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatchAsync_FreshInboxOrphanedByDeadInstance_ClaimsOnNextTickAsync() {
+    // Arrange — this instance is alive.
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    // A dead instance (NOT in wh_service_instances) holds a still-live wh_active_streams
+    // lease on a stream. This models the state left behind by a SIGKILLed previous owner:
+    // its lease_expiry is in the future but its heartbeat is gone.
+    var deadInstanceId = _idProvider.NewGuid();
+    var testStreamId = _idProvider.NewGuid();
+    var freshInboxId = _idProvider.NewGuid();
+
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(@"
+        INSERT INTO wh_active_streams (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
+        VALUES (@stream, @dead, @lease, 0, @now)", connection);
+      command.Parameters.AddWithValue("stream", (Guid)testStreamId);
+      command.Parameters.AddWithValue("dead", (Guid)deadInstanceId);
+      command.Parameters.AddWithValue("lease", DateTimeOffset.UtcNow.AddMinutes(5));
+      command.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    // A fresh inbox message arrives on that stream with instance_id = NULL (the "drop and
+    // walk away" pattern — store_inbox_messages always writes NULL lease).
+    await InsertInboxMessageAsync(
+      freshInboxId,
+      "TestHandler",
+      "FreshEventAfterCrash",
+      "{\"data\":1}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: null,
+      leaseExpiry: null,
+      streamId: testStreamId);
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
+
+    // Assert — the fresh message is claimed despite the dead instance's lingering lease.
+    await Assert.That(result.InboxWork.Count).IsEqualTo(1);
+    await Assert.That(result.InboxWork.Single().MessageId).IsEqualTo(freshInboxId);
+    await Assert.That(await GetInboxInstanceIdAsync(freshInboxId)).IsEqualTo(_instanceId);
+  }
+
+  /// <summary>
+  /// Ownership preservation: when the blocking instance is still heartbeating (alive,
+  /// just processing another stream), the claim must NOT steal its stream — otherwise
+  /// the dead-instance tolerance would over-claim across healthy instances.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatchAsync_FreshInboxWithLiveOwnerOnDifferentInstance_DoesNotClaimAsync() {
+    // Arrange — both instances are registered AND actively heartbeating.
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var liveOtherInstanceId = _idProvider.NewGuid();
+    await InsertServiceInstanceAsync(liveOtherInstanceId, "TestService", "test-host-2", 67890);
+
+    // The other live instance owns a stream.
+    var testStreamId = _idProvider.NewGuid();
+    var freshInboxId = _idProvider.NewGuid();
+
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(@"
+        INSERT INTO wh_active_streams (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
+        VALUES (@stream, @owner, @lease, 0, @now)", connection);
+      command.Parameters.AddWithValue("stream", (Guid)testStreamId);
+      command.Parameters.AddWithValue("owner", (Guid)liveOtherInstanceId);
+      command.Parameters.AddWithValue("lease", DateTimeOffset.UtcNow.AddMinutes(5));
+      command.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    // Fresh inbox message arrives on a stream owned by the OTHER live instance.
+    await InsertInboxMessageAsync(
+      freshInboxId,
+      "TestHandler",
+      "EventOnOthersStream",
+      "{\"data\":2}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: null,
+      leaseExpiry: null,
+      streamId: testStreamId);
+
+    // Act — this instance polls.
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
+
+    // Assert — the other instance's ownership is respected; this instance must NOT claim.
+    await Assert.That(result.InboxWork.Count).IsEqualTo(0);
+    await Assert.That(await GetInboxInstanceIdAsync(freshInboxId)).IsNull();
+  }
+
   [Test]
   public async Task ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync() {
     // Arrange
@@ -1571,7 +1705,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       NewInboxMessages: [],
       RenewOutboxLeaseIds: [],
       RenewInboxLeaseIds: [],
-      StaleThresholdSeconds: 600)); // 10 minutes
+      AbandonStaleInstanceThresholdSeconds: 600)); // 10 minutes
 
     // Assert - Stale instance should be deleted
     await using (var dbContext = CreateDbContext()) {
@@ -1846,7 +1980,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
       ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
       NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
-      StaleThresholdSeconds: 600));
+      AbandonStaleInstanceThresholdSeconds: 600));
 
     // Assert - Stale instance's partitions should be released (CASCADE DELETE)
     await using (var dbContext = CreateDbContext()) {
