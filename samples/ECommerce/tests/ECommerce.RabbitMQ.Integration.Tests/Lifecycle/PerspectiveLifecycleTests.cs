@@ -428,13 +428,15 @@ public class PerspectiveLifecycleTests {
       // Act - Dispatch command (event will be processed by ProductCatalog perspective in BFF)
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for all stages to complete (increased timeout for resource exhaustion scenarios)
+      // Wait for all stages to complete (generous timeout — CI runners under parallel
+      // test-suite load can see slow fixture init + RabbitMQ cold-start before stages fire.
+      // Normal local runtime is 2–3s; 90s is safely above p99 without masking real hangs).
       await Task.WhenAll(
         preInlineCompletion.Task,
         preAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(60));
+      ).WaitAsync(TimeSpan.FromSeconds(90));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);

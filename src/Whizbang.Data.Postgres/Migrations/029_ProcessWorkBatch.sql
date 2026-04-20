@@ -1232,26 +1232,34 @@ BEGIN
         )
     ),
     tier1_limited AS (
+      -- Tier 1: small streams (pending <= per-stream cap). Within the tier, order
+      -- by pending_count ASC so the smallest stream is served first — matches the
+      -- fairness contract (small streams never starve behind larger ones).
       SELECT e.*
       FROM eligible_perspective e
       WHERE e.stream_pending_count <= v_max_work_items_per_stream
-      ORDER BY e.stream_id, e.perspective_name, e.event_id
+      ORDER BY e.stream_pending_count, e.stream_id, e.perspective_name, e.event_id
       LIMIT v_tier1_max
     ),
     tier1_used AS (
       SELECT COUNT(*) as cnt FROM tier1_limited
     ),
     tier2_limited AS (
+      -- Tier 2: large streams (pending > per-stream cap). Within the tier, order
+      -- by pending_count ASC so that when Tier 2 is itself large enough to fill the
+      -- remaining budget, smaller-of-the-large streams make progress first.
       SELECT e.*
       FROM eligible_perspective e
       WHERE e.stream_pending_count > v_max_work_items_per_stream
         AND e.stream_rank <= v_max_work_items_per_stream
-      ORDER BY e.stream_id, e.perspective_name, e.event_id
+      ORDER BY e.stream_pending_count, e.stream_id, e.perspective_name, e.event_id
       LIMIT v_max_work_items - (SELECT cnt FROM tier1_used)
     ),
     ordered_perspective AS (
       SELECT combined.*,
-        ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
+        -- Preserve tier ordering (Tier 1 before Tier 2) AND within-tier ordering
+        -- (smaller pending_count first) via the ROW_NUMBER window.
+        ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_pending_count, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
       FROM (
         SELECT t1.*, 1 as tier FROM tier1_limited t1
         UNION ALL
@@ -1259,9 +1267,14 @@ BEGIN
       ) combined
     ),
     distinct_streams AS (
-      SELECT DISTINCT stream_id
+      -- Preserve the tier-derived row_num (Tier 1 streams come before Tier 2) by
+      -- collapsing to distinct stream_ids on the MIN row_num per stream. The final
+      -- ORDER BY min_row_num surfaces Tier 1 streams first, which matches the
+      -- fairness contract documented in plans/twotier-*.md.
+      SELECT stream_id, MIN(row_num) AS min_row_num
       FROM ordered_perspective
       WHERE row_num <= v_max_work_items
+      GROUP BY stream_id
     )
     SELECT
       v_rank as instance_rank,
@@ -1274,7 +1287,7 @@ BEGIN
       NULL::VARCHAR(500) as message_type,
       NULL::VARCHAR(500) as envelope_type,
       NULL::TEXT as message_data,
-      CASE WHEN ROW_NUMBER() OVER (ORDER BY ds.stream_id) = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
+      CASE WHEN ROW_NUMBER() OVER (ORDER BY ds.min_row_num) = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
         THEN v_ack_counts
         ELSE NULL::JSONB END as metadata,
       0::INTEGER as status,
@@ -1285,7 +1298,7 @@ BEGIN
       NULL::INTEGER as failure_reason,
       NULL::VARCHAR(200) as perspective_name
     FROM distinct_streams ds
-    ORDER BY ds.stream_id;
+    ORDER BY ds.min_row_num;
 
   -- Return sync inquiry results
   RETURN QUERY

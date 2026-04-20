@@ -30,11 +30,18 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
 internal sealed class RebuildCommandReceptorRegistrar(
-    IReceptorRegistry registry,
+    IServiceProvider services,
     IServiceScopeFactory scopeFactory,
     ILogger<RebuildPerspectiveCommandReceptor> receptorLogger) : IHostedService {
 
   public Task StartAsync(CancellationToken cancellationToken) {
+    // Receptor registry is optional — hosts that wire the Postgres driver without a dispatcher
+    // (minimal diagnostic hosts, schema-only tools) should still boot.
+    var registry = services.GetService<IReceptorRegistry>();
+    if (registry is null) {
+      return Task.CompletedTask;
+    }
+
     var receptor = new RebuildPerspectiveCommandReceptor(scopeFactory, receptorLogger);
     // Match the compile-time default-stage behavior of receptors without [FireAt]. Registering
     // only PostInboxInline misses the common case where a service dispatches the command to

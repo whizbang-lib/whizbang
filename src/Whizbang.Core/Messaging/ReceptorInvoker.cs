@@ -40,6 +40,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
@@ -239,8 +240,11 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     // Cross-worker dedup: prevent the same message+stage from being processed twice
-    // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox)
-    if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage)) {
+    // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox).
+    // For perspective-scoped stages the dedup key also includes context.PerspectiveType so
+    // that N perspectives processing the same event each get their own claim — without this,
+    // only the first perspective's Pre/PostPerspective* (and ImmediateDetached) fires.
+    if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage, context?.PerspectiveType)) {
       _ensureLogger();
       if (_logger is not null) {
         Log.SkippedStageTrackerDedup(_logger, stage, messageType.Name, envelope.MessageId.Value);
@@ -502,9 +506,21 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // this envelope. Per-receptor (not per-stage), so a filter bug that lets the same
     // receptor fire at both LocalImmediateInline AND PreOutboxInline is caught here.
     // Receptors declared [ReceptorIdempotent] bypass — they've opted in to re-firing.
+    //
+    // Perspective-scoped stages (Pre/PostPerspective*, ImmediateDetached under a
+    // perspective) are exempt because the SAME receptor legitimately fires once per
+    // perspective per event (N perspectives → N fires). A prior invocation whose stage
+    // is itself perspective-scoped doesn't indicate a double-fire bug; it indicates
+    // normal per-perspective fan-out.
+    var currentIsPerspectiveScoped = ctx.LifecycleContext?.PerspectiveType is not null
+      || ctx.Stage is LifecycleStage.PrePerspectiveInline
+                   or LifecycleStage.PrePerspectiveDetached
+                   or LifecycleStage.PostPerspectiveInline
+                   or LifecycleStage.PostPerspectiveDetached;
     if (_invocationTracking == Configuration.ReceptorInvocationTracking.TrackAndEnforce
         && _dedupStore is not null
-        && !receptor.IsIdempotent) {
+        && !receptor.IsIdempotent
+        && !currentIsPerspectiveScoped) {
       var prior = await _dedupStore.TryGetPriorInvocationAsync(ctx.Envelope, receptor.ReceptorId, cancellationToken).ConfigureAwait(false);
       if (prior is not null) {
         if (_onDoubleFire == Configuration.DoubleFireBehavior.Throw) {
