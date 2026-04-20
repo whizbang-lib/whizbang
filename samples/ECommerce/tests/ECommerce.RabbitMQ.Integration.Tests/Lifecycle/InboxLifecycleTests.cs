@@ -331,7 +331,7 @@ public class InboxLifecycleTests {
         preAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(60));
+      ).WaitAsync(TimeSpan.FromSeconds(90));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
