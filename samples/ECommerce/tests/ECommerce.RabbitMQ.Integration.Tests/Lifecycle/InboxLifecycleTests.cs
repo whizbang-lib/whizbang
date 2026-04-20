@@ -322,13 +322,16 @@ public class InboxLifecycleTests {
       // Act - Dispatch command (will publish event to RabbitMQ, BFF will receive it)
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for all stages to complete (with timeout)
+      // Wait for all stages to complete (with timeout).
+      // CI runners (especially under parallel test-suite load) see cold RabbitMQ
+      // container startup + fixture init + message publish+receive eat into the
+      // deadline. 60s is well above normal (~2–3s locally) but still bounded.
       await Task.WhenAll(
         preInlineCompletion.Task,
         preAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(25));
+      ).WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);

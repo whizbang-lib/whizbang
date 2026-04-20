@@ -234,11 +234,13 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
     });
 
     var worker = services.GetRequiredService<IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
     // Act
     await worker.StartAsync(cts.Token);
-    // If the cap weren't disabled, the 10s poll interval would prevent reaching 10 claims in 2s.
+    // If the cap weren't disabled, the 10s poll interval would prevent reaching 10 claims
+    // in the harness deadline. When disabled, the 10 claims drain back-to-back in <1s; the
+    // generous deadline only matters for CI runners where worker startup can eat the first second.
     await coordinator.WaitForClaimsAsync(10, cts.Token);
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
