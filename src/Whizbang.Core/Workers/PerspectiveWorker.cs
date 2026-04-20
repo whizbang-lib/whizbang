@@ -533,8 +533,14 @@ public partial class PerspectiveWorker(
     var (workBatch, completionsToSend, failuresToSend) = await _submitCompletionsAndClaimWorkAsync(
       workCoordinator, cancellationToken);
 
-    // 5-8. Reconcile acknowledgements and prepare work groups
-    var groupedWork = _reconcileAcknowledgementsAndPrepareWork(workBatch);
+    // 5-8. Reconcile acknowledgements and prepare work groups. Acknowledge the
+    // local sent-count rather than relying on SQL-returned metadata (which is
+    // silently dropped when the response has no work rows — same bug class
+    // fixed in WorkCoordinatorPublisherWorker).
+    var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
+      workBatch,
+      sentCompletionCount: completionsToSend.Length,
+      sentFailureCount: failuresToSend.Length);
 
     // Record batch composition metrics and tracing tags
     _recordBatchMetrics(batchActivity, workBatch, groupedWork, completionsToSend, failuresToSend);
@@ -1074,17 +1080,30 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Extracts acknowledgement counts from the work batch metadata,
-  /// reconciles completion state, and groups work items for processing.
+  /// Reconciles completion state and groups work items for processing.
+  ///
+  /// Historically extracted acknowledgement counts from SQL-returned metadata
+  /// (perspective_completions_processed / _failures_processed). That path is
+  /// silently dropped when the SQL response has no perspective/outbox/inbox
+  /// rows — post-burst idle cycles leave completions stuck in "Sent" state
+  /// until ResetStale resets them (5–60 min backoff), producing repeating
+  /// "Perspective batch: completed=N" log entries that resend the same
+  /// completions indefinitely. Matches the bug fixed in
+  /// WorkCoordinatorPublisherWorker.
+  ///
+  /// Fix: acknowledge the local sent-count captured at submission time. The
+  /// SQL's perspective_completions_processed is just
+  /// jsonb_array_length(p_perspective_completions), so it always equals
+  /// what we sent — the round-trip is redundant.
   /// </summary>
   private List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>>
-    _reconcileAcknowledgementsAndPrepareWork(WorkBatch workBatch) {
+    _reconcileAcknowledgementsAndPrepareWork(
+      WorkBatch workBatch,
+      int sentCompletionCount,
+      int sentFailureCount) {
 
-    // 5. Extract acknowledgement counts from workBatch metadata (from first row)
-    var (completionsProcessed, failuresProcessed) = _extractAcknowledgementCounts(workBatch);
-
-    // 6. Mark as Acknowledged based on counts from SQL
-    _completionStrategy.MarkAsAcknowledged(completionsProcessed, failuresProcessed);
+    // 5-6. Acknowledge the local sent-count (not the SQL-returned metadata).
+    _completionStrategy.MarkAsAcknowledged(sentCompletionCount, sentFailureCount);
 
     // 6a. DB confirmed completion — start TTL countdown for in-flight dedup entries
     _processedEventCache.ActivateRetention();
