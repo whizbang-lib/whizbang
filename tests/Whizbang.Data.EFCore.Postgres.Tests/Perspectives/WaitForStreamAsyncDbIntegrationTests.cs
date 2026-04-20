@@ -250,14 +250,15 @@ public class WaitForStreamAsyncDbIntegrationTests : EFCoreTestBase {
       Flags = WorkBatchOptions.None
     });
 
-    // Assert — perspective work should be returned (same instance can see its own leased work)
-    await Assert.That(secondBatch.PerspectiveWork.Count).IsGreaterThanOrEqualTo(1)
-      .Because("PerspectiveWorker (same instance) should receive perspective work items on subsequent batch calls");
+    // Assert — perspective work should be returned (same instance can see its own leased work).
+    // Drain mode surfaces canonical stream ids via PerspectiveStreamIds; PerspectiveWork is left
+    // empty when perspective_stream rows are present (see twotier-perspective-work-missing-on-fresh-outbox.md).
+    var streamIds = secondBatch.PerspectiveStreamIds;
+    await Assert.That(streamIds.Count).IsGreaterThanOrEqualTo(1)
+      .Because("PerspectiveWorker (same instance) should receive perspective stream ids on subsequent batch calls");
 
-    // Verify the perspective work matches our event
-    var perspectiveWork = secondBatch.PerspectiveWork.FirstOrDefault(pw => pw.StreamId == streamId);
-    await Assert.That(perspectiveWork).IsNotNull()
-      .Because("Perspective work should include our stream");
+    await Assert.That(streamIds).Contains(streamId)
+      .Because("Perspective stream ids should include our stream");
   }
 
   [Test]
