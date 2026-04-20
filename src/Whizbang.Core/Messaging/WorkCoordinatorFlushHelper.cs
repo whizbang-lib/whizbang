@@ -119,7 +119,7 @@ internal static class WorkCoordinatorFlushHelper {
         Flags = ctx.Flags | (ctx.Options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
         PartitionCount = ctx.Options.PartitionCount,
         LeaseSeconds = ctx.Options.LeaseSeconds,
-        StaleThresholdSeconds = ctx.Options.StaleThresholdSeconds
+        AbandonStaleInstanceThresholdSeconds = ctx.Options.AbandonStaleInstanceThresholdSeconds
       };
       var flushSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await resolvedCoordinator.ProcessWorkBatchAsync(request, ct);

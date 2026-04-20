@@ -498,8 +498,8 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var streamIds = result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList();
+    // Phase 7 returns distinct stream ids via PerspectiveStreamIds in drain mode
+    var streamIds = result.PerspectiveStreamIds;
 
     await Assert.That(streamIds).Contains(smallStreamId)
       .Because("Small stream should be in the returned assignments");
@@ -507,12 +507,12 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       .Because("Large stream should also be in the returned assignments");
 
     // Small stream (Tier 1) should appear before large stream (Tier 2)
-    var smallPos = result.PerspectiveWork.Select((w, i) => (w.StreamId, i)).First(x => x.StreamId == smallStreamId).i;
-    var largePos = result.PerspectiveWork.Select((w, i) => (w.StreamId, i)).First(x => x.StreamId == largeStreamId).i;
+    var smallPos = streamIds.IndexOf(smallStreamId);
+    var largePos = streamIds.IndexOf(largeStreamId);
     await Assert.That(smallPos).IsLessThan(largePos)
       .Because("Small stream (Tier 1) should appear before large stream (Tier 2)");
 
-    await Assert.That(result.PerspectiveWork.Count).IsEqualTo(2)
+    await Assert.That(streamIds.Count).IsEqualTo(2)
       .Because("Should return 2 distinct stream IDs, not individual event rows");
   }
 
@@ -537,12 +537,12 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var streamIds = result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList();
+    // Phase 7 returns distinct stream ids via PerspectiveStreamIds in drain mode
+    var streamIds = result.PerspectiveStreamIds;
 
     await Assert.That(streamIds).Contains(streamId)
       .Because("Small stream should be in the returned assignments");
-    await Assert.That(result.PerspectiveWork.Count).IsEqualTo(1)
+    await Assert.That(streamIds.Count).IsEqualTo(1)
       .Because("Should return 1 distinct stream ID, not individual event rows");
   }
 
@@ -567,12 +567,12 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var streamIds = result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList();
+    // Phase 7 returns distinct stream ids via PerspectiveStreamIds in drain mode
+    var streamIds = result.PerspectiveStreamIds;
 
     await Assert.That(streamIds).Contains(streamId)
       .Because("Large stream should still be served even without small streams present");
-    await Assert.That(result.PerspectiveWork.Count).IsEqualTo(1)
+    await Assert.That(streamIds.Count).IsEqualTo(1)
       .Because("Should return 1 distinct stream ID, not individual event rows");
   }
 
@@ -597,12 +597,12 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var streamIds = result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList();
+    // Phase 7 returns distinct stream ids via PerspectiveStreamIds in drain mode
+    var streamIds = result.PerspectiveStreamIds;
 
     await Assert.That(streamIds).Contains(streamId)
       .Because("Large stream should be in the returned assignments");
-    await Assert.That(result.PerspectiveWork.Count).IsEqualTo(1)
+    await Assert.That(streamIds.Count).IsEqualTo(1)
       .Because("Should return 1 distinct stream ID, not individual event rows");
   }
 
@@ -637,8 +637,8 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var streamIds = result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList();
+    // Phase 7 returns distinct stream ids via PerspectiveStreamIds in drain mode
+    var streamIds = result.PerspectiveStreamIds;
 
     await Assert.That(streamIds).Contains(small1)
       .Because("Small stream 1 should be in the returned assignments");
@@ -651,14 +651,12 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
 
     // Small streams (Tier 1) should appear before large stream (Tier 2)
     var smallIds = new HashSet<Guid> { small1, small2, small3 };
-    var maxSmallPos = result.PerspectiveWork.Select((w, i) => (w.StreamId, i))
-      .Where(x => smallIds.Contains(x.StreamId)).Max(x => x.i);
-    var largePos = result.PerspectiveWork.Select((w, i) => (w.StreamId, i))
-      .First(x => x.StreamId == large).i;
+    var maxSmallPos = streamIds.Select((id, i) => (id, i)).Where(x => smallIds.Contains(x.id)).Max(x => x.i);
+    var largePos = streamIds.IndexOf(large);
     await Assert.That(maxSmallPos).IsLessThan(largePos)
       .Because("All small streams (Tier 1) should appear before the large stream (Tier 2)");
 
-    await Assert.That(result.PerspectiveWork.Count).IsEqualTo(4)
+    await Assert.That(streamIds.Count).IsEqualTo(4)
       .Because("Should return 4 distinct stream IDs, not individual event rows");
   }
 
@@ -688,14 +686,14 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
       LeaseSeconds: 300));
 
-    // Phase 7 now returns DISTINCT stream_id only (stream assignment model)
-    var streamIds = result.PerspectiveWork.Select(w => w.StreamId).Distinct().ToList();
+    // Phase 7 returns distinct stream ids via PerspectiveStreamIds in drain mode
+    var streamIds = result.PerspectiveStreamIds;
 
     await Assert.That(streamIds).Contains(stream1)
       .Because("Stream 1 should be in the returned assignments");
     await Assert.That(streamIds).Contains(stream2)
       .Because("Stream 2 should be in the returned assignments");
-    await Assert.That(result.PerspectiveWork.Count).IsEqualTo(2)
+    await Assert.That(streamIds.Count).IsEqualTo(2)
       .Because("Should return 2 distinct stream IDs, not individual event rows");
   }
 

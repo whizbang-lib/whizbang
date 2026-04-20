@@ -58,6 +58,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_HANDLER_COUNT = "__HANDLER_COUNT__";
   private const string PLACEHOLDER_IS_EXPLICIT = "__IS_EXPLICIT__";
   private const string PLACEHOLDER_FIRE_DURING_REPLAY = "__FIRE_DURING_REPLAY__";
+  private const string PLACEHOLDER_IS_IDEMPOTENT = "__IS_IDEMPOTENT__";
   private const string PLACEHOLDER_RECEPTOR_INVOCATIONS = "__RECEPTOR_INVOCATIONS__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
@@ -141,8 +142,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Check for [WhizbangTrace] attribute
     var hasTraceAttribute = _hasWhizbangTraceAttribute(classSymbol);
 
-    // Check for [FireDuringReplay] attribute
+    // Check for [FireDuringReplay] or [ReceptorIdempotent(AlwaysFire=true)] — determines
+    // whether the receptor fires for already-processed events during Replay/Rebuild.
     var hasFireDuringReplayAttribute = _hasFireDuringReplayAttribute(classSymbol);
+
+    // Check for [ReceptorIdempotent] regardless of AlwaysFire — determines whether the
+    // receptor is declared safe to re-invoke for the same event id. Consulted by the
+    // ReceptorInvoker double-fire guardrail.
+    var isIdempotent = _hasReceptorIdempotentAttribute(classSymbol);
 
     // Try each receptor interface in order: async with response, async void, sync with response, sync void
     var interfaceCandidates = new[] {
@@ -175,7 +182,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           HasTraceAttribute: hasTraceAttribute,
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
           IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
-          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
+          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
+          IsIdempotent: isIdempotent
       );
     }
 
@@ -561,16 +569,45 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a class symbol has the [FireDuringReplay] attribute.
-  /// Returns true if the attribute is present, false otherwise.
-  /// Used to generate FireDuringReplay metadata on ReceptorInfo so the invoker can
-  /// suppress non-opted-in receptors during replay and rebuild operations.
+  /// Returns true when the receptor is decorated with <c>[ReceptorIdempotent(AlwaysFire = true)]</c>
+  /// or the legacy <c>[FireDuringReplay]</c> — both mean "fire for every replayed event,
+  /// including already-processed ones". Used to stamp the AlwaysFireOnReplay flag on
+  /// ReceptorInfo so the invoker can branch without runtime reflection.
   /// </summary>
   private static bool _hasFireDuringReplayAttribute(INamedTypeSymbol classSymbol) {
     const string FIRE_DURING_REPLAY_ATTRIBUTE = "Whizbang.Core.Messaging.FireDuringReplayAttribute";
+    const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == FIRE_DURING_REPLAY_ATTRIBUTE) {
+      var fqName = attribute.AttributeClass?.ToDisplayString();
+      if (fqName == FIRE_DURING_REPLAY_ATTRIBUTE) {
+        return true;
+      }
+      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
+        // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true.
+        foreach (var arg in attribute.NamedArguments) {
+          if (arg.Key == "AlwaysFire" && arg.Value.Value is bool b && b) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Returns true when the receptor is decorated with <c>[ReceptorIdempotent]</c> —
+  /// regardless of the <c>AlwaysFire</c> value. Used by the double-fire guardrail in
+  /// <see cref="Whizbang.Core.Messaging.ReceptorInvoker"/> to let legitimately idempotent
+  /// receptors re-fire even when a prior invocation is recorded on the envelope.
+  /// </summary>
+  private static bool _hasReceptorIdempotentAttribute(INamedTypeSymbol classSymbol) {
+    const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      var fqName = attribute.AttributeClass?.ToDisplayString();
+      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
         return true;
       }
     }
@@ -1700,7 +1737,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
         .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode)
-        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? "true" : "false");
+        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? "true" : "false")
+        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? "true" : "false");
 
     if (!receptor.IsVoid && receptor.ResponseType is not null) {
       result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
@@ -1743,7 +1781,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("  },");
     sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
-    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? "true" : "false")}");
+    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? "true" : "false")},");
+    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? "true" : "false")}");
     sb.Append(')');
 
     return sb.ToString();

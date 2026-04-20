@@ -357,6 +357,9 @@ public partial class TransportConsumerWorker : BackgroundService {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
+    // Ensure event type set is built before echo check (lazy, one-time init).
+    _ensureKnownEventTypesInitialized(scope.ServiceProvider);
+
     // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
     var inboxMessages = new List<InboxMessage>(messages.Count);
     foreach (var msg in messages) {
@@ -366,15 +369,26 @@ public partial class TransportConsumerWorker : BackgroundService {
       var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
       _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-      // Skip self-echo
-      if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null) {
-        var isSelfEcho = _isSelfEcho(envelope);
+      // Skip echo: owned events are ALWAYS echo (only the owning service publishes
+      // events in its namespace). Owned commands may come from other services, so
+      // check the last hop's service name to distinguish echo from cross-service delivery.
+      // <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
+      // <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+      if (_ownedDomains.Count > 0 && envelopeType is not null) {
         var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
         var isOwned = _isOwnedNamespace(ns);
-        if (isSelfEcho && isOwned) {
-          LogSelfEchoDiscarded(_logger, messageType, _serviceName);
-          _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
-          continue;
+        if (isOwned) {
+          var isEvent = _isKnownEventType(envelopeType);
+          if (isEvent) {
+            LogOwnedEventEchoDiscarded(_logger, messageType);
+            _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+            continue;
+          }
+          if (_serviceName is not null && _isSelfEcho(envelope)) {
+            LogSelfEchoDiscarded(_logger, messageType, _serviceName);
+            _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+            continue;
+          }
         }
       }
 
@@ -396,21 +410,10 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     if (inboxMessages.Count > 0) {
       // Pre-filter: drop events that this service has no perspectives or receptors for.
-      // Build known-types set lazily from IEventTypeProvider (immutable after startup).
-      if (_knownEventTypeNames is null) {
-        var eventTypeProvider = scope.ServiceProvider.GetService<IEventTypeProvider>();
-        if (eventTypeProvider is not null) {
-          var eventTypes = eventTypeProvider.GetEventTypes();
-          _knownEventTypeNames = new HashSet<string>(
-            eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(
-              t.FullName + ", " + t.Assembly.GetName().Name)),
-            StringComparer.Ordinal);
-        } else {
-          _knownEventTypeNames = [];  // Empty = no filtering (allow all)
-        }
-      }
+      // Known-types set already initialized above (_ensureKnownEventTypesInitialized).
+      _ensureKnownEventTypesInitialized(scope.ServiceProvider);
 
-      if (_knownEventTypeNames.Count > 0) {
+      if (_knownEventTypeNames!.Count > 0) {
         var beforeCount = inboxMessages.Count;
         inboxMessages.RemoveAll(msg => {
           // Keep non-events (commands) — they're routed to specific services intentionally
@@ -459,26 +462,34 @@ public partial class TransportConsumerWorker : BackgroundService {
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-    // Discard self-echo: owned messages from THIS service arriving back via transport.
-    // Two conditions must be true:
-    // 1. Owned namespace — message type belongs to this service's owned domains
-    // 2. Same service — the last hop's service name matches this service
-    // Messages from OTHER services always pass through (different service name in hop).
-    if (_ownedDomains.Count > 0 && _serviceName is not null && envelopeType is not null) {
-      var isSelfEcho = _isSelfEcho(envelope);
+    // Ensure event type set is built before echo check (lazy, one-time init).
+    // Single-message path may run before batch path, so init here too.
+    if (_knownEventTypeNames is null && _ownedDomains.Count > 0) {
+      await using var initScope = _scopeFactory.CreateAsyncScope();
+      _ensureKnownEventTypesInitialized(initScope.ServiceProvider);
+    }
+
+    // Discard echo: owned events are ALWAYS echo (only the owning service publishes
+    // events in its namespace). Owned commands may come from other services, so
+    // check the last hop's service name to distinguish echo from cross-service delivery.
+    // <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
+    // <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+    if (_ownedDomains.Count > 0 && envelopeType is not null) {
       var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
       var isOwned = _isOwnedNamespace(ns);
-      if (isSelfEcho && isOwned) {
-        LogSelfEchoDiscarded(_logger, messageType, _serviceName);
-        _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
-        return;
+      if (isOwned) {
+        var isEvent = _isKnownEventType(envelopeType);
+        if (isEvent) {
+          LogOwnedEventEchoDiscarded(_logger, messageType);
+          _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+          return;
+        }
+        if (_serviceName is not null && _isSelfEcho(envelope)) {
+          LogSelfEchoDiscarded(_logger, messageType, _serviceName);
+          _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
+          return;
+        }
       }
-
-      // Owned commands from other services fall through to normal inbox processing.
-      // The PostInbox filter in ReceptorInvoker allows owned commands to fire:
-      //   isPostInbox && (isOwned ? isEvent : !isEvent) → skip owned EVENTS (self-echo),
-      //   but fire owned COMMANDS (cross-service delivery).
-      // This preserves full scope context (tenant, security) established by the inbox pipeline.
     }
 
     var inboxActivity = _startInboxActivity(envelope, messageType);
@@ -1024,7 +1035,18 @@ public partial class TransportConsumerWorker : BackgroundService {
   )]
   private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
 
-  /// <summary>Logs that a self-echo message was discarded (owned event from this service arriving back via transport).</summary>
+  /// <summary>Logs that an owned event was discarded (owned events arriving from transport are always echo).</summary>
+  /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Owned event echo discarded: {MessageType} (owned events never arrive from external services)"
+  )]
+  private static partial void LogOwnedEventEchoDiscarded(ILogger logger, string messageType);
+
+  /// <summary>Logs that a self-echo command was discarded (owned command from this service arriving back via transport).</summary>
+  /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
     Message = "Self-echo discarded: {MessageType} from {ServiceName}"
@@ -1068,6 +1090,42 @@ public partial class TransportConsumerWorker : BackgroundService {
       }
     }
     return false;
+  }
+
+  /// <summary>
+  /// Lazily initializes <see cref="_knownEventTypeNames"/> from <see cref="IEventTypeProvider"/>.
+  /// Thread-safe: first caller wins; subsequent calls are no-ops.
+  /// </summary>
+  private void _ensureKnownEventTypesInitialized(IServiceProvider serviceProvider) {
+    if (_knownEventTypeNames is not null) {
+      return;
+    }
+    var eventTypeProvider = serviceProvider.GetService<IEventTypeProvider>();
+    if (eventTypeProvider is not null) {
+      var eventTypes = eventTypeProvider.GetEventTypes();
+      _knownEventTypeNames = new HashSet<string>(
+        eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(
+          t.FullName + ", " + t.Assembly.GetName().Name)),
+        StringComparer.Ordinal);
+    } else {
+      _knownEventTypeNames = [];  // Empty = no filtering (allow all through)
+    }
+  }
+
+  /// <summary>
+  /// Checks if an envelope type string represents a known event type.
+  /// Uses <see cref="_knownEventTypeNames"/> (must be initialized first via
+  /// <see cref="_ensureKnownEventTypesInitialized"/>).
+  /// Falls back to allowing through if the set is empty (no provider registered).
+  /// </summary>
+  /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
+  private bool _isKnownEventType(string envelopeType) {
+    if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
+      return false;  // No provider → can't determine, treat as non-event (safe: falls through to hop check)
+    }
+    var normalized = EventTypeMatchingHelper.NormalizeTypeName(envelopeType);
+    return _knownEventTypeNames.Contains(normalized);
   }
 
   // Namespace extraction moved to TypeNameFormatter.GetPayloadNamespace (testable utility)

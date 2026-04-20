@@ -553,7 +553,7 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(options.PollingIntervalMilliseconds).IsEqualTo(1000);
     await Assert.That(options.LeaseSeconds).IsEqualTo(300);
-    await Assert.That(options.StaleThresholdSeconds).IsEqualTo(600);
+    await Assert.That(options.AbandonStaleInstanceThresholdSeconds).IsEqualTo(30);
     await Assert.That(options.DebugMode).IsFalse();
     await Assert.That(options.PartitionCount).IsEqualTo(10_000);
     await Assert.That(options.IdleThresholdPolls).IsEqualTo(2);
@@ -567,7 +567,7 @@ public class PerspectiveWorkerCoverageTests {
     var options = new PerspectiveWorkerOptions {
       PollingIntervalMilliseconds = 500,
       LeaseSeconds = 60,
-      StaleThresholdSeconds = 120,
+      AbandonStaleInstanceThresholdSeconds = 120,
       DebugMode = true,
       PartitionCount = 5000,
       IdleThresholdPolls = 5,
@@ -580,7 +580,7 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(options.PollingIntervalMilliseconds).IsEqualTo(500);
     await Assert.That(options.LeaseSeconds).IsEqualTo(60);
-    await Assert.That(options.StaleThresholdSeconds).IsEqualTo(120);
+    await Assert.That(options.AbandonStaleInstanceThresholdSeconds).IsEqualTo(120);
     await Assert.That(options.DebugMode).IsTrue();
     await Assert.That(options.PartitionCount).IsEqualTo(5000);
     await Assert.That(options.IdleThresholdPolls).IsEqualTo(5);

@@ -141,7 +141,7 @@ internal sealed class WorkCoordinatorQueues {
       Flags = flags | (options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
       PartitionCount = options.PartitionCount,
       LeaseSeconds = options.LeaseSeconds,
-      StaleThresholdSeconds = options.StaleThresholdSeconds
+      AbandonStaleInstanceThresholdSeconds = options.AbandonStaleInstanceThresholdSeconds
     };
   }
 

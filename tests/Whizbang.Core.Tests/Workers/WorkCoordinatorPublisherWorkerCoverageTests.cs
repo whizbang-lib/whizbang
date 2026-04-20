@@ -1774,7 +1774,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
       DebugMode = true,
       PartitionCount = 5000,
       LeaseSeconds = 120,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     }));
     services.AddLogging();
     services.AddHostedService<WorkCoordinatorPublisherWorker>();
@@ -1803,7 +1803,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
       .Because("DebugMode should set the DebugMode flag");
     await Assert.That(request.PartitionCount).IsEqualTo(5000);
     await Assert.That(request.LeaseSeconds).IsEqualTo(120);
-    await Assert.That(request.StaleThresholdSeconds).IsEqualTo(300);
+    await Assert.That(request.AbandonStaleInstanceThresholdSeconds).IsEqualTo(300);
   }
 
   // ================================================================
