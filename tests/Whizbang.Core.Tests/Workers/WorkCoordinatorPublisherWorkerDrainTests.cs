@@ -268,6 +268,102 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
   }
 
   // ==========================================================================
+  // 2h: Acknowledge-local-sent-count fix
+  // Regression test for the stuck-completion bug: when the SQL processes
+  // completions but returns an empty work batch, ack_counts were lost, leaving
+  // items in "Sent" state until a slow exponential-backoff reset cycle retried
+  // them. Fix: acknowledge what we sent locally instead of relying on metadata.
+  // ==========================================================================
+
+  [Test]
+  public async Task OutboxCompletions_AreAcknowledgedEvenWhenCoordinatorReturnsEmptyBatchAsync() {
+    // Arrange — Worker publishes one message successfully; publisher path calls
+    // _completions.Add. On the next ProcessWorkBatchAsync the worker must send
+    // that completion AND — because the coordinator response has no work rows
+    // carrying ack-count metadata — it must still mark the completion acknowledged
+    // locally so it doesn't loop through ResetStale for 5–60 minutes.
+    var coordinator = new CompletionTrackingCoordinator();
+    coordinator.EnqueueWorkForNextClaim([_newOutboxWork()]);
+
+    var strategy = new NoopPublishStrategy();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _buildServices(coordinator, strategy, channelWriter, options => {
+      options.MaxStreamsPerBatch = 10;
+      options.PollingIntervalMilliseconds = 100;
+      options.ImmediateOutboxCompletionFlushThreshold = 1;
+    });
+
+    var worker = services.GetRequiredService<IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    // Act — wait until the coordinator sees an outbox completion for the
+    // published message, then wait a further poll cycle.
+    await worker.StartAsync(cts.Token);
+    await coordinator.FirstCompletionWithEmptyBatchSignal.Task.WaitAsync(cts.Token);
+    // Give the worker time to do at least one more poll after the ack-empty cycle.
+    await coordinator.PollAfterAckSignal.Task.WaitAsync(cts.Token);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — the SAME completion must not be re-sent after the initial
+    // coordinator processed it. Pre-fix this test would observe the completion
+    // resent repeatedly (until a 5min ResetStale cycle); post-fix the tracker
+    // acknowledges on the first successful round-trip.
+    await Assert.That(coordinator.DistinctCompletionSendCounts.Values.All(c => c == 1)).IsTrue()
+      .Because("Each completion should be sent exactly once; stuck-loop would resend.");
+  }
+
+  /// <summary>
+  /// Coordinator that returns empty WorkBatches and tracks how many times each
+  /// completion MessageId is resent across calls.
+  /// </summary>
+  private sealed class CompletionTrackingCoordinator : IWorkCoordinator {
+    public Dictionary<Guid, int> DistinctCompletionSendCounts { get; } = [];
+    public TaskCompletionSource FirstCompletionWithEmptyBatchSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource PollAfterAckSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _callsAfterFirstCompletion;
+    private readonly Queue<List<OutboxWork>> _scriptedWork = new();
+    private readonly object _lock = new();
+
+    public void EnqueueWorkForNextClaim(List<OutboxWork> work) => _scriptedWork.Enqueue(work);
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        foreach (var completion in request.OutboxCompletions) {
+          DistinctCompletionSendCounts.TryGetValue(completion.MessageId, out var count);
+          DistinctCompletionSendCounts[completion.MessageId] = count + 1;
+        }
+
+        if (request.OutboxCompletions.Length > 0 && !FirstCompletionWithEmptyBatchSignal.Task.IsCompleted) {
+          FirstCompletionWithEmptyBatchSignal.TrySetResult();
+        } else if (FirstCompletionWithEmptyBatchSignal.Task.IsCompleted) {
+          _callsAfterFirstCompletion++;
+          if (_callsAfterFirstCompletion >= 3) {
+            PollAfterAckSignal.TrySetResult();
+          }
+        }
+
+        var work = _scriptedWork.Count > 0 ? _scriptedWork.Dequeue() : [];
+        // Intentionally return empty response after the work is consumed — this
+        // is the bug-inducing case.
+        return Task.FromResult(new WorkBatch {
+          OutboxWork = work,
+          InboxWork = [],
+          PerspectiveWork = []
+        });
+      }
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  // ==========================================================================
   // Helpers / fakes
   // ==========================================================================
 
