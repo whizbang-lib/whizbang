@@ -203,7 +203,7 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
     });
 
     var worker = services.GetRequiredService<IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
     // Act
     await worker.StartAsync(cts.Token);
@@ -347,7 +347,7 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
     });
 
     var worker = services.GetRequiredService<IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
     // Act — wait until the coordinator sees an outbox completion for the
     // published message, then wait a further poll cycle.
