@@ -931,8 +931,41 @@ public partial class WorkCoordinatorPublisherWorker(
       return; // Exit early, retry on next cycle
     }
 
-    // 5-8. Extract ack counts, mark acknowledged, clear, and reset stale
-    _processAcknowledgements(workBatch);
+    // 5-8. Mark acknowledged, clear, and reset stale.
+    //
+    // We acknowledge exactly what we sent in this cycle — not what the SQL tells us.
+    // The SQL's v_ack_counts in the 029 migration is computed as
+    // jsonb_array_length(p_outbox_completions) etc. on line 370, so it always equals
+    // the input array length. But v_ack_counts is only returned when there is at
+    // least one outbox, inbox, or perspective-stream row in the response (line 1277
+    // of 029). Post-burst idle cycles hit the "coordinator processed completions,
+    // returned empty batch" path — ack counts are silently lost. Items stay in
+    // "Sent" state until ResetStale (5 min base, up to 60 min cap) resets them,
+    // causing them to be re-sent indefinitely. Downstream symptom: processed_at IS
+    // stamped in wh_outbox by the FIRST call, but the tracker doesn't know, so it
+    // keeps sending the same completion IDs in an exponential-backoff loop.
+    // Fix: acknowledge the local sent-count directly and drop the metadata round-trip.
+    _completions.MarkAsAcknowledged(completionsToSend.Length);
+    _failures.MarkAsAcknowledged(failuresToSend.Length);
+    _leaseRenewals.MarkAsAcknowledged(leaseRenewalsToSend.Length);
+    _inboxCompletions.MarkAsAcknowledged(inboxCompletionsToSend.Length);
+    _inboxFailures.MarkAsAcknowledged(inboxFailuresToSend.Length);
+    _inboxLeaseRenewals.MarkAsAcknowledged(inboxLeaseRenewalsToSend.Length);
+
+    _completions.ClearAcknowledged();
+    _failures.ClearAcknowledged();
+    _leaseRenewals.ClearAcknowledged();
+    _inboxCompletions.ClearAcknowledged();
+    _inboxFailures.ClearAcknowledged();
+    _inboxLeaseRenewals.ClearAcknowledged();
+
+    var _ackNow = DateTimeOffset.UtcNow;
+    _completions.ResetStale(_ackNow);
+    _failures.ResetStale(_ackNow);
+    _leaseRenewals.ResetStale(_ackNow);
+    _inboxCompletions.ResetStale(_ackNow);
+    _inboxFailures.ResetStale(_ackNow);
+    _inboxLeaseRenewals.ResetStale(_ackNow);
 
     // Drain signal: if the SQL claim came back full on either axis, there's almost
     // certainly more work waiting. Skip the next poll wait and claim again immediately.
@@ -1069,34 +1102,12 @@ public partial class WorkCoordinatorPublisherWorker(
   }
 
   /// <summary>
-  /// Extracts acknowledgement counts from work batch metadata and processes tracker state.
+  /// Obsolete — ack counts were extracted from SQL-returned metadata which
+  /// silently disappears when the response has no outbox/inbox/perspective-stream
+  /// rows (post-burst idle). Replaced by acknowledging the local sent-count
+  /// directly after a successful ProcessWorkBatchAsync. Kept for reference; can
+  /// be deleted once no downstream consumer relies on its signature.
   /// </summary>
-  private void _processAcknowledgements(WorkBatch workBatch) {
-    var metadataRow = _extractMetadataRow(workBatch);
-
-    _completions.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_completions_processed"));
-    _failures.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_failures_processed"));
-    _leaseRenewals.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_lease_renewals_processed"));
-    _inboxCompletions.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_completions_processed"));
-    _inboxFailures.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_failures_processed"));
-    _inboxLeaseRenewals.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_lease_renewals_processed"));
-
-    _completions.ClearAcknowledged();
-    _failures.ClearAcknowledged();
-    _leaseRenewals.ClearAcknowledged();
-    _inboxCompletions.ClearAcknowledged();
-    _inboxFailures.ClearAcknowledged();
-    _inboxLeaseRenewals.ClearAcknowledged();
-
-    var now = DateTimeOffset.UtcNow;
-    _completions.ResetStale(now);
-    _failures.ResetStale(now);
-    _leaseRenewals.ResetStale(now);
-    _inboxCompletions.ResetStale(now);
-    _inboxFailures.ResetStale(now);
-    _inboxLeaseRenewals.ResetStale(now);
-  }
-
   private static Dictionary<string, JsonElement>? _extractMetadataRow(WorkBatch workBatch) {
     var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
     if (outboxFirstRow?.Metadata != null) {
