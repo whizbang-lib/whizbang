@@ -127,6 +127,57 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
   }
 
   // ==========================================================================
+  // 2f regression: concurrent SignalNewWorkAvailable during drain must not
+  // throw SemaphoreFullException.
+  // ==========================================================================
+
+  [Test]
+  public async Task FullBatchDrain_WithConcurrentSignals_DoesNotThrowSemaphoreFullAsync() {
+    // Arrange — return full batches while an external component signals
+    // SignalNewWorkAvailable repeatedly. Pre-fix: drain path reset _wakeSignaled=0
+    // without consuming the semaphore, letting the next external Release()
+    // overflow the 1-count semaphore → SemaphoreFullException.
+    var coordinator = new ScriptedWorkCoordinator();
+    for (int i = 0; i < 10; i++) {
+      coordinator.EnqueueFullBatch(count: 5);
+    }
+
+    var strategy = new NoopPublishStrategy();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _buildServices(coordinator, strategy, channelWriter, options => {
+      options.MaxStreamsPerBatch = 5;
+      options.PollingIntervalMilliseconds = 10_000;
+    });
+
+    var worker = services.GetRequiredService<IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+    // Act — start the worker, spam SignalNewWorkAvailable while it drains.
+    await worker.StartAsync(cts.Token);
+    var signalSpam = Task.Run(async () => {
+      while (!cts.Token.IsCancellationRequested) {
+        channelWriter.SignalNewWorkAvailable();
+        await Task.Yield();
+      }
+    }, cts.Token);
+
+    try {
+      await coordinator.WaitForClaimsAsync(5, cts.Token);
+    } catch (OperationCanceledException) {
+      // test deadline — that's fine, we only care about NOT observing an exception
+    }
+    await cts.CancelAsync();
+    try { await signalSpam; } catch (OperationCanceledException) { }
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — drain processed multiple claims and the worker is still alive.
+    // If the SemaphoreFullException regression returns, the worker will have
+    // crashed and claim count will stall.
+    await Assert.That(coordinator.ClaimCount).IsGreaterThanOrEqualTo(3)
+      .Because("Concurrent SignalNewWorkAvailable during drain must not crash the worker.");
+  }
+
+  // ==========================================================================
   // 2f safety cap: MaxConsecutiveFullDrains
   // ==========================================================================
 
