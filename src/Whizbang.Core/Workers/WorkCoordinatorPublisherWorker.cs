@@ -338,14 +338,21 @@ public partial class WorkCoordinatorPublisherWorker(
       }
 
       // Drain pattern: if the last claim returned a full batch, there's more work
-      // waiting — loop immediately without a poll wait. Clears the flag so the next
-      // iteration re-evaluates based on what it claims. Respects the runaway-drain
+      // waiting — loop immediately without a poll wait. Respects the runaway-drain
       // cap (_options.MaxConsecutiveFullDrains); 0 disables the cap entirely.
+      //
+      // IMPORTANT: do NOT touch _wakeSignaled here. That flag is a guard paired
+      // with _pollWakeSignal (1-count semaphore): RequestImmediatePoll uses CAS
+      // 0→1 to permit a single Release, and the post-WaitAsync reset restores 0
+      // after WaitAsync consumes the semaphore. Resetting the guard here without
+      // consuming the semaphore would let a subsequent external signal call
+      // Release() on an already-full semaphore → SemaphoreFullException. Any
+      // pending signal accumulated during drain will be consumed naturally on
+      // the first WaitAsync after drain ends.
       var capEnabled = _options.MaxConsecutiveFullDrains > 0;
       if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
         _lastBatchWasFull = false;
         _consecutiveFullDrains++;
-        Interlocked.Exchange(ref _wakeSignaled, 0);
         continue;
       }
       _consecutiveFullDrains = 0;
