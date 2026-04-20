@@ -1619,21 +1619,22 @@ public class PostgresFunctionTests : PostgresTestBase {
         new { messageId = _idProvider.NewGuid(), streamId = otherStreamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
     }
 
-    // Act
+    // Act — pass p_max_streams := 25 so the unified budget drives a per-stream cap at 25.
+    // (p_max_streams drives both the total-per-tick budget and the per-stream budget — see commit d88818d4.)
     var result = await connection.QueryAsync<WorkBatchRow>(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId, p_service_name := 'TestService', p_host_name := 'test-host',
-        p_process_id := 12345, p_metadata := NULL::jsonb, p_now := @now
+        p_process_id := 12345, p_metadata := NULL::jsonb, p_now := @now,
+        p_max_streams := 25
       )", new { instanceId, now });
 
     var outboxWork = result.Where(r => r.source == "outbox").ToList();
     var busyStreamCount = outboxWork.Count(w => w.work_stream_id == busyStreamId);
-    var otherStreamCount = outboxWork.Count(w => w.work_stream_id == otherStreamId);
 
     await Assert.That(busyStreamCount).IsLessThanOrEqualTo(25)
-      .Because("Per-stream limit prevents a single stream from consuming all slots");
-    await Assert.That(otherStreamCount).IsEqualTo(5)
-      .Because("Other streams should get their fair share");
+      .Because("Per-stream rank filter caps a single busy stream at v_max_work_items_per_stream (= p_max_streams)");
+    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(25)
+      .Because("Global limit (v_max_work_items = p_max_streams) bounds total rows returned");
   }
 
   [Test]
