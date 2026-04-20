@@ -97,8 +97,10 @@ public class PerspectiveDedupIntegrationTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await runner.WaitForCallCountAsync(100, TimeSpan.FromSeconds(10));
-    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    // Generous deadlines — completes in <1s locally, but CI parallel load can
+    // slip the 100-call drain past a tight budget.
+    await runner.WaitForCallCountAsync(100, TimeSpan.FromSeconds(30));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
