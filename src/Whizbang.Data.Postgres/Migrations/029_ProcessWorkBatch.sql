@@ -1259,9 +1259,14 @@ BEGIN
       ) combined
     ),
     distinct_streams AS (
-      SELECT DISTINCT stream_id
+      -- Preserve the tier-derived row_num (Tier 1 streams come before Tier 2) by
+      -- collapsing to distinct stream_ids on the MIN row_num per stream. The final
+      -- ORDER BY min_row_num surfaces Tier 1 streams first, which matches the
+      -- fairness contract documented in plans/twotier-*.md.
+      SELECT stream_id, MIN(row_num) AS min_row_num
       FROM ordered_perspective
       WHERE row_num <= v_max_work_items
+      GROUP BY stream_id
     )
     SELECT
       v_rank as instance_rank,
@@ -1274,7 +1279,7 @@ BEGIN
       NULL::VARCHAR(500) as message_type,
       NULL::VARCHAR(500) as envelope_type,
       NULL::TEXT as message_data,
-      CASE WHEN ROW_NUMBER() OVER (ORDER BY ds.stream_id) = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
+      CASE WHEN ROW_NUMBER() OVER (ORDER BY ds.min_row_num) = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
         THEN v_ack_counts
         ELSE NULL::JSONB END as metadata,
       0::INTEGER as status,
@@ -1285,7 +1290,7 @@ BEGIN
       NULL::INTEGER as failure_reason,
       NULL::VARCHAR(200) as perspective_name
     FROM distinct_streams ds
-    ORDER BY ds.stream_id;
+    ORDER BY ds.min_row_num;
 
   -- Return sync inquiry results
   RETURN QUERY
