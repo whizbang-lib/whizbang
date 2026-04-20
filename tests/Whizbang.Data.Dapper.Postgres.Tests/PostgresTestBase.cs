@@ -19,6 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Dapper type handlers for TrackedGuid and DateTimeOffset are registered via
 /// <see cref="DapperTypeHandlers"/> module initializer.
 /// </remarks>
+[NotInParallel("PostgreSQL")]
 public abstract class PostgresTestBase : IAsyncDisposable {
   static PostgresTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
