@@ -395,7 +395,8 @@ public class DispatcherSnippets {
             return result;
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
-          FireDuringReplay: __FIRE_DURING_REPLAY__
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }
@@ -427,7 +428,8 @@ public class DispatcherSnippets {
             return null;
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
-          FireDuringReplay: __FIRE_DURING_REPLAY__
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }
@@ -501,7 +503,8 @@ public class DispatcherSnippets {
             return result;
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
-          FireDuringReplay: __FIRE_DURING_REPLAY__
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }
@@ -570,7 +573,8 @@ public class DispatcherSnippets {
             return null;
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
-          FireDuringReplay: __FIRE_DURING_REPLAY__
+          FireDuringReplay: __FIRE_DURING_REPLAY__,
+          IsIdempotent: __IS_IDEMPOTENT__
         )
       };
     }

@@ -942,6 +942,14 @@ public class RewindScenarioTests {
   private sealed class _recordingReceptorInvoker : IReceptorInvoker {
     private readonly ConcurrentBag<InvocationRecord> _invocations = [];
 
+    /// <summary>
+    /// Simulates a generic attribute-less receptor. Mirrors ReceptorInvoker._filterForReplayMode:
+    /// during Replay/Rebuild, non-idempotent receptors fire only when IsNewEvent is true.
+    /// When true (default), this spy records every invocation regardless — useful for tests
+    /// that want the raw stream, including AlwaysFire semantics.
+    /// </summary>
+    public bool SimulateAlwaysFire { get; init; }
+
     public IReadOnlyCollection<InvocationRecord> Invocations => [.. _invocations];
 
     public ValueTask InvokeAsync(
@@ -949,14 +957,25 @@ public class RewindScenarioTests {
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
+      if (!SimulateAlwaysFire
+          && context is { ProcessingMode: ProcessingMode.Replay or ProcessingMode.Rebuild, IsNewEvent: false }) {
+        // Attribute-less receptor during Replay/Rebuild for an already-processed event:
+        // ReceptorInvoker would suppress it via _filterForReplayMode.
+        return ValueTask.CompletedTask;
+      }
       _invocations.Add(new InvocationRecord(
         envelope.MessageId.Value,
         stage,
-        context?.ProcessingMode));
+        context?.ProcessingMode,
+        context?.IsNewEvent ?? true));
       return ValueTask.CompletedTask;
     }
 
-    public sealed record InvocationRecord(Guid EventId, LifecycleStage Stage, ProcessingMode? ProcessingMode);
+    public sealed record InvocationRecord(
+      Guid EventId,
+      LifecycleStage Stage,
+      ProcessingMode? ProcessingMode,
+      bool IsNewEvent);
   }
 
   /// <summary>

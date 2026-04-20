@@ -214,7 +214,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;
@@ -223,7 +223,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;

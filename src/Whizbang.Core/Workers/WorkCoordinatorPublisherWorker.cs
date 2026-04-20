@@ -337,6 +337,26 @@ public partial class WorkCoordinatorPublisherWorker(
         await _runPeriodicMaintenanceAsync(stoppingToken);
       }
 
+      // Drain pattern: if the last claim returned a full batch, there's more work
+      // waiting — loop immediately without a poll wait. Respects the runaway-drain
+      // cap (_options.MaxConsecutiveFullDrains); 0 disables the cap entirely.
+      //
+      // IMPORTANT: do NOT touch _wakeSignaled here. That flag is a guard paired
+      // with _pollWakeSignal (1-count semaphore): RequestImmediatePoll uses CAS
+      // 0→1 to permit a single Release, and the post-WaitAsync reset restores 0
+      // after WaitAsync consumes the semaphore. Resetting the guard here without
+      // consuming the semaphore would let a subsequent external signal call
+      // Release() on an already-full semaphore → SemaphoreFullException. Any
+      // pending signal accumulated during drain will be consumed naturally on
+      // the first WaitAsync after drain ends.
+      var capEnabled = _options.MaxConsecutiveFullDrains > 0;
+      if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
+        _lastBatchWasFull = false;
+        _consecutiveFullDrains++;
+        continue;
+      }
+      _consecutiveFullDrains = 0;
+
       try {
         // Wait for either the polling interval OR an external wake signal (whichever comes first).
         // RequestImmediatePoll() releases the semaphore, waking this loop early.
@@ -436,8 +456,17 @@ public partial class WorkCoordinatorPublisherWorker(
         publishSw.Stop();
         _transportMetrics?.OutboxPublishDuration.Record(publishSw.Elapsed.TotalMilliseconds);
 
-        // Post-outbox lifecycle per message + track results
+        // Post-outbox lifecycle per message + track results (populates _completions).
         await _processPublishBatchResultsAsync(batchContexts, results, stoppingToken);
+
+        // 2g: immediate outbox completion flush. When pending completions reach the
+        // configured threshold, wake the coordinator loop so it flushes (via its
+        // regular ProcessWorkBatchRequest) without waiting for the next poll tick.
+        // Threshold = 0 disables; = 1 flushes any pending.
+        if (_options.ImmediateOutboxCompletionFlushThreshold > 0
+            && _completions.PendingCount >= _options.ImmediateOutboxCompletionFlushThreshold) {
+          RequestImmediatePoll();
+        }
       } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
         // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
         LogPublisherLoopInternalCancellation(_logger, batch.Count);
@@ -577,6 +606,12 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Collect results
         _trackPublishResult(work, result);
+
+        // 2g: immediate outbox completion flush (see _publisherLoopBulkAsync for details).
+        if (_options.ImmediateOutboxCompletionFlushThreshold > 0
+            && _completions.PendingCount >= _options.ImmediateOutboxCompletionFlushThreshold) {
+          RequestImmediatePoll();
+        }
       } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
         // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
         _workChannelWriter.RemoveInFlight(work.MessageId);
@@ -816,6 +851,15 @@ public partial class WorkCoordinatorPublisherWorker(
     }
   }
 
+  // Set by _processWorkBatchAsync when the last claim returned a full batch,
+  // meaning there's almost certainly more work waiting and we should drain
+  // immediately instead of sleeping for PollingIntervalMilliseconds.
+  private bool _lastBatchWasFull;
+
+  // Tracks how many back-to-back full-batch drains we've done since the last
+  // forced poll wait. Compared against WorkCoordinatorPublisherOptions.MaxConsecutiveFullDrains.
+  private int _consecutiveFullDrains;
+
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
     // Create a scope to resolve scoped IWorkCoordinator
     using var scope = _scopeFactory.CreateScope();
@@ -883,7 +927,8 @@ public partial class WorkCoordinatorPublisherWorker(
         Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds
+        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds,
+        MaxStreamsPerBatch = _options.MaxStreamsPerBatch
       };
       workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
     } catch (Exception ex) {
@@ -893,8 +938,47 @@ public partial class WorkCoordinatorPublisherWorker(
       return; // Exit early, retry on next cycle
     }
 
-    // 5-8. Extract ack counts, mark acknowledged, clear, and reset stale
-    _processAcknowledgements(workBatch);
+    // 5-8. Mark acknowledged, clear, and reset stale.
+    //
+    // We acknowledge exactly what we sent in this cycle — not what the SQL tells us.
+    // The SQL's v_ack_counts in the 029 migration is computed as
+    // jsonb_array_length(p_outbox_completions) etc. on line 370, so it always equals
+    // the input array length. But v_ack_counts is only returned when there is at
+    // least one outbox, inbox, or perspective-stream row in the response (line 1277
+    // of 029). Post-burst idle cycles hit the "coordinator processed completions,
+    // returned empty batch" path — ack counts are silently lost. Items stay in
+    // "Sent" state until ResetStale (5 min base, up to 60 min cap) resets them,
+    // causing them to be re-sent indefinitely. Downstream symptom: processed_at IS
+    // stamped in wh_outbox by the FIRST call, but the tracker doesn't know, so it
+    // keeps sending the same completion IDs in an exponential-backoff loop.
+    // Fix: acknowledge the local sent-count directly and drop the metadata round-trip.
+    _completions.MarkAsAcknowledged(completionsToSend.Length);
+    _failures.MarkAsAcknowledged(failuresToSend.Length);
+    _leaseRenewals.MarkAsAcknowledged(leaseRenewalsToSend.Length);
+    _inboxCompletions.MarkAsAcknowledged(inboxCompletionsToSend.Length);
+    _inboxFailures.MarkAsAcknowledged(inboxFailuresToSend.Length);
+    _inboxLeaseRenewals.MarkAsAcknowledged(inboxLeaseRenewalsToSend.Length);
+
+    _completions.ClearAcknowledged();
+    _failures.ClearAcknowledged();
+    _leaseRenewals.ClearAcknowledged();
+    _inboxCompletions.ClearAcknowledged();
+    _inboxFailures.ClearAcknowledged();
+    _inboxLeaseRenewals.ClearAcknowledged();
+
+    var _ackNow = DateTimeOffset.UtcNow;
+    _completions.ResetStale(_ackNow);
+    _failures.ResetStale(_ackNow);
+    _leaseRenewals.ResetStale(_ackNow);
+    _inboxCompletions.ResetStale(_ackNow);
+    _inboxFailures.ResetStale(_ackNow);
+    _inboxLeaseRenewals.ResetStale(_ackNow);
+
+    // Drain signal: if the SQL claim came back full on either axis, there's almost
+    // certainly more work waiting. Skip the next poll wait and claim again immediately.
+    _lastBatchWasFull =
+      workBatch.OutboxWork.Count >= _options.MaxStreamsPerBatch ||
+      workBatch.InboxWork.Count >= _options.MaxStreamsPerBatch;
 
     // Log a summary of message processing activity
     int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length
@@ -911,7 +995,7 @@ public partial class WorkCoordinatorPublisherWorker(
         inboxFailuresToSend.Length
       );
     } else {
-      LogNoWorkClaimed(_logger);
+      LogNoWorkClaimed(_logger, _options.PartitionCount, _instanceProvider.InstanceId);
     }
 
     // Write outbox work to channel for publisher loop
@@ -988,7 +1072,7 @@ public partial class WorkCoordinatorPublisherWorker(
               Flags = WorkBatchOptions.SkipInboxClaiming,
               PartitionCount = _options.PartitionCount,
               LeaseSeconds = _options.LeaseSeconds,
-              StaleThresholdSeconds = _options.StaleThresholdSeconds
+              AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
             }, cancellationToken);
             _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
           } catch (Exception ex) {
@@ -1025,34 +1109,12 @@ public partial class WorkCoordinatorPublisherWorker(
   }
 
   /// <summary>
-  /// Extracts acknowledgement counts from work batch metadata and processes tracker state.
+  /// Obsolete — ack counts were extracted from SQL-returned metadata which
+  /// silently disappears when the response has no outbox/inbox/perspective-stream
+  /// rows (post-burst idle). Replaced by acknowledging the local sent-count
+  /// directly after a successful ProcessWorkBatchAsync. Kept for reference; can
+  /// be deleted once no downstream consumer relies on its signature.
   /// </summary>
-  private void _processAcknowledgements(WorkBatch workBatch) {
-    var metadataRow = _extractMetadataRow(workBatch);
-
-    _completions.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_completions_processed"));
-    _failures.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_failures_processed"));
-    _leaseRenewals.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_lease_renewals_processed"));
-    _inboxCompletions.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_completions_processed"));
-    _inboxFailures.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_failures_processed"));
-    _inboxLeaseRenewals.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_lease_renewals_processed"));
-
-    _completions.ClearAcknowledged();
-    _failures.ClearAcknowledged();
-    _leaseRenewals.ClearAcknowledged();
-    _inboxCompletions.ClearAcknowledged();
-    _inboxFailures.ClearAcknowledged();
-    _inboxLeaseRenewals.ClearAcknowledged();
-
-    var now = DateTimeOffset.UtcNow;
-    _completions.ResetStale(now);
-    _failures.ResetStale(now);
-    _leaseRenewals.ResetStale(now);
-    _inboxCompletions.ResetStale(now);
-    _inboxFailures.ResetStale(now);
-    _inboxLeaseRenewals.ResetStale(now);
-  }
-
   private static Dictionary<string, JsonElement>? _extractMetadataRow(WorkBatch workBatch) {
     var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
     if (outboxFirstRow?.Metadata != null) {
@@ -1422,9 +1484,9 @@ public partial class WorkCoordinatorPublisherWorker(
   [LoggerMessage(
     EventId = 21,
     Level = LogLevel.Debug,
-    Message = "Work batch processing: no work claimed (all partitions assigned to other instances or no pending messages)"
+    Message = "Work batch processing: empty result (outbox=0, inbox=0; no completions/failures/renewals sent). PartitionCount={PartitionCount}, InstanceId={InstanceId}. Cause not determinable from publisher; inspect wh_outbox/wh_inbox/wh_service_instances directly."
   )]
-  static partial void LogNoWorkClaimed(ILogger logger);
+  static partial void LogNoWorkClaimed(ILogger logger, int partitionCount, Guid instanceId);
 
   [LoggerMessage(
     EventId = 22,
@@ -1540,11 +1602,14 @@ public partial class WorkCoordinatorPublisherWorker(
 public class WorkCoordinatorPublisherOptions {
   /// <summary>
   /// Milliseconds to wait between polling for work.
-  /// Default: 1000 (1 second)
+  /// Default: 250 (1/4 second). This is also the heartbeat cadence — lower values
+  /// trade idle DB load (4x writes vs 1000ms) for faster burst drain and faster
+  /// instance-failure detection. For a ~6s burst of N events with per-cycle
+  /// drain time D, tail ≈ (PollingInterval + D) × ceil(N / MaxStreamsPerBatch).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_MultipleInstances_NoDuplicatePublishingAsync</tests>
-  public int PollingIntervalMilliseconds { get; set; } = 1000;
+  public int PollingIntervalMilliseconds { get; set; } = 250;
 
   /// <summary>
   /// Lease duration in seconds.
@@ -1555,12 +1620,15 @@ public class WorkCoordinatorPublisherOptions {
   public int LeaseSeconds { get; set; } = 300;
 
   /// <summary>
-  /// Stale instance threshold in seconds.
-  /// Instances that haven't sent a heartbeat for this duration will be removed.
-  /// Default: 600 (10 minutes)
+  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
+  /// After this, the instance's message leases are released and its stream ownership no longer
+  /// blocks other instances from claiming fresh work. Heartbeats occur every
+  /// <see cref="PollingIntervalMilliseconds"/> (default 250 ms); 30 s = 120 missed heartbeats.
+  /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
+  /// (GC, disk stalls, network blips) without triggering work reassignment.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
-  public int StaleThresholdSeconds { get; set; } = 600;
+  public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 
   /// <summary>
   /// Optional metadata to attach to this service instance.
@@ -1616,11 +1684,41 @@ public class WorkCoordinatorPublisherOptions {
   /// <summary>
   /// Maximum number of messages to include in a single bulk publish batch.
   /// Only applies when the transport supports the BulkPublish capability.
-  /// Default: 300 (matches p_max_streams in process_work_batch).
+  /// Default: 1000. Sized larger than p_max_streams (300) so a burst spanning
+  /// multiple SQL poll cycles can drain in a single publish pass once the
+  /// work channel has accumulated events.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_LimitsDrainCountAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_DefaultIs300Async</tests>
-  public int MaxBulkPublishBatchSize { get; set; } = 300;
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerBulkPublishTests.cs:BulkPublish_MaxBatchSize_DefaultIs1000Async</tests>
+  public int MaxBulkPublishBatchSize { get; set; } = 1000;
+
+  /// <summary>
+  /// Maximum number of streams/events the SQL process_work_batch call returns per claim.
+  /// Maps to p_max_streams in the migration. Default: 1000. Aligned with
+  /// MaxBulkPublishBatchSize so a single poll cycle can claim + publish + mark-processed
+  /// in one shot instead of draining the burst across many polling cycles.
+  /// </summary>
+  public int MaxStreamsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// Maximum number of consecutive full-batch drain cycles before forcing one
+  /// poll wait. Guards against runaway drain if the SQL claim keeps returning
+  /// full batches faster than they can be published (pressuring CPU/DB).
+  /// Default: 100 — covers a 100k-event burst at MaxStreamsPerBatch=1000 without
+  /// pausing. Set to 0 to disable the cap entirely (unbounded drain).
+  /// </summary>
+  public int MaxConsecutiveFullDrains { get; set; } = 100;
+
+  /// <summary>
+  /// Minimum number of pending outbox completions that triggers an immediate
+  /// DB flush (independent of the poll cadence). Mirrors the long-standing
+  /// inbox immediate-flush for channel-routed work. 1 = flush any pending
+  /// completions at the end of a work cycle, so wh_outbox.processed_at is
+  /// stamped without waiting for the next ProcessWorkBatchRequest.
+  /// 0 = disable; completions wait for the next poll tick.
+  /// Default: 1.
+  /// </summary>
+  public int ImmediateOutboxCompletionFlushThreshold { get; set; } = 1;
 }
 
 /// <summary>

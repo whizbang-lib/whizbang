@@ -1622,8 +1622,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var staleInstanceId = _idProvider.NewGuid();
     var activeInstanceId = _instanceId;
 
-    // Insert stale instance (heartbeat > 600 seconds old, matching default StaleThresholdSeconds)
-    // Default StaleThresholdSeconds is 600 (10 minutes), so heartbeat must be older than that
+    // Insert stale instance — heartbeat is 700s old, well past the default
+    // AbandonStaleInstanceThresholdSeconds of 30s, so cleanup will remove it.
     await _insertServiceInstanceAsync(staleInstanceId, "StaleService", "stale-host", 999);
     await _markInstanceHeartbeatOldAsync(staleInstanceId, DateTimeOffset.UtcNow.AddSeconds(-700));
 
@@ -1658,7 +1658,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var activeExists = await _serviceInstanceExistsAsync(activeInstanceId);
 
     await Assert.That(staleExists).IsFalse()
-      .Because("Instance with heartbeat older than StaleThresholdSeconds (600s) should be deleted");
+      .Because("Instance with heartbeat older than AbandonStaleInstanceThresholdSeconds (30s) should be deleted");
     await Assert.That(activeExists).IsTrue()
       .Because("Active instance should remain");
   }

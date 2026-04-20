@@ -93,6 +93,32 @@ BEGIN
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
+
+  -- ========================================
+  -- Task 6: Purge abandoned active-stream rows
+  -- ========================================
+  -- Removes wh_active_streams entries whose assigned_instance_id no longer exists
+  -- in wh_service_instances. After the heartbeat-recency liveness check in
+  -- claim_orphaned_inbox / claim_orphaned_outbox (migrations 024/025) these rows
+  -- are already non-blocking, but they accumulate indefinitely because
+  -- cleanup_stale_instances only nulls assigned_instance_id in the tick where the
+  -- instance is deleted, and the field can be re-populated by concurrent UPSERTs
+  -- via the COALESCE preserve-existing-ownership clause in process_work_batch
+  -- Phase 5.5. No age guard — a missing wh_service_instances row means the
+  -- instance is fully gone (UUIDv7 IDs never repeat).
+  v_start := clock_timestamp();
+  DELETE FROM __SCHEMA__.wh_active_streams
+  WHERE assigned_instance_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_service_instances si
+      WHERE si.instance_id = __SCHEMA__.wh_active_streams.assigned_instance_id
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_abandoned_active_streams'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -106,6 +132,6 @@ VALUES ('stuck_inbox_retention_days', '7', 'integer', 'Days to retain inbox mess
 ON CONFLICT (setting_key) DO NOTHING;
 
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance IS
-'Runs maintenance tasks: purges completed messages, old deduplication entries, and stuck inbox messages.
+'Runs maintenance tasks: purges completed messages, old deduplication entries, stuck inbox messages, and abandoned active-stream ownership rows.
 Returns a result set with task name, rows affected, duration, and status.
-Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days).';
+Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days). Abandoned active-streams purge has no retention knob — a missing wh_service_instances row is sufficient evidence that the owner is gone.';

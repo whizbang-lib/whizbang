@@ -133,7 +133,8 @@ public interface ILifecycleContext {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// <strong>Use Case:</strong> Opted-in receptors (decorated with <see cref="FireDuringReplayAttribute"/>)
+  /// <strong>Use Case:</strong> Opted-in receptors (decorated with <see cref="ReceptorIdempotentAttribute"/>
+  /// with <c>AlwaysFire = true</c>)
   /// can check this property to branch their behavior during replay:
   /// </para>
   /// <code>
@@ -144,4 +145,27 @@ public interface ILifecycleContext {
   /// </remarks>
   /// <docs>fundamentals/receptors/lifecycle-receptors#processing-mode</docs>
   ProcessingMode? ProcessingMode { get; }
+
+  /// <summary>
+  /// Convenience for <c>ProcessingMode is Replay or Rebuild</c>. True when the receptor is
+  /// being invoked inside a rewind or rebuild pass rather than during live processing.
+  /// </summary>
+  /// <docs>fundamentals/receptors/lifecycle-receptors#processing-mode</docs>
+  bool IsReplay => ProcessingMode is Messaging.ProcessingMode.Replay or Messaging.ProcessingMode.Rebuild;
+
+  /// <summary>
+  /// <c>true</c> when this specific event has never had its handlers fire for this
+  /// perspective before — i.e., the <see cref="Whizbang.Core.Perspectives.IPerspectiveReplayReader"/>
+  /// annotated it as new. In live processing this is always <c>true</c>. In Replay/Rebuild
+  /// it is <c>false</c> for events whose handlers already ran in a prior pass.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Non-idempotent receptors are invoked only when <c>IsNewEvent</c> is <c>true</c>.
+  /// Receptors decorated with <c>[ReceptorIdempotent(AlwaysFire = true)]</c> are invoked
+  /// regardless and can branch on <c>IsNewEvent</c> to tailor behavior per invocation.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/receptors/lifecycle-receptors#replay-safety</docs>
+  bool IsNewEvent => true;
 }

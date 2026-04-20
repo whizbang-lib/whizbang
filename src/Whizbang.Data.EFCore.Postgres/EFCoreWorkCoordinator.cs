@@ -283,7 +283,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           renewInboxParam,
           renewPerspectiveEventLeaseIdsParam,
           new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
-          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds),
+          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.AbandonStaleInstanceThresholdSeconds),
           syncInquiriesParam,
           maxStreamsParam
         )
@@ -794,8 +794,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var json = _serializeNewInboxMessages(messages);
-    var jsonParam = PostgresJsonHelper.JsonStringToJsonb(json);
-    jsonParam.ParameterName = "p_messages";
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -807,12 +805,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var sql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
 #pragma warning restore S2077
 
-    var now = DateTime.UtcNow;
-
-    await _dbContext.Database.ExecuteSqlRawAsync(
-      sql,
-      [json, now, partitionCount],
-      cancellationToken);
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      var now = DateTime.UtcNow;
+      await _dbContext.Database.ExecuteSqlRawAsync(
+        sql,
+        [json, now, partitionCount],
+        cancellationToken);
+    }, logger: _logger, cancellationToken: cancellationToken);
   }
 
   public async Task ReportPerspectiveCompletionAsync(

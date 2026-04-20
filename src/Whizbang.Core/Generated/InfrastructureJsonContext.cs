@@ -28,6 +28,8 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(CorrelationId))]
 [JsonSerializable(typeof(MessageHop))]
 [JsonSerializable(typeof(List<MessageHop>))]
+[JsonSerializable(typeof(ReceptorInvocationRecord))]
+[JsonSerializable(typeof(List<ReceptorInvocationRecord>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
 [JsonSerializable(typeof(ServiceInstanceInfo))]
 [JsonSerializable(typeof(ServiceInstanceMetadata))]

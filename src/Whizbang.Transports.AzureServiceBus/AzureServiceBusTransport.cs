@@ -330,7 +330,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       return [];
     }
 
-    var results = new List<BulkPublishItemResult>(items.Count);
     var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
 
     // Group items by StreamId to ensure messages in the same session go into the same batch.
@@ -338,49 +337,65 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // when sessions are enabled. Null StreamId items group together (no session requirement).
     var streamGroups = items
       .Select((item, index) => (Item: item, OriginalIndex: index))
-      .GroupBy(x => x.Item.StreamId);
+      .GroupBy(x => x.Item.StreamId)
+      .ToList();
 
-    foreach (var streamGroup in streamGroups) {
-      var groupItems = streamGroup.ToList();
+    // Parallelize across stream groups. ServiceBusSender is thread-safe, and each group's
+    // ServiceBusMessageBatch is built/sent independently. Per-group logic stays serial so
+    // Session semantics (fill-batch-then-send) are preserved. MaxDegreeOfParallelism=8
+    // matches the bounded concurrency used elsewhere in the coordination layer.
+    var concurrentResults = new System.Collections.Concurrent.ConcurrentBag<BulkPublishItemResult>();
 
-      var currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
-      var batchItemIds = new List<Guid>();
+    await Parallel.ForEachAsync(
+      streamGroups,
+      new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
+      async (streamGroup, ct) => {
+        var groupItems = streamGroup.ToList();
+        var localResults = new List<BulkPublishItemResult>(groupItems.Count);
 
-      foreach (var (item, _) in groupItems) {
-        try {
-          var message = _createServiceBusMessage(item, destination);
+        var currentBatch = await sender.CreateMessageBatchAsync(ct);
+        var batchItemIds = new List<Guid>();
 
-          if (!currentBatch.TryAddMessage(message)) {
-            // Current batch is full -- send and start new
-            await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
-            currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
-            batchItemIds = [];
+        foreach (var (item, _) in groupItems) {
+          try {
+            var message = _createServiceBusMessage(item, destination);
 
             if (!currentBatch.TryAddMessage(message)) {
-              results.Add(new BulkPublishItemResult {
-                MessageId = item.MessageId,
-                Success = false,
-                Error = $"Message {item.MessageId} exceeds maximum batch message size"
-              });
-              continue;
-            }
-          }
+              // Current batch is full -- send and start new
+              await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, localResults, ct);
+              currentBatch = await sender.CreateMessageBatchAsync(ct);
+              batchItemIds = [];
 
-          batchItemIds.Add(item.MessageId);
-        } catch (Exception ex) {
-          results.Add(new BulkPublishItemResult {
-            MessageId = item.MessageId,
-            Success = false,
-            Error = $"{ex.GetType().Name}: {ex.Message}"
-          });
+              if (!currentBatch.TryAddMessage(message)) {
+                localResults.Add(new BulkPublishItemResult {
+                  MessageId = item.MessageId,
+                  Success = false,
+                  Error = $"Message {item.MessageId} exceeds maximum batch message size"
+                });
+                continue;
+              }
+            }
+
+            batchItemIds.Add(item.MessageId);
+          } catch (Exception ex) when (ex is not OperationCanceledException) {
+            localResults.Add(new BulkPublishItemResult {
+              MessageId = item.MessageId,
+              Success = false,
+              Error = $"{ex.GetType().Name}: {ex.Message}"
+            });
+          }
+        }
+
+        // Send remaining batch for this stream group
+        await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, localResults, ct);
+
+        foreach (var r in localResults) {
+          concurrentResults.Add(r);
         }
       }
+    );
 
-      // Send remaining batch for this stream group
-      await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
-    }
-
-    return results;
+    return concurrentResults.ToList();
   }
 
   private static async Task _sendAndRecordBatchAsync(
