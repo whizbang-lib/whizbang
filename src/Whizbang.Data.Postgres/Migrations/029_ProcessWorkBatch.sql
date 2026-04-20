@@ -1232,26 +1232,34 @@ BEGIN
         )
     ),
     tier1_limited AS (
+      -- Tier 1: small streams (pending <= per-stream cap). Within the tier, order
+      -- by pending_count ASC so the smallest stream is served first — matches the
+      -- fairness contract (small streams never starve behind larger ones).
       SELECT e.*
       FROM eligible_perspective e
       WHERE e.stream_pending_count <= v_max_work_items_per_stream
-      ORDER BY e.stream_id, e.perspective_name, e.event_id
+      ORDER BY e.stream_pending_count, e.stream_id, e.perspective_name, e.event_id
       LIMIT v_tier1_max
     ),
     tier1_used AS (
       SELECT COUNT(*) as cnt FROM tier1_limited
     ),
     tier2_limited AS (
+      -- Tier 2: large streams (pending > per-stream cap). Within the tier, order
+      -- by pending_count ASC so that when Tier 2 is itself large enough to fill the
+      -- remaining budget, smaller-of-the-large streams make progress first.
       SELECT e.*
       FROM eligible_perspective e
       WHERE e.stream_pending_count > v_max_work_items_per_stream
         AND e.stream_rank <= v_max_work_items_per_stream
-      ORDER BY e.stream_id, e.perspective_name, e.event_id
+      ORDER BY e.stream_pending_count, e.stream_id, e.perspective_name, e.event_id
       LIMIT v_max_work_items - (SELECT cnt FROM tier1_used)
     ),
     ordered_perspective AS (
       SELECT combined.*,
-        ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
+        -- Preserve tier ordering (Tier 1 before Tier 2) AND within-tier ordering
+        -- (smaller pending_count first) via the ROW_NUMBER window.
+        ROW_NUMBER() OVER (ORDER BY combined.tier, combined.stream_pending_count, combined.stream_id, combined.perspective_name, combined.event_id) as row_num
       FROM (
         SELECT t1.*, 1 as tier FROM tier1_limited t1
         UNION ALL
