@@ -339,12 +339,16 @@ public partial class WorkCoordinatorPublisherWorker(
 
       // Drain pattern: if the last claim returned a full batch, there's more work
       // waiting — loop immediately without a poll wait. Clears the flag so the next
-      // iteration re-evaluates based on what it claims.
-      if (_lastBatchWasFull) {
+      // iteration re-evaluates based on what it claims. Respects the runaway-drain
+      // cap (_options.MaxConsecutiveFullDrains); 0 disables the cap entirely.
+      var capEnabled = _options.MaxConsecutiveFullDrains > 0;
+      if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
         _lastBatchWasFull = false;
+        _consecutiveFullDrains++;
         Interlocked.Exchange(ref _wakeSignaled, 0);
         continue;
       }
+      _consecutiveFullDrains = 0;
 
       try {
         // Wait for either the polling interval OR an external wake signal (whichever comes first).
@@ -445,8 +449,17 @@ public partial class WorkCoordinatorPublisherWorker(
         publishSw.Stop();
         _transportMetrics?.OutboxPublishDuration.Record(publishSw.Elapsed.TotalMilliseconds);
 
-        // Post-outbox lifecycle per message + track results
+        // Post-outbox lifecycle per message + track results (populates _completions).
         await _processPublishBatchResultsAsync(batchContexts, results, stoppingToken);
+
+        // 2g: immediate outbox completion flush. When pending completions reach the
+        // configured threshold, wake the coordinator loop so it flushes (via its
+        // regular ProcessWorkBatchRequest) without waiting for the next poll tick.
+        // Threshold = 0 disables; = 1 flushes any pending.
+        if (_options.ImmediateOutboxCompletionFlushThreshold > 0
+            && _completions.PendingCount >= _options.ImmediateOutboxCompletionFlushThreshold) {
+          RequestImmediatePoll();
+        }
       } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
         // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
         LogPublisherLoopInternalCancellation(_logger, batch.Count);
@@ -586,6 +599,12 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Collect results
         _trackPublishResult(work, result);
+
+        // 2g: immediate outbox completion flush (see _publisherLoopBulkAsync for details).
+        if (_options.ImmediateOutboxCompletionFlushThreshold > 0
+            && _completions.PendingCount >= _options.ImmediateOutboxCompletionFlushThreshold) {
+          RequestImmediatePoll();
+        }
       } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
         // Internal cancellation (e.g., DB timeout) — NOT a shutdown. Log and continue.
         _workChannelWriter.RemoveInFlight(work.MessageId);
@@ -829,6 +848,10 @@ public partial class WorkCoordinatorPublisherWorker(
   // meaning there's almost certainly more work waiting and we should drain
   // immediately instead of sleeping for PollingIntervalMilliseconds.
   private bool _lastBatchWasFull;
+
+  // Tracks how many back-to-back full-batch drains we've done since the last
+  // forced poll wait. Compared against WorkCoordinatorPublisherOptions.MaxConsecutiveFullDrains.
+  private int _consecutiveFullDrains;
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
     // Create a scope to resolve scoped IWorkCoordinator
@@ -1582,7 +1605,7 @@ public class WorkCoordinatorPublisherOptions {
   /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
   /// After this, the instance's message leases are released and its stream ownership no longer
   /// blocks other instances from claiming fresh work. Heartbeats occur every
-  /// <see cref="PollingIntervalMilliseconds"/> (default 1 s); 30 s = 30 missed heartbeats.
+  /// <see cref="PollingIntervalMilliseconds"/> (default 250 ms); 30 s = 120 missed heartbeats.
   /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
   /// (GC, disk stalls, network blips) without triggering work reassignment.
   /// </summary>
@@ -1658,6 +1681,26 @@ public class WorkCoordinatorPublisherOptions {
   /// in one shot instead of draining the burst across many polling cycles.
   /// </summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// Maximum number of consecutive full-batch drain cycles before forcing one
+  /// poll wait. Guards against runaway drain if the SQL claim keeps returning
+  /// full batches faster than they can be published (pressuring CPU/DB).
+  /// Default: 100 — covers a 100k-event burst at MaxStreamsPerBatch=1000 without
+  /// pausing. Set to 0 to disable the cap entirely (unbounded drain).
+  /// </summary>
+  public int MaxConsecutiveFullDrains { get; set; } = 100;
+
+  /// <summary>
+  /// Minimum number of pending outbox completions that triggers an immediate
+  /// DB flush (independent of the poll cadence). Mirrors the long-standing
+  /// inbox immediate-flush for channel-routed work. 1 = flush any pending
+  /// completions at the end of a work cycle, so wh_outbox.processed_at is
+  /// stamped without waiting for the next ProcessWorkBatchRequest.
+  /// 0 = disable; completions wait for the next poll tick.
+  /// Default: 1.
+  /// </summary>
+  public int ImmediateOutboxCompletionFlushThreshold { get; set; } = 1;
 }
 
 /// <summary>
