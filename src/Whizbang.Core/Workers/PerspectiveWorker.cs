@@ -94,10 +94,6 @@ public partial class PerspectiveWorker(
   // not once per batch cycle.
   private Dictionary<string, IReadOnlyList<string>>? _perspectivesPerEventType;
 
-  // Lifecycle stage skip flags — set once at startup from IPerspectiveRunnerRegistry.LifecycleStagesWithReceptors.
-  // When false, drain mode skips the invocation entirely (no DI resolution, no context creation, no InvokeAsync).
-  private bool _hasPrePerspectiveReceptors;
-  private bool _hasPostPerspectiveReceptors;
 
   // Cursor position cache for drain mode — eliminates redundant GetPerspectiveCursorAsync DB calls
   private readonly PerspectiveCursorCache _cursorCache = new();
@@ -271,14 +267,6 @@ public partial class PerspectiveWorker(
     }
 
     _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
-
-    // Cache lifecycle stage skip flags from the registry's compile-time stage set.
-    // When no receptors exist for a stage, drain mode skips the invocation entirely.
-    var stagesWithReceptors = registry.LifecycleStagesWithReceptors;
-    _hasPrePerspectiveReceptors = stagesWithReceptors.Contains(LifecycleStage.PrePerspectiveDetached)
-      || stagesWithReceptors.Contains(LifecycleStage.PrePerspectiveInline);
-    _hasPostPerspectiveReceptors = stagesWithReceptors.Contains(LifecycleStage.PostPerspectiveInline)
-      || stagesWithReceptors.Contains(LifecycleStage.PostPerspectiveDetached);
   }
 
   private static Dictionary<string, IReadOnlyList<string>> _buildPerspectivesPerEventTypeMap(
@@ -894,9 +882,11 @@ public partial class PerspectiveWorker(
               envelope.MessageId.Value, envelope,
               LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
 
-            // Only invoke PrePerspective receptors if any are registered (skip DI + context if not)
-            if (_hasPrePerspectiveReceptors) {
-              await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+            // Invoke PrePerspective receptors. The invoker short-circuits when the registry
+            // returns no receptors (compile-time or runtime), so the cost when nothing is
+            // registered is a single DI scope create + registry lookup — cheap enough to run
+            // unconditionally and correct for integration tests that wire receptors at runtime.
+            await using (var lifecycleScope = _scopeFactory.CreateAsyncScope()) {
               await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, lifecycleScope.ServiceProvider, ct);
               await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, lifecycleScope.ServiceProvider, ct);
             }
@@ -949,8 +939,10 @@ public partial class PerspectiveWorker(
                 batchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
               }
 
-              // Fire PostPerspectiveInline + ImmediateDetached only if receptors exist
-              if (_hasPostPerspectiveReceptors) {
+              // Fire PostPerspectiveInline + ImmediateDetached. The invoker is a no-op when
+              // no receptors exist at the stage (compile-time or runtime), so skipping based
+              // on a startup-cached flag would miss integration-test receptors registered later.
+              {
                 var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
                 await _invokeLifecycleReceptorsForEventsAsync(
                   filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
@@ -986,6 +978,14 @@ public partial class PerspectiveWorker(
                     EventWorkId = rawEvent.EventWorkId
                   });
                 }
+              }
+
+              if (filteredEvents.Count > 0) {
+                OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
+                  PerspectiveName = perspectiveName,
+                  StreamId = streamId,
+                  EventCount = filteredEvents.Count
+                });
               }
             }
 
@@ -2102,10 +2102,13 @@ public partial class PerspectiveWorker(
       ProcessingMode? processingMode = null,
       IReadOnlyDictionary<Guid, bool>? isNewByEventId = null) {
 
-    var scopedReceptorInvoker = streamCtx.ScopedProvider.GetService<IReceptorInvoker>()
-      ?? throw new InvalidOperationException(
-        "IReceptorInvoker is required for lifecycle stage invocation but was not registered. " +
-        "Ensure AddWhizbangReceptorInvoker() is called during DI setup.");
+    var scopedReceptorInvoker = streamCtx.ScopedProvider.GetService<IReceptorInvoker>();
+    if (scopedReceptorInvoker is null) {
+      // No receptor invoker registered — no receptors can fire, so nothing to do.
+      // This is valid for minimal hosts (e.g., tests or schema-only tools) that wire
+      // perspectives without the full dispatcher/receptor stack.
+      return;
+    }
 
     try {
       // Invoke receptors for each event. IsNewEvent defaults to true (live processing,
