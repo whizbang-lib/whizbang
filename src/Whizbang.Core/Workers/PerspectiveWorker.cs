@@ -873,23 +873,19 @@ public partial class PerspectiveWorker(
           }
         }
 
-        // Coordinator tracking + PrePerspective lifecycle per event.
-        // BeginTracking and ExpectPerspectiveCompletions ALWAYS run (coordinator gates PostAllPerspectives).
-        // AdvanceToAsync (receptor invocation) only runs if PrePerspective receptors exist.
+        // Coordinator tracking + ExpectPerspectiveCompletions set up the WhenAll gate
+        // that fires PostAllPerspectives once every perspective has completed.
+        //
+        // NOTE: PrePerspective receptor invocation is intentionally NOT done here.
+        // The generated IPerspectiveRunner (RunWithEventsAsync) fires
+        // PrePerspectiveDetached + PrePerspectiveInline itself at the start of its
+        // processing loop (see PerspectiveRunnerTemplate.cs). Firing them here too
+        // would double-invoke every registered Pre* receptor.
         if (lifecycleCoordinator is not null) {
           foreach (var envelope in streamEvents) {
-            var tracking = lifecycleCoordinator.BeginTracking(
+            _ = lifecycleCoordinator.BeginTracking(
               envelope.MessageId.Value, envelope,
               LifecycleStage.PrePerspectiveDetached, MessageSource.Local, streamId);
-
-            // Invoke PrePerspective receptors. The invoker short-circuits when the registry
-            // returns no receptors (compile-time or runtime), so the cost when nothing is
-            // registered is a single DI scope create + registry lookup — cheap enough to run
-            // unconditionally and correct for integration tests that wire receptors at runtime.
-            await using (var lifecycleScope = _scopeFactory.CreateAsyncScope()) {
-              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveDetached, lifecycleScope.ServiceProvider, ct);
-              await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, lifecycleScope.ServiceProvider, ct);
-            }
 
             // Register expected perspective completions for WhenAll gate.
             if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
