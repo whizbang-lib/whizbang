@@ -102,6 +102,13 @@
     <NoWarn>$(NoWarn);CS1570;CS1573;CS1574;CS0419</NoWarn>
   </PropertyGroup>
 
+  <!-- Pinned identity rollout: WHIZ110/WHIZ111 are warnings enforcing [PinnedId] on concrete -->
+  <!-- IMessage / IPerspectiveFor<> types. Suppressed here during the Whizbang-internal rollout -->
+  <!-- so downstream consumers still see the warnings. Remove once all internal types are tagged. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);WHIZ110;WHIZ111</NoWarn>
+  </PropertyGroup>
+
   <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->
   <!-- Other source projects still suppress CS1591 until their docs are completed -->
   <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.Core' and '$(MSBuildProjectName)' != 'Whizbang.Generators'">

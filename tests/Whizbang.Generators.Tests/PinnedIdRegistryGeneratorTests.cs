@@ -196,6 +196,29 @@ public class PinnedIdRegistryGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_EmitsModuleInitializerThatRegistersViaAddWhizbangAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp.Events;
+
+      [PinnedId("22222222-2222-2222-2222-222222222222")]
+      public record SomeEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PinnedIdRegistryGenerator>(source);
+    var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
+
+    await Assert.That(registryCode).IsNotNull();
+    await Assert.That(registryCode!).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(registryCode!).Contains("ServiceRegistrationCallbacks.PinnedIdRegistry");
+    await Assert.That(registryCode!).Contains("AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>");
+  }
+
+  [Test]
   public async Task Generator_UnpinnedType_ReturnsNullFromGeneratedGetPinnedIdAsync() {
     // The generated code should return null for types not in the registry;
     // we check this by confirming the method ends with "return null;".
