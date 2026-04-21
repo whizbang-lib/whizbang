@@ -213,6 +213,84 @@ public class PerspectiveApplyExactlyOnceTests {
       + $"Recorded: {string.Join(", ", applyDispatchesForEvent.Select(i => i.Path))}.");
   }
 
+  // ==================== Scenario 1c: mixed-multiplicity burst through drain mode ====================
+
+  /// <summary>
+  /// Stronger regression lock-in for the dedupe fix. Three distinct events where each arrives
+  /// with a different multiplicity (1×, 2×, 3×) in the upstream drain batch — mirroring a
+  /// production stream that has several perspective_events rows for some events but not others.
+  /// Each event must produce exactly one Apply dispatch regardless of how many times upstream
+  /// returns it.
+  /// </summary>
+  [Test]
+  public async Task DrainMode_MixedMultiplicityBurst_ApplyFiresExactlyOncePerEvent_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventIdA = TrackedGuid.NewMedo().Value;
+    var eventIdB = TrackedGuid.NewMedo().Value;
+    var eventIdC = TrackedGuid.NewMedo().Value;
+    const string perspectiveName = "Test.MixedMultiplicityPerspective";
+    var runner = new _pathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventIdC);
+
+    static MessageEnvelope<IEvent> _envelope(Guid id, int seq) => new() {
+      MessageId = new MessageId(id),
+      Payload = new _fakeApplyEvent(seq),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    var envelopeA = _envelope(eventIdA, 1);
+    var envelopeB = _envelope(eventIdB, 2);
+    var envelopeC = _envelope(eventIdC, 3);
+
+    static StreamEventData _raw(Guid streamId, Guid eventId, int seq) => new() {
+      StreamId = streamId,
+      EventId = eventId,
+      EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
+      EventData = JsonSerializer.Serialize(new _fakeApplyEvent(seq)),
+      Metadata = null,
+      Scope = null,
+      EventWorkId = Guid.CreateVersion7()
+    };
+
+    var coordinator = new _dualPathCoordinator {
+      StreamIdsToReturnOnce = [streamId],
+      PerspectiveWorkToReturnOnce = [],
+      StreamEventsToReturn = [
+        // Event A — 1 row
+        _raw(streamId, eventIdA, 1),
+        // Event B — 2 rows (duplicate)
+        _raw(streamId, eventIdB, 2),
+        _raw(streamId, eventIdB, 2),
+        // Event C — 3 rows (triple duplicate)
+        _raw(streamId, eventIdC, 3),
+        _raw(streamId, eventIdC, 3),
+        _raw(streamId, eventIdC, 3)
+      ]
+    };
+
+    // StreamEnvelopes contains the envelopes matching the raw rows — DeserializeStreamEvents
+    // will look up by event id and return the same envelope for each duplicate raw row.
+    var eventStore = new _applyTestEventStore {
+      StreamEnvelopes = { [streamId] = [envelopeA, envelopeB, envelopeC] }
+    };
+    var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
+
+    using var cts = new CancellationTokenSource();
+    var worker = _createWorker(coordinator, registry, eventStore);
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+
+    foreach (var (eventId, multiplicity) in new[] { (eventIdA, 1), (eventIdB, 2), (eventIdC, 3) }) {
+      var count = runner.Invocations.Count(i =>
+        i.StreamId == streamId && i.PerspectiveName == perspectiveName && i.EventId == eventId);
+      await Assert.That(count).IsEqualTo(1).Because(
+        $"Apply-exactly-once: event {eventId:N} appeared {multiplicity}× upstream but must dispatch exactly once. "
+        + $"Got {count} dispatches via {string.Join(",", runner.Invocations.Where(i => i.EventId == eventId).Select(i => i.Path))}.");
+    }
+  }
+
   // ==================== Scenario 2: IPerspectiveRunner not double-registered ====================
 
   /// <summary>
