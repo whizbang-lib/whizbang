@@ -144,6 +144,10 @@ public static class ServiceCollectionExtensions {
 
     services.DecorateEventStoreWithSyncTracking();
 
+    // Message type registry populator — reconciles wh_message_type_registry at startup
+    // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
+    services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
+
     return services;
   }
 
@@ -247,6 +251,10 @@ public static class ServiceCollectionExtensions {
     // This enables perspective synchronization by tracking emitted events
     // before they reach the database (cross-scope sync support)
     services.DecorateEventStoreWithSyncTracking();
+
+    // Message type registry populator — reconciles wh_message_type_registry at startup
+    // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
+    services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
 
     return services;
   }
