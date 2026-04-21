@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,7 +9,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
-using System.Text.Json;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
