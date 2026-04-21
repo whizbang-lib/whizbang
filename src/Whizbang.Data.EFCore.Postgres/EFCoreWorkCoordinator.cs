@@ -8,6 +8,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
 
@@ -193,6 +194,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var syncInquiriesParam = PostgresJsonHelper.JsonStringToJsonb(syncInquiriesJson);
     syncInquiriesParam.ParameterName = "p_sync_inquiries";
 
+    var maxStreamsParam = new Npgsql.NpgsqlParameter("p_max_streams", NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = request.MaxStreamsPerBatch
+    };
+
     var now = DateTimeOffset.UtcNow;
 
     // CRITICAL: Get schema from DbContext model to schema-qualify the function call
@@ -237,7 +242,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_renew_perspective_event_lease_ids,
         @p_flags,
         @p_stale_threshold_seconds,
-        @p_sync_inquiries
+        @p_sync_inquiries,
+        @p_max_streams
       )";
 
     // Hook PostgreSQL RAISE DEBUG messages for debugging
@@ -277,8 +283,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
           renewInboxParam,
           renewPerspectiveEventLeaseIdsParam,
           new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
-          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds),
-          syncInquiriesParam
+          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.AbandonStaleInstanceThresholdSeconds),
+          syncInquiriesParam,
+          maxStreamsParam
         )
         .ToListAsync(cancellationToken);
     } catch (Exception ex) {
@@ -348,18 +355,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Select(_mapInboxWork)
       .ToList();
 
-    var perspectiveWork = validResults
-      .Where(r => r.Source == "perspective")
-      .Select(_mapPerspectiveWork)
+    // Drain mode: SQL returns 'perspective_stream' rows (one per distinct stream, no per-event detail).
+    // Legacy: SQL returns 'perspective' rows (one per event with perspective_name).
+    var perspectiveStreamRows = validResults
+      .Where(r => r.Source == "perspective_stream")
       .ToList();
+
+    var perspectiveRows = validResults
+      .Where(r => r.Source == "perspective")
+      .ToList();
+
+    // Drain mode: stream IDs from dedicated rows (skip PerspectiveWork construction entirely)
+    // Legacy: deduplicate stream IDs from per-event rows
+    var perspectiveStreamIds = perspectiveStreamRows.Count > 0
+      ? perspectiveStreamRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).ToList()
+      : perspectiveRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).Distinct().ToList();
+
+    var perspectiveWork = perspectiveStreamRows.Count > 0
+      ? new List<PerspectiveWork>()
+      : perspectiveRows.Select(_mapPerspectiveWork).ToList();
 
     var syncInquiryResults = validResults
       .Where(r => r.Source == "sync_result")
       .Select(r => new SyncInquiryResult {
-        InquiryId = r.WorkId,
+        InquiryId = r.WorkId!.Value,
         StreamId = r.StreamId ?? Guid.Empty,
         PendingCount = r.PartitionNumber ?? 0,
-        ProcessedCount = r.Status,
+        ProcessedCount = r.Status ?? 0,
         PendingEventIds = _parsePendingEventIds(r.MessageData),
         ProcessedEventIds = _parseProcessedEventIds(r.Metadata)
       })
@@ -385,6 +407,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       OutboxWork = outboxWork,
       InboxWork = inboxWork,
       PerspectiveWork = perspectiveWork,
+      PerspectiveStreamIds = perspectiveStreamIds,
       SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
     };
   }
@@ -399,7 +422,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       : _extractMessageTypeFromEnvelopeType(r.EnvelopeType!);
 
     return new OutboxWork {
-      MessageId = r.WorkId,
+      MessageId = r.WorkId!.Value,
       Destination = r.Destination!,
       Envelope = jsonEnvelope,
       EnvelopeType = r.EnvelopeType!,
@@ -407,7 +430,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       StreamId = r.StreamId,
       PartitionNumber = r.PartitionNumber,
       Attempts = r.Attempts ?? 0,
-      Status = (MessageProcessingStatus)r.Status,
+      Status = (MessageProcessingStatus)(r.Status ?? 0),
       Flags = _buildFlags(r),
       Metadata = _parseMetadataJson(r)
     };
@@ -426,13 +449,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
 
     return new InboxWork {
-      MessageId = r.WorkId,
+      MessageId = r.WorkId!.Value,
       Envelope = jsonEnvelope,
       MessageType = r.MessageType,
       StreamId = r.StreamId,
       PartitionNumber = r.PartitionNumber,
       Attempts = r.Attempts ?? 0,
-      Status = (MessageProcessingStatus)r.Status,
+      Status = (MessageProcessingStatus)(r.Status ?? 0),
       Flags = _buildFlags(r),
       Metadata = _parseMetadataJson(r)
     };
@@ -440,11 +463,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   private PerspectiveWork _mapPerspectiveWork(WorkBatchRow r) {
     return new PerspectiveWork {
-      WorkId = r.WorkId,
+      WorkId = r.WorkId ?? Guid.Empty,  // NULL in stream assignment model (drain mode) — worker uses PerspectiveStreamIds instead
       StreamId = r.StreamId ?? throw new InvalidOperationException("Perspective work must have StreamId"),
       PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
       LastProcessedEventId = null,
-      Status = (PerspectiveProcessingStatus)r.Status,
+      Status = (PerspectiveProcessingStatus)(r.Status ?? 0),
       PartitionNumber = r.PartitionNumber,
       Flags = _buildFlags(r),
       Metadata = _parseMetadataJson(r)
@@ -721,6 +744,76 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// Creates its own database connection to allow calling after the scoped DbContext is disposed.
   /// </summary>
+  /// <inheritdoc />
+  public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "deregister_instance");
+
+#pragma warning disable S2077
+    var sql = $"SELECT {functionName}({{0}})";
+#pragma warning restore S2077
+
+    await _dbContext.Database.ExecuteSqlRawAsync(sql, [instanceId], cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+
+    var sql = $@"SELECT
+      (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as ""PendingPerspectiveEvents"",
+      (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as ""PendingOutbox"",
+      (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as ""PendingInbox"",
+      (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as ""ActiveStreams""";
+
+    var result = await _dbContext.Database
+      .SqlQueryRaw<WorkCoordinatorStatistics>(sql)
+      .ToListAsync(cancellationToken);
+
+    return result.FirstOrDefault() ?? new WorkCoordinatorStatistics();
+  }
+
+  /// <summary>
+  /// Stores inbox messages directly via store_inbox_messages SQL function.
+  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
+  /// Event storage and perspective creation happen on the next tick when
+  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// </summary>
+  public async Task StoreInboxMessagesAsync(
+    InboxMessage[] messages,
+    int partitionCount = 2,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    var json = _serializeNewInboxMessages(messages);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "store_inbox_messages");
+
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    var sql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
+#pragma warning restore S2077
+
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      var now = DateTime.UtcNow;
+      await _dbContext.Database.ExecuteSqlRawAsync(
+        sql,
+        [json, now, partitionCount],
+        cancellationToken);
+    }, logger: _logger, cancellationToken: cancellationToken);
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
@@ -743,7 +836,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await _executeCursorCompletionAsync(
       completion.StreamId, completion.PerspectiveName,
-      completion.LastEventId, (short)completion.Status, null,
+      completion.LastEventId, completion.ProcessedEventIds,
+      (short)completion.Status, null,
       cancellationToken);
 
     await _logCheckpointDiagnosticAsync(completion.StreamId, completion.PerspectiveName, cancellationToken);
@@ -755,6 +849,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   private async Task _executeCursorCompletionAsync(
     Guid streamId, string perspectiveName, Guid lastEventId,
+    Guid[] processedEventIds,
     short status, string? error,
     CancellationToken cancellationToken) {
     var transaction = _dbContext.Database.CurrentTransaction;
@@ -770,13 +865,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DEFAULT_SCHEMA,
         _logger);
       var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{4})
-      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{5})
+      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}::jsonb, {{4}}, {{5}}::text)";
 #pragma warning restore S2077
+
+      // Serialize ProcessedEventIds as JSON string for the JSONB parameter (AOT-safe)
+      var processedEventIdsJson = System.Text.Json.JsonSerializer.Serialize(
+        processedEventIds,
+        _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        [streamId, perspectiveName, lastEventId, status, error!],
+        [streamId, perspectiveName, lastEventId, processedEventIdsJson, status, error!],
         cancellationToken);
 
       if (needsCommit && transaction != null) {
@@ -875,19 +975,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return;
     }
 
-    // Get schema from DbContext configuration for schema-qualified function call
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
-      DEFAULT_SCHEMA,
-      _logger);
-    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
-#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant; parameters use EF Core positional placeholders ({0}..{4})
-    var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
-#pragma warning restore S2077
-
-    await _dbContext.Database.ExecuteSqlRawAsync(
-      sql,
-      [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error],
+    await _executeCursorCompletionAsync(
+      failure.StreamId, failure.PerspectiveName,
+      failure.LastEventId, failure.ProcessedEventIds,
+      (short)failure.Status, failure.Error,
       cancellationToken);
   }
 
@@ -926,6 +1017,49 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Status = (PerspectiveProcessingStatus)result.Status,
       RewindTriggerEventId = result.RewindTriggerEventId
     };
+  }
+
+  /// <inheritdoc />
+  public async Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) {
+
+    if (streamIds.Length == 0) {
+      return [];
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    await using var cmd = (Npgsql.NpgsqlCommand)dbConnection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    cmd.CommandText = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = ANY(@p_stream_ids)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streamIds
+    });
+
+    var results = new List<PerspectiveCursorInfo>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new PerspectiveCursorInfo {
+        StreamId = reader.GetGuid(0),
+        PerspectiveName = reader.GetString(1),
+        LastEventId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
+        RewindTriggerEventId = reader.IsDBNull(4) ? null : reader.GetGuid(4)
+      });
+    }
+
+    return results;
   }
 
   /// <summary>
@@ -1051,8 +1185,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
             orphaned.Add(new OrphanedLifecycleEvent(row.EventId, row.StreamId, envelope));
           } catch (Exception ex) {
             if (_logger?.IsEnabled(LogLevel.Warning) == true) {
-              var eventId = row.EventId;
-              _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} for reconciliation", eventId);
+              _logger.LogWarning(ex, "Failed to deserialize orphaned event {EventId} (type: {EventType}) for reconciliation", row.EventId, row.EventType);
             }
           }
         }
@@ -1088,26 +1221,41 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cancellationToken);
   }
 
-  private MessageEnvelope<IEvent> _deserializeEventEnvelope(OrphanedEventRow row) {
-    // Deserialize from event_store columns into a MessageEnvelope
-    var eventData = row.EventData;
-    var metadata = row.Metadata;
-
-    // The event_type column contains the CLR type key: "FullName, AssemblyName"
-    var eventTypeInfo = _jsonOptions.GetTypeInfo(typeof(IEvent));
-    var payload = eventTypeInfo is not null
-      ? (IEvent?)System.Text.Json.JsonSerializer.Deserialize(eventData, eventTypeInfo)
-      : null;
-
-    if (payload is null) {
-      throw new InvalidOperationException(
-        $"Failed to deserialize event {row.EventId} of type {row.EventType}");
+  /// <summary>
+  /// Deserializes an orphaned event row from the event store into a MessageEnvelope with JsonElement payload.
+  /// Falls back to JsonDocument.Parse when the type resolver returns incompatible type info.
+  /// </summary>
+  /// <docs>fundamentals/events/event-store-serialization</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_DeserializesOrphanedEvent_AsJsonElementAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_FallsBackToJsonDocumentParse_WhenTypeResolverFailsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_DeserializesEventData_WithTypeDiscriminatorAsync</tests>
+  private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
+    // Deserialize event_data as JsonElement for AOT compatibility — same pattern as _deserializeEnvelope.
+    // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
+    JsonElement payload;
+    try {
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for JsonElement.");
+      payload = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(row.EventData, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event {row.EventId} as JsonElement."));
+    } catch (NotSupportedException) {
+      // Fallback: deserializing an interface/abstract type is not supported.
+      // The chained type resolver may return polymorphic IEvent type info.
+      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+    } catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible JsonTypeInfo")) {
+      // Fallback: the type resolver returned a JsonTypeInfo for a different type
+      // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
+      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
     }
 
-    return new MessageEnvelope<IEvent> {
+    // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
+    // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.
+    var hops = _buildHopsFromScope(row.Scope);
+
+    return new MessageEnvelope<JsonElement> {
       MessageId = new MessageId(row.EventId),
       Payload = payload,
-      Hops = [],
+      Hops = hops,
       DispatchContext = new MessageDispatchContext {
         Mode = DispatchModes.Local,
         Source = MessageSource.Local
@@ -1115,10 +1263,200 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  private List<MessageHop> _buildHopsFromScope(string? scopeJson) {
+    if (string.IsNullOrEmpty(scopeJson)) {
+      return [];
+    }
+
+    try {
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(JsonElement))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for JsonElement.");
+      var scopeElement = (JsonElement)(System.Text.Json.JsonSerializer.Deserialize(scopeJson, typeInfo)!);
+
+      string? tenantId = null;
+      string? userId = null;
+
+      if (scopeElement.TryGetProperty("t", out var t) && t.ValueKind == JsonValueKind.String) {
+        tenantId = t.GetString();
+      }
+      if (scopeElement.TryGetProperty("u", out var u) && u.ValueKind == JsonValueKind.String) {
+        userId = u.GetString();
+      }
+
+      if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+        return [new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId })
+        }];
+      }
+    } catch {
+      // Scope parsing is best-effort for reconciliation
+    }
+
+    return [];
+  }
+
   private static Guid _instanceId() {
     // Fallback to a new GUID — the actual instance ID is set by the PerspectiveWorker
     // which resolves IServiceInstanceProvider from DI
     return Guid.NewGuid();
+  }
+
+  /// <summary>
+  /// Queries wh_perspective_cursors for cursors with the RewindRequired flag (bit 5 = 32).
+  /// Used by PerspectiveWorker startup scan to identify streams needing rewind repair.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  public async Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
+      CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+
+    var sql = $@"
+      SELECT stream_id, perspective_name, last_event_id, rewind_trigger_event_id
+      FROM {cursorsTable}
+      WHERE (status & 32) = 32
+      ORDER BY stream_id, perspective_name";
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    var results = new List<RewindCursorInfo>();
+    await using var cmd = dbConnection.CreateCommand();
+    cmd.CommandText = sql;
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new RewindCursorInfo(
+        reader.GetGuid(0),
+        reader.GetString(1),
+        reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        reader.IsDBNull(3) ? null : reader.GetGuid(3)));
+    }
+
+    return results;
+  }
+
+  /// <summary>
+  /// Deletes processed perspective event rows via complete_perspective_events SQL function.
+  /// Called after drain mode processing completes for a batch of events.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  public async Task<int> CompletePerspectiveEventsAsync(
+    Guid[] workItemIds,
+    CancellationToken cancellationToken = default) {
+    if (workItemIds.Length == 0) {
+      return 0;
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_events");
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {functionName}(@p_event_work_ids)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_event_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = workItemIds
+    });
+
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return result is int count ? count : 0;
+  }
+
+  /// <summary>
+  /// Batch-fetches events for multiple streams in a single call via get_stream_events SQL function.
+  /// Returns denormalized rows: one per (stream, event). C# groups by StreamId for processing.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  public async Task<List<StreamEventData>> GetStreamEventsAsync(
+    Guid instanceId,
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) {
+    if (streamIds.Length == 0) {
+      return [];
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "get_stream_events");
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streamIds
+    });
+
+    var results = new List<StreamEventData>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      // AOT-safe: read columns by ordinal, parse event_data as string
+      var metadataOrdinal = reader.GetOrdinal("out_metadata");
+      var scopeOrdinal = reader.GetOrdinal("out_scope");
+      results.Add(new StreamEventData {
+        StreamId = reader.GetGuid(reader.GetOrdinal("out_stream_id")),
+        EventId = reader.GetGuid(reader.GetOrdinal("out_event_id")),
+        EventType = reader.GetString(reader.GetOrdinal("out_event_type")),
+        EventData = reader.GetString(reader.GetOrdinal("out_event_data")),
+        Metadata = reader.IsDBNull(metadataOrdinal) ? null : reader.GetString(metadataOrdinal),
+        Scope = reader.IsDBNull(scopeOrdinal) ? null : reader.GetString(scopeOrdinal),
+        EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id"))
+      });
+    }
+
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA, _logger);
+
+    var connection = _dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await _dbContext.Database.OpenConnectionAsync(cancellationToken);
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"SELECT * FROM \"{schema}\".perform_maintenance()";
+    command.CommandTimeout = 30;
+
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var results = new List<MaintenanceResult>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new MaintenanceResult(
+        reader.GetString(0),
+        reader.GetInt64(1),
+        reader.GetDouble(2),
+        reader.GetString(3)
+      ));
+    }
+    return results;
   }
 }
 
@@ -1137,7 +1475,7 @@ internal class WorkBatchRow {
   public required string Source { get; set; }  // 'outbox', 'inbox', 'receptor', 'perspective'
 
   [Column("work_id")]
-  public required Guid WorkId { get; set; }  // message_id or event_work_id or processing_id
+  public Guid? WorkId { get; set; }  // message_id or event_work_id or processing_id (NULL for stream-only perspective rows)
 
   [Column("work_stream_id")]
   public Guid? StreamId { get; set; }
@@ -1161,7 +1499,7 @@ internal class WorkBatchRow {
   public string? Metadata { get; set; }  // JSONB as string
 
   [Column("status")]
-  public int Status { get; set; }  // MessageProcessingStatus flags
+  public int? Status { get; set; }  // MessageProcessingStatus flags (NULL for stream-only perspective rows)
 
   [Column("attempts")]
   public int? Attempts { get; set; }

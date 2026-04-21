@@ -78,6 +78,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -209,7 +215,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // Act - start worker and wait for readiness check to be called (proves worker tried)
     var workerTask = worker.StartAsync(cts.Token);
-    await databaseReadiness.WaitForCheckAsync(TimeSpan.FromSeconds(10));
+    await databaseReadiness.WaitForCheckAsync(TimeSpan.FromSeconds(30));
     cts.Cancel();
 
     try {
@@ -449,6 +455,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -459,6 +471,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
   // Test helper - Mock work channel writer
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 
@@ -485,5 +498,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

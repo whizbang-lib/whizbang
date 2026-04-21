@@ -162,10 +162,20 @@ public sealed record ProcessWorkBatchRequest {
   public int LeaseSeconds { get; init; } = 300;
 
   /// <summary>
-  /// How long before an instance is considered stale in seconds (default: 600 = 10 minutes).
-  /// Instances with expired heartbeats are cleaned up and their work redistributed.
+  /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
+  /// After this, the instance's message leases are released and its stream ownership no longer
+  /// blocks other instances from claiming fresh work. Heartbeats occur every
+  /// PollingIntervalMilliseconds (default 1 s); 30 s = 30 missed heartbeats.
+  /// Shorten for faster recovery after SIGKILL / crash; lengthen to tolerate longer pauses
+  /// (GC, disk stalls, network blips) without triggering work reassignment.
   /// </summary>
-  public int StaleThresholdSeconds { get; init; } = 30;
+  public int AbandonStaleInstanceThresholdSeconds { get; init; } = 30;
+
+  /// <summary>
+  /// Maximum number of streams to return per batch for perspective processing.
+  /// Controls how many distinct streams the SQL returns per tick. Default: 300.
+  /// </summary>
+  public int MaxStreamsPerBatch { get; init; } = 300;
 }
 
 /// <summary>
@@ -261,6 +271,37 @@ public interface IWorkCoordinator {
   );
 
   /// <summary>
+  /// Deregisters this instance on graceful shutdown.
+  /// Releases all leases (outbox, inbox, perspective events, receptors, active streams),
+  /// logs shutdown to wh_log, and removes the instance from wh_service_instances.
+  /// Called by WhizbangShutdownService.StopAsync on SIGTERM.
+  /// </summary>
+  Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gathers expensive statistics (COUNT queries) for observability gauges.
+  /// Called periodically (~every 60 ticks), NOT on every tick. Single source of truth
+  /// for queue depth metrics that are too expensive for the hot path.
+  /// </summary>
+  Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Stores inbox messages directly without running the full process_work_batch pipeline.
+  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication,
+  /// bypassing completions, failures, claiming, and return query phases.
+  /// Event storage and perspective creation happen on the next tick when the
+  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// </summary>
+  /// <param name="messages">Inbox messages to store</param>
+  /// <param name="partitionCount">Number of partitions for load balancing</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <docs>operations/workers/transport-consumer</docs>
+  Task StoreInboxMessagesAsync(
+    InboxMessage[] messages,
+    int partitionCount = 2,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Reports perspective cursor completion or failure directly (out-of-band).
   /// This lightweight method ONLY updates the perspective cursor without affecting
   /// heartbeats, work claiming, or other coordination operations.
@@ -318,6 +359,19 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Batch-fetches perspective cursors for multiple streams in a single SQL call.
+  /// Used by drain mode to prefetch all cursors before parallel processing starts,
+  /// eliminating N individual GetPerspectiveCursorAsync calls during the hot loop.
+  /// </summary>
+  /// <param name="streamIds">Stream IDs to fetch cursors for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of cursor info for all streams that have checkpoints</returns>
+  /// <docs>fundamentals/perspectives/drain-mode#batch-cursor-fetch</docs>
+  Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
+
+  /// <summary>
   /// Records that PostLifecycle completed for an event.
   /// Used as a durable marker for crash recovery reconciliation.
   /// Idempotent — duplicate event IDs are silently ignored.
@@ -355,7 +409,78 @@ public interface IWorkCoordinator {
   Task<int> CleanupLifecycleCompletionsAsync(
     TimeSpan retentionPeriod,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Gets all perspective cursors that have the RewindRequired flag set.
+  /// Used by startup scan to identify streams needing rewind repair.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>List of cursors requiring rewind.</returns>
+  /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
+  Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(
+    CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RewindCursorInfo>>([]);
+
+  /// <summary>
+  /// Completes perspective events by deleting the specified work items from wh_perspective_events.
+  /// Called per-stream immediately after processing (drain mode — no buffering).
+  /// </summary>
+  /// <param name="workItemIds">Array of event_work_id values to delete</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Number of rows deleted</returns>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<int> CompletePerspectiveEventsAsync(
+    Guid[] workItemIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// Batch-fetches events for multiple streams in a single call.
+  /// Returns denormalized rows joining wh_perspective_events with wh_event_store.
+  /// Only returns events leased to the requesting instance.
+  /// C# determines which perspectives apply from EventType using its registry.
+  /// </summary>
+  /// <param name="instanceId">Instance ID to filter leased events</param>
+  /// <param name="streamIds">Stream IDs to fetch events for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of stream event data for processing</returns>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<List<StreamEventData>> GetStreamEventsAsync(
+    Guid instanceId,
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
+
+  /// <summary>
+  /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
+  /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Results for each maintenance task with row counts and durations.</returns>
+  /// <docs>operations/maintenance</docs>
+  Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 }
+
+/// <summary>
+/// Result of a single maintenance task executed by <see cref="IWorkCoordinator.PerformMaintenanceAsync"/>.
+/// </summary>
+/// <param name="TaskName">Name of the maintenance task (e.g., "purge_completed_outbox").</param>
+/// <param name="RowsAffected">Number of rows affected by the task.</param>
+/// <param name="DurationMs">Duration of the task in milliseconds.</param>
+/// <param name="Status">Status of the task (e.g., "ok").</param>
+/// <docs>operations/maintenance</docs>
+public sealed record MaintenanceResult(string TaskName, long RowsAffected, double DurationMs, string Status);
+
+/// <summary>
+/// <summary>
+/// Information about a perspective cursor that requires rewind.
+/// Returned by <see cref="IWorkCoordinator.GetCursorsRequiringRewindAsync"/>.
+/// </summary>
+/// <param name="StreamId">The stream requiring rewind.</param>
+/// <param name="PerspectiveName">The perspective that needs rewind on this stream.</param>
+/// <param name="LastEventId">Current cursor position.</param>
+/// <param name="RewindTriggerEventId">The late-arriving event that triggered the rewind.</param>
+/// <docs>fundamentals/perspectives/rewind</docs>
+public record RewindCursorInfo(Guid StreamId, string PerspectiveName, Guid? LastEventId, Guid? RewindTriggerEventId);
 
 /// <summary>
 /// An event where all perspectives completed but PostLifecycle was never fired.
@@ -365,7 +490,7 @@ public interface IWorkCoordinator {
 /// <param name="StreamId">The stream the event belongs to.</param>
 /// <param name="Envelope">The deserialized message envelope for receptor invocation.</param>
 /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
-public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, MessageEnvelope<IEvent> Envelope);
+public sealed record OrphanedLifecycleEvent(Guid EventId, Guid StreamId, IMessageEnvelope Envelope);
 
 /// <summary>
 /// Information about a perspective cursor.
@@ -403,6 +528,27 @@ public record PerspectiveCursorInfo {
 /// <summary>
 /// Result of ProcessWorkBatchAsync containing work that needs processing.
 /// </summary>
+/// <summary>
+/// Statistics gathered periodically for observability gauges.
+/// Contains expensive COUNT-based metrics that are too costly for every-tick measurement.
+/// </summary>
+public record WorkCoordinatorStatistics {
+  /// <summary>Unprocessed perspective events awaiting projection.</summary>
+  public long PendingPerspectiveEvents { get; init; }
+
+  /// <summary>Unprocessed outbox messages awaiting publishing.</summary>
+  public long PendingOutbox { get; init; }
+
+  /// <summary>Unprocessed inbox messages awaiting handling.</summary>
+  public long PendingInbox { get; init; }
+
+  /// <summary>Active streams tracked in wh_active_streams.</summary>
+  public long ActiveStreams { get; init; }
+}
+
+/// <summary>
+/// Contains the results of a work batch poll including work items for this instance to process.
+/// </summary>
 public record WorkBatch {
   /// <summary>
   /// Outbox work to publish (includes both new pending messages and orphaned messages with expired leases).
@@ -420,6 +566,13 @@ public record WorkBatch {
   /// Each item represents a stream that needs perspective updates.
   /// </summary>
   public required List<PerspectiveWork> PerspectiveWork { get; init; }
+
+  /// <summary>
+  /// Stream IDs that have leased perspective events for this instance.
+  /// The worker determines which perspectives apply from event types using its C# registry.
+  /// Replaces the per-event PerspectiveWork return for drain mode.
+  /// </summary>
+  public List<Guid> PerspectiveStreamIds { get; init; } = [];
 
   /// <summary>
   /// Results of sync inquiries from this batch call.
@@ -536,6 +689,12 @@ public record InboxMessage {
   /// Stored in the dedicated scope JSONB column for query filtering.
   /// </summary>
   public PerspectiveScope? Scope { get; init; }
+
+  /// <summary>
+  /// Envelope metadata including MessageId, Hops, and DispatchContext.
+  /// Stored in the inbox metadata JSONB column for query filtering and observability.
+  /// </summary>
+  public EnvelopeMetadata? Metadata { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the message payload type (e.g., "MyApp.Events.ProductCreatedEvent, MyApp").
@@ -837,6 +996,21 @@ public record PerspectiveCursorCompletion {
   /// Processing status (e.g., Completed, CatchingUp).
   /// </summary>
   public required PerspectiveProcessingStatus Status { get; init; }
+
+  /// <summary>
+  /// Number of events processed in this run.
+  /// Used by rewind observability to populate PerspectiveRewindCompleted.EventsReplayed.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  public int EventsProcessed { get; init; }
+
+  /// <summary>
+  /// Event IDs actually processed by the runner in this batch.
+  /// Used by complete_perspective_cursor_work to mark only these specific events
+  /// as processed, preventing concurrent late-arriving events from being
+  /// incorrectly marked as processed via range-based cursor advancement.
+  /// </summary>
+  public Guid[] ProcessedEventIds { get; init; } = [];
 }
 
 /// <summary>
@@ -869,6 +1043,14 @@ public record PerspectiveCursorFailure {
   /// Error message or exception details.
   /// </summary>
   public required string Error { get; init; }
+
+  /// <summary>
+  /// Event IDs actually processed by the runner before the failure occurred.
+  /// Used by complete_perspective_cursor_work to mark only these specific events
+  /// as processed, preventing concurrent late-arriving events from being
+  /// incorrectly marked as processed via range-based cursor advancement.
+  /// </summary>
+  public Guid[] ProcessedEventIds { get; init; } = [];
 }
 
 /// <summary>
@@ -925,6 +1107,34 @@ public record PerspectiveWork {
 }
 
 /// <summary>
+/// Represents a single event fetched for stream processing via get_stream_events.
+/// Denormalized row: one per (stream, event). C# groups by StreamId.
+/// No perspective_name — C# determines applicable perspectives from EventType using registry.
+/// </summary>
+public record StreamEventData {
+  /// <summary>Stream that this event belongs to.</summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>Event ID from wh_event_store (UUIDv7, naturally ordered).</summary>
+  public required Guid EventId { get; init; }
+
+  /// <summary>Event type (assembly-qualified name). Used to determine which perspectives apply.</summary>
+  public required string EventType { get; init; }
+
+  /// <summary>Serialized event data from wh_event_store.</summary>
+  public required string EventData { get; init; }
+
+  /// <summary>Serialized metadata JSONB from wh_event_store. Contains MessageId, Hops, DispatchContext.</summary>
+  public string? Metadata { get; init; }
+
+  /// <summary>Serialized scope JSONB from wh_event_store. Contains tenant context (TenantId, UserId, etc.).</summary>
+  public string? Scope { get; init; }
+
+  /// <summary>Work ID from wh_perspective_events. Used for completion reporting via CompletePerspectiveEventsAsync.</summary>
+  public required Guid EventWorkId { get; init; }
+}
+
+/// <summary>
 /// Represents a perspective event completion (used to delete processed wh_perspective_events rows).
 /// Property names match the SQL function's expected JSONB format (EventWorkId, StatusFlags).
 /// </summary>
@@ -965,7 +1175,7 @@ public readonly record struct ProcessWorkBatchContext(
   WorkBatchOptions Flags = WorkBatchOptions.None,
   int PartitionCount = 10_000,
   int LeaseSeconds = 300,
-  int StaleThresholdSeconds = 30);
+  int AbandonStaleInstanceThresholdSeconds = 30);
 
 /// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
@@ -1002,7 +1212,7 @@ public static class WorkCoordinatorExtensions {
       Flags = context.Flags,
       PartitionCount = context.PartitionCount,
       LeaseSeconds = context.LeaseSeconds,
-      StaleThresholdSeconds = context.StaleThresholdSeconds
+      AbandonStaleInstanceThresholdSeconds = context.AbandonStaleInstanceThresholdSeconds
     };
     return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
   }

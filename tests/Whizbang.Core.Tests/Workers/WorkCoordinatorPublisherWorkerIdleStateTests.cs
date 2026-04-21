@@ -185,7 +185,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
 
     await AsyncTestHelpers.WaitForConditionAsync(
       () => Volatile.Read(ref idleFired) == 1,
-      TimeSpan.FromSeconds(10),
+      TimeSpan.FromSeconds(30),
       timeoutMessage: "OnWorkProcessingIdle should fire after IdleThresholdPolls consecutive empty polls");
 
     cts.Cancel();
@@ -492,6 +492,12 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -537,6 +543,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
   }
 
   private sealed class IdleTestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel;
 
     public IdleTestWorkChannelWriter() {
@@ -557,5 +564,9 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

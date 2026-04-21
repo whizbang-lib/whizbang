@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
@@ -92,6 +93,11 @@ public static class ServiceCollectionExtensions {
   public static WhizbangBuilder AddWhizbang(
       this IServiceCollection services,
       Action<WhizbangCoreOptions>? configure) {
+    // Register startup logger (logs Whizbang version via ILogger on first call only)
+    if (!services.Any(s => s.ServiceType == typeof(WhizbangCoreOptions))) {
+      services.AddSingleton<IHostedService, WhizbangStartupLogger>();
+    }
+
     // Create and configure options
     var coreOptions = new WhizbangCoreOptions();
     configure?.Invoke(coreOptions);
@@ -198,6 +204,9 @@ public static class ServiceCollectionExtensions {
     // Events queued here are drained by the work coordinator in the next lifecycle loop
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
 
+    // Inbox channel for routing claimed inbox work to the publisher worker
+    services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
+
     // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
     // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
     // but the factory lambda resolves at runtime so ordering is fine.
@@ -237,6 +246,13 @@ public static class ServiceCollectionExtensions {
 
     // Cross-worker dedup: prevents same message+stage from firing twice
     services.TryAddSingleton<Messaging.LifecycleStageTracker>();
+
+    // Register IPerspectiveRebuilder so callers (PerspectiveMigrationWorker, the
+    // RebuildPerspectiveCommand receptor) can resolve it. The rebuilder itself only depends
+    // on IServiceScopeFactory + ILogger — Core-level services — so registration lives here.
+    // Cursor persistence is routed through IPerspectiveCheckpointCompleter, which is
+    // registered by the storage driver extension (.WithDriver.Postgres or AddWhizbangPostgres).
+    services.TryAddSingleton<Perspectives.IPerspectiveRebuilder, Perspectives.PerspectiveRebuilder>();
   }
 
   /// <summary>

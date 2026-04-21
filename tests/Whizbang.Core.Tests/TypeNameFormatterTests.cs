@@ -376,6 +376,39 @@ public class TypeNameFormatterTests {
     await Assert.That(result).IsEqualTo("JDX.Contracts.SystemSeeding");
   }
 
+  // ==========================================================================
+  // GetPerspectiveName tests
+  // ==========================================================================
+
+  [Test]
+  public async Task GetPerspectiveName_TopLevelType_ReturnsFullNameAsync() {
+    var result = TypeNameFormatter.GetPerspectiveName(typeof(TypeNameFormatterTests));
+    await Assert.That(result).IsEqualTo(typeof(TypeNameFormatterTests).FullName);
+  }
+
+  [Test]
+  public async Task GetPerspectiveName_NestedType_UsesPlusSeparatorAsync() {
+    var result = TypeNameFormatter.GetPerspectiveName(typeof(NestedTestClass));
+    // Should be "Namespace.TypeNameFormatterTests+NestedTestClass" (CLR format)
+    await Assert.That(result).Contains("+NestedTestClass");
+    await Assert.That(result).IsEqualTo(typeof(NestedTestClass).FullName);
+  }
+
+  [Test]
+  public async Task GetPerspectiveName_MatchesTypeFullNameAsync() {
+    // This is the key consistency guarantee — the method must produce the same
+    // output as Type.FullName (which matches BuildClrTypeName from generators)
+    var types = new[] { typeof(string), typeof(TypeNameFormatterTests), typeof(NestedTestClass), typeof(DeeplyNested.Inner) };
+    foreach (var type in types) {
+      var result = TypeNameFormatter.GetPerspectiveName(type);
+      await Assert.That(result).IsEqualTo(type.FullName);
+    }
+  }
+
   // Helper nested class for testing
   private sealed class NestedTestClass { }
+
+  private sealed class DeeplyNested {
+    public sealed class Inner { }
+  }
 }

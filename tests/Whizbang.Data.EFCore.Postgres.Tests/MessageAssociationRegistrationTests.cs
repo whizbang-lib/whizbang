@@ -1,6 +1,5 @@
 #pragma warning disable CA1707
 
-using Dapper;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -191,20 +190,21 @@ public class MessageAssociationRegistrationTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    // ActionTestPerspective has 4 event types:
+    // ActionTestPerspective has 5 event types:
     // IPerspectiveFor: ActionTestCreatedEvent, ActionTestUpdatedEvent
-    // IPerspectiveWithActionsFor: ActionTestSoftDeletedEvent, ActionTestPurgedEvent
+    // IPerspectiveWithActionsFor: ActionTestSoftDeletedEvent, ActionTestPurgedEvent, ActionTestIgnoredEvent
     var associations = await conn.QueryAsync<string>(
       "SELECT message_type FROM wh_message_associations WHERE target_name LIKE '%ActionTestPerspective%' ORDER BY message_type");
     var list = associations.ToList();
 
-    await Assert.That(list.Count).IsEqualTo(4)
-      .Because("ActionTestPerspective has 4 event types (2 IPerspectiveFor + 2 IPerspectiveWithActionsFor)");
+    await Assert.That(list.Count).IsEqualTo(5)
+      .Because("ActionTestPerspective has 5 event types (2 IPerspectiveFor + 3 IPerspectiveWithActionsFor)");
 
     await Assert.That(list.Any(m => m.Contains("ActionTestCreatedEvent"))).IsTrue();
     await Assert.That(list.Any(m => m.Contains("ActionTestUpdatedEvent"))).IsTrue();
     await Assert.That(list.Any(m => m.Contains("ActionTestSoftDeletedEvent"))).IsTrue();
     await Assert.That(list.Any(m => m.Contains("ActionTestPurgedEvent"))).IsTrue();
+    await Assert.That(list.Any(m => m.Contains("ActionTestIgnoredEvent"))).IsTrue();
   }
 
   // ════════════════════════════════════════════════════════════════════════

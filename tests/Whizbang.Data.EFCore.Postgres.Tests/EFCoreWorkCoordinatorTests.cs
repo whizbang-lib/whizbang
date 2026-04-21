@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -455,6 +457,140 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetInboxInstanceIdAsync(orphanedId1);
     await Assert.That(newInstanceId).IsEqualTo(_instanceId);
+  }
+
+  /// <summary>
+  /// Regression guard: when a previous instance died non-gracefully (SIGKILL / crash),
+  /// its wh_active_streams lease remains with lease_expiry up to lease_duration_seconds
+  /// (300 s default) in the future. Without dead-instance tolerance, this blocks fresh
+  /// cross-instance claims on the same stream for up to 5 minutes. With the tolerance,
+  /// the claim succeeds on the next tick because the dead instance is no longer in
+  /// wh_service_instances with a fresh heartbeat.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatchAsync_FreshInboxOrphanedByDeadInstance_ClaimsOnNextTickAsync() {
+    // Arrange — this instance is alive.
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    // A dead instance (NOT in wh_service_instances) holds a still-live wh_active_streams
+    // lease on a stream. This models the state left behind by a SIGKILLed previous owner:
+    // its lease_expiry is in the future but its heartbeat is gone.
+    var deadInstanceId = _idProvider.NewGuid();
+    var testStreamId = _idProvider.NewGuid();
+    var freshInboxId = _idProvider.NewGuid();
+
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(@"
+        INSERT INTO wh_active_streams (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
+        VALUES (@stream, @dead, @lease, 0, @now)", connection);
+      command.Parameters.AddWithValue("stream", (Guid)testStreamId);
+      command.Parameters.AddWithValue("dead", (Guid)deadInstanceId);
+      command.Parameters.AddWithValue("lease", DateTimeOffset.UtcNow.AddMinutes(5));
+      command.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    // A fresh inbox message arrives on that stream with instance_id = NULL (the "drop and
+    // walk away" pattern — store_inbox_messages always writes NULL lease).
+    await InsertInboxMessageAsync(
+      freshInboxId,
+      "TestHandler",
+      "FreshEventAfterCrash",
+      "{\"data\":1}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: null,
+      leaseExpiry: null,
+      streamId: testStreamId);
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
+
+    // Assert — the fresh message is claimed despite the dead instance's lingering lease.
+    await Assert.That(result.InboxWork.Count).IsEqualTo(1);
+    await Assert.That(result.InboxWork.Single().MessageId).IsEqualTo(freshInboxId);
+    await Assert.That(await GetInboxInstanceIdAsync(freshInboxId)).IsEqualTo(_instanceId);
+  }
+
+  /// <summary>
+  /// Ownership preservation: when the blocking instance is still heartbeating (alive,
+  /// just processing another stream), the claim must NOT steal its stream — otherwise
+  /// the dead-instance tolerance would over-claim across healthy instances.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatchAsync_FreshInboxWithLiveOwnerOnDifferentInstance_DoesNotClaimAsync() {
+    // Arrange — both instances are registered AND actively heartbeating.
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var liveOtherInstanceId = _idProvider.NewGuid();
+    await InsertServiceInstanceAsync(liveOtherInstanceId, "TestService", "test-host-2", 67890);
+
+    // The other live instance owns a stream.
+    var testStreamId = _idProvider.NewGuid();
+    var freshInboxId = _idProvider.NewGuid();
+
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(@"
+        INSERT INTO wh_active_streams (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
+        VALUES (@stream, @owner, @lease, 0, @now)", connection);
+      command.Parameters.AddWithValue("stream", (Guid)testStreamId);
+      command.Parameters.AddWithValue("owner", (Guid)liveOtherInstanceId);
+      command.Parameters.AddWithValue("lease", DateTimeOffset.UtcNow.AddMinutes(5));
+      command.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    // Fresh inbox message arrives on a stream owned by the OTHER live instance.
+    await InsertInboxMessageAsync(
+      freshInboxId,
+      "TestHandler",
+      "EventOnOthersStream",
+      "{\"data\":2}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: null,
+      leaseExpiry: null,
+      streamId: testStreamId);
+
+    // Act — this instance polls.
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []));
+
+    // Assert — the other instance's ownership is respected; this instance must NOT claim.
+    await Assert.That(result.InboxWork.Count).IsEqualTo(0);
+    await Assert.That(await GetInboxInstanceIdAsync(freshInboxId)).IsNull();
   }
 
   [Test]
@@ -1569,7 +1705,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       NewInboxMessages: [],
       RenewOutboxLeaseIds: [],
       RenewInboxLeaseIds: [],
-      StaleThresholdSeconds: 600)); // 10 minutes
+      AbandonStaleInstanceThresholdSeconds: 600)); // 10 minutes
 
     // Assert - Stale instance should be deleted
     await using (var dbContext = CreateDbContext()) {
@@ -1844,7 +1980,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       OutboxCompletions: [], OutboxFailures: [], InboxCompletions: [], InboxFailures: [],
       ReceptorCompletions: [], ReceptorFailures: [], PerspectiveCompletions: [], PerspectiveFailures: [],
       NewOutboxMessages: [], NewInboxMessages: [], RenewOutboxLeaseIds: [], RenewInboxLeaseIds: [],
-      StaleThresholdSeconds: 600));
+      AbandonStaleInstanceThresholdSeconds: 600));
 
     // Assert - Stale instance's partitions should be released (CASCADE DELETE)
     await using (var dbContext = CreateDbContext()) {
@@ -2750,6 +2886,217 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       connection);
     command.Parameters.AddWithValue("streamId", streamId);
     return (int)(await command.ExecuteScalarAsync() ?? 0);
+  }
+
+  // ===== ORPHANED LIFECYCLE EVENT DESERIALIZATION TESTS =====
+
+  /// <summary>
+  /// Happy path: orphaned events are deserialized as JsonElement when type resolver works correctly.
+  /// </summary>
+  [Test]
+  [Category("Integration")]
+  public async Task GetOrphanedLifecycleEventsAsync_DeserializesOrphanedEvent_AsJsonElementAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var eventId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    const string eventType = "TestApp.Events.OrderCreated, TestApp";
+    const string eventData = """{"OrderId":"abc-123","Total":99.99}""";
+    const string perspectiveName = "OrderSummary";
+
+    await InsertEventStoreRowAsync(eventId, streamId, eventType, eventData);
+    await InsertPerspectiveCursorAsync(streamId, perspectiveName, eventId);
+
+    var perspectivesPerEventType = new Dictionary<string, IReadOnlyList<string>> {
+      [eventType] = [perspectiveName]
+    };
+
+    // Act
+    var result = await _sut.GetOrphanedLifecycleEventsAsync(
+      perspectivesPerEventType,
+      TimeSpan.FromHours(1));
+
+    // Assert
+    await Assert.That(result).Count().IsEqualTo(1);
+    await Assert.That(result[0].EventId).IsEqualTo(eventId);
+    await Assert.That(result[0].StreamId).IsEqualTo(streamId);
+
+    var payload = ((MessageEnvelope<JsonElement>)result[0].Envelope).Payload;
+    await Assert.That(payload.GetProperty("OrderId").GetString()).IsEqualTo("abc-123");
+    await Assert.That(payload.GetProperty("Total").GetDecimal()).IsEqualTo(99.99m);
+  }
+
+  /// <summary>
+  /// When the chained type resolver returns IEvent type info for JsonElement (production bug),
+  /// the fallback should use JsonDocument.Parse to successfully deserialize.
+  /// </summary>
+  [Test]
+  [Category("Integration")]
+  public async Task GetOrphanedLifecycleEventsAsync_FallsBackToJsonDocumentParse_WhenTypeResolverFailsAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var eventId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    const string eventType = "TestApp.Events.OrderCreated, TestApp";
+    const string eventData = """{"OrderId":"fallback-test","Total":42.00}""";
+    const string perspectiveName = "OrderSummary";
+
+    await InsertEventStoreRowAsync(eventId, streamId, eventType, eventData);
+    await InsertPerspectiveCursorAsync(streamId, perspectiveName, eventId);
+
+    // Create broken JsonSerializerOptions that reproduces the production bug:
+    // GetTypeInfo(typeof(JsonElement)) returns IEvent type info instead
+    var realOptions = JsonContextRegistry.CreateCombinedOptions();
+    var brokenOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new BrokenJsonElementResolver(realOptions.TypeInfoResolver!, realOptions)
+    };
+
+    var logger = new CapturingLogger();
+    var brokenSut = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      CreateDbContext(), brokenOptions, logger);
+
+    var perspectivesPerEventType = new Dictionary<string, IReadOnlyList<string>> {
+      [eventType] = [perspectiveName]
+    };
+
+    // Act
+    var result = await brokenSut.GetOrphanedLifecycleEventsAsync(
+      perspectivesPerEventType,
+      TimeSpan.FromHours(1));
+
+    // Assert — with fallback, the event should be returned (not skipped)
+    await Assert.That(result).Count().IsEqualTo(1);
+    await Assert.That(result[0].EventId).IsEqualTo(eventId);
+
+    var payload = ((MessageEnvelope<JsonElement>)result[0].Envelope).Payload;
+    await Assert.That(payload.GetProperty("OrderId").GetString()).IsEqualTo("fallback-test");
+
+    // The fallback should succeed silently — no warnings logged
+    await Assert.That(logger.WarningCount).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// When event_data contains a $type discriminator property, it should still be
+  /// deserialized successfully as a JsonElement (the $type is just a JSON property).
+  /// </summary>
+  [Test]
+  [Category("Integration")]
+  public async Task GetOrphanedLifecycleEventsAsync_DeserializesEventData_WithTypeDiscriminatorAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var eventId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    const string eventType = "TestApp.Events.OrderCreated, TestApp";
+    const string eventData = """{"$type":"OrderCreated","OrderId":"poly-test","Total":10.00}""";
+    const string perspectiveName = "OrderSummary";
+
+    await InsertEventStoreRowAsync(eventId, streamId, eventType, eventData);
+    await InsertPerspectiveCursorAsync(streamId, perspectiveName, eventId);
+
+    var perspectivesPerEventType = new Dictionary<string, IReadOnlyList<string>> {
+      [eventType] = [perspectiveName]
+    };
+
+    // Act
+    var result = await _sut.GetOrphanedLifecycleEventsAsync(
+      perspectivesPerEventType,
+      TimeSpan.FromHours(1));
+
+    // Assert
+    await Assert.That(result).Count().IsEqualTo(1);
+
+    var payload = ((MessageEnvelope<JsonElement>)result[0].Envelope).Payload;
+    await Assert.That(payload.GetProperty("$type").GetString()).IsEqualTo("OrderCreated");
+    await Assert.That(payload.GetProperty("OrderId").GetString()).IsEqualTo("poly-test");
+  }
+
+  // ===== ORPHANED LIFECYCLE EVENT HELPERS =====
+
+  private async Task InsertEventStoreRowAsync(
+    Guid eventId, Guid streamId, string eventType, string eventData,
+    string? scope = null) {
+    await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    var metadata = $$"""{"messageId":"{{eventId}}","hops":[]}""";
+
+    await using var command = new Npgsql.NpgsqlCommand("""
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'TestAggregate', @eventType, @eventData::jsonb, @metadata::jsonb, @scope::jsonb, 1, NOW())
+      """, connection);
+
+    command.Parameters.AddWithValue("eventId", eventId);
+    command.Parameters.AddWithValue("streamId", streamId);
+    command.Parameters.AddWithValue("eventType", eventType);
+    command.Parameters.AddWithValue("eventData", eventData);
+    command.Parameters.AddWithValue("metadata", metadata);
+    command.Parameters.AddWithValue("scope", (object?)scope ?? DBNull.Value);
+
+    await command.ExecuteNonQueryAsync();
+  }
+
+  private async Task InsertPerspectiveCursorAsync(
+    Guid streamId, string perspectiveName, Guid lastEventId) {
+    await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var command = new Npgsql.NpgsqlCommand("""
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at)
+      VALUES (@streamId, @perspectiveName, @lastEventId, 0, NOW())
+      """, connection);
+
+    command.Parameters.AddWithValue("streamId", streamId);
+    command.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    command.Parameters.AddWithValue("lastEventId", lastEventId);
+
+    await command.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Reproduces the production bug where the chained type resolver returns
+  /// IEvent polymorphic type info when asked for JsonElement type info.
+  /// </summary>
+  private sealed class BrokenJsonElementResolver(
+    IJsonTypeInfoResolver inner,
+    JsonSerializerOptions realOptions) : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
+      if (type == typeof(JsonElement)) {
+        // Return IEvent type info instead — reproduces the production bug
+        // where the chained resolver maps JsonElement to the polymorphic IEvent.
+        // Use realOptions to get the IEvent type info (it has the full resolver chain).
+        return realOptions.GetTypeInfo(typeof(IEvent));
+      }
+
+      return inner.GetTypeInfo(type, options);
+    }
+  }
+
+  /// <summary>
+  /// Simple logger that captures log messages for test verification.
+  /// </summary>
+  private sealed class CapturingLogger : ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
+    public int WarningCount { get; private set; }
+    public string? LastWarningMessage { get; private set; }
+    public Exception? LastException { get; private set; }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+      LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Warning) {
+        WarningCount++;
+        LastWarningMessage = formatter(state, exception);
+        LastException = exception;
+      }
+    }
   }
 
   /// <summary>

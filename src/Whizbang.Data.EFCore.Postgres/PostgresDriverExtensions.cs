@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 
@@ -70,6 +71,22 @@ public static class PostgresDriverExtensions {
         // before they reach the database (cross-scope sync support)
         selector.Services.DecorateEventStoreWithSyncTracking();
 
+        // TURNKEY: Register IPerspectiveCheckpointCompleter so PerspectiveRebuilder can
+        // persist cursor checkpoints after rebuild. Without this, rebuild would still update
+        // projection tables but wh_perspective_cursors would stay at whatever live processing
+        // last wrote. Resolves the consumer's DbContext via the captured DbContextType.
+        var dbContextType = selector.DbContextType;
+        selector.Services.TryAddScoped<IPerspectiveCheckpointCompleter>(sp =>
+            new EFCorePostgresPerspectiveCheckpointCompleter(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
+
+        // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
+        // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
+        // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
+        // so a built-in receptor shipped from this assembly needs runtime registration.
+        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
+
         // TURNKEY: Auto-initialize database schema before workers start
         // Registered before PerspectiveWorker to ensure StartAsync ordering
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
@@ -78,6 +95,26 @@ public static class PostgresDriverExtensions {
         // This is registered by source-generated module initializer in consumer assembly
         // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
         PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
+
+        // TURNKEY: Register perspective snapshot and rewind options
+        selector.Services.AddOptions<PerspectiveSnapshotOptions>();
+        selector.Services.AddOptions<PerspectiveRewindOptions>();
+
+        // TURNKEY: Register perspective snapshot store for efficient rewind
+        // Uses NpgsqlDataSource for connection management (same as readiness check)
+        selector.Services.TryAddSingleton<IPerspectiveSnapshotStore>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          var snapshotLogger = sp.GetService<ILogger<EFCorePerspectiveSnapshotStore>>();
+          return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
+        });
+
+        // TURNKEY: Register table statistics provider + collector for OTel metrics
+        selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          return new PostgresTableStatisticsProvider(ds);
+        });
+        selector.Services.TryAddSingleton<TableStatisticsMetrics>();
+        selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // Register IDatabaseReadinessCheck - CRITICAL for resilient worker startup
         // Uses NpgsqlDataSource directly to create connections (avoids password stripping bug)

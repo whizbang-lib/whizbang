@@ -3006,25 +3006,41 @@ public abstract partial class Dispatcher(
       // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
       var messageId = MessageId.New();
 
+      // Extract stream ID early — needed for both sync tracking and delivery receipt
+      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
+
+      // Track in singleton tracker for cross-scope sync (mirrors cascade path behavior).
+      // Without this, events published via PublishAsync are invisible to IPerspectiveSyncAwaiter,
+      // causing WaitForStreamAsync to return NoPendingEvents immediately.
+      if (streamId.HasValue) {
+        _trackInSingletonTracker(streamId.Value, eventType, messageId.Value);
+      }
+
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
-      // Invoke local handlers - zero reflection, strongly typed
-      await publisher(eventData);
+      // Start outbox publishing concurrently with the local receptor.
+      // The receptor (publisher) can take 30+ seconds for heavy operations — we don't want
+      // to delay cross-service event delivery by that amount. Starting the outbox first also
+      // ensures FIFO order: the original event enters the outbox before any cascaded events
+      // produced by the receptor.
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      try {
+        await publisher(eventData);
+      } catch {
+        // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
+        try { await outboxTask; } catch { /* outbox exception is secondary */ }
+        throw;
+      }
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(eventData, eventType);
 
-      // Publish event for cross-service delivery if work coordinator strategy is available
-      // process_work_batch will store events to wh_event_store and create perspective events atomically
-      await PublishToOutboxAsync(eventData, eventType, messageId);
+      await outboxTask;
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
         new KeyValuePair<string, object?>(METRIC_PATTERN, "publish"));
-
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
 
       // Return delivery receipt with stream ID
       var destination = eventType.Name;
@@ -3075,12 +3091,20 @@ public abstract partial class Dispatcher(
       var publisher = GetReceptorPublisher(eventData, eventType);
 
       options.CancellationToken.ThrowIfCancellationRequested();
-      await publisher(eventData);
+
+      // Start outbox concurrently with receptor (see other overload for rationale)
+      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId);
+      try {
+        await publisher(eventData);
+      } catch {
+        try { await outboxTask; } catch { /* outbox exception is secondary */ }
+        throw;
+      }
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(eventData, eventType);
 
-      await PublishToOutboxAsync(eventData, eventType, messageId);
+      await outboxTask;
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
@@ -3447,10 +3471,10 @@ public abstract partial class Dispatcher(
     };
     envelope.AddHop(hop);
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Destination={Destination}", destination);
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Queueing event {EventType} with destination '{Destination}'",
+        eventType.Name, destination);
       CascadeLogger.LogDebug("[TRACE] PublishToOutboxAsync: TraceParent={TraceParent}, HasActivity={HasActivity}",
         hop.TraceParent ?? "(null)", System.Diagnostics.Activity.Current is not null);
     }
@@ -3497,7 +3521,7 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
 
     // Flush strategy to execute the batch
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var outboxCount = workBatch.OutboxWork.Count;
@@ -3507,7 +3531,12 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Successfully queued event {EventType} via work coordinator",
+        eventType.Name);
+    }
+#pragma warning restore CA1848
   }
 
   /// <summary>
@@ -3552,7 +3581,7 @@ public abstract partial class Dispatcher(
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
       strategy.QueueOutboxMessage(newOutboxMessage);
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
         await asyncDisposable.DisposeAsync();
@@ -3831,7 +3860,7 @@ public abstract partial class Dispatcher(
       strategy.QueueOutboxMessage(newOutboxMessage);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
@@ -3917,7 +3946,7 @@ public abstract partial class Dispatcher(
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -3983,7 +4012,7 @@ public abstract partial class Dispatcher(
       }
 
       // Flush ONCE for all messages
-      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
 
     } finally {
       // Dispose scope asynchronously

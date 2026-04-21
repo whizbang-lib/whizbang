@@ -3,6 +3,8 @@
 -- Updates processing status when a receptor completes (or fails) processing an event
 -- =============================================
 
+SELECT __SCHEMA__.drop_all_overloads('complete_receptor_processing_work');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_receptor_processing_work(
   p_event_id UUID,
   p_receptor_name TEXT,

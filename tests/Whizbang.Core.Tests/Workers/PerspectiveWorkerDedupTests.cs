@@ -521,6 +521,7 @@ public class PerspectiveWorkerDedupTests {
   }
 
   private sealed class CountingPerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     private readonly TaskCompletionSource<int>[] _runWaiters = new TaskCompletionSource<int>[10];
     public int RunAsyncCallCount => _callCount;
     private int _callCount;
@@ -566,6 +567,7 @@ public class PerspectiveWorkerDedupTests {
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["Whizbang.Core.Tests.Workers.PerspectiveWorkerDedupTests+_fakeEvent, Whizbang.Core.Tests"])];
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class DedupFakeWorkCoordinator : IWorkCoordinator {
@@ -625,6 +627,12 @@ public class PerspectiveWorkerDedupTests {
       Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
@@ -709,6 +717,8 @@ public class PerspectiveWorkerDedupTests {
       throw new NotImplementedException();
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
       throw new NotImplementedException();
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>

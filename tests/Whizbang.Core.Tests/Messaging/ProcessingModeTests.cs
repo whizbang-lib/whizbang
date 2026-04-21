@@ -39,17 +39,17 @@ public class ProcessingModeTests {
 
   #endregion
 
-  #region FireDuringReplayAttribute Tests
+  #region ReceptorIdempotentAttribute Tests
 
   [Test]
-  public async Task FireDuringReplayAttribute_CanBeInstantiatedAsync() {
-    var attr = new FireDuringReplayAttribute();
+  public async Task ReceptorIdempotentAttribute_CanBeInstantiatedAsync() {
+    var attr = new ReceptorIdempotentAttribute();
     await Assert.That(attr).IsNotNull();
   }
 
   [Test]
-  public async Task FireDuringReplayAttribute_TargetsClassOnlyAsync() {
-    var attrUsage = typeof(FireDuringReplayAttribute)
+  public async Task ReceptorIdempotentAttribute_TargetsClassOnlyAsync() {
+    var attrUsage = typeof(ReceptorIdempotentAttribute)
         .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
         .Cast<AttributeUsageAttribute>()
         .Single();

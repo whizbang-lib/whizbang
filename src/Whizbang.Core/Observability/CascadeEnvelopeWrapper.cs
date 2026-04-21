@@ -24,6 +24,8 @@ internal sealed class CascadeEnvelopeWrapper : IMessageEnvelope {
   public MessageId MessageId => _inner.MessageId;
   public object Payload => _inner.Payload;
   public List<MessageHop> Hops => _inner.Hops;
+  public List<ReceptorInvocationRecord>? ReceptorInvocations => _inner.ReceptorInvocations;
+  public List<ReceptorInvocationRecord> GetOrCreateReceptorInvocations() => _inner.GetOrCreateReceptorInvocations();
   public void AddHop(MessageHop hop) => _inner.AddHop(hop);
   public DateTimeOffset GetMessageTimestamp() => _inner.GetMessageTimestamp();
   public CorrelationId? GetCorrelationId() => _inner.GetCorrelationId();

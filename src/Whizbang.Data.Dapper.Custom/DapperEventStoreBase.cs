@@ -370,4 +370,9 @@ public abstract class DapperEventStoreBase : IEventStore {
     public string Metadata { get; set; } = string.Empty;
     public string? Scope { get; set; }
   }
+
+  /// <inheritdoc />
+  public virtual List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
+    return [];
+  }
 }

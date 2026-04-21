@@ -3,6 +3,8 @@
 -- Creates processing records when receptors need to process an event
 -- =============================================
 
+SELECT __SCHEMA__.drop_all_overloads('acquire_receptor_processing_work');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.acquire_receptor_processing_work(
   p_event_id UUID,
   p_receptor_names TEXT[]

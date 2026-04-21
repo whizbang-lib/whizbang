@@ -32,9 +32,19 @@ namespace Whizbang.Core.Messaging;
 /// Populated by the invoker from the envelope's first Current hop before invocation.
 /// </param>
 /// <param name="FireDuringReplay">
-/// Whether this receptor should fire during replay and rebuild operations.
-/// Set to true when the receptor class is decorated with <see cref="FireDuringReplayAttribute"/>.
-/// Default is false — receptors are suppressed during replay/rebuild for safety.
+/// Whether this receptor is fully idempotent — i.e., should fire for every applied event
+/// during Replay and Rebuild, including events that were already processed in a prior run.
+/// Set to true when the receptor is decorated with <see cref="ReceptorIdempotentAttribute"/>
+/// with <c>AlwaysFire = true</c>. Default is false — receptors fire only for new events
+/// during Replay/Rebuild (driven by <see cref="ILifecycleContext.IsNewEvent"/>).
+/// </param>
+/// <param name="IsIdempotent">
+/// Whether this receptor has declared itself safe to re-invoke for the same event id via
+/// <see cref="ReceptorIdempotentAttribute"/> — regardless of the <c>AlwaysFire</c> value.
+/// The <see cref="ReceptorInvoker"/>'s double-fire guardrail consults this flag: a receptor
+/// that has already fired for a message is normally skipped, but an idempotent receptor is
+/// allowed through. Distinct from <see cref="FireDuringReplay"/>, which only flips when
+/// <c>AlwaysFire = true</c>.
 /// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
@@ -44,7 +54,8 @@ public sealed record ReceptorInfo(
     Func<IServiceProvider, object, IMessageEnvelope, ICallerInfo?, CancellationToken, ValueTask<object?>> InvokeAsync,
     IReadOnlyList<ReceptorSyncAttributeInfo>? SyncAttributes = null,
     ICallerInfo? CallerInfo = null,
-    bool FireDuringReplay = false
+    bool FireDuringReplay = false,
+    bool IsIdempotent = false
 );
 
 /// <summary>

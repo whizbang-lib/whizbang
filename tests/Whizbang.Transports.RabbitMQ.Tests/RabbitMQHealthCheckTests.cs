@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable CS0067 // Event is never used (test doubles)
@@ -107,6 +108,13 @@ public class RabbitMQHealthCheckTests {
       TransportDestination destination,
       CancellationToken cancellationToken = default
     ) => throw new NotImplementedException();
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
       IMessageEnvelope requestEnvelope,

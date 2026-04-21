@@ -31,6 +31,7 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   /// </summary>
   public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData) {
     // Apply our visitor to transform r.Data.PropertyName to EF.Property(r, "column")
+    // Apply our visitor to transform r.Data.PropertyName to EF.Property(r, "column")
     return _visitor.Visit(queryExpression);
   }
 }

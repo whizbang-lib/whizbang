@@ -106,7 +106,12 @@ public static class SharedPostgresContainer {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="InvalidOperationException">Thrown if initialization fails or has previously failed.</exception>
   public static async Task InitializeAsync(CancellationToken cancellationToken = default) {
-    // If already initialized successfully, verify the connection is still valid
+    // If already initialized successfully, verify the connection is still valid.
+    // Don't null out _connectionString on health-check failure — other threads reading
+    // the getter concurrently would throw "not initialized" even though a valid (if
+    // temporarily stale) connection string still exists. Only flip _initialized so the
+    // locked block below performs the full reinit, and let the new connection string
+    // replace the old one atomically on success.
     if (_initialized) {
       try {
         // Quick health check - verify we can still connect
@@ -116,10 +121,8 @@ public static class SharedPostgresContainer {
         return; // Connection still works, we're good
       } catch {
         // Connection failed - container may have been removed
-        // Reset state and reinitialize
         Console.WriteLine("[SharedPostgresContainer] Existing connection failed, reinitializing...");
         _initialized = false;
-        _connectionString = null;
       }
     }
 

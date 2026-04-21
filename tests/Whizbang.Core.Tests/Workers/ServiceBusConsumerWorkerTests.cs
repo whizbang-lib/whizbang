@@ -93,6 +93,14 @@ internal sealed class TestTransport : ITransport {
     return Task.CompletedTask;
   }
 
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) {
+    return Task.FromResult<ISubscription>(new TestSubscription());
+  }
+
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope envelope,
     TransportDestination destination,

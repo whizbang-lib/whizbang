@@ -1062,6 +1062,106 @@ public class AuditLogger : IReceptor<AuditEvent> {
     await Assert.That(auditEventCount).IsGreaterThan(0);
   }
 
+  /// <summary>
+  /// Pins the [FireAt] double-fire fix: PublishToReceptors (PublishAsync path) must NOT
+  /// emit explicit-stage receptors. They fire only at their declared lifecycle stage via
+  /// ReceptorInvoker. Prevents regression of the engineer-reported double-fire bug where
+  /// _dispatcher.PublishAsync(evt) inside a handler fired the [FireAt] receptor twice.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PublishToReceptors_OmitsFireAtReceptorsAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record SomeEvent : IEvent;
+
+// Default-stage void receptor — MUST be emitted in PublishToReceptors.
+public class DefaultStageReceptor : IReceptor<SomeEvent> {
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+// Explicit [FireAt] void receptor — MUST NOT be emitted in PublishToReceptors; it
+// fires at its declared stage via ReceptorInvoker, not synchronously during publish.
+[FireAt(LifecycleStage.PostAllPerspectivesDetached)]
+public class FireAtReceptor : IReceptor<SomeEvent> {
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Carve out just the PublishToReceptors block — we care about what's emitted for the
+    // PublishAsync path, not the cascade/untyped publish path.
+    var content = dispatcher!;
+    var publishStart = content.IndexOf("async Task PublishToReceptors(TEvent evt)", StringComparison.Ordinal);
+    await Assert.That(publishStart).IsGreaterThan(-1);
+    var publishEnd = content.IndexOf("return PublishToReceptors;", publishStart, StringComparison.Ordinal);
+    await Assert.That(publishEnd).IsGreaterThan(publishStart);
+    var publishBody = content.Substring(publishStart, publishEnd - publishStart);
+
+    await Assert.That(publishBody).Contains("DefaultStageReceptor")
+      .Because("default-stage void receptors must still fire from PublishAsync");
+    await Assert.That(publishBody).DoesNotContain("FireAtReceptor")
+      .Because("[FireAt] receptors must be deferred to their declared stage, never emitted in PublishToReceptors");
+    await Assert.That(publishBody).DoesNotContain("if (!isDefaultDispatch)")
+      .Because("PublishAsync has no sourceEnvelope — no runtime gate needed when the [FireAt] block is omitted entirely");
+  }
+
+  /// <summary>
+  /// Symmetric guard: the cascade path (PublishToReceptorsUntyped) MUST still emit
+  /// [FireAt] receptors inside an `if (!isDefaultDispatch)` block. That path is shared
+  /// with code that invokes receptors with a non-default envelope; removing it would
+  /// silently break other callers.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PublishToReceptorsUntyped_KeepsFireAtGuardedByIsDefaultDispatchAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record SomeEvent : IEvent;
+
+[FireAt(LifecycleStage.PostAllPerspectivesDetached)]
+public class FireAtReceptor : IReceptor<SomeEvent> {
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    var content = dispatcher!;
+    var untypedStart = content.IndexOf("async Task PublishToReceptorsUntyped", StringComparison.Ordinal);
+    await Assert.That(untypedStart).IsGreaterThan(-1);
+    var untypedEnd = content.IndexOf("return PublishToReceptorsUntyped;", untypedStart, StringComparison.Ordinal);
+    await Assert.That(untypedEnd).IsGreaterThan(untypedStart);
+    var untypedBody = content.Substring(untypedStart, untypedEnd - untypedStart);
+
+    await Assert.That(untypedBody).Contains("isDefaultDispatch")
+      .Because("cascade path still declares isDefaultDispatch from sourceEnvelope");
+    await Assert.That(untypedBody).Contains("if (!isDefaultDispatch)")
+      .Because("cascade path still gates [FireAt] receptors behind the isDefaultDispatch flag");
+    await Assert.That(untypedBody).Contains("FireAtReceptor")
+      .Because("[FireAt] receptor must still be present in the cascade path — just behind the runtime guard");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ReceptorRegistry_HasCorrectStructureAsync() {

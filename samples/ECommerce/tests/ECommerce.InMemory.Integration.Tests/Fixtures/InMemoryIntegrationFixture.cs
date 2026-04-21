@@ -339,7 +339,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
@@ -385,7 +385,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
@@ -509,7 +509,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
@@ -548,7 +548,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
+      options.AbandonStaleInstanceThresholdSeconds = 600;
       options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
@@ -890,6 +890,39 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Waits for a specific number of perspective completions using the
+  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var completionCount = 0;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) { return; }
+      PerspectiveEventProcessedHandler? handler = null;
+      handler = (e) => {
+        var current = Interlocked.Increment(ref completionCount);
+        if (current >= expectedCompletions) { tcs.TrySetResult(true); }
+      };
+      worker.OnPerspectiveEventProcessed += handler;
+    }
+    if (hostFilter is null or "inventory") {
+      var inventoryWorker = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(inventoryWorker);
+    }
+    if (hostFilter is null or "bff") {
+      var bffWorker = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault();
+      WireWorker(bffWorker);
+    }
+    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
+    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
+  /// <summary>
   /// Cleans up all test data from the database (truncates all tables).
   /// Call this between test classes to ensure isolation.
   /// </summary>
@@ -963,15 +996,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private async Task _setupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
     // Subscribe InventoryWorker to generic topics (topic-00, topic-01)
     // CRITICAL: Must match GenericTopicRoutingStrategy which routes events to these topics
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-00", "inventory-worker"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-01", "inventory-worker"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
@@ -979,15 +1022,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Subscribe BFF to generic topics (topic-00, topic-01) with different subscription name
     // This simulates independent Service Bus subscriptions for each service
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-00", "bff-service"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 
-    await _transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
+    await _transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var msg in batch) {
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+        }
+      },
       new TransportDestination("topic-01", "bff-service"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cancellationToken
     );
 

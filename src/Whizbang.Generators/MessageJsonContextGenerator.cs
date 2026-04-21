@@ -96,17 +96,30 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Combine messages with compilation
-    var messagesWithCompilation = messageTypes.Collect().Combine(context.CompilationProvider);
+    // Discover event types from perspective interfaces (IPerspectiveFor<TModel, TEvent1, TEvent2, ...>).
+    // These are often in referenced assemblies (e.g., JDX.Contracts) that the syntactic predicate
+    // can't see. But perspective classes in this assembly reference them as type arguments,
+    // which semantic analysis resolves. Required for drain mode's DeserializeStreamEvents.
+    var perspectiveEventTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) =>
+            node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractPerspectiveEventTypes(ctx, ct)
+    ).Where(static info => !info.IsDefaultOrEmpty)
+     .SelectMany(static (arr, _) => arr);
+
+    // Combine messages + perspective event types with compilation
+    var allDiscoveredTypes = messageTypes.Collect().Combine(perspectiveEventTypes.Collect());
+    var messagesWithCompilation = allDiscoveredTypes.Combine(context.CompilationProvider);
 
     // Generate WhizbangJsonContext from collected message types
     context.RegisterSourceOutput(
         messagesWithCompilation,
-        static (ctx, data) => _generateWhizbangJsonContext(
-            ctx,
-            data.Left!,    // messages
-            data.Right     // compilation
-        )
+        static (ctx, data) => {
+          // Merge message types (nullable-filtered) with perspective event types (non-nullable)
+          var messages = data.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
+          var combined = messages.AddRange(data.Left.Right);
+          _generateWhizbangJsonContext(ctx, combined, data.Right);
+        }
     );
   }
 
@@ -2715,6 +2728,75 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", System.StringComparison.Ordinal) ||
            originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", System.StringComparison.Ordinal) ||
            originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", System.StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Extracts event types (TEvent1, TEvent2, ...) from perspective interfaces on a class.
+  /// Returns JsonMessageTypeInfo for each event type so drain mode's DeserializeStreamEvents
+  /// can deserialize them via the source-generated JSON context.
+  /// </summary>
+  private static ImmutableArray<JsonMessageTypeInfo> _extractPerspectiveEventTypes(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct) as INamedTypeSymbol;
+    if (typeSymbol is null || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return default;
+    }
+
+    var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
+
+    foreach (var iface in typeSymbol.AllInterfaces) {
+      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      if (!_isPerspectiveInterfaceDefinition(originalDef)) {
+        continue;
+      }
+
+      // Event types start at index 1 (index 0 is TModel)
+      for (int i = 1; i < iface.TypeArguments.Length; i++) {
+        if (iface.TypeArguments[i] is not INamedTypeSymbol eventType) {
+          continue;
+        }
+
+        if (eventType.DeclaredAccessibility != Accessibility.Public) {
+          continue;
+        }
+
+        var fullyQualifiedName = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var clrTypeName = _getClrTypeName(eventType);
+        var simpleName = eventType.Name;
+
+        var properties = _getAllPropertiesIncludingInherited(eventType)
+            .Select(p => new PropertyInfo(
+                Name: p.Name,
+                Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+                IsValueType: _isValueType(p.Type),
+                IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+                CanWrite: p.SetMethod != null
+            ))
+            .ToArray();
+
+        var writableProperties = properties.Where(p => p.CanWrite).ToArray();
+        bool hasParameterizedConstructor = eventType.Constructors.Any(c =>
+            c.DeclaredAccessibility == Accessibility.Public &&
+            c.Parameters.Length == writableProperties.Length &&
+            c.Parameters.All(p => writableProperties.Any(prop =>
+                prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+
+        results.Add(new JsonMessageTypeInfo(
+            FullyQualifiedName: fullyQualifiedName,
+            ClrTypeName: clrTypeName,
+            SimpleName: simpleName,
+            IsCommand: false,
+            IsEvent: true,
+            IsSerializable: false,
+            Properties: properties,
+            HasParameterizedConstructor: hasParameterizedConstructor
+        ));
+      }
+    }
+
+    return results.Count > 0 ? results.ToImmutable() : default;
   }
 
   /// <summary>

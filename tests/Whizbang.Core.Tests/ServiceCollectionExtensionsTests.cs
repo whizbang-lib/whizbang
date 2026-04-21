@@ -1386,6 +1386,8 @@ public class ServiceCollectionExtensionsTests {
 
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
       Task.FromResult(0L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>
@@ -1413,6 +1415,12 @@ public class ServiceCollectionExtensionsTests {
         CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
         Guid streamId,

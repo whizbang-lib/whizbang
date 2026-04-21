@@ -51,9 +51,9 @@ public class WorkBatchOptionsTests {
   }
 
   [Test]
-  public async Task WorkBatchOptions_HasSevenValuesAsync() {
+  public async Task WorkBatchOptions_HasEightValuesAsync() {
     var values = Enum.GetValues<WorkBatchOptions>();
-    await Assert.That(values.Length).IsEqualTo(7);
+    await Assert.That(values.Length).IsEqualTo(8);
   }
 
   [Test]

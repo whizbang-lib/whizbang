@@ -2,12 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -589,13 +589,14 @@ public class SecurityIntegrationTests {
       };
 
       // Create envelope with scope embedded in hops
-      var envelope = new Observability.MessageEnvelope<TestPerspectiveEvent> {
+      var envelope = new MessageEnvelope<TestPerspectiveEvent> {
         MessageId = ValueObjects.MessageId.New(),
         Payload = new TestPerspectiveEvent(Guid.NewGuid()),
+        DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = Messaging.MessageSource.Local },
         Hops = [
-          new Observability.MessageHop {
-            Type = Observability.HopType.Current,
-            ServiceInstance = new Observability.ServiceInstanceInfo {
+          new MessageHop {
+            Type = HopType.Current,
+            ServiceInstance = new global::Whizbang.Core.Observability.ServiceInstanceInfo {
               ServiceName = "TestService",
               HostName = "TestHost",
               ProcessId = Environment.ProcessId,
@@ -756,13 +757,14 @@ public class SecurityIntegrationTests {
         Claims = new Dictionary<string, string>()
       };
 
-      var envelope = new Observability.MessageEnvelope<TestPerspectiveEvent> {
+      var envelope = new MessageEnvelope<TestPerspectiveEvent> {
         MessageId = ValueObjects.MessageId.New(),
         Payload = new TestPerspectiveEvent(Guid.NewGuid()),
+        DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = Messaging.MessageSource.Local },
         Hops = [
-          new Observability.MessageHop {
-            Type = Observability.HopType.Current,
-            ServiceInstance = new Observability.ServiceInstanceInfo {
+          new MessageHop {
+            Type = HopType.Current,
+            ServiceInstance = new global::Whizbang.Core.Observability.ServiceInstanceInfo {
               ServiceName = "TestService",
               HostName = "TestHost",
               ProcessId = Environment.ProcessId,
@@ -1126,7 +1128,7 @@ public class SecurityIntegrationTests {
   private sealed class TestSecurityContextCallback(Action<IScopeContext> onContextEstablished) : ISecurityContextCallback {
     public ValueTask OnContextEstablishedAsync(
       IScopeContext context,
-      Observability.IMessageEnvelope envelope,
+      IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken = default) {
       onContextEstablished(context);

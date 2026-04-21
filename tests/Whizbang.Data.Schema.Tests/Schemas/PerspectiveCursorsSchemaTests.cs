@@ -31,8 +31,8 @@ public class PerspectiveCursorsSchemaTests {
     // Arrange & Act
     var columns = PerspectiveCursorsSchema.Table.Columns;
 
-    // Assert - Verify column count (6 original + 4 rewind/locking columns)
-    await Assert.That(columns).Count().IsEqualTo(10);
+    // Assert - Verify column count (6 original + 6 rewind/locking columns)
+    await Assert.That(columns).Count().IsEqualTo(12);
 
     // Verify each column definition (use First to avoid order dependency)
     var streamId = columns.First(c => c.Name == "stream_id");
@@ -198,6 +198,7 @@ public class PerspectiveCursorsSchemaTests {
     var processedAt = PerspectiveCursorsSchema.Columns.PROCESSED_AT;
     var error = PerspectiveCursorsSchema.Columns.ERROR;
     var rewindTriggerEventId = PerspectiveCursorsSchema.Columns.REWIND_TRIGGER_EVENT_ID;
+    var rewindFlaggedAt = PerspectiveCursorsSchema.Columns.REWIND_FLAGGED_AT;
     var streamLockInstanceId = PerspectiveCursorsSchema.Columns.STREAM_LOCK_INSTANCE_ID;
     var streamLockExpiry = PerspectiveCursorsSchema.Columns.STREAM_LOCK_EXPIRY;
     var streamLockReason = PerspectiveCursorsSchema.Columns.STREAM_LOCK_REASON;
@@ -210,6 +211,9 @@ public class PerspectiveCursorsSchemaTests {
     await Assert.That(processedAt).IsEqualTo("processed_at");
     await Assert.That(error).IsEqualTo("error");
     await Assert.That(rewindTriggerEventId).IsEqualTo("rewind_trigger_event_id");
+    await Assert.That(rewindFlaggedAt).IsEqualTo("rewind_flagged_at");
+    var rewindFirstFlaggedAt = PerspectiveCursorsSchema.Columns.REWIND_FIRST_FLAGGED_AT;
+    await Assert.That(rewindFirstFlaggedAt).IsEqualTo("rewind_first_flagged_at");
     await Assert.That(streamLockInstanceId).IsEqualTo("stream_lock_instance_id");
     await Assert.That(streamLockExpiry).IsEqualTo("stream_lock_expiry");
     await Assert.That(streamLockReason).IsEqualTo("stream_lock_reason");

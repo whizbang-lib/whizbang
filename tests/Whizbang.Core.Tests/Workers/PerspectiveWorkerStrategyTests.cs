@@ -459,6 +459,12 @@ public class PerspectiveWorkerStrategyTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -504,9 +510,11 @@ public class PerspectiveWorkerStrategyTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
     public bool ShouldThrow { get; set; }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
@@ -603,6 +611,7 @@ public class PerspectiveWorkerStrategyTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   #endregion

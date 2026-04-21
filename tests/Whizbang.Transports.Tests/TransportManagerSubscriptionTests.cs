@@ -29,9 +29,9 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    var handlerCalled = false;
+    var handlerSignal = new TaskCompletionSource();
     Task handler(IMessageEnvelope envelope) {
-      handlerCalled = true;
+      handlerSignal.TrySetResult();
       return Task.CompletedTask;
     }
 
@@ -50,9 +50,11 @@ public class TransportManagerSubscriptionTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, CancellationToken.None);
-    await Task.Delay(50); // Allow async processing
 
-    await Assert.That(handlerCalled).IsTrue();
+    // Wait for the batch collector to flush and invoke the handler
+    await handlerSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(handlerSignal.Task.IsCompleted).IsTrue();
   }
 
   [Test]
@@ -271,8 +273,10 @@ public class TransportManagerSubscriptionTests {
     };
 
     IMessageEnvelope? receivedEnvelope = null;
+    var handlerSignal = new TaskCompletionSource();
     Task handler(IMessageEnvelope envelope) {
       receivedEnvelope = envelope;
+      handlerSignal.TrySetResult();
       return Task.CompletedTask;
     }
 
@@ -287,7 +291,9 @@ public class TransportManagerSubscriptionTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
     await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, CancellationToken.None);
-    await Task.Delay(50); // Allow async processing
+
+    // Wait for the batch collector to flush and invoke the handler
+    await handlerSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
     // Assert
     await Assert.That(receivedEnvelope).IsNotNull();

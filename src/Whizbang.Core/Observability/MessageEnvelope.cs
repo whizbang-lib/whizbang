@@ -66,6 +66,22 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public required List<MessageHop> Hops { get; init; }
 
   /// <summary>
+  /// Per-receptor invocation records captured after each receptor fires against this
+  /// envelope. Parallel to <see cref="Hops"/>. Used by
+  /// <see cref="Messaging.IReceptorDedupStore"/> to enforce "exactly once per receptor
+  /// per message". Nullable: envelopes deserialized before this field existed roundtrip
+  /// without it, and fresh envelopes only allocate the list when the first record is
+  /// recorded.
+  /// </summary>
+  /// <remarks>
+  /// NOT consulted by security, scope, source-service, or trace-context extraction —
+  /// those walk <see cref="Hops"/> only.
+  /// </remarks>
+  /// <docs>fundamentals/receptors/exactly-once-firing</docs>
+  [JsonPropertyName("rin")]
+  public List<ReceptorInvocationRecord>? ReceptorInvocations { get; set; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {
@@ -104,6 +120,14 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_AddHop_MaintainsOrderedListAsync</tests>
   public void AddHop(MessageHop hop) {
     Hops.Add(hop);
+  }
+
+  /// <summary>
+  /// Returns <see cref="ReceptorInvocations"/>, allocating and assigning an empty list
+  /// if it is currently null. Used by <see cref="Messaging.EnvelopeReceptorDedupStore"/>.
+  /// </summary>
+  public List<ReceptorInvocationRecord> GetOrCreateReceptorInvocations() {
+    return ReceptorInvocations ??= [];
   }
 
   /// <summary>

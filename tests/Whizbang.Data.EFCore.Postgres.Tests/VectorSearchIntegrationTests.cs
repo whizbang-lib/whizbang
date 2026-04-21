@@ -1,4 +1,3 @@
-using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Pgvector;

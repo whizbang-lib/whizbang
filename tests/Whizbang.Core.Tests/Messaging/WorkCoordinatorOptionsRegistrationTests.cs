@@ -29,7 +29,7 @@ public class WorkCoordinatorOptionsRegistrationTests {
       opts.IntervalMilliseconds = 500;
       opts.PartitionCount = 5000;
       opts.LeaseSeconds = 120;
-      opts.StaleThresholdSeconds = 180;
+      opts.AbandonStaleInstanceThresholdSeconds = 180;
     });
 
     // Simulate the generated registration pattern from EFCoreSnippets.cs
@@ -56,7 +56,7 @@ public class WorkCoordinatorOptionsRegistrationTests {
     await Assert.That(resolvedOptions.IntervalMilliseconds).IsEqualTo(500);
     await Assert.That(resolvedOptions.PartitionCount).IsEqualTo(5000);
     await Assert.That(resolvedOptions.LeaseSeconds).IsEqualTo(120);
-    await Assert.That(resolvedOptions.StaleThresholdSeconds).IsEqualTo(180);
+    await Assert.That(resolvedOptions.AbandonStaleInstanceThresholdSeconds).IsEqualTo(180);
   }
 
   /// <summary>
@@ -91,7 +91,7 @@ public class WorkCoordinatorOptionsRegistrationTests {
     await Assert.That(resolvedOptions.IntervalMilliseconds).IsEqualTo(100); // Default
     await Assert.That(resolvedOptions.PartitionCount).IsEqualTo(10000); // Default
     await Assert.That(resolvedOptions.LeaseSeconds).IsEqualTo(300); // Default
-    await Assert.That(resolvedOptions.StaleThresholdSeconds).IsEqualTo(600); // Default
+    await Assert.That(resolvedOptions.AbandonStaleInstanceThresholdSeconds).IsEqualTo(30); // Default
   }
 
   /// <summary>
