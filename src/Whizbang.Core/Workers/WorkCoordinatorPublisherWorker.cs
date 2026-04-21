@@ -288,6 +288,12 @@ public partial class WorkCoordinatorPublisherWorker(
       _options.PollingIntervalMilliseconds
     );
 
+    // Self-heal partition_number columns left inconsistent by a previous PartitionCount.
+    // No-op when database is already consistent. WARN logs surface a recompute that
+    // happened — useful for spotting deployments that crossed a PartitionCount boundary
+    // (and reproducing the a consumer BFF dev wedge of 2026-04-20).
+    await _recomputePartitionsOnStartupAsync(stoppingToken);
+
     // Start both loops concurrently
     var coordinatorTask = _coordinatorLoopAsync(stoppingToken);
     var publisherTask = _publisherLoopAsync(stoppingToken);
@@ -296,6 +302,25 @@ public partial class WorkCoordinatorPublisherWorker(
     await Task.WhenAll(coordinatorTask, publisherTask);
 
     LogWorkerStopping(_logger);
+  }
+
+  private async Task _recomputePartitionsOnStartupAsync(CancellationToken stoppingToken) {
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var result = await workCoordinator.RecomputePartitionNumbersAsync(_options.PartitionCount, stoppingToken);
+      if (result.AnyRecomputed) {
+        LogPartitionRecompute(
+          _logger,
+          _options.PartitionCount,
+          result.InboxRowsRecomputed,
+          result.OutboxRowsRecomputed,
+          result.ActiveStreamsRowsRecomputed);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Recompute is best-effort — never block the worker from starting if it fails.
+      LogPartitionRecomputeFailed(_logger, ex);
+    }
   }
 
   private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
@@ -1569,6 +1594,26 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "Periodic maintenance failed (non-fatal, will retry on next interval)"
   )]
   static partial void LogMaintenanceError(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 33,
+    Level = LogLevel.Warning,
+    Message = "Partition recompute on startup: PartitionCount={PartitionCount}, wh_inbox={InboxRows}, wh_outbox={OutboxRows}, wh_active_streams={ActiveStreamsRows}. Database held rows whose partition_number disagreed with compute_partition(stream_id, PartitionCount); now self-healed. Typical cause: previous PartitionCount, or the IWorkCoordinator.StoreInboxMessagesAsync default=2 wedge."
+  )]
+  static partial void LogPartitionRecompute(
+    ILogger logger,
+    int partitionCount,
+    long inboxRows,
+    long outboxRows,
+    long activeStreamsRows
+  );
+
+  [LoggerMessage(
+    EventId = 34,
+    Level = LogLevel.Error,
+    Message = "Partition recompute on startup failed; worker continuing. Wedged messages may persist until next successful run."
+  )]
+  static partial void LogPartitionRecomputeFailed(ILogger logger, Exception ex);
 
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.

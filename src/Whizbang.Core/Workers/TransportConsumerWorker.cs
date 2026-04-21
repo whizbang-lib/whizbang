@@ -65,6 +65,10 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
+  // Single source of truth for partition count across this service. Read from
+  // WorkCoordinatorPublisherOptions so all three call sites — this consumer,
+  // WorkBatchCoordinator, and WorkCoordinatorPublisherWorker — agree by construction.
+  private readonly int _partitionCount;
 
   /// <summary>
   /// Initializes a new instance of TransportConsumerWorker.
@@ -100,7 +104,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
-    IWorkChannelWriter? workChannelWriter = null
+    IWorkChannelWriter? workChannelWriter = null,
+    Microsoft.Extensions.Options.IOptions<WorkCoordinatorPublisherOptions>? publisherOptions = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -124,6 +129,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _serviceName = serviceInstanceProvider?.ServiceName;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
+    _partitionCount = publisherOptions?.Value?.PartitionCount ?? new WorkCoordinatorPublisherOptions().PartitionCount;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
@@ -437,8 +443,12 @@ public partial class TransportConsumerWorker : BackgroundService {
       // Direct INSERT into wh_inbox — bypasses process_work_batch entirely.
       // Event storage + perspective creation happens on next tick via self-healing
       // (Phase 5 claims → Phase 4.5B stores events → Phase 4.6/4.7 creates perspectives).
+      // PartitionCount is sourced from WorkCoordinatorPublisherOptions — the single source
+      // of truth across this service's TransportConsumerWorker, WorkBatchCoordinator, and
+      // WorkCoordinatorPublisherWorker — preventing the partition mismatch wedge.
       await workCoordinator.StoreInboxMessagesAsync(
         [.. inboxMessages],
+        partitionCount: _partitionCount,
         cancellationToken: cancellationToken);
       _metrics?.InboxMessagesProcessed.Add(inboxMessages.Count);
 
