@@ -336,10 +336,18 @@ public class InboxLifecycleTests {
         ).WaitAsync(TimeSpan.FromSeconds(120));
       } catch (TimeoutException) {
         var missing = new List<string>();
-        if (!preInlineCompletion.Task.IsCompleted) missing.Add("PreInboxInline");
-        if (!preAsyncCompletion.Task.IsCompleted) missing.Add("PreInboxDetached");
-        if (!postAsyncCompletion.Task.IsCompleted) missing.Add("PostInboxDetached");
-        if (!postInlineCompletion.Task.IsCompleted) missing.Add("PostInboxInline");
+        if (!preInlineCompletion.Task.IsCompleted) {
+          missing.Add("PreInboxInline");
+        }
+        if (!preAsyncCompletion.Task.IsCompleted) {
+          missing.Add("PreInboxDetached");
+        }
+        if (!postAsyncCompletion.Task.IsCompleted) {
+          missing.Add("PostInboxDetached");
+        }
+        if (!postInlineCompletion.Task.IsCompleted) {
+          missing.Add("PostInboxInline");
+        }
         throw new TimeoutException(
           $"Inbox lifecycle stages did not all fire within 120s. " +
           $"Missing stages: [{string.Join(", ", missing)}]. " +
