@@ -11,6 +11,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// <docs>fundamentals/events/system-events#permission-changed</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
+[PinnedId("b7deb3af-385c-4167-be12-d525100f17bd")]
 public sealed record PermissionChanged : ISystemEvent {
   /// <summary>
   /// Unique identifier for this event.

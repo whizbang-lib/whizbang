@@ -106,7 +106,7 @@
   <!-- IMessage / IPerspectiveFor<> types. Suppressed here during the Whizbang-internal rollout -->
   <!-- so downstream consumers still see the warnings. Remove once all internal types are tagged. -->
   <PropertyGroup>
-    <NoWarn>$(NoWarn);WHIZ110;WHIZ111</NoWarn>
+    <NoWarn>$(NoWarn)</NoWarn>
   </PropertyGroup>
 
   <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->
