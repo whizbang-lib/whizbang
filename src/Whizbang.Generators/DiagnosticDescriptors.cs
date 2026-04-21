@@ -761,6 +761,56 @@ public static class DiagnosticDescriptors {
   );
 
   // ==========================================================================
+  // WHIZ110-112: Pinned identity
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ110: Warning — concrete IMessage (IEvent or ICommand) missing [PinnedId].
+  /// Adds a stable identity for the type so it survives namespace restructuring.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz110</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor MessageMissingPinnedId = new(
+      id: "WHIZ110",
+      title: "Message Missing [PinnedId]",
+      messageFormat: "Message type '{0}' is missing [PinnedId]. Apply the code fix to add a stable pinned identity.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Concrete IEvent and ICommand types should carry [PinnedId] so stored events can survive namespace restructuring. This is a warning, not an error, to allow gradual adoption."
+  );
+
+  /// <summary>
+  /// WHIZ111: Warning — concrete IPerspectiveFor&lt;&gt; missing [PinnedId].
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz111</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PerspectiveMissingPinnedId = new(
+      id: "WHIZ111",
+      title: "Perspective Missing [PinnedId]",
+      messageFormat: "Perspective type '{0}' is missing [PinnedId]. Apply the code fix to add a stable pinned identity.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Concrete IPerspectiveFor<> types should carry [PinnedId] so perspective registrations survive namespace restructuring."
+  );
+
+  /// <summary>
+  /// WHIZ112: Error — [PinnedId] value is not a valid GUID string.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz112</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor PinnedIdNotAValidGuid = new(
+      id: "WHIZ112",
+      title: "Invalid [PinnedId] GUID",
+      messageFormat: "[PinnedId] value '{0}' on '{1}' is not a valid GUID. Use a value parseable by Guid.Parse (e.g., '00000000-0000-0000-0000-000000000000').",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The [PinnedId] attribute requires its argument to be a parseable GUID string so it can uniquely identify the type across services and environments."
+  );
+
+  // ==========================================================================
   // WHIZ200: Perspective sync in receptor safety
   // ==========================================================================
 

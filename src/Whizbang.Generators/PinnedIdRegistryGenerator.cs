@@ -155,11 +155,27 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("public static class PinnedIdRegistryExtensions {");
     source.AppendLine("  /// <summary>");
     source.AppendLine($"  /// Registers GeneratedPinnedIdRegistry with {ordered.Count} type(s) as a singleton IPinnedIdRegistry.");
+    source.AppendLine("  /// Called automatically by AddWhizbang() via a module initializer, but may be invoked");
+    source.AppendLine("  /// directly when configuring DI without calling AddWhizbang().");
     source.AppendLine("  /// </summary>");
     source.AppendLine("  public static IServiceCollection AddPinnedIdRegistry(");
     source.AppendLine("      this IServiceCollection services) {");
     source.AppendLine("    services.AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>();");
     source.AppendLine("    return services;");
+    source.AppendLine("  }");
+    source.AppendLine("}");
+    source.AppendLine();
+
+    source.AppendLine("/// <summary>");
+    source.AppendLine("/// Module initializer that wires GeneratedPinnedIdRegistry into AddWhizbang().");
+    source.AppendLine("/// Fires when the consumer assembly loads, so AddWhizbang() registers IPinnedIdRegistry");
+    source.AppendLine("/// automatically with no explicit call from the consumer.");
+    source.AppendLine("/// </summary>");
+    source.AppendLine("internal static class PinnedIdRegistryModuleInitializer {");
+    source.AppendLine("  [System.Runtime.CompilerServices.ModuleInitializer]");
+    source.AppendLine("  internal static void Initialize() {");
+    source.AppendLine("    ServiceRegistrationCallbacks.PinnedIdRegistry = static services =>");
+    source.AppendLine("      services.AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>();");
     source.AppendLine("  }");
     source.AppendLine("}");
 
