@@ -47,7 +47,7 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
 
     var rows = await connection.QueryAsync<ReconcileRow>(
       new CommandDefinition(
-        "SELECT action AS Action, pinned_id AS PinnedId, clr_type_name AS ClrTypeName, stored_clr_type_name AS StoredClrTypeName FROM reconcile_message_type_registry(@Entries::jsonb)",
+        "SELECT o_action AS Action, o_pinned_id AS PinnedId, o_clr_type_name AS ClrTypeName, o_stored_clr_type_name AS StoredClrTypeName FROM reconcile_message_type_registry(@Entries::jsonb)",
         new { Entries = _serializeEntries(entries) },
         cancellationToken: cancellationToken));
 

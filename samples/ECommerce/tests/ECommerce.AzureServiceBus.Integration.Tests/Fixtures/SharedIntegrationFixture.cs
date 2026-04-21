@@ -229,7 +229,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register Azure Service Bus transport (will reuse the shared client registered above)
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -364,7 +367,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(_sharedServiceBusClient ?? throw new InvalidOperationException("Shared ServiceBusClient not initialized"));
 
     // Register Azure Service Bus transport (will reuse the shared client registered above)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -951,7 +957,7 @@ internal class InboxDiagnosticResult {
   public string MessageType { get; set; } = string.Empty;
   public Guid StreamId { get; set; }
   public bool IsEvent { get; set; }
-  public string Status { get; set; } = string.Empty;
+  public int Status { get; set; }
   public DateTimeOffset ReceivedAt { get; set; }
 }
 

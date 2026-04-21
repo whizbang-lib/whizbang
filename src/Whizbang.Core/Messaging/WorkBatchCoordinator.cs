@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Messaging;
 
@@ -24,13 +26,18 @@ public class WorkBatchCoordinator(
   IServiceInstanceProvider instanceProvider,
   IWorkChannelWriter outboxChannel,
   IPerspectiveChannelWriter perspectiveChannel,
-  IInboxChannelWriter? inboxChannel = null
+  IInboxChannelWriter? inboxChannel = null,
+  IOptions<WorkCoordinatorPublisherOptions>? publisherOptions = null
   ) : IWorkBatchCoordinator {
   private readonly IWorkCoordinator _workCoordinator = workCoordinator ?? throw new ArgumentNullException(nameof(workCoordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IWorkChannelWriter _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
   private readonly IPerspectiveChannelWriter _perspectiveChannel = perspectiveChannel ?? throw new ArgumentNullException(nameof(perspectiveChannel));
   private readonly IInboxChannelWriter? _inboxChannel = inboxChannel;
+  // Single source of truth — same options object that TransportConsumerWorker and
+  // WorkCoordinatorPublisherWorker read. Falls back to the WorkCoordinatorPublisherOptions
+  // default (10_000) when not injected (test fixtures, primarily).
+  private readonly int _partitionCount = publisherOptions?.Value?.PartitionCount ?? new WorkCoordinatorPublisherOptions().PartitionCount;
 
   /// <inheritdoc />
   public async Task ProcessAndDistributeDetached(
@@ -58,7 +65,7 @@ public class WorkBatchCoordinator(
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
       Flags = WorkBatchOptions.SkipInboxClaiming,
-      PartitionCount = 16,  // FUTURE: Make configurable
+      PartitionCount = _partitionCount,
       LeaseSeconds = 30,    // FUTURE: Make configurable
       AbandonStaleInstanceThresholdSeconds = 30  // FUTURE: Make configurable
     };

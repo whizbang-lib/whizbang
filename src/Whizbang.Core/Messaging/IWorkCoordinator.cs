@@ -7,6 +7,22 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// Per-table count of rows whose <c>partition_number</c> was recomputed by
+/// <see cref="IWorkCoordinator.RecomputePartitionNumbersAsync"/>.
+/// </summary>
+public sealed record PartitionRecomputeResult {
+  /// <summary>Rows in <c>wh_inbox</c> whose <c>partition_number</c> was updated.</summary>
+  public long InboxRowsRecomputed { get; init; }
+  /// <summary>Rows in <c>wh_outbox</c> whose <c>partition_number</c> was updated.</summary>
+  public long OutboxRowsRecomputed { get; init; }
+  /// <summary>Rows in <c>wh_active_streams</c> whose <c>partition_number</c> was updated.</summary>
+  public long ActiveStreamsRowsRecomputed { get; init; }
+
+  /// <summary>True if any row in any table was recomputed (i.e. the database was previously inconsistent with the supplied PartitionCount).</summary>
+  public bool AnyRecomputed => InboxRowsRecomputed > 0 || OutboxRowsRecomputed > 0 || ActiveStreamsRowsRecomputed > 0;
+}
+
+/// <summary>
 /// Parameter object for ProcessWorkBatchAsync to reduce method complexity.
 /// Groups related parameters for better maintainability and caller ergonomics.
 /// </summary>
@@ -293,13 +309,41 @@ public interface IWorkCoordinator {
   /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
   /// </summary>
   /// <param name="messages">Inbox messages to store</param>
-  /// <param name="partitionCount">Number of partitions for load balancing</param>
+  /// <param name="partitionCount">Number of partitions for load balancing. Must match
+  /// <see cref="ProcessWorkBatchRequest.PartitionCount"/> used by the publisher worker
+  /// in this service — otherwise wh_inbox.partition_number and wh_active_streams.partition_number
+  /// disagree for the same stream and claim_orphaned_inbox deadlocks.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <docs>operations/workers/transport-consumer</docs>
   Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
-    int partitionCount = 2,
+    int partitionCount,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Recomputes <c>partition_number</c> on <c>wh_inbox</c>, <c>wh_outbox</c>, and
+  /// <c>wh_active_streams</c> using the supplied <paramref name="partitionCount"/>,
+  /// fixing any rows whose stored value disagrees with
+  /// <c>compute_partition(stream_id, partition_count)</c>. Idempotent.
+  /// </summary>
+  /// <remarks>
+  /// Called by <c>WorkCoordinatorPublisherWorker</c> on startup so a service that comes
+  /// up under a new (or first-time-correct) <c>PartitionCount</c> immediately self-heals
+  /// rows wedged by a partition-mismatch (the dev BFF incident of 2026-04-20). Returns
+  /// the number of rows recomputed per table, which the worker logs at WARN if any are
+  /// non-zero.
+  /// </remarks>
+  /// <param name="partitionCount">PartitionCount the service is currently configured to use</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <remarks>
+  /// Has a default no-op implementation so test fakes/in-memory coordinators that don't
+  /// own a real database don't need to override it. Production Postgres implementations
+  /// override with the real <c>recompute_partition_numbers</c> SQL call.
+  /// </remarks>
+  Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
+    int partitionCount,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(new PartitionRecomputeResult());
 
   /// <summary>
   /// Reports perspective cursor completion or failure directly (out-of-band).
