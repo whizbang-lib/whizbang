@@ -212,6 +212,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       (PerspectiveSnapshotsSchema.Table, "Perspective Snapshots - Periodic state snapshots for efficient rewind"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (PerspectiveRegistrySchema.Table, "Perspective Registry - CLR type to table name mappings with schema JSON"),
+      (MessageTypeRegistrySchema.Table, "Message Type Registry - Universal catalog of registered message/perspective types with optional [PinnedId] metadata"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };
