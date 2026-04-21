@@ -56,6 +56,23 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
 
+    // Self-bootstrap: idempotent CREATE TABLE IF NOT EXISTS so the populator works even when
+    // schema init ran against a different database than this connection points at.
+    await connection.ExecuteAsync(
+      new CommandDefinition(@"
+        CREATE TABLE IF NOT EXISTS wh_message_type_registry (
+            type_id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+            clr_type_name VARCHAR(500) NOT NULL,
+            pinned_id UUID NULL,
+            kind VARCHAR(50) NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_message_type_registry_clr_type_name UNIQUE (clr_type_name)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_message_type_registry_pinned_id
+            ON wh_message_type_registry (pinned_id)
+            WHERE pinned_id IS NOT NULL;",
+        cancellationToken: cancellationToken));
+
     var inserted = 0;
     var updated = 0;
     var drifted = 0;

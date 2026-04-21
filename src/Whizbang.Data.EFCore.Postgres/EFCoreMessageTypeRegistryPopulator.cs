@@ -46,6 +46,13 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
 
     await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
 
+    // Self-bootstrap: ensure the registry table exists on this connection before upserting.
+    // PostgresSchemaBuilder + migration 039 both create this table, but consumer apps with
+    // multiple DbContexts may run the populator against an NpgsqlDataSource whose database
+    // wasn't initialized via the turnkey EFCore init. CREATE TABLE IF NOT EXISTS is idempotent
+    // and keeps the populator working in that shape without special-casing it.
+    await _ensureTableAsync(connection, cancellationToken);
+
     var inserted = 0;
     var updated = 0;
     var drifted = 0;
@@ -81,6 +88,23 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     _logger?.LogInformation(
       "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
       entries.Count, pinnedCount, unpinnedCount, inserted, updated, drifted);
+  }
+
+  private static async Task _ensureTableAsync(NpgsqlConnection connection, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      CREATE TABLE IF NOT EXISTS wh_message_type_registry (
+          type_id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+          clr_type_name VARCHAR(500) NOT NULL,
+          pinned_id UUID NULL,
+          kind VARCHAR(50) NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT uq_message_type_registry_clr_type_name UNIQUE (clr_type_name)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS ix_message_type_registry_pinned_id
+          ON wh_message_type_registry (pinned_id)
+          WHERE pinned_id IS NOT NULL;";
+    await cmd.ExecuteNonQueryAsync(ct);
   }
 
   private static async Task<(string? ClrTypeName, bool Exists)> _lookupByPinnedIdAsync(
