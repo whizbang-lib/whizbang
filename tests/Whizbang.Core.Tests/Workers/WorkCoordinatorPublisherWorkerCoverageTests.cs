@@ -1538,9 +1538,10 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+    // Widened from 2s → 30s to match other harness deadlines on CI slow-runner safety.
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
     while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
+      await Task.Delay(10);
     }
 
     await cts.CancelAsync();
