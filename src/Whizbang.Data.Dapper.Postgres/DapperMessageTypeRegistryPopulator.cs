@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
@@ -7,22 +8,12 @@ using Whizbang.Core.Data;
 namespace Whizbang.Data.Dapper.Postgres;
 
 /// <summary>
-/// Postgres implementation of <see cref="IMessageTypeRegistryPopulator"/> backed by Dapper.
+/// Dapper implementation of <see cref="IMessageTypeRegistryPopulator"/> that delegates to the
+/// <c>reconcile_message_type_registry</c> PL/pgSQL function (migration 040).
 /// </summary>
 /// <remarks>
-/// <para>
-/// On every call, walks <see cref="IMessageTypeCatalog"/> and upserts rows into
-/// <c>wh_message_type_registry</c>:
-/// </para>
-/// <list type="bullet">
-///   <item>Pinned types are upserted by <c>pinned_id</c>. When a registry row's
-///         <c>clr_type_name</c> differs from the current code, a warning is logged and the
-///         row is <b>not</b> overwritten — only the rename tool (Phase 5) should reconcile drift.</item>
-///   <item>Unpinned types are upserted by <c>clr_type_name</c>.</item>
-/// </list>
-/// <para>
-/// Safe to call on every startup.
-/// </para>
+/// Provided for explicit invocation (admin commands, migrations). Turnkey startup paths run
+/// the same SQL function per-DbContext inside <c>EnsureWhizbangDatabaseInitializedAsync</c>.
 /// </remarks>
 /// <docs>core-concepts/pinned-identity</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Populator runs once at startup; structured logging cost is negligible.")]
@@ -32,9 +23,7 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
   private readonly IDbConnectionFactory _connectionFactory;
   private readonly ILogger<DapperMessageTypeRegistryPopulator>? _logger;
 
-  /// <summary>
-  /// Initializes a new populator.
-  /// </summary>
+  /// <summary>Initializes a new populator.</summary>
   public DapperMessageTypeRegistryPopulator(
       IMessageTypeCatalog catalog,
       IDbConnectionFactory connectionFactory,
@@ -56,94 +45,85 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
 
-    // Self-bootstrap: idempotent CREATE TABLE IF NOT EXISTS so the populator works even when
-    // schema init ran against a different database than this connection points at.
-    await connection.ExecuteAsync(
-      new CommandDefinition(@"
-        CREATE TABLE IF NOT EXISTS wh_message_type_registry (
-            type_id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
-            clr_type_name VARCHAR(500) NOT NULL,
-            pinned_id UUID NULL,
-            kind VARCHAR(50) NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT uq_message_type_registry_clr_type_name UNIQUE (clr_type_name)
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS ix_message_type_registry_pinned_id
-            ON wh_message_type_registry (pinned_id)
-            WHERE pinned_id IS NOT NULL;",
+    var rows = await connection.QueryAsync<ReconcileRow>(
+      new CommandDefinition(
+        "SELECT action AS Action, pinned_id AS PinnedId, clr_type_name AS ClrTypeName, stored_clr_type_name AS StoredClrTypeName FROM reconcile_message_type_registry(@Entries::jsonb)",
+        new { Entries = _serializeEntries(entries) },
         cancellationToken: cancellationToken));
 
     var inserted = 0;
     var updated = 0;
     var drifted = 0;
-    var pinnedCount = 0;
-    var unpinnedCount = 0;
-
-    foreach (var entry in entries) {
-      cancellationToken.ThrowIfCancellationRequested();
-
-      if (entry.PinnedId is not null) {
-        pinnedCount++;
-        var existing = await connection.QueryFirstOrDefaultAsync<(Guid TypeId, string ClrTypeName)?>(
-          new CommandDefinition(
-            @"SELECT type_id AS TypeId, clr_type_name AS ClrTypeName
-              FROM wh_message_type_registry
-              WHERE pinned_id = @PinnedId::uuid",
-            new { PinnedId = entry.PinnedId },
-            cancellationToken: cancellationToken));
-
-        if (existing is null) {
-          var affected = await connection.ExecuteAsync(
-            new CommandDefinition(
-              @"INSERT INTO wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at)
-                VALUES (@ClrTypeName, @PinnedId::uuid, @Kind, NOW())
-                ON CONFLICT (clr_type_name) DO UPDATE
-                  SET pinned_id = EXCLUDED.pinned_id,
-                      kind = EXCLUDED.kind,
-                      updated_at = NOW()
-                  WHERE wh_message_type_registry.pinned_id IS NULL",
-              new { entry.ClrTypeName, entry.PinnedId, entry.Kind },
-              cancellationToken: cancellationToken));
-          if (affected == 1) {
-            inserted++;
-          }
-        } else if (string.Equals(existing.Value.ClrTypeName, entry.ClrTypeName, StringComparison.Ordinal)) {
-          await connection.ExecuteAsync(
-            new CommandDefinition(
-              @"UPDATE wh_message_type_registry
-                SET kind = @Kind, updated_at = NOW()
-                WHERE pinned_id = @PinnedId::uuid",
-              new { entry.Kind, entry.PinnedId },
-              cancellationToken: cancellationToken));
-          updated++;
-        } else {
+    foreach (var row in rows) {
+      switch (row.Action) {
+        case "inserted": inserted++; break;
+        case "updated": updated++; break;
+        case "drift_detected":
           drifted++;
           _logger?.LogWarning(
-            "Pinned id {PinnedId} is registered with clr_type_name '{StoredClrTypeName}' but current code has '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
-            entry.PinnedId,
-            existing.Value.ClrTypeName,
-            entry.ClrTypeName);
-        }
+            "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
+            row.StoredClrTypeName, row.ClrTypeName);
+          break;
+      }
+    }
+
+    var pinned = 0;
+    var unpinned = 0;
+    foreach (var e in entries) {
+      if (e.PinnedId is null) {
+        unpinned++;
       } else {
-        unpinnedCount++;
-        var affected = await connection.ExecuteAsync(
-          new CommandDefinition(
-            @"INSERT INTO wh_message_type_registry (clr_type_name, kind, updated_at)
-              VALUES (@ClrTypeName, @Kind, NOW())
-              ON CONFLICT (clr_type_name) DO UPDATE
-                SET kind = EXCLUDED.kind, updated_at = NOW()",
-            new { entry.ClrTypeName, entry.Kind },
-            cancellationToken: cancellationToken));
-        if (affected == 1) {
-          inserted++;
-        } else {
-          updated++;
-        }
+        pinned++;
       }
     }
 
     _logger?.LogInformation(
       "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
-      entries.Count, pinnedCount, unpinnedCount, inserted, updated, drifted);
+      entries.Count, pinned, unpinned, inserted, updated, drifted);
+  }
+
+  private sealed record ReconcileRow(string Action, Guid? PinnedId, string ClrTypeName, string? StoredClrTypeName);
+
+  private static string _serializeEntries(IReadOnlyList<MessageTypeCatalogEntry> entries) {
+    var sb = new StringBuilder("[");
+    for (var i = 0; i < entries.Count; i++) {
+      var e = entries[i];
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
+        .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
+        .Append(",\"Kind\":").Append(_jsonString(e.Kind))
+        .Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  private static string _jsonString(string? value) {
+    if (value is null) {
+      return "null";
+    }
+    var sb = new StringBuilder("\"");
+    foreach (var c in value) {
+      switch (c) {
+        case '"': sb.Append("\\\""); break;
+        case '\\': sb.Append("\\\\"); break;
+        case '\b': sb.Append("\\b"); break;
+        case '\f': sb.Append("\\f"); break;
+        case '\n': sb.Append("\\n"); break;
+        case '\r': sb.Append("\\r"); break;
+        case '\t': sb.Append("\\t"); break;
+        default:
+          if (c < 0x20) {
+            sb.AppendFormat(System.Globalization.CultureInfo.InvariantCulture, "\\u{0:X4}", (int)c);
+          } else {
+            sb.Append(c);
+          }
+          break;
+      }
+    }
+    sb.Append('"');
+    return sb.ToString();
   }
 }

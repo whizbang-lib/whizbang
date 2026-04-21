@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
@@ -7,14 +8,14 @@ using Whizbang.Core;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// EFCore/Npgsql implementation of <see cref="IMessageTypeRegistryPopulator"/> that reconciles
-/// <c>wh_message_type_registry</c> against the compile-time <see cref="IMessageTypeCatalog"/>
-/// using the Whizbang-wide <see cref="NpgsqlDataSource"/>.
+/// EFCore/Npgsql implementation of <see cref="IMessageTypeRegistryPopulator"/> that delegates to
+/// the <c>reconcile_message_type_registry</c> PL/pgSQL function (migration 040) via the shared
+/// <see cref="NpgsqlDataSource"/>.
 /// </summary>
 /// <remarks>
-/// Mirrors the semantics of the Dapper populator but uses raw Npgsql to avoid pulling a Dapper
-/// dependency into the EFCore package. Pinned types upsert by pinned_id and log a warning on
-/// drift; unpinned types upsert by clr_type_name.
+/// The turnkey <c>EnsureWhizbangDatabaseInitializedAsync</c> path calls the same SQL function
+/// directly against each DbContext's connection. This DI-registered populator exists for
+/// explicit invocation (admin commands, tooling) — it is not auto-run.
 /// </remarks>
 /// <docs>core-concepts/pinned-identity</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Populator runs once at startup; structured logging cost is negligible.")]
@@ -45,120 +46,86 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     }
 
     await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-
-    // Self-bootstrap: ensure the registry table exists on this connection before upserting.
-    // PostgresSchemaBuilder + migration 039 both create this table, but consumer apps with
-    // multiple DbContexts may run the populator against an NpgsqlDataSource whose database
-    // wasn't initialized via the turnkey EFCore init. CREATE TABLE IF NOT EXISTS is idempotent
-    // and keeps the populator working in that shape without special-casing it.
-    await _ensureTableAsync(connection, cancellationToken);
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT * FROM reconcile_message_type_registry(@p_entries::JSONB)";
+    command.Parameters.Add(new NpgsqlParameter("p_entries", NpgsqlDbType.Jsonb) { Value = _serializeEntries(entries) });
 
     var inserted = 0;
     var updated = 0;
     var drifted = 0;
-    var pinnedCount = 0;
-    var unpinnedCount = 0;
-
-    foreach (var entry in entries) {
-      cancellationToken.ThrowIfCancellationRequested();
-
-      if (entry.PinnedId is not null) {
-        pinnedCount++;
-        var (existingClrTypeName, exists) = await _lookupByPinnedIdAsync(connection, entry.PinnedId, cancellationToken);
-
-        if (!exists) {
-          var affected = await _upsertPinnedNewAsync(connection, entry, cancellationToken);
-          if (affected == 1) { inserted++; } else { updated++; }
-        } else if (string.Equals(existingClrTypeName, entry.ClrTypeName, StringComparison.Ordinal)) {
-          await _touchPinnedAsync(connection, entry, cancellationToken);
-          updated++;
-        } else {
-          drifted++;
-          _logger?.LogWarning(
-            "Pinned id {PinnedId} is registered with clr_type_name '{StoredClrTypeName}' but current code has '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
-            entry.PinnedId, existingClrTypeName, entry.ClrTypeName);
+    await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) {
+      while (await reader.ReadAsync(cancellationToken)) {
+        var action = reader.GetString(0);
+        var currentClr = reader.GetString(2);
+        var storedClr = reader.IsDBNull(3) ? null : reader.GetString(3);
+        switch (action) {
+          case "inserted": inserted++; break;
+          case "updated": updated++; break;
+          case "drift_detected":
+            drifted++;
+            _logger?.LogWarning(
+              "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
+              storedClr, currentClr);
+            break;
         }
+      }
+    }
+
+    var pinned = 0;
+    var unpinned = 0;
+    foreach (var e in entries) {
+      if (e.PinnedId is null) {
+        unpinned++;
       } else {
-        unpinnedCount++;
-        var affected = await _upsertUnpinnedAsync(connection, entry, cancellationToken);
-        if (affected == 1) { inserted++; } else { updated++; }
+        pinned++;
       }
     }
 
     _logger?.LogInformation(
       "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
-      entries.Count, pinnedCount, unpinnedCount, inserted, updated, drifted);
+      entries.Count, pinned, unpinned, inserted, updated, drifted);
   }
 
-  private static async Task _ensureTableAsync(NpgsqlConnection connection, CancellationToken ct) {
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
-      CREATE TABLE IF NOT EXISTS wh_message_type_registry (
-          type_id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
-          clr_type_name VARCHAR(500) NOT NULL,
-          pinned_id UUID NULL,
-          kind VARCHAR(50) NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CONSTRAINT uq_message_type_registry_clr_type_name UNIQUE (clr_type_name)
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS ix_message_type_registry_pinned_id
-          ON wh_message_type_registry (pinned_id)
-          WHERE pinned_id IS NOT NULL;";
-    await cmd.ExecuteNonQueryAsync(ct);
-  }
-
-  private static async Task<(string? ClrTypeName, bool Exists)> _lookupByPinnedIdAsync(
-      NpgsqlConnection connection, string pinnedId, CancellationToken ct) {
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = "SELECT clr_type_name FROM wh_message_type_registry WHERE pinned_id = @pinnedId::uuid";
-    cmd.Parameters.Add(new NpgsqlParameter("pinnedId", NpgsqlDbType.Text) { Value = pinnedId });
-
-    await using var reader = await cmd.ExecuteReaderAsync(ct);
-    if (await reader.ReadAsync(ct)) {
-      return (reader.GetString(0), true);
+  private static string _serializeEntries(IReadOnlyList<MessageTypeCatalogEntry> entries) {
+    var sb = new StringBuilder("[");
+    for (var i = 0; i < entries.Count; i++) {
+      var e = entries[i];
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
+        .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
+        .Append(",\"Kind\":").Append(_jsonString(e.Kind))
+        .Append('}');
     }
-    return (null, false);
+    sb.Append(']');
+    return sb.ToString();
   }
 
-  private static async Task<int> _upsertPinnedNewAsync(
-      NpgsqlConnection connection, MessageTypeCatalogEntry entry, CancellationToken ct) {
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
-      INSERT INTO wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at)
-      VALUES (@clr, @pid::uuid, @kind, NOW())
-      ON CONFLICT (clr_type_name) DO UPDATE
-        SET pinned_id = EXCLUDED.pinned_id,
-            kind = EXCLUDED.kind,
-            updated_at = NOW()
-        WHERE wh_message_type_registry.pinned_id IS NULL";
-    cmd.Parameters.Add(new NpgsqlParameter("clr", NpgsqlDbType.Text) { Value = entry.ClrTypeName });
-    cmd.Parameters.Add(new NpgsqlParameter("pid", NpgsqlDbType.Text) { Value = entry.PinnedId! });
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Text) { Value = entry.Kind });
-    return await cmd.ExecuteNonQueryAsync(ct);
-  }
-
-  private static async Task _touchPinnedAsync(
-      NpgsqlConnection connection, MessageTypeCatalogEntry entry, CancellationToken ct) {
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
-      UPDATE wh_message_type_registry
-      SET kind = @kind, updated_at = NOW()
-      WHERE pinned_id = @pid::uuid";
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Text) { Value = entry.Kind });
-    cmd.Parameters.Add(new NpgsqlParameter("pid", NpgsqlDbType.Text) { Value = entry.PinnedId! });
-    await cmd.ExecuteNonQueryAsync(ct);
-  }
-
-  private static async Task<int> _upsertUnpinnedAsync(
-      NpgsqlConnection connection, MessageTypeCatalogEntry entry, CancellationToken ct) {
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
-      INSERT INTO wh_message_type_registry (clr_type_name, kind, updated_at)
-      VALUES (@clr, @kind, NOW())
-      ON CONFLICT (clr_type_name) DO UPDATE
-        SET kind = EXCLUDED.kind, updated_at = NOW()";
-    cmd.Parameters.Add(new NpgsqlParameter("clr", NpgsqlDbType.Text) { Value = entry.ClrTypeName });
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Text) { Value = entry.Kind });
-    return await cmd.ExecuteNonQueryAsync(ct);
+  private static string _jsonString(string? value) {
+    if (value is null) {
+      return "null";
+    }
+    var sb = new StringBuilder("\"");
+    foreach (var c in value) {
+      switch (c) {
+        case '"': sb.Append("\\\""); break;
+        case '\\': sb.Append("\\\\"); break;
+        case '\b': sb.Append("\\b"); break;
+        case '\f': sb.Append("\\f"); break;
+        case '\n': sb.Append("\\n"); break;
+        case '\r': sb.Append("\\r"); break;
+        case '\t': sb.Append("\\t"); break;
+        default:
+          if (c < 0x20) {
+            sb.AppendFormat(System.Globalization.CultureInfo.InvariantCulture, "\\u{0:X4}", (int)c);
+          } else {
+            sb.Append(c);
+          }
+          break;
+      }
+    }
+    sb.Append('"');
+    return sb.ToString();
   }
 }
