@@ -827,10 +827,17 @@ public partial class PerspectiveWorker(
       typeNameCache.TryAdd(type, TypeNameFormatter.Format(type));
     }
 
-    // 4. Group typed events by streamId
+    // 4. Group typed events by streamId — and dedupe by MessageId.
+    // get_stream_events joins perspective_events × event_store, so the same event can appear
+    // multiple times (one row per queued perspective_events entry). Feeding those duplicates
+    // downstream causes the generated runner's ApplyEvent to fire once per envelope, which is
+    // where the Apply-exactly-once contract breaks. DistinctBy(MessageId) collapses the
+    // duplicates before any Apply dispatch or lifecycle-coordinator tracking.
+    // The raw rows are preserved separately in rawByEventId below so every queued EventWorkId
+    // still receives its own completion write.
     var eventsByStream = typedEvents
       .GroupBy(e => rawEvents.First(r => r.EventId == e.MessageId.Value).StreamId)
-      .ToDictionary(g => g.Key, g => g.ToList());
+      .ToDictionary(g => g.Key, g => g.DistinctBy(e => e.MessageId.Value).ToList());
 
     // Build a lookup from raw event ID → StreamEventData list for work IDs (needed for completion).
     // The same event can appear multiple times when multiple perspectives reference it
