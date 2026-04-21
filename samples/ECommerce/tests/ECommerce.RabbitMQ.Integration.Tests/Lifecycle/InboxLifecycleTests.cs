@@ -325,13 +325,29 @@ public class InboxLifecycleTests {
       // Wait for all stages to complete (with timeout).
       // CI runners (especially under parallel test-suite load) see cold RabbitMQ
       // container startup + fixture init + message publish+receive eat into the
-      // deadline. 60s is well above normal (~2–3s locally) but still bounded.
-      await Task.WhenAll(
-        preInlineCompletion.Task,
-        preAsyncCompletion.Task,
-        postAsyncCompletion.Task,
-        postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(120));
+      // deadline. 120s is well above normal (~2–3s locally) but still bounded.
+      // On timeout, report WHICH stage(s) didn't fire so future failures are diagnosable.
+      try {
+        await Task.WhenAll(
+          preInlineCompletion.Task,
+          preAsyncCompletion.Task,
+          postAsyncCompletion.Task,
+          postInlineCompletion.Task
+        ).WaitAsync(TimeSpan.FromSeconds(120));
+      } catch (TimeoutException) {
+        var missing = new List<string>();
+        if (!preInlineCompletion.Task.IsCompleted) missing.Add("PreInboxInline");
+        if (!preAsyncCompletion.Task.IsCompleted) missing.Add("PreInboxDetached");
+        if (!postAsyncCompletion.Task.IsCompleted) missing.Add("PostInboxDetached");
+        if (!postInlineCompletion.Task.IsCompleted) missing.Add("PostInboxInline");
+        throw new TimeoutException(
+          $"Inbox lifecycle stages did not all fire within 120s. " +
+          $"Missing stages: [{string.Join(", ", missing)}]. " +
+          $"Fired: PreInboxInline={preInlineReceptor.InvocationCount}, " +
+          $"PreInboxDetached={preAsyncReceptor.InvocationCount}, " +
+          $"PostInboxDetached={postAsyncReceptor.InvocationCount}, " +
+          $"PostInboxInline={postInlineReceptor.InvocationCount}.");
+      }
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
