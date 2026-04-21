@@ -392,6 +392,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Disable auto-provisioning since emulator has pre-created topics via Config-Named.json
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
       opts.AutoProvisionInfrastructure = false;
+      // Emulator config declares RequiresSession=false on every subscription; match that here.
+      // With the default EnableSessions=true, the consumer would open a sessionful receiver and
+      // the emulator would reject it with "sessionful receiver on an entity that does not require sessions".
+      opts.EnableSessions = false;
     });
 
     // Register OrderedStreamProcessor for message ordering (required by ServiceBusConsumerWorker)
@@ -590,6 +594,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Disable auto-provisioning since emulator has pre-created topics via Config-Named.json
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
       opts.AutoProvisionInfrastructure = false;
+      // Emulator config declares RequiresSession=false on every subscription; match that here.
+      // With the default EnableSessions=true, the consumer would open a sessionful receiver and
+      // the emulator would reject it with "sessionful receiver on an entity that does not require sessions".
+      opts.EnableSessions = false;
     });
 
     // Add trace store for observability

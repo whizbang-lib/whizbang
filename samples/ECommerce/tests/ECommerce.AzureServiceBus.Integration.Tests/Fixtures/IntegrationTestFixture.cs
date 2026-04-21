@@ -139,7 +139,10 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     });
 
     // Register Azure Service Bus transport
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    // EnableSessions=false matches the emulator config (RequiresSession=false).
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -221,7 +224,10 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     });
 
     // Register Azure Service Bus transport
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    // EnableSessions=false matches the emulator config (RequiresSession=false).
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, opts => {
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
