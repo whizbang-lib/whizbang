@@ -142,6 +142,7 @@ public record PerspectiveRewindCompleted(
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+[PinnedId("e3accb0d-aecb-4b54-9bb5-945d5adf844b")]
 public record StreamRewindStarted(
     [property: StreamId] Guid StreamId,
     string[] PerspectiveNames,
@@ -161,6 +162,7 @@ public record StreamRewindStarted(
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+[PinnedId("2a4f496c-acee-4dcf-b336-1b0ba1858238")]
 public record StreamRewindCompleted(
     [property: StreamId] Guid StreamId,
     string[] PerspectiveNames,
