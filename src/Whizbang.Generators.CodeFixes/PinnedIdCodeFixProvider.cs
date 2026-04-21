@@ -8,6 +8,8 @@ using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Formatting;
+using Microsoft.CodeAnalysis.Simplification;
 
 namespace Whizbang.Generators.CodeFixes;
 
@@ -30,8 +32,8 @@ namespace Whizbang.Generators.CodeFixes;
 public class PinnedIdCodeFixProvider : CodeFixProvider {
   private const string WHIZ110 = "WHIZ110";
   private const string WHIZ111 = "WHIZ111";
-  private const string PINNED_ID_ATTRIBUTE_SHORT_NAME = "PinnedId";
   private const string PINNED_ID_ATTRIBUTE_NAMESPACE = "Whizbang.Core.Attributes";
+  private const string PINNED_ID_ATTRIBUTE_FQN = "global::Whizbang.Core.Attributes.PinnedId";
 
   /// <inheritdoc/>
   public override ImmutableArray<string> FixableDiagnosticIds => [WHIZ110, WHIZ111];
@@ -68,33 +70,38 @@ public class PinnedIdCodeFixProvider : CodeFixProvider {
       TypeDeclarationSyntax typeDeclaration,
       CancellationToken cancellationToken) {
 
-    var guid = System.Guid.NewGuid().ToString();
-
-    var attributeArgument = SyntaxFactory.AttributeArgument(
-      SyntaxFactory.LiteralExpression(
-        SyntaxKind.StringLiteralExpression,
-        SyntaxFactory.Literal(guid)));
-
-    var attribute = SyntaxFactory.Attribute(
-      SyntaxFactory.IdentifierName(PINNED_ID_ATTRIBUTE_SHORT_NAME),
-      SyntaxFactory.AttributeArgumentList(
-        SyntaxFactory.SingletonSeparatedList(attributeArgument)));
-
-    var attributeList = SyntaxFactory.AttributeList(
-      SyntaxFactory.SingletonSeparatedList(attribute));
-
-    var newTypeDeclaration = typeDeclaration.AddAttributeLists(attributeList);
-
     var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
     if (root is null) {
       return document;
     }
 
+    var guid = System.Guid.NewGuid().ToString();
+
+    // Use the fully-qualified name + Simplifier.Annotation so Roslyn collapses it to "PinnedId"
+    // after the using directive is added. Avoids a transient "unresolved PinnedId" state that
+    // can make VS Code reject the change with "Sorry, your request failed".
+    var attributeName = SyntaxFactory.ParseName(PINNED_ID_ATTRIBUTE_FQN)
+      .WithAdditionalAnnotations(Simplifier.Annotation);
+
+    var attribute = SyntaxFactory.Attribute(
+      attributeName,
+      SyntaxFactory.AttributeArgumentList(
+        SyntaxFactory.SingletonSeparatedList(
+          SyntaxFactory.AttributeArgument(
+            SyntaxFactory.LiteralExpression(
+              SyntaxKind.StringLiteralExpression,
+              SyntaxFactory.Literal(guid))))));
+
+    var attributeList = SyntaxFactory.AttributeList(
+      SyntaxFactory.SingletonSeparatedList(attribute))
+      .WithAdditionalAnnotations(Formatter.Annotation);
+
+    var newTypeDeclaration = typeDeclaration.AddAttributeLists(attributeList);
     var newRoot = root.ReplaceNode(typeDeclaration, newTypeDeclaration);
 
     if (newRoot is CompilationUnitSyntax compilationUnit && !_hasUsing(compilationUnit, PINNED_ID_ATTRIBUTE_NAMESPACE)) {
       var usingDirective = SyntaxFactory.UsingDirective(SyntaxFactory.ParseName(PINNED_ID_ATTRIBUTE_NAMESPACE))
-        .WithTrailingTrivia(SyntaxFactory.LineFeed);
+        .WithAdditionalAnnotations(Formatter.Annotation);
       newRoot = compilationUnit.AddUsings(usingDirective);
     }
 
