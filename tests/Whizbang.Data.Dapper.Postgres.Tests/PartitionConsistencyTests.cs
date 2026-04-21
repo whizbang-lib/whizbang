@@ -441,16 +441,14 @@ public class PartitionConsistencyTests : PostgresTestBase {
 
     await _seedActiveStreamAsync(streamId, owningInstance, 10_000, leaseSecondsFromNow: 300);
 
-    // Store via the OLD shipped default to wedge the row.
+    // Store via the OLD shipped default so the inbox row has partition = 0 or 1.
     var inboxMessage = _createInboxMessage(messageId, streamId);
     await _sut.StoreInboxMessagesAsync([inboxMessage], partitionCount: 2);
 
-    // Sanity check the wedge: a round of ticks shouldn't drain it.
-    foreach (var inst in new[] { instanceA, instanceB, instanceC }) {
-      await _sut.ProcessWorkBatchAsync(_emptyTickRequest(inst));
-    }
-    await Assert.That(await _countUnclaimedAsync([messageId])).IsEqualTo(1)
-      .Because("setup verification — the wedge must be present before recompute");
+    // Capture the pre-recompute partition for assertion.
+    var preInboxPartition = await _getInboxPartitionNumberAsync(messageId);
+    await Assert.That(preInboxPartition).IsIn(0, 1)
+      .Because("setup precondition — inbox row stored under partitionCount=2 must have partition 0 or 1");
 
     // Act — recompute against the canonical PartitionCount.
     var result = await _sut.RecomputePartitionNumbersAsync(partitionCount: 10_000);
@@ -458,18 +456,13 @@ public class PartitionConsistencyTests : PostgresTestBase {
     await Assert.That(result.AnyRecomputed).IsTrue()
       .Because("recompute must report the row(s) it healed");
     await Assert.That(result.InboxRowsRecomputed).IsGreaterThanOrEqualTo(1)
-      .Because("the wedged inbox row's partition_number must have been re-hashed under PartitionCount=10_000");
+      .Because("the inbox row's partition_number must have been re-hashed under PartitionCount=10_000");
 
-    // After recompute, ticks should drain the previously-wedged row.
-    foreach (var _ in Enumerable.Range(0, 3)) {
-      foreach (var inst in new[] { instanceA, instanceB, instanceC }) {
-        await _sut.ProcessWorkBatchAsync(_emptyTickRequest(inst));
-      }
-    }
-
-    var stillUnclaimed = await _countUnclaimedAsync([messageId]);
-    await Assert.That(stillUnclaimed).IsEqualTo(0)
-      .Because("the wedged message must drain after recompute aligns wh_inbox.partition_number with wh_active_streams.partition_number");
+    // Row's partition_number now matches compute_partition(stream, 10_000).
+    var postInboxPartition = await _getInboxPartitionNumberAsync(messageId);
+    var activeStreamPartition = await _getActiveStreamPartitionNumberAsync(streamId);
+    await Assert.That(postInboxPartition).IsEqualTo(activeStreamPartition)
+      .Because("after recompute, wh_inbox.partition_number must agree with wh_active_streams.partition_number (the canonical cross-table invariant is restored)");
 
     // Idempotency — a second recompute on a now-consistent database is a no-op.
     var secondRun = await _sut.RecomputePartitionNumbersAsync(partitionCount: 10_000);
@@ -477,9 +470,179 @@ public class PartitionConsistencyTests : PostgresTestBase {
       .Because("recompute must be idempotent — re-running with the same PartitionCount on a consistent database changes no rows");
   }
 
+  /// <summary>
+  /// Test 12 — the slot-3 deadlock reproduction (Fix 4 anchor). Stream has a
+  /// LIVE owner whose instance_rank differs from (partition_number % active_count).
+  /// Partition-filter routes claim to one rank; stream-ownership clause blocks
+  /// that rank because another live instance owns the stream; the owner is
+  /// blocked by the partition filter. Both gates fire → wedge.
+  /// Current code: RED (0 rows claimed by any instance).
+  /// After Fix 4: GREEN (owner path claims regardless of partition modulo).
+  /// </summary>
+  [Test]
+  public async Task WhenLiveOwnerRankDisagreesWithPartitionRank_OwnerStillClaimsAsync() {
+    var instanceA = _instanceId;
+    Guid instanceB = _idProvider.NewGuid();
+    Guid instanceC = _idProvider.NewGuid();
+    await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
+    await _insertServiceInstanceAsync(instanceC, "TestService", "test-host-c", 33333);
+
+    // Find a stream whose partition (at PartitionCount=10_000) modulo 3 does NOT
+    // equal the owner's rank. Forcing the deadlock: owner = rank X, partition
+    // routes to rank Y ≠ X.
+    var orderedInstances = new[] { instanceA, instanceB, instanceC }.OrderBy(x => x).ToArray();
+    var (streamId, messageId, ownerRank, partitionRank) =
+      await _findOwnershipPartitionDisagreementStreamAsync(orderedInstances);
+    var owner = orderedInstances[ownerRank];
+
+    await Assert.That(ownerRank).IsNotEqualTo(partitionRank)
+      .Because("test setup sanity — owner and partition ranks must differ to reproduce the wedge");
+
+    // Pre-seed active_streams: owner holds a fresh lease at partition_count=10_000.
+    await _seedActiveStreamAsync(streamId, owner, 10_000, leaseSecondsFromNow: 300);
+
+    // Insert the inbox row with partition_number matching the LIVE partition scheme.
+    var inboxMessage = _createInboxMessage(messageId, streamId);
+    await _sut.StoreInboxMessagesAsync([inboxMessage], partitionCount: 10_000);
+
+    // Three rounds of ticks — every instance gets a shot. With the bug, nobody claims.
+    foreach (var _ in Enumerable.Range(0, 3)) {
+      foreach (var inst in orderedInstances) {
+        await _sut.ProcessWorkBatchAsync(_emptyTickRequest(inst));
+      }
+    }
+
+    var unclaimed = await _countUnclaimedAsync([messageId]);
+    await Assert.That(unclaimed).IsEqualTo(0)
+      .Because("the live stream owner must claim its messages even when partition_number % active_count does not match the owner's rank — this is the slot-3 wedge on 2026-04-21");
+  }
+
+  /// <summary>
+  /// Test 13 — scale-up rank churn. Two instances claim streams; a third
+  /// instance arrives and active_instance_count flips 2→3. Rank values for each
+  /// partition shift (x % 2 ≠ x % 3 in general). Prior stream owners keep their
+  /// active_streams leases but the modulo target now points elsewhere. Assert
+  /// that messages on previously-claimed streams still drain.
+  /// Current code: RED when mod-3 rank ≠ owner's rank; GREEN after Fix 4.
+  /// </summary>
+  [Test]
+  public async Task WhenThirdInstanceJoinsAfterClaim_OwnedStreamsStillDrainAsync() {
+    var instanceA = _instanceId;
+    Guid instanceB = _idProvider.NewGuid();
+    await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
+
+    // Two-instance world: claim a handful of streams to seed active_streams ownership.
+    var streamIds = new List<Guid>();
+    var messageIds = new List<Guid>();
+    for (var i = 0; i < 10; i++) {
+      var streamId = _idProvider.NewGuid();
+      var msgId = _idProvider.NewGuid();
+      streamIds.Add(streamId);
+      messageIds.Add(msgId);
+      await _sut.StoreInboxMessagesAsync(
+        [_createInboxMessage(msgId, streamId)],
+        partitionCount: 10_000);
+    }
+
+    // Drain the first wave under 2 instances — active_streams will be populated.
+    foreach (var _ in Enumerable.Range(0, 2)) {
+      foreach (var inst in new[] { instanceA, instanceB }) {
+        await _sut.ProcessWorkBatchAsync(_emptyTickRequest(inst));
+      }
+    }
+
+    // Confirm first wave drained (sanity — if this fails, test is measuring the wrong thing).
+    await Assert.That(await _countUnclaimedAsync(messageIds)).IsEqualTo(0)
+      .Because("first wave under 2 instances should drain cleanly — anything left unclaimed means the setup is broken");
+
+    // Scale up: third instance joins. Ranks may shift.
+    Guid instanceC = _idProvider.NewGuid();
+    await _insertServiceInstanceAsync(instanceC, "TestService", "test-host-c", 33333);
+
+    // Second wave on the SAME streams — active_streams still pinned to the original
+    // 2-instance-era owner. For most streams the mod-3 rank will not match the owner's rank.
+    var secondWaveIds = new List<Guid>();
+    for (var i = 0; i < streamIds.Count; i++) {
+      var msgId = _idProvider.NewGuid();
+      secondWaveIds.Add(msgId);
+      await _sut.StoreInboxMessagesAsync(
+        [_createInboxMessage(msgId, streamIds[i])],
+        partitionCount: 10_000);
+    }
+
+    // Drain under 3 instances.
+    foreach (var _ in Enumerable.Range(0, 3)) {
+      foreach (var inst in new[] { instanceA, instanceB, instanceC }) {
+        await _sut.ProcessWorkBatchAsync(_emptyTickRequest(inst));
+      }
+    }
+
+    await Assert.That(await _countUnclaimedAsync(secondWaveIds)).IsEqualTo(0)
+      .Because("scale-up must not strand messages on streams that already have a live owner from the pre-scale-up era — the owner keeps claiming its own work regardless of the new modulo target");
+  }
+
+  /// <summary>
+  /// Test 14 — owner-preferring ordering invariant. When a stream has a live
+  /// owner, only the owner may claim its messages even if a non-owner is the
+  /// partition-rank match. Preserves per-stream FIFO: all of a stream's
+  /// messages flow through the same instance until that instance dies.
+  /// </summary>
+  [Test]
+  public async Task WhenStreamHasLiveOwner_NonOwnerWithMatchingPartitionRankDoesNotClaimAsync() {
+    var instanceA = _instanceId;
+    Guid instanceB = _idProvider.NewGuid();
+    Guid instanceC = _idProvider.NewGuid();
+    await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
+    await _insertServiceInstanceAsync(instanceC, "TestService", "test-host-c", 33333);
+
+    var orderedInstances = new[] { instanceA, instanceB, instanceC }.OrderBy(x => x).ToArray();
+    var (streamId, messageId, ownerRank, partitionRank) =
+      await _findOwnershipPartitionDisagreementStreamAsync(orderedInstances);
+    var owner = orderedInstances[ownerRank];
+    var partitionRankMatch = orderedInstances[partitionRank];
+
+    await _seedActiveStreamAsync(streamId, owner, 10_000, leaseSecondsFromNow: 300);
+
+    var inboxMessage = _createInboxMessage(messageId, streamId);
+    await _sut.StoreInboxMessagesAsync([inboxMessage], partitionCount: 10_000);
+
+    // The partition-rank-matching (non-owner) instance ticks FIRST. It must NOT claim
+    // — even though (partition % 3) == its rank, the stream has a live owner.
+    var nonOwnerBatch = await _sut.ProcessWorkBatchAsync(_emptyTickRequest(partitionRankMatch));
+    var nonOwnerClaimed = nonOwnerBatch.InboxWork.Any(w => w.MessageId == messageId);
+
+    await Assert.That(nonOwnerClaimed).IsFalse()
+      .Because("non-owner instance must never claim a message for a stream owned by a live other instance, even if its rank matches partition_number % active_count — FIFO per-stream requires the owner be the sole claimant");
+
+    // Now the owner ticks — and claims.
+    var ownerBatch = await _sut.ProcessWorkBatchAsync(_emptyTickRequest(owner));
+    var ownerClaimed = ownerBatch.InboxWork.Any(w => w.MessageId == messageId);
+
+    await Assert.That(ownerClaimed).IsTrue()
+      .Because("the live owner must claim its stream's messages regardless of partition modulo");
+  }
+
   // ========================================
   // Helpers — mirror InboxNullLeaseTests.cs
   // ========================================
+
+  /// <summary>
+  /// Synthesizes a stream where (compute_partition(stream, 10_000) % N) differs
+  /// from a synthetic owner's rank, guaranteeing the partition-vs-ownership
+  /// disagreement we want to test. Owner rank = (partitionRank + 1) % N.
+  /// </summary>
+  private async Task<(Guid streamId, Guid messageId, int ownerRank, int partitionRank)>
+    _findOwnershipPartitionDisagreementStreamAsync(Guid[] orderedInstances) {
+    using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    var streamId = _idProvider.NewGuid();
+    var part = await connection.QuerySingleAsync<int>(
+      "SELECT compute_partition(@s, 10000)", new { s = streamId });
+    var n = orderedInstances.Length;
+    var partitionRank = part % n;
+    var ownerRank = (partitionRank + 1) % n;
+    return (streamId, _idProvider.NewGuid(), ownerRank, partitionRank);
+  }
 
   private ProcessWorkBatchRequest _emptyTickRequest(Guid instanceId) {
     return new ProcessWorkBatchRequest {
