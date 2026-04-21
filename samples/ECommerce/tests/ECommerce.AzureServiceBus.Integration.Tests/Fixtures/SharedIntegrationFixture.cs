@@ -957,7 +957,7 @@ internal class InboxDiagnosticResult {
   public string MessageType { get; set; } = string.Empty;
   public Guid StreamId { get; set; }
   public bool IsEvent { get; set; }
-  public string Status { get; set; } = string.Empty;
+  public int Status { get; set; }
   public DateTimeOffset ReceivedAt { get; set; }
 }
 
