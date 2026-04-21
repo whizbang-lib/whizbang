@@ -68,7 +68,7 @@ public class PinnedIdCodeFixProviderTests {
         }
         """;
 
-    var fixedSource = await _applyCodeFixAsync(source);
+    var fixedSource = await _applyCodeFixAsync(source, diagnosticId: "WHIZ111");
 
     await Assert.That(fixedSource).Contains("[PinnedId(\"");
     // Perspective should have the attribute
@@ -123,7 +123,7 @@ public class PinnedIdCodeFixProviderTests {
   }
 
   [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Document APIs need ad-hoc workspace setup.")]
-  private static async Task<string> _applyCodeFixAsync(string source) {
+  private static async Task<string> _applyCodeFixAsync(string source, string? diagnosticId = null) {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
     var references = new List<MetadataReference>();
@@ -147,7 +147,9 @@ public class PinnedIdCodeFixProviderTests {
     var analyzer = new PinnedIdAnalyzer();
     var compilationWithAnalyzers = compilation.WithAnalyzers([analyzer]);
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();
-    var targetDiagnostic = diagnostics.First(d => d.Id is "WHIZ110" or "WHIZ111");
+    var targetDiagnostic = diagnosticId is null
+      ? diagnostics.First(d => d.Id is "WHIZ110" or "WHIZ111")
+      : diagnostics.First(d => d.Id == diagnosticId);
 
     // Build an ad-hoc workspace + document so the code fix provider can operate.
     using var workspace = new AdhocWorkspace();
