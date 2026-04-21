@@ -1692,14 +1692,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("            .UseNpgsql(initDataSource)");
     sb.AppendLine("            .Options;");
     sb.AppendLine($"        await using var initDbContext = new {dbContext.FullyQualifiedName}(initOptions);");
-    sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, ct);");
+    sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, scope.ServiceProvider, ct);");
     sb.AppendLine("      } else {");
     sb.AppendLine($"        var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
     sb.AppendLine("        if (dbContext == null) {");
     sb.AppendLine($"          logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
     sb.AppendLine("          return;");
     sb.AppendLine("        }");
-    sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, ct);");
+    sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, scope.ServiceProvider, ct);");
     sb.AppendLine("      }");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();

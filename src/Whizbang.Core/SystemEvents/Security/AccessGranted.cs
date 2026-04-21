@@ -13,6 +13,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// <docs>fundamentals/events/system-events#access-granted</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
+[PinnedId("030f98d2-5ca7-4a54-bd9b-9d8463a92c1e")]
 public sealed record AccessGranted : ISystemEvent {
   /// <summary>
   /// Unique identifier for this event.

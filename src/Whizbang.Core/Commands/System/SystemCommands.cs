@@ -1,3 +1,5 @@
+using Whizbang.Core.Attributes;
+
 namespace Whizbang.Core.Commands.System;
 
 /// <summary>
@@ -27,6 +29,7 @@ namespace Whizbang.Core.Commands.System;
 /// <param name="ExcludeStreamIds">Optional: exclude these streams from rebuild. Null = no exclusions.</param>
 /// <param name="FromEventId">Optional: start replaying from this event ID. Null = from beginning.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
+[PinnedId("69430ea4-edbe-4a5f-890d-cd25cfe66766")]
 public record RebuildPerspectiveCommand(
     string[]? PerspectiveNames = null,
     Perspectives.RebuildMode Mode = Perspectives.RebuildMode.BlueGreen,
@@ -40,6 +43,7 @@ public record RebuildPerspectiveCommand(
 /// </summary>
 /// <param name="PerspectiveName">Name of the perspective whose rebuild should be cancelled.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
+[PinnedId("5b8636e8-5c28-4520-8013-bf1e95b7f783")]
 public record CancelPerspectiveRebuildCommand(
     string PerspectiveName
 ) : ICommand;
@@ -50,6 +54,7 @@ public record CancelPerspectiveRebuildCommand(
 /// <param name="CacheKey">Optional specific cache key to clear. If null, clears all caches.</param>
 /// <param name="CacheRegion">Optional cache region/namespace to target.</param>
 /// <docs>data/caching#clear-cache</docs>
+[PinnedId("db190b57-50ca-4748-9929-0f090dba9e28")]
 public record ClearCacheCommand(
     string? CacheKey = null,
     string? CacheRegion = null
@@ -61,6 +66,7 @@ public record ClearCacheCommand(
 /// <param name="Type">Type of diagnostics to collect.</param>
 /// <param name="CorrelationId">Optional correlation ID for tracking diagnostic responses.</param>
 /// <docs>operations/observability/diagnostics#system-diagnostics</docs>
+[PinnedId("48bd69ed-628a-4a04-b9fc-5fa6ecd13899")]
 public record DiagnosticsCommand(
     DiagnosticType Type,
     Guid? CorrelationId = null
@@ -103,6 +109,7 @@ public enum DiagnosticType {
 /// <param name="DurationSeconds">Optional duration in seconds after which processing resumes automatically.</param>
 /// <param name="Reason">Reason for pausing (for logging/audit).</param>
 /// <docs>fundamentals/lifecycle/lifecycle#pause-resume</docs>
+[PinnedId("7475daa0-8b26-40fe-af25-215ac42e2526")]
 public record PauseProcessingCommand(
     int? DurationSeconds = null,
     string? Reason = null
@@ -113,6 +120,7 @@ public record PauseProcessingCommand(
 /// </summary>
 /// <param name="Reason">Reason for resuming (for logging/audit).</param>
 /// <docs>fundamentals/lifecycle/lifecycle#pause-resume</docs>
+[PinnedId("c50126f7-aa4f-4cb8-b46f-36f589e0c36b")]
 public record ResumeProcessingCommand(
     string? Reason = null
 ) : ICommand;

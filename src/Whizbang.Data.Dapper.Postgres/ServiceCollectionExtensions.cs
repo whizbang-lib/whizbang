@@ -148,6 +148,14 @@ public static class ServiceCollectionExtensions {
 
     services.DecorateEventStoreWithSyncTracking();
 
+    // Message type registry populator — reconciles wh_message_type_registry at startup
+    // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
+    services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
+
+    // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
+    // Resolved explicitly (admin command / migration), not run automatically.
+    services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
     // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
     // still update projection tables but wh_perspective_cursors would stay at whatever live
     // processing last wrote. See IPerspectiveCheckpointCompleter.
@@ -155,6 +163,20 @@ public static class ServiceCollectionExtensions {
       new DapperPostgresPerspectiveCheckpointCompleter(
         connectionString,
         sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
+
+    // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
+    // Runs only when the schema was just initialized here (we know the table exists) and
+    // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
+    if (initializeSchema) {
+      using var populatorProvider = services.BuildServiceProvider();
+      var catalog = populatorProvider.GetService<IMessageTypeCatalog>();
+      if (catalog is not null) {
+        var populator = populatorProvider.GetRequiredService<IMessageTypeRegistryPopulator>();
+        populator.PopulateAsync().GetAwaiter().GetResult();
+      } else {
+        logger?.LogInformation("Skipping message type registry population — no IMessageTypeCatalog registered (did you call services.AddWhizbang() before AddWhizbangPostgres()?).");
+      }
+    }
 
     return services;
   }
@@ -264,6 +286,14 @@ public static class ServiceCollectionExtensions {
     // before they reach the database (cross-scope sync support)
     services.DecorateEventStoreWithSyncTracking();
 
+    // Message type registry populator — reconciles wh_message_type_registry at startup
+    // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
+    services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
+
+    // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
+    // Resolved explicitly (admin command / migration), not run automatically.
+    services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
     // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
     // still update projection tables but wh_perspective_cursors would stay at whatever live
     // processing last wrote. See IPerspectiveCheckpointCompleter.
@@ -271,6 +301,20 @@ public static class ServiceCollectionExtensions {
       new DapperPostgresPerspectiveCheckpointCompleter(
         connectionString,
         sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
+
+    // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
+    // Runs only when the schema was just initialized here (we know the table exists) and
+    // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
+    if (initializeSchema) {
+      using var populatorProvider = services.BuildServiceProvider();
+      var catalog = populatorProvider.GetService<IMessageTypeCatalog>();
+      if (catalog is not null) {
+        var populator = populatorProvider.GetRequiredService<IMessageTypeRegistryPopulator>();
+        populator.PopulateAsync().GetAwaiter().GetResult();
+      } else {
+        logger?.LogInformation("Skipping message type registry population — no IMessageTypeCatalog registered (did you call services.AddWhizbang() before AddWhizbangPostgres()?).");
+      }
+    }
 
     return services;
   }

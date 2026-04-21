@@ -20,6 +20,7 @@
   <ItemGroup>
     <!-- Reference to the generator projects we're testing -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators.CodeFixes/Whizbang.Generators.CodeFixes.csproj" />
     <!-- Shared library for testing shared utility types (use extern alias to avoid conflicts with ILRepack merged types) -->
     <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
       <Aliases>shared</Aliases>
