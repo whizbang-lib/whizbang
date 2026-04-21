@@ -21,6 +21,9 @@
 -- Drift semantics: when a pinned_id exists with a different clr_type_name than
 -- the code currently reports, the registry row is NOT overwritten. The caller
 -- logs a warning and the IEventTypeRenameTool handles reconciliation.
+--
+-- Column aliases inside the function use v_* / o_* prefixes to avoid PL/pgSQL
+-- variable-vs-column ambiguity errors (42702) against the table's column names.
 
 SELECT __SCHEMA__.drop_all_overloads('reconcile_message_type_registry');
 
@@ -28,41 +31,40 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.reconcile_message_type_registry(
   p_entries JSONB
 )
 RETURNS TABLE (
-  action VARCHAR,
-  pinned_id UUID,
-  clr_type_name VARCHAR,
-  stored_clr_type_name VARCHAR
+  o_action VARCHAR,
+  o_pinned_id UUID,
+  o_clr_type_name VARCHAR,
+  o_stored_clr_type_name VARCHAR
 ) AS $$
 DECLARE
-  v_entry RECORD;
-  v_existing RECORD;
+  v_clr VARCHAR;
+  v_pinned TEXT;
+  v_kind VARCHAR;
+  v_stored_clr VARCHAR;
   v_action VARCHAR;
-  v_stored_clr_type_name VARCHAR;
 BEGIN
-  FOR v_entry IN
+  FOR v_clr, v_pinned, v_kind IN
     SELECT
-      entry->>'ClrTypeName' AS clr_type_name,
-      NULLIF(entry->>'PinnedId', '') AS pinned_id_text,
-      entry->>'Kind' AS kind
+      entry->>'ClrTypeName',
+      NULLIF(entry->>'PinnedId', ''),
+      entry->>'Kind'
     FROM jsonb_array_elements(p_entries) AS entry
   LOOP
-    v_stored_clr_type_name := NULL;
+    v_stored_clr := NULL;
 
-    IF v_entry.pinned_id_text IS NOT NULL THEN
+    IF v_pinned IS NOT NULL THEN
       -- Pinned entry: lookup by pinned_id
       SELECT r.clr_type_name
-      INTO v_existing
+      INTO v_stored_clr
       FROM __SCHEMA__.wh_message_type_registry r
-      WHERE r.pinned_id = v_entry.pinned_id_text::uuid;
+      WHERE r.pinned_id = v_pinned::uuid;
 
       IF FOUND THEN
-        v_stored_clr_type_name := v_existing.clr_type_name;
-
-        IF v_existing.clr_type_name = v_entry.clr_type_name THEN
+        IF v_stored_clr = v_clr THEN
           -- Match: touch updated_at (and kind in case it changed)
-          UPDATE __SCHEMA__.wh_message_type_registry
-          SET kind = v_entry.kind, updated_at = NOW()
-          WHERE __SCHEMA__.wh_message_type_registry.pinned_id = v_entry.pinned_id_text::uuid;
+          UPDATE __SCHEMA__.wh_message_type_registry r
+          SET kind = v_kind, updated_at = NOW()
+          WHERE r.pinned_id = v_pinned::uuid;
           v_action := 'updated';
         ELSE
           -- Drift: do not overwrite
@@ -72,7 +74,7 @@ BEGIN
         -- No row for this pinned_id. Insert; handle conflict with an existing
         -- unpinned row that has the same clr_type_name by adopting it.
         INSERT INTO __SCHEMA__.wh_message_type_registry (clr_type_name, pinned_id, kind, updated_at)
-        VALUES (v_entry.clr_type_name, v_entry.pinned_id_text::uuid, v_entry.kind, NOW())
+        VALUES (v_clr, v_pinned::uuid, v_kind, NOW())
         ON CONFLICT (clr_type_name) DO UPDATE
           SET pinned_id = EXCLUDED.pinned_id,
               kind = EXCLUDED.kind,
@@ -83,17 +85,17 @@ BEGIN
     ELSE
       -- Unpinned entry: upsert by clr_type_name
       INSERT INTO __SCHEMA__.wh_message_type_registry (clr_type_name, kind, updated_at)
-      VALUES (v_entry.clr_type_name, v_entry.kind, NOW())
+      VALUES (v_clr, v_kind, NOW())
       ON CONFLICT (clr_type_name) DO UPDATE
         SET kind = EXCLUDED.kind, updated_at = NOW();
       v_action := 'inserted';
     END IF;
 
-    RETURN QUERY SELECT
-      v_action::VARCHAR,
-      CASE WHEN v_entry.pinned_id_text IS NULL THEN NULL::uuid ELSE v_entry.pinned_id_text::uuid END,
-      v_entry.clr_type_name::VARCHAR,
-      v_stored_clr_type_name::VARCHAR;
+    o_action := v_action::VARCHAR;
+    o_pinned_id := CASE WHEN v_pinned IS NULL THEN NULL::uuid ELSE v_pinned::uuid END;
+    o_clr_type_name := v_clr::VARCHAR;
+    o_stored_clr_type_name := v_stored_clr::VARCHAR;
+    RETURN NEXT;
   END LOOP;
 
   RETURN;
