@@ -13,6 +13,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// <docs>fundamentals/events/system-events#scope-context-established</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
+[PinnedId("8c5ce34e-8a74-4bb6-b56f-07e33fb8716c")]
 public sealed record ScopeContextEstablished : ISystemEvent {
   /// <summary>
   /// Unique identifier for this event.

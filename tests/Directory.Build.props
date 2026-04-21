@@ -6,5 +6,8 @@
     <!-- Temporarily suppress Guid usage analyzer warnings in test projects -->
     <!-- Remove after Phase 5 migration completes all usages -->
     <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
+    <!-- Suppress [PinnedId] enforcement in tests: test-only message/perspective types -->
+    <!-- (TestEvent, TestCommand, TestPerspective, etc.) are ephemeral fixtures, not stored data. -->
+    <NoWarn>$(NoWarn);WHIZ110;WHIZ111</NoWarn>
   </PropertyGroup>
 </Project>
