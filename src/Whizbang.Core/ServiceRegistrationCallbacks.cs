@@ -61,6 +61,12 @@ public static class ServiceRegistrationCallbacks {
   public static Action<IServiceCollection>? PinnedIdRegistry { get; set; }
 
   /// <summary>
+  /// Callback for registering the generated <see cref="IMessageTypeCatalog"/>.
+  /// Set by the MessageTypeCatalogGenerator's module initializer in the consumer assembly.
+  /// </summary>
+  public static Action<IServiceCollection>? MessageTypeCatalog { get; set; }
+
+  /// <summary>
   /// Invokes all registered service callbacks with the provided options.
   /// Called by <see cref="ServiceCollectionExtensions.AddWhizbang"/> to auto-register services.
   /// </summary>
@@ -72,6 +78,7 @@ public static class ServiceRegistrationCallbacks {
       PerspectiveServices?.Invoke(services, options);
       Dispatcher?.Invoke(services);
       PinnedIdRegistry?.Invoke(services);
+      MessageTypeCatalog?.Invoke(services);
     }
   }
 
@@ -84,6 +91,7 @@ public static class ServiceRegistrationCallbacks {
       PerspectiveServices = null;
       Dispatcher = null;
       PinnedIdRegistry = null;
+      MessageTypeCatalog = null;
     }
   }
 }
