@@ -41,7 +41,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.91.0-local.176</Version>
+    <Version>0.91.0-local.198</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -100,6 +100,13 @@
   <!-- CS1570/CS1573/CS1574/CS0419 are XML doc quality warnings that need separate cleanup -->
   <PropertyGroup>
     <NoWarn>$(NoWarn);CS1570;CS1573;CS1574;CS0419</NoWarn>
+  </PropertyGroup>
+
+  <!-- Pinned identity rollout: WHIZ110/WHIZ111 are warnings enforcing [PinnedId] on concrete -->
+  <!-- IMessage / IPerspectiveFor<> types. Suppressed here during the Whizbang-internal rollout -->
+  <!-- so downstream consumers still see the warnings. Remove once all internal types are tagged. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn)</NoWarn>
   </PropertyGroup>
 
   <!-- CS1591 enforcement: Whizbang.Core and Whizbang.Generators enforce XML docs on all public members -->

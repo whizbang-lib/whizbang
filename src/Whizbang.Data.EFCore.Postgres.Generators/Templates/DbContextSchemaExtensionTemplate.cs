@@ -11,7 +11,9 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 
@@ -45,11 +47,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
   /// <param name="initConnectionString">Optional direct PostgreSQL connection string (bypasses PgBouncer). Falls back to DbContext connection if null.</param>
+  /// <param name="serviceProvider">Optional service provider. When present, IMessageTypeCatalog is resolved and the message type registry is reconciled via reconcile_message_type_registry(). Skipped if null or catalog is not registered.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   public static async Task EnsureWhizbangDatabaseInitializedAsync(
     this __DBCONTEXT_FQN__ dbContext,
     ILogger? logger = null,
     string? initConnectionString = null,
+    IServiceProvider? serviceProvider = null,
     CancellationToken cancellationToken = default) {
 
     var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -264,9 +268,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             phaseSw.Restart();
             await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
             phases.Add(("Registry", phaseSw.ElapsedMilliseconds, "completed"));
+
+            // Step 7: Reconcile message type registry (pinned ids + CLR type names for all IMessage/IPerspectiveFor types)
+            logger?.LogDebug("Reconciling message type registry for {DbContext}...", "__DBCONTEXT_CLASS__");
+            phaseSw.Restart();
+            await ReconcileMessageTypeRegistryAsync(dbContext, serviceProvider, logger, cancellationToken);
+            phases.Add(("MessageTypeRegistry", phaseSw.ElapsedMilliseconds, "completed"));
           } else {
             phases.Add(("Associations", 0, "skipped (hash match)"));
             phases.Add(("Registry", 0, "skipped (hash match)"));
+            phases.Add(("MessageTypeRegistry", 0, "skipped (hash match)"));
           }
 
           // Commit transaction — this automatically releases the advisory lock
@@ -1060,6 +1071,137 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       logger?.LogWarning(ex, "Failed to reconcile perspective registry (function may not exist yet)");
       // Don't throw - registry reconciliation is informational, not critical
     }
+  }
+
+  /// <summary>
+  /// Reconciles the message type registry (wh_message_type_registry) by calling the
+  /// reconcile_message_type_registry() SQL function with the compile-time IMessageTypeCatalog.
+  /// Runs on the DbContext's connection so migration 039 (which creates the table) and this
+  /// reconciliation hit the same database.
+  /// </summary>
+  private static async Task ReconcileMessageTypeRegistryAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    IServiceProvider? serviceProvider,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    if (serviceProvider is null) {
+      return;
+    }
+
+    var catalog = (IMessageTypeCatalog?)serviceProvider.GetService(typeof(IMessageTypeCatalog));
+    if (catalog is null) {
+      logger?.LogDebug("IMessageTypeCatalog not registered — skipping message type registry reconciliation");
+      return;
+    }
+
+    var entries = catalog.GetAll();
+    if (entries.Count == 0) {
+      logger?.LogDebug("Message type catalog is empty — skipping registry reconciliation");
+      return;
+    }
+
+    // Build JSON array manually (AOT-safe — no JsonSerializer reflection).
+    var json = new System.Text.StringBuilder("[");
+    for (int i = 0; i < entries.Count; i++) {
+      var e = entries[i];
+      if (i > 0) {
+        json.Append(',');
+      }
+      json.Append("{\"ClrTypeName\":").Append(_jsonString(e.ClrTypeName))
+          .Append(",\"PinnedId\":").Append(e.PinnedId is null ? "null" : _jsonString(e.PinnedId))
+          .Append(",\"Kind\":").Append(_jsonString(e.Kind))
+          .Append('}');
+    }
+    json.Append(']');
+
+    try {
+      var sql = @"SELECT * FROM __QUOTED_SCHEMA__.reconcile_message_type_registry(@p_entries::JSONB)";
+
+      var connection = dbContext.Database.GetDbConnection();
+      if (connection.State != System.Data.ConnectionState.Open) {
+        await connection.OpenAsync(cancellationToken);
+      }
+
+      using var command = connection.CreateCommand();
+      command.CommandText = sql;
+      var entriesParam = command.CreateParameter();
+      entriesParam.ParameterName = "@p_entries";
+      entriesParam.Value = json.ToString();
+      command.Parameters.Add(entriesParam);
+
+      var currentTransaction = dbContext.Database.CurrentTransaction;
+      if (currentTransaction is not null) {
+        command.Transaction = currentTransaction.GetDbTransaction();
+      }
+
+      using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      var insertedCount = 0;
+      var updatedCount = 0;
+      var driftCount = 0;
+
+      while (await reader.ReadAsync(cancellationToken)) {
+        var action = reader.GetString(0);
+        // Guid? pinnedId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+        var clrType = reader.GetString(2);
+        var storedClr = reader.IsDBNull(3) ? null : reader.GetString(3);
+
+        switch (action) {
+          case "inserted": insertedCount++; break;
+          case "updated": updatedCount++; break;
+          case "drift_detected":
+            driftCount++;
+            logger?.LogWarning(
+              "Pinned id drift: stored clr_type_name '{StoredClrTypeName}' differs from current code '{CurrentClrTypeName}'. Run the rename tool to reconcile.",
+              storedClr, clrType);
+            break;
+        }
+      }
+
+      var pinned = 0;
+      var unpinned = 0;
+      foreach (var e in entries) {
+        if (e.PinnedId is null) {
+          unpinned++;
+        } else {
+          pinned++;
+        }
+      }
+
+      logger?.LogInformation(
+        "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
+        entries.Count, pinned, unpinned, insertedCount, updatedCount, driftCount);
+    } catch (Exception ex) {
+      logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
+      // Don't throw — reconciliation is informational, not critical for startup.
+    }
+  }
+
+  private static string _jsonString(string? value) {
+    if (value is null) {
+      return "null";
+    }
+    var sb = new System.Text.StringBuilder("\"");
+    foreach (var c in value) {
+      switch (c) {
+        case '"': sb.Append("\\\""); break;
+        case '\\': sb.Append("\\\\"); break;
+        case '\b': sb.Append("\\b"); break;
+        case '\f': sb.Append("\\f"); break;
+        case '\n': sb.Append("\\n"); break;
+        case '\r': sb.Append("\\r"); break;
+        case '\t': sb.Append("\\t"); break;
+        default:
+          if (c < 0x20) {
+            sb.AppendFormat(System.Globalization.CultureInfo.InvariantCulture, "\\u{0:X4}", (int)c);
+          } else {
+            sb.Append(c);
+          }
+          break;
+      }
+    }
+    sb.Append('"');
+    return sb.ToString();
   }
 
   /// <summary>

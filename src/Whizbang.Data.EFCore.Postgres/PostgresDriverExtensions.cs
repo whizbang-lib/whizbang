@@ -91,6 +91,17 @@ public static class PostgresDriverExtensions {
         // Registered before PerspectiveWorker to ensure StartAsync ordering
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
+        // Message type registry populator — reconciles wh_message_type_registry against the
+        // compile-time IMessageTypeCatalog at startup. Uses NpgsqlDataSource directly so it
+        // works without the Dapper driver being installed. WhizbangDatabaseInitializerService
+        // invokes it after schema init.
+        selector.Services.TryAddSingleton<IMessageTypeRegistryPopulator>(sp => {
+          var catalog = sp.GetRequiredService<IMessageTypeCatalog>();
+          var dataSource = sp.GetRequiredService<NpgsqlDataSource>();
+          var populatorLogger = sp.GetService<ILogger<EFCoreMessageTypeRegistryPopulator>>();
+          return new EFCoreMessageTypeRegistryPopulator(catalog, dataSource, populatorLogger);
+        });
+
         // TURNKEY: Invoke perspective runner registration callbacks
         // This is registered by source-generated module initializer in consumer assembly
         // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker

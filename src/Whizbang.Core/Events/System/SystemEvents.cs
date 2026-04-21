@@ -14,6 +14,7 @@ namespace Whizbang.Core.Events.System;
 /// <param name="TotalStreams">Total number of event streams to process.</param>
 /// <param name="StartedAt">When the rebuild operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+[PinnedId("47c7c500-b017-47dc-a523-d69e59a6b6d8")]
 public record PerspectiveRebuildStarted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -33,6 +34,7 @@ public record PerspectiveRebuildStarted(
 /// <param name="EventsReplayed">Total events replayed so far.</param>
 /// <param name="StartedAt">When the rebuild operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+[PinnedId("9cc9d8da-dfde-4265-9dc1-add8ac12282a")]
 public record PerspectiveRebuildProgress(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -53,6 +55,7 @@ public record PerspectiveRebuildProgress(
 /// <param name="EventsReplayed">Total number of events replayed.</param>
 /// <param name="Duration">Wall-clock time for the rebuild.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+[PinnedId("5e3fb66f-286a-406f-9cf0-23e77bd96026")]
 public record PerspectiveRebuildCompleted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -72,6 +75,7 @@ public record PerspectiveRebuildCompleted(
 /// <param name="StreamsProcessedBeforeFailure">Number of streams successfully processed before the failure.</param>
 /// <param name="Duration">Wall-clock time before the failure occurred.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
+[PinnedId("65600841-5460-4feb-879f-b6b527331184")]
 public record PerspectiveRebuildFailed(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -94,6 +98,7 @@ public record PerspectiveRebuildFailed(
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+[PinnedId("7291e4ab-917e-4955-a78c-e41da5ee1af3")]
 public record PerspectiveRewindStarted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -115,6 +120,7 @@ public record PerspectiveRewindStarted(
 /// <param name="CompletedAt">When the rewind operation completed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+[PinnedId("56514b57-149d-47aa-9a10-afcb4e38539c")]
 public record PerspectiveRewindCompleted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -136,6 +142,7 @@ public record PerspectiveRewindCompleted(
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+[PinnedId("e3accb0d-aecb-4b54-9bb5-945d5adf844b")]
 public record StreamRewindStarted(
     [property: StreamId] Guid StreamId,
     string[] PerspectiveNames,
@@ -155,6 +162,7 @@ public record StreamRewindStarted(
 /// <docs>fundamentals/perspectives/rewind#stream-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/StreamRewindEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
+[PinnedId("2a4f496c-acee-4dcf-b336-1b0ba1858238")]
 public record StreamRewindCompleted(
     [property: StreamId] Guid StreamId,
     string[] PerspectiveNames,
@@ -174,6 +182,7 @@ public record StreamRewindCompleted(
 /// <param name="OldHash">Hash of the previous migration definition, or null if new.</param>
 /// <param name="NewHash">Hash of the new migration definition.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+[PinnedId("a8809ecd-7804-43c2-b534-54156fe21b7a")]
 public record MigrationItemStarted(
     [property: StreamId] Guid StreamId,
     string MigrationKey,
@@ -191,6 +200,7 @@ public record MigrationItemStarted(
 /// <param name="StatusDescription">Human-readable description of the status.</param>
 /// <param name="Duration">Wall-clock time for this migration item.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+[PinnedId("e93fe788-bc47-482b-b88c-d7cefe7e278d")]
 public record MigrationItemCompleted(
     [property: StreamId] Guid StreamId,
     string MigrationKey,
@@ -209,6 +219,7 @@ public record MigrationItemCompleted(
 /// <param name="Error">Error message describing the failure.</param>
 /// <param name="Duration">Wall-clock time before the failure occurred.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+[PinnedId("5d40437d-2955-493a-89ba-462bcf11fded")]
 public record MigrationItemFailed(
     [property: StreamId] Guid StreamId,
     string MigrationKey,
@@ -228,6 +239,7 @@ public record MigrationItemFailed(
 /// <param name="TotalMigrations">Total number of migration items in the batch.</param>
 /// <param name="TotalPerspectives">Total number of perspectives included in the batch.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+[PinnedId("8a3c0619-a6f9-4e1f-8c73-b9bde323ad01")]
 public record MigrationBatchStarted(
     [property: StreamId] Guid StreamId,
     string LibraryVersion,
@@ -247,6 +259,7 @@ public record MigrationBatchStarted(
 /// <param name="Failed">Number of migrations that failed.</param>
 /// <param name="TotalDuration">Wall-clock time for the entire batch.</param>
 /// <docs>operations/infrastructure/migrations#migration-events</docs>
+[PinnedId("ee969fd8-45c3-48cf-ae1e-44ff5987efce")]
 public record MigrationBatchCompleted(
     [property: StreamId] Guid StreamId,
     string LibraryVersion,

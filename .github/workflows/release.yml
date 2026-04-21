@@ -33,10 +33,10 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
-# Grant permissions needed across jobs; jobs restrict further as needed
+# Restrictive default; jobs that need elevated permissions declare them explicitly.
+# (sonar githubactions:S8233 — avoid workflow-wide write perms)
 permissions:
-  contents: write    # Required for tag creation and GitHub releases
-  id-token: write    # Required for NuGet OIDC trusted publishing
+  contents: read
 
 concurrency:
   group: release

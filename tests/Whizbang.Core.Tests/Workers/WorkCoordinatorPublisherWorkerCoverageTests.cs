@@ -421,10 +421,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for the coordinator to be called at least twice (first returns work, second picks up failures)
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -466,10 +463,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await publishStrategy.BatchPublishSignal.Task.WaitAsync(cts.Token);
 
     // Give time for result processing
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -499,10 +493,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     // The publisher loop should exit on ObjectDisposedException
     // Wait enough for the coordinator to have called and work to flow
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(1, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -533,10 +524,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(1, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -575,10 +563,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
 
     // Wait for failure to be reported
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -648,10 +633,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -723,10 +705,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -758,10 +737,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for at least 3 calls (1 initial + exception on 2nd + recovery on 3rd)
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 3 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(3, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -809,10 +785,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 3 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(3, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -847,10 +820,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for inbox processing
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -880,10 +850,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -913,10 +880,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -994,10 +958,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1024,10 +985,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1241,10 +1199,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
 
     // Wait a few polls
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (coordinator.ProcessWorkBatchCallCount < 4 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(4, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1277,10 +1232,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for at least one poll cycle
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(1, TimeSpan.FromSeconds(30));
 
     // Cancel to trigger shutdown
     await cts.CancelAsync();
@@ -1538,10 +1490,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1607,10 +1556,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
 
     // Wait for recovery - coordinator should be called again after initial failure
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 3 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(3, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1706,10 +1652,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (coordinator.ProcessWorkBatchCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1785,10 +1728,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(1, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1839,10 +1779,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
     dbCheck.IsReady = true;
 
     // Wait for coordinator to be called (means readiness check passed)
-    deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-    while (coordinator.ProcessWorkBatchCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await coordinator.WaitForCallCountAsync(1, TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

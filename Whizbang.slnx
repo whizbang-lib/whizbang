@@ -45,6 +45,7 @@
     <Project Path="src/Whizbang.Data.EFCore.Postgres/Whizbang.Data.EFCore.Postgres.csproj" />
     <Project Path="src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
     <Project Path="src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
+    <Project Path="src/Whizbang.Generators.CodeFixes/Whizbang.Generators.CodeFixes.csproj" />
     <Project Path="src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
     <Project Path="src/Whizbang.Hosting.AspNet/Whizbang.Hosting.AspNet.csproj" />

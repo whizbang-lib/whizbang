@@ -132,6 +132,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// Uses IAsyncEnumerable for efficient streaming of large event sequences.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadAsync_WithExistingEvents_ReturnsEventsInSequenceOrderAsync</tests>
+  [SuppressMessage("Major Bug", "S2955:Generic could be value type", Justification = "Event payload types in Whizbang are always reference types (records/classes implementing IEvent). Adding `class` constraint would break IEventStore.ReadAsync public contract.")]
   public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
       Guid streamId,
       long fromSequence,
@@ -173,6 +174,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// Supports perspective checkpoint processing where last processed event ID is tracked.
   /// Uses IAsyncEnumerable for efficient streaming of large event sequences.
   /// </summary>
+  [SuppressMessage("Major Bug", "S2955:Generic could be value type", Justification = "Event payload types in Whizbang are always reference types (records/classes implementing IEvent). Adding `class` constraint would break IEventStore.ReadAsync public contract.")]
   public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
       Guid streamId,
       Guid? fromEventId,
