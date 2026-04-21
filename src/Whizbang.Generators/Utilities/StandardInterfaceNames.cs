@@ -40,6 +40,7 @@ internal static class StandardInterfaceNames {
   public const string I_PERSPECTIVE_WITH_ACTIONS_FOR_GENERIC_DEFINITION = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent, TAction>";
 
   // Attributes
+  public const string PINNED_ID_ATTRIBUTE = "global::Whizbang.Core.Attributes.PinnedIdAttribute";
   public const string STREAM_ID_ATTRIBUTE = "global::Whizbang.Core.StreamIdAttribute";
   public const string TOPIC_ATTRIBUTE = "global::Whizbang.Core.Attributes.TopicAttribute";
   public const string TOPIC_FILTER_ATTRIBUTE = "global::Whizbang.Core.TopicFilterAttribute";
