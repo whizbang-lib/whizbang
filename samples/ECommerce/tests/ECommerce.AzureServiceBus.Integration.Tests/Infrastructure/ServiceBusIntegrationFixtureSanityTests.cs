@@ -25,7 +25,11 @@ public class ServiceBusIntegrationFixtureSanityTests {
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
-    await Task.Delay(500);
+    // Drain any in-flight work from prior test before cleaning DB.
+    // Otherwise prior-test perspective events still flowing through the
+    // pipeline satisfy this test's WaitForPerspectiveProcessingAsync counter,
+    // and the assertion queries a product that hasn't yet materialized.
+    await _fixture.WaitForWorkersIdleAsync();
     await _fixture.CleanupDatabaseAsync();
   }
 
@@ -105,6 +109,10 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Assert - Command accepted (doesn't throw)
     // Note: This only tests publishing, not receiving
     Console.WriteLine("[SANITY] Message published successfully without throwing");
+
+    // Drain so the in-flight events don't satisfy the next test's perspective
+    // completion counter and cause cross-test contamination.
+    await fixture.WaitForWorkersIdleAsync();
   }
 
   /// <summary>

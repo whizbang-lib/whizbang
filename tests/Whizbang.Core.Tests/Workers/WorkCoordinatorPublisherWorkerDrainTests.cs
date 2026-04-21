@@ -113,7 +113,11 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
     });
 
     var worker = services.GetRequiredService<IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    // 15s safety net — same pattern as other drain tests in this file.
+    // Real assertion is the completion signal (WaitForClaimsAsync + ClaimCount);
+    // deadline is a deadlock guard for slow CI runners. If drain were broken
+    // we'd need 30s+ (3 × 10s poll interval) to see 3 claims.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
     // Act
     await worker.StartAsync(cts.Token);
