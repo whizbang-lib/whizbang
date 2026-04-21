@@ -348,7 +348,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[InventoryHost] Registered SHARED ServiceBusClient in DI");
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
     // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
@@ -485,7 +488,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[BFFHost] Registered SHARED ServiceBusClient in DI");
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
+      // Emulator config has RequiresSession=false on every subscription — match that here.
+      opts.EnableSessions = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
