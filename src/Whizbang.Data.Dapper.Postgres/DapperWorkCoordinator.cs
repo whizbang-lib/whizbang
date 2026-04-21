@@ -493,9 +493,27 @@ public partial class DapperWorkCoordinator(
   /// Stores inbox messages directly via store_inbox_messages SQL function.
   /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
   /// </summary>
+  /// <inheritdoc />
+  public async Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
+    int partitionCount,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var rows = (await connection.QueryAsync<(string table_name, long rows_recomputed)>(
+      "SELECT table_name, rows_recomputed FROM recompute_partition_numbers(@partitionCount)",
+      new { partitionCount })).ToList();
+
+    long get(string table) => rows.FirstOrDefault(r => r.table_name == table).rows_recomputed;
+    return new PartitionRecomputeResult {
+      InboxRowsRecomputed = get("wh_inbox"),
+      OutboxRowsRecomputed = get("wh_outbox"),
+      ActiveStreamsRowsRecomputed = get("wh_active_streams")
+    };
+  }
+
   public async Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
-    int partitionCount = 2,
+    int partitionCount,
     CancellationToken cancellationToken = default) {
     if (messages.Length == 0) {
       return;

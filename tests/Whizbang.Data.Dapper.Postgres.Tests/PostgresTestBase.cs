@@ -167,7 +167,11 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "029_ProcessWorkBatch.sql",
       "030_ReconcilePerspectiveRegistry.sql",
       "036_DeregisterInstance.sql",
-      "037_CompletePerspectiveEvents.sql"
+      "037_CompletePerspectiveEvents.sql",
+      "038_GetStreamEvents.sql",
+      "039_CreateMessageTypeRegistryTable.sql",
+      "040_ReconcileMessageTypeRegistry.sql",
+      "041_RecomputePartitionNumbers.sql"
     };
 
     foreach (var functionFile in functionFiles) {
