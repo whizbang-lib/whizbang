@@ -333,8 +333,8 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Wait for both outbox+inbox background invocations via completion signal (no polling)
+    await invoker.WaitForInvocationsAsync(2, TimeSpan.FromSeconds(10));
 
     // Assert - both should be processed
     await Assert.That(invoker.Invocations.Count).IsEqualTo(2);
@@ -550,6 +550,7 @@ public class LifecycleInvocationHelperTests {
     private readonly List<LifecycleInvocation> _invocations = [];
     private readonly Lock _lock = new();
     private readonly TaskCompletionSource _detachedStageAttempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<(int Count, TaskCompletionSource Tcs)> _invocationWaiters = [];
 
     public bool ThrowOnAsyncStage { get; set; }
 
@@ -573,18 +574,47 @@ public class LifecycleInvocationHelperTests {
       }
     }
 
+    /// <summary>
+    /// Waits until at least <paramref name="count"/> invocations have been recorded.
+    /// Replaces Task.Delay polling in tests that exercise fire-and-forget code paths.
+    /// </summary>
+    public Task WaitForInvocationsAsync(int count, TimeSpan timeout) {
+      TaskCompletionSource tcs;
+      lock (_lock) {
+        if (_invocations.Count >= count) {
+          return Task.CompletedTask;
+        }
+        tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _invocationWaiters.Add((count, tcs));
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       if (ThrowOnAsyncStage && stage.ToString().EndsWith("Detached", StringComparison.Ordinal)) {
         _detachedStageAttempted.TrySetResult();
         throw new InvalidOperationException("Test exception in async stage");
       }
 
+      List<TaskCompletionSource>? toSignal = null;
       lock (_lock) {
         _invocations.Add(new LifecycleInvocation {
           Message = envelope.Payload,
           Stage = stage,
           Context = context as LifecycleExecutionContext
         });
+        var currentCount = _invocations.Count;
+        for (int i = _invocationWaiters.Count - 1; i >= 0; i--) {
+          if (_invocationWaiters[i].Count <= currentCount) {
+            (toSignal ??= []).Add(_invocationWaiters[i].Tcs);
+            _invocationWaiters.RemoveAt(i);
+          }
+        }
+      }
+      if (toSignal is not null) {
+        foreach (var tcs in toSignal) {
+          tcs.TrySetResult();
+        }
       }
       return ValueTask.CompletedTask;
     }
