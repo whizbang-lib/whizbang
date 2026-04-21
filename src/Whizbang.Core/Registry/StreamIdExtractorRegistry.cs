@@ -95,6 +95,7 @@ public static class StreamIdExtractorRegistry {
         .Any(extractor => extractor.SetStreamId(message, streamId));
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S3218:Inner class members should not shadow outer class \"static\" members", Justification = "Explicit interface implementations must match interface member names; they are not reachable via the outer type identifier so there is no real shadowing risk.")]
   private sealed class CompositeStreamIdExtractor : IStreamIdExtractor {
     Guid? IStreamIdExtractor.ExtractStreamId(object message, Type messageType) =>
         StreamIdExtractorRegistry.ExtractStreamId(message, messageType);
