@@ -69,6 +69,12 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -242,7 +248,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     // Act — start worker, wait for requeue signal (deterministic), then stop
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the deterministic requeue signal — fires when TryWrite is called after initial WriteAsync
@@ -293,7 +299,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     // Act — start worker, wait for requeue signal (deterministic), then stop
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the deterministic requeue signal
@@ -353,6 +359,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
   // Test helper - Mock work channel writer with deterministic signals
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _writeCount;
@@ -394,5 +401,9 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

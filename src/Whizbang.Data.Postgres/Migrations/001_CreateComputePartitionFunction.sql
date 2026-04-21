@@ -2,6 +2,8 @@
 -- Date: 2025-12-07
 -- Description: Helper function to compute partition number from stream_id using consistent hashing
 
+SELECT __SCHEMA__.drop_all_overloads('compute_partition');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.compute_partition(p_stream_id UUID, p_partition_count INTEGER DEFAULT 10000)
 RETURNS INTEGER AS $$
 BEGIN

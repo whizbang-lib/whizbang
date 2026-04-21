@@ -6,13 +6,13 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -97,8 +97,10 @@ public class PerspectiveDedupIntegrationTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await runner.WaitForCallCountAsync(100, TimeSpan.FromSeconds(10));
-    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
+    // Generous deadlines — completes in <1s locally, but CI parallel load can
+    // slip the 100-call drain past a tight budget.
+    await runner.WaitForCallCountAsync(100, TimeSpan.FromSeconds(30));
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -374,8 +376,8 @@ public class PerspectiveDedupIntegrationTests {
     var workerTask = worker.StartAsync(cts.Token);
     await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
 
-    // Allow a couple more cycles for PostLifecycle to fire
-    await Task.Delay(300);
+    // Wait for the coordinator WhenAll gate to fire PostLifecycleInline — deterministic signal, no timing bet.
+    await postLifecycleSpy.WaitForPostLifecycleInlineCountAsync(1, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -429,8 +431,8 @@ public class PerspectiveDedupIntegrationTests {
     await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
     await workCoordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
 
-    // Allow time for PostLifecycle processing
-    await Task.Delay(200);
+    // Deterministic wait for PostLifecycleInline — no Task.Delay timing bet.
+    await postLifecycleSpy.WaitForPostLifecycleInlineCountAsync(1, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -480,8 +482,8 @@ public class PerspectiveDedupIntegrationTests {
     var workerTask = worker.StartAsync(cts.Token);
     await runner.WaitForCallCountAsync(1, TimeSpan.FromSeconds(5));
 
-    // Allow time for PostLifecycle to fire
-    await Task.Delay(200);
+    // Deterministic wait for PostLifecycleInline — no Task.Delay timing bet.
+    await postLifecycleSpy.WaitForPostLifecycleInlineCountAsync(1, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -583,6 +585,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Records call count, stream IDs, and detects duplicate WorkIds.
   /// </summary>
   private sealed class ApplyTrackingRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     private int _callCount;
     private readonly ConcurrentBag<Guid> _processedWorkIds = [];
     private readonly ConcurrentBag<Guid> _streamIds = [];
@@ -701,6 +704,12 @@ public class PerspectiveDedupIntegrationTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
@@ -739,6 +748,12 @@ public class PerspectiveDedupIntegrationTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
@@ -765,15 +780,23 @@ public class PerspectiveDedupIntegrationTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private sealed class SingleRunnerRegistry(IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
+    public Type PerspectiveType => typeof(object);
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo("Test.LockInPerspective", "global::Test.LockInPerspective", "global::Test.Model", ["global::Test.Event"])];
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
@@ -781,7 +804,8 @@ public class PerspectiveDedupIntegrationTests {
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
     public int ProcessId { get; } = 12345;
-    public Observability.ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
+    ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
+      new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
 
   private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
@@ -810,12 +834,26 @@ public class PerspectiveDedupIntegrationTests {
 
   /// <summary>
   /// Spy IReceptorInvoker that counts PostLifecycleInline invocations.
-  /// All other stage invocations are no-ops.
+  /// Exposes a completion signal so tests can await deterministically instead of
+  /// relying on Task.Delay — see feedback_no_timing_tests.md / feedback_hooks_for_signals.md.
   /// </summary>
   private sealed class PostLifecycleSpyInvoker : IReceptorInvoker {
     private int _postLifecycleInlineCount;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _countWaiters = new();
 
     public int PostLifecycleInlineCount => _postLifecycleInlineCount;
+
+    /// <summary>
+    /// Waits until PostLifecycleInline has fired at least <paramref name="count"/> times.
+    /// Use instead of Task.Delay to synchronize with the WhenAll coordinator without timing bets.
+    /// </summary>
+    public Task WaitForPostLifecycleInlineCountAsync(int count, TimeSpan timeout) {
+      var waiter = _countWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (_postLifecycleInlineCount >= count) {
+        waiter.TrySetResult();
+      }
+      return waiter.Task.WaitAsync(timeout);
+    }
 
     public ValueTask InvokeAsync(
       IMessageEnvelope envelope,
@@ -823,7 +861,12 @@ public class PerspectiveDedupIntegrationTests {
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
       if (stage == LifecycleStage.PostLifecycleInline) {
-        Interlocked.Increment(ref _postLifecycleInlineCount);
+        var current = Interlocked.Increment(ref _postLifecycleInlineCount);
+        foreach (var kvp in _countWaiters) {
+          if (current >= kvp.Key) {
+            kvp.Value.TrySetResult();
+          }
+        }
       }
       return ValueTask.CompletedTask;
     }
@@ -841,6 +884,10 @@ public class PerspectiveDedupIntegrationTests {
       var events = EventsPerStream.TryGetValue(streamId, out var list) ? list : [];
       return Task.FromResult(events);
     }
+
+    // Drain-mode deserialization path — not exercised in these tests; return empty.
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+      IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
 
     // Stubs — not used by PerspectiveWorker lifecycle path
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -870,6 +917,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Tracks calls per perspective name and supports WaitForCallCount.
   /// </summary>
   private sealed class FixedEventIdRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     private readonly Guid _lastEventId;
     private int _callCount;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _callCountWaiters = new();
@@ -918,6 +966,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Used by lifecycle tests where many perspectives share the same behavior.
   /// </summary>
   private sealed class MultiPerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+    public Type PerspectiveType => typeof(object);
     private readonly HashSet<string> _knownNames;
     private readonly IPerspectiveRunner _runner;
 
@@ -933,5 +982,7 @@ public class PerspectiveDedupIntegrationTests {
       _knownNames.Select(name => new PerspectiveRegistrationInfo(name, $"global::{name}", "global::Test.Model", ["global::Test.Event"])).ToList();
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 }

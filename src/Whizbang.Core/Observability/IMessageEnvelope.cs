@@ -58,6 +58,33 @@ public interface IMessageEnvelope {
   List<MessageHop> Hops { get; }
 
   /// <summary>
+  /// Per-receptor invocation records. Parallel to <see cref="Hops"/>; used by
+  /// <see cref="Messaging.IReceptorDedupStore"/> to enforce exactly-once-per-receptor-per-message.
+  /// Null by default; allocated lazily via <see cref="GetOrCreateReceptorInvocations"/> on first append.
+  /// NOT consulted by security, scope, source-service, or trace-context extraction.
+  /// </summary>
+  /// <remarks>
+  /// Default implementation returns null, so existing non-tracking envelope types (e.g.,
+  /// test doubles) continue to compile. Production envelopes (<see cref="MessageEnvelope{TMessage}"/>,
+  /// <see cref="CascadeEnvelopeWrapper"/>) override with real backing.
+  /// </remarks>
+  /// <docs>fundamentals/receptors/exactly-once-firing</docs>
+  [JsonPropertyName("rin")]
+  List<ReceptorInvocationRecord>? ReceptorInvocations => null;
+
+  /// <summary>
+  /// Returns the <see cref="ReceptorInvocations"/> list, creating and assigning it on the
+  /// envelope if it was null. Default implementation throws: an envelope type must opt in
+  /// to tracking by overriding this member. Callers (notably
+  /// <see cref="Messaging.EnvelopeReceptorDedupStore"/>) should only reach here for envelope
+  /// types that genuinely support invocation tracking.
+  /// </summary>
+  List<ReceptorInvocationRecord> GetOrCreateReceptorInvocations() =>
+    throw new System.NotSupportedException(
+      $"Envelope type '{GetType().FullName}' does not support receptor invocation tracking. " +
+      "Use MessageEnvelope<T> or implement IMessageEnvelope.GetOrCreateReceptorInvocations explicitly.");
+
+  /// <summary>
   /// Adds a hop to the message's journey.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_AddHop_AddsHopToListAsync</tests>

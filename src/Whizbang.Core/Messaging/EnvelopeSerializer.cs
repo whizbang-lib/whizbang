@@ -70,6 +70,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       MessageId = envelope.MessageId,
       Payload = payloadJson,
       Hops = envelope.Hops?.ToList() ?? [],
+      ReceptorInvocations = envelope.ReceptorInvocations?.ToList(),
       DispatchContext = envelope.DispatchContext
     };
 

@@ -581,9 +581,12 @@ public class PerspectiveWorkerSecurityContextTests {
     var scopeContextAccessor = new TestScopeContextAccessor();
 
     // Create lifecycle invoker that captures the IMessageContext state
+    // Capture at PrePerspectiveInline (fires synchronously on the main thread) rather than
+    // PrePerspectiveDetached (fires via Task.Run and may not complete before test cancellation).
+    // Security context is established BEFORE all stages, so the context is already set.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveDetached) {
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
           capturedScopeContext = messageContextAccessor.Current?.ScopeContext;
@@ -680,9 +683,11 @@ public class PerspectiveWorkerSecurityContextTests {
     var messageContextAccessor = new TestMessageContextAccessor();
     var scopeContextAccessor = new TestScopeContextAccessor();
 
+    // Capture at PrePerspectiveInline (fires synchronously) rather than PrePerspectiveDetached
+    // (fires via Task.Run). Security context is established before all stages.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
       onInvoke: (envelope, stage, ctx) => {
-        if (stage == LifecycleStage.PrePerspectiveDetached) {
+        if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
         }
@@ -1292,6 +1297,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
       return Task.FromResult(-1L);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   /// <summary>
@@ -1357,6 +1364,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
       return Task.FromResult(-1L);
     }
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   private sealed class TestScopeContext : IScopeContext {
@@ -1559,6 +1568,12 @@ public class PerspectiveWorkerSecurityContextTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
         Guid streamId,
         string perspectiveName,
@@ -1601,9 +1616,12 @@ public class PerspectiveWorkerSecurityContextTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(TestEvent)];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object); // Fake — no real perspective type
+
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,

@@ -342,7 +342,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
 
   /// <summary>
   /// Returns total count of queued messages (outbox + inbox). Must be called under lock.
@@ -380,7 +380,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, FlushTrigger.BatchSize, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, FlushTrigger.BatchSize, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringBatchFlush(_logger, ex);
@@ -404,7 +404,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, FlushTrigger.Debounce, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, FlushTrigger.Debounce, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringDebounceFlush(_logger, ex);
@@ -449,7 +449,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     try {
-      await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, FlushTrigger.Manual, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, FlushTrigger.Manual, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);

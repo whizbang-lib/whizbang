@@ -146,7 +146,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.Configure<WorkCoordinatorPublisherOptions>(options => {
           options.PollingIntervalMilliseconds = 100; // Fast polling for tests
           options.LeaseSeconds = 300;
-          options.StaleThresholdSeconds = 600;
+          options.AbandonStaleInstanceThresholdSeconds = 600;
           options.DebugMode = true; // Keep completed messages for verification
           options.PartitionCount = 10000;
         });
@@ -433,6 +433,13 @@ public class TestTransport : Whizbang.Core.Transports.ITransport {
     CancellationToken cancellationToken = default) {
     throw new NotImplementedException("SubscribeAsync not needed for outbox tests");
   }
+
+  public Task<Whizbang.Core.Transports.ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<Whizbang.Core.Transports.TransportMessage>, CancellationToken, Task> batchHandler,
+    Whizbang.Core.Transports.TransportDestination destination,
+    Whizbang.Core.Workers.TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException();
 
   public Task<Whizbang.Core.Observability.IMessageEnvelope> SendAsync<TRequest, TResponse>(
     Whizbang.Core.Observability.IMessageEnvelope envelope,

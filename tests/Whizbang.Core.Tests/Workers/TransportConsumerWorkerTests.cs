@@ -261,6 +261,7 @@ public class TransportConsumerWorkerTests {
 internal class FakeTransport : ITransport, IDisposable {
   private readonly List<FakeSubscription> _subscriptions = [];
   private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+  private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
   private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
   public int SubscribeCallCount { get; private set; }
@@ -303,6 +304,20 @@ internal class FakeTransport : ITransport, IDisposable {
     return Task.FromResult<ISubscription>(subscription);
   }
 
+  public Task<ISubscription> SubscribeBatchAsync(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    TransportBatchOptions batchOptions,
+    CancellationToken cancellationToken = default
+  ) {
+    SubscribeCallCount++;
+    _batchHandler = batchHandler;
+    var subscription = new FakeSubscription();
+    _subscriptions.Add(subscription);
+    _subscribeSignal.Release();
+    return Task.FromResult<ISubscription>(subscription);
+  }
+
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope requestEnvelope,
     TransportDestination destination,
@@ -312,7 +327,9 @@ internal class FakeTransport : ITransport, IDisposable {
   }
 
   public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-    if (_handler != null) {
+    if (_batchHandler != null) {
+      await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+    } else if (_handler != null) {
       await _handler(envelope, envelopeType, CancellationToken.None);
     }
   }

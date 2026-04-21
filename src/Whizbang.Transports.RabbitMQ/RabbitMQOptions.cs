@@ -76,10 +76,12 @@ public class RabbitMQOptions {
   ///   <item><see cref="MaxChannels"/> — how many <em>RabbitMQ channels</em> are pooled for publishing (connection pooling, not message buffering)</item>
   /// </list>
   /// </para>
-  /// Default: 10
+  /// Default: 200. The transport consumer uses batch receive (SubscribeBatchAsync) so higher
+  /// values are safe and dramatically improve throughput. Match this to
+  /// <see cref="TransportBatchOptions.BatchSize"/> for optimal batching.
   /// </summary>
   /// <docs>messaging/transports/rabbitmq#prefetch</docs>
-  public ushort PrefetchCount { get; set; } = 10;
+  public ushort PrefetchCount { get; set; } = 200;
 
   /// <summary>
   /// Whether to automatically declare dead-letter exchange and queue.

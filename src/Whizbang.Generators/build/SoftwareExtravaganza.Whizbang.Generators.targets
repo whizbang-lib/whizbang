@@ -63,7 +63,7 @@
 
     <Message
       Text="Whizbang: Message registry extracted to $(WhizbangRegistryJsonFile)"
-      Importance="high"
+      Importance="normal"
       Condition="Exists('$(WhizbangRegistryJsonFile)')" />
   </Target>
 </Project>

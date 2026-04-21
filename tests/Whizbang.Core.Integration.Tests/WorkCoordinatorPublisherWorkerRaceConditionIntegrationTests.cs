@@ -4,12 +4,12 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -141,6 +141,12 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
@@ -544,6 +550,10 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public void ClearInFlight() { }
+    public bool ShouldRenewLease(Guid messageId) => false;
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 
@@ -566,5 +576,9 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
     public void Complete() {
       _channel.Writer.Complete();
     }
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 }

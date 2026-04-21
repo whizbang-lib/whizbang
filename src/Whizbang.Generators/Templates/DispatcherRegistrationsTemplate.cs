@@ -163,6 +163,12 @@ namespace Whizbang.Core.Generated {
     public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
       services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
       services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
+      // Default dedup store: records receptor invocations on the envelope itself.
+      // TryAddSingleton lets a consumer replace this with a DB-backed implementation.
+      services.TryAddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();
+      // ChaosInjectorInvoker resolves an optional IChaosInjector and gates it behind
+      // WhizbangOptions.Guardrails.EnableChaosHooks. No production cost when disabled.
+      services.TryAddSingleton<ChaosInjectorInvoker>();
       return services;
     }
   }

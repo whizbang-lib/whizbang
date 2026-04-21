@@ -1,4 +1,3 @@
-using Dapper;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Core;

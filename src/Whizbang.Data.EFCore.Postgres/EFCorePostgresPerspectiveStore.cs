@@ -70,6 +70,11 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         _context, _tableName, streamId, model, _defaultMetadata, scope, cancellationToken);
 
   /// <inheritdoc/>
+  public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, streamId, model, _defaultMetadata, scope, forceUpdateScope, cancellationToken);
+
+  /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WithStringPartitionKey_ReturnsModelAsync</tests>
@@ -115,6 +120,18 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     _upsertStrategy.UpsertPerspectiveRowAsync(
         _context, _tableName, _convertPartitionKeyToGuid(partitionKey), model,
         _defaultMetadata, scope, cancellationToken);
+
+  /// <inheritdoc/>
+  public Task UpsertByPartitionKeyAsync<TPartitionKey>(
+      TPartitionKey partitionKey,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      CancellationToken cancellationToken = default)
+      where TPartitionKey : notnull =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, _convertPartitionKeyToGuid(partitionKey), model,
+        _defaultMetadata, scope, forceUpdateScope, cancellationToken);
 
   /// <summary>
   /// Converts a partition key of any type to a Guid for storage.
@@ -167,6 +184,18 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         physicalFieldValues, cancellationToken);
 
   /// <inheritdoc/>
+  public Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context, _tableName, streamId, model, _defaultMetadata, scope ?? new PerspectiveScope(),
+        physicalFieldValues, forceUpdateScope, cancellationToken);
+
+  /// <inheritdoc/>
   public async Task FlushAsync(CancellationToken cancellationToken = default) {
     // For EF Core, ensure all tracked changes are committed to the database
     // This is critical for PostPerspectiveInline lifecycle stage which guarantees
@@ -178,17 +207,21 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordExists_RemovesRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
   public async Task PurgeAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    // Find the row to delete
-    var row = await _context.Set<PerspectiveRow<TModel>>()
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
-
-    // If row exists, remove it
-    if (row != null) {
-      _context.Set<PerspectiveRow<TModel>>().Remove(row);
-      await _context.SaveChangesAsync(cancellationToken);
+    // Use ExecuteDeleteAsync to bypass change tracker JSON serialization,
+    // which fails on entities with complex collections in deleted state (EF Core bug with Npgsql JSON columns)
+    if (_context.Database.IsRelational()) {
+      await _context.Set<PerspectiveRow<TModel>>()
+          .Where(r => r.Id == streamId)
+          .ExecuteDeleteAsync(cancellationToken);
+    } else {
+      var row = await _context.Set<PerspectiveRow<TModel>>()
+          .OrderBy(r => r.Id)
+          .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
+      if (row != null) {
+        _context.Set<PerspectiveRow<TModel>>().Remove(row);
+        await _context.SaveChangesAsync(cancellationToken);
+      }
     }
-    // If row doesn't exist, idempotent no-op (don't throw)
   }
 
   /// <inheritdoc/>
@@ -203,16 +236,20 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     // Convert partition key to Guid for storage
     var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
 
-    // Find the row to delete
-    var row = await _context.Set<PerspectiveRow<TModel>>()
-        .OrderBy(r => r.Id)
-        .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
-
-    // If row exists, remove it
-    if (row != null) {
-      _context.Set<PerspectiveRow<TModel>>().Remove(row);
-      await _context.SaveChangesAsync(cancellationToken);
+    // Use ExecuteDeleteAsync to bypass change tracker JSON serialization,
+    // which fails on entities with complex collections in deleted state (EF Core bug with Npgsql JSON columns)
+    if (_context.Database.IsRelational()) {
+      await _context.Set<PerspectiveRow<TModel>>()
+          .Where(r => r.Id == partitionGuid)
+          .ExecuteDeleteAsync(cancellationToken);
+    } else {
+      var row = await _context.Set<PerspectiveRow<TModel>>()
+          .OrderBy(r => r.Id)
+          .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
+      if (row != null) {
+        _context.Set<PerspectiveRow<TModel>>().Remove(row);
+        await _context.SaveChangesAsync(cancellationToken);
+      }
     }
-    // If row doesn't exist, idempotent no-op (don't throw)
   }
 }

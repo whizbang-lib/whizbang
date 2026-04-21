@@ -37,7 +37,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 100,  // 100ms interval for fast test
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -83,7 +83,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 1000,  // 1 second interval (longer to avoid races)
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -152,7 +152,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 1000,  // 1 second interval
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -206,7 +206,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,  // 5 second interval (long)
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -258,7 +258,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -305,7 +305,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -339,7 +339,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -373,7 +373,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -408,7 +408,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -447,7 +447,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -478,7 +478,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -515,7 +515,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -541,7 +541,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 5000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300,
+      AbandonStaleInstanceThresholdSeconds = 300,
       DebugMode = false
     };
 
@@ -812,7 +812,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var sut = new IntervalWorkCoordinatorStrategy(
@@ -835,10 +835,9 @@ public class IntervalWorkCoordinatorStrategyTests {
       // Act
       await sut.FlushAsync(WorkBatchOptions.None);
 
-      // Assert — channel writes no longer happen during flush (work is persisted to DB,
-      // coordinator loop picks it up on next tick)
+      // Assert — ExecuteFlushAsync signals publisher but does not write to channel
       await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
-        .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+        .Because("ExecuteFlushAsync signals publisher but does not write to channel");
       // Work was still persisted via ProcessWorkBatchAsync
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
     } finally {
@@ -867,7 +866,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var sut = new IntervalWorkCoordinatorStrategy(
@@ -917,7 +916,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       IntervalMilliseconds = 60000,
       PartitionCount = 10000,
       LeaseSeconds = 300,
-      StaleThresholdSeconds = 300
+      AbandonStaleInstanceThresholdSeconds = 300
     };
 
     var sut = new IntervalWorkCoordinatorStrategy(
@@ -950,6 +949,7 @@ public class IntervalWorkCoordinatorStrategyTests {
   // ========================================
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -970,9 +970,14 @@ public class IntervalWorkCoordinatorStrategyTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 
@@ -986,6 +991,10 @@ public class IntervalWorkCoordinatorStrategyTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator, IDisposable {
@@ -1041,6 +1050,12 @@ public class IntervalWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -1074,6 +1089,12 @@ public class IntervalWorkCoordinatorStrategyTests {
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
@@ -1162,6 +1183,12 @@ public class IntervalWorkCoordinatorStrategyTests {
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,

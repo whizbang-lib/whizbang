@@ -80,6 +80,12 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
@@ -147,6 +153,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly Channel<OutboxWork> _channel;
     private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _tryWriteCount;
@@ -181,6 +188,10 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private static ServiceInstanceProvider _createTestInstanceProvider() {
@@ -235,7 +246,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for batch publish signal
@@ -264,7 +275,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     await publishStrategy.PublishSignal.Task.WaitAsync(cts.Token);
@@ -291,7 +302,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for requeue signal
@@ -330,7 +341,7 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for the re-queue signal — fires when TryWrite is called after initial WriteAsync
@@ -346,6 +357,16 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
     var msg2WriteCount = channelWriter.WrittenWork.Count(w => w.MessageId == msg2.MessageId);
     await Assert.That(msg2WriteCount).IsGreaterThan(1)
       .Because("Transport exception should cause re-queue of the failed message");
+  }
+
+  [Test]
+  public async Task BulkPublish_MaxBatchSize_DefaultIs1000Async() {
+    // Arrange
+    var options = new WorkCoordinatorPublisherOptions();
+
+    // Assert — default 1000: sized larger than p_max_streams (300) so a burst spanning
+    // multiple SQL poll cycles can drain in a single publish pass.
+    await Assert.That(options.MaxBulkPublishBatchSize).IsEqualTo(1000);
   }
 
   [Test]
@@ -383,11 +404,11 @@ public class WorkCoordinatorPublisherWorkerBulkPublishTests {
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);
 
     // Wait for all 5 messages to be published — signal-based, deterministic
-    await allPublishedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await allPublishedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

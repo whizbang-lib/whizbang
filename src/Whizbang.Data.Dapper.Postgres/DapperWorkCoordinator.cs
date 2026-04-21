@@ -69,18 +69,21 @@ public partial class DapperWorkCoordinator(
         request.NewOutboxMessages.Length, request.NewInboxMessages.Length, request.Flags);
     }
 
-    await using var connection = new NpgsqlConnection(_connectionString);
-
-    // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
-    // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
-    connection.Notice += _onNotice;
-
-    await connection.OpenAsync(cancellationToken);
-
     var commandDefinition = _buildCommandDefinition(request, cancellationToken);
-    var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
 
-    return _categorizeResults(resultList);
+    return await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var connection = new NpgsqlConnection(_connectionString);
+
+      // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
+      // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
+      connection.Notice += _onNotice;
+
+      await connection.OpenAsync(cancellationToken);
+
+      var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
+
+      return _categorizeResults(resultList);
+    }, logger: _logger, cancellationToken: cancellationToken);
   }
 
   /// <summary>
@@ -119,7 +122,8 @@ public partial class DapperWorkCoordinator(
         @p_renew_perspective_event_lease_ids::jsonb,
         @p_flags::int,
         @p_stale_threshold_seconds::int,
-        @p_sync_inquiries::jsonb
+        @p_sync_inquiries::jsonb,
+        @p_max_streams::int
       )";
 
     var parameters = new {
@@ -146,8 +150,9 @@ public partial class DapperWorkCoordinator(
       p_renew_inbox_lease_ids = serializedData.RenewInboxLeaseIds,
       p_renew_perspective_event_lease_ids = "[]",
       p_flags = (int)request.Flags,
-      p_stale_threshold_seconds = request.StaleThresholdSeconds,
-      p_sync_inquiries = serializedData.SyncInquiries
+      p_stale_threshold_seconds = request.AbandonStaleInstanceThresholdSeconds,
+      p_sync_inquiries = serializedData.SyncInquiries,
+      p_max_streams = request.MaxStreamsPerBatch
     };
 
     return new CommandDefinition(
@@ -194,6 +199,7 @@ public partial class DapperWorkCoordinator(
     var outboxWork = new List<OutboxWork>();
     var inboxWork = new List<InboxWork>();
     var perspectiveWork = new List<PerspectiveWork>();
+    var perspectiveStreamIds = new HashSet<Guid>();
     var syncInquiryResults = new List<SyncInquiryResult>();
 
     foreach (var r in resultList) {
@@ -204,8 +210,18 @@ public partial class DapperWorkCoordinator(
         case "inbox":
           inboxWork.Add(_mapInboxWork(r));
           break;
+        case "perspective_stream":
+          // Drain mode: SQL returns one row per distinct stream (no per-event detail)
+          if (r.work_stream_id.HasValue) {
+            perspectiveStreamIds.Add(r.work_stream_id.Value);
+          }
+          break;
         case "perspective":
+          // Legacy mode: per-event rows with perspective_name
           perspectiveWork.Add(_mapPerspectiveWork(r));
+          if (r.work_stream_id.HasValue) {
+            perspectiveStreamIds.Add(r.work_stream_id.Value);
+          }
           break;
         case "sync_result":
           syncInquiryResults.Add(_mapSyncInquiryResult(r));
@@ -221,6 +237,7 @@ public partial class DapperWorkCoordinator(
       OutboxWork = outboxWork,
       InboxWork = inboxWork,
       PerspectiveWork = perspectiveWork,
+      PerspectiveStreamIds = [.. perspectiveStreamIds],
       SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
     };
   }
@@ -230,7 +247,7 @@ public partial class DapperWorkCoordinator(
   /// </summary>
   private SyncInquiryResult _mapSyncInquiryResult(WorkBatchRow r) {
     return new SyncInquiryResult {
-      InquiryId = r.work_id,
+      InquiryId = r.work_id!.Value,
       StreamId = r.work_stream_id ?? Guid.Empty,
       PendingCount = r.partition_number ?? 0,
       ProcessedCount = r.status,
@@ -253,7 +270,7 @@ public partial class DapperWorkCoordinator(
       : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
 
     return new OutboxWork {
-      MessageId = r.work_id,
+      MessageId = r.work_id!.Value,
       Destination = r.destination!,
       Envelope = jsonEnvelope,
       EnvelopeType = r.envelope_type!,
@@ -276,7 +293,7 @@ public partial class DapperWorkCoordinator(
       ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
 
     return new InboxWork {
-      MessageId = r.work_id,
+      MessageId = r.work_id!.Value,
       Envelope = jsonEnvelope,
       MessageType = r.message_type,
       StreamId = r.work_stream_id,
@@ -289,7 +306,7 @@ public partial class DapperWorkCoordinator(
 
   private static PerspectiveWork _mapPerspectiveWork(WorkBatchRow r) {
     return new PerspectiveWork {
-      WorkId = r.work_id,
+      WorkId = r.work_id ?? Guid.Empty,  // NULL in stream assignment model (drain mode) — worker uses PerspectiveStreamIds instead
       StreamId = r.work_stream_id ?? throw new InvalidOperationException("Perspective work must have StreamId"),
       PerspectiveName = r.perspective_name ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
       LastProcessedEventId = null,
@@ -453,18 +470,71 @@ public partial class DapperWorkCoordinator(
   /// Reports perspective cursor completion directly (out-of-band).
   /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// </summary>
+  /// <inheritdoc />
+  public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync("SELECT deregister_instance(@instanceId)", new { instanceId });
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.QuerySingleAsync<WorkCoordinatorStatistics>(@"
+      SELECT
+        (SELECT COUNT(*) FROM wh_perspective_events WHERE processed_at IS NULL) as PendingPerspectiveEvents,
+        (SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NULL) as PendingOutbox,
+        (SELECT COUNT(*) FROM wh_inbox WHERE processed_at IS NULL) as PendingInbox,
+        (SELECT COUNT(*) FROM wh_active_streams) as ActiveStreams");
+  }
+
+  /// <summary>
+  /// Stores inbox messages directly via store_inbox_messages SQL function.
+  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
+  /// </summary>
+  public async Task StoreInboxMessagesAsync(
+    InboxMessage[] messages,
+    int partitionCount = 2,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    var json = _serializeNewInboxMessages(messages);
+
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var connection = new NpgsqlConnection(_connectionString);
+      await connection.OpenAsync(cancellationToken);
+
+      var now = DateTimeOffset.UtcNow;
+      await connection.ExecuteAsync(
+        "SELECT * FROM store_inbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
+        new {
+          messages = json,
+          now,
+          partitionCount
+        });
+    }, logger: _logger, cancellationToken: cancellationToken);
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
+    var processedEventIdsJson = JsonSerializer.Serialize(
+      completion.ProcessedEventIds,
+      _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
       new {
         StreamId = completion.StreamId,
         PerspectiveName = completion.PerspectiveName,
         LastEventId = completion.LastEventId,
+        ProcessedEventIds = processedEventIdsJson,
         Status = (short)completion.Status,
         Error = (string?)null
       });
@@ -480,15 +550,63 @@ public partial class DapperWorkCoordinator(
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
+    var processedEventIdsJson = JsonSerializer.Serialize(
+      failure.ProcessedEventIds,
+      _jsonOptions.GetTypeInfo(typeof(Guid[])) ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]"));
+
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
       new {
         StreamId = failure.StreamId,
         PerspectiveName = failure.PerspectiveName,
         LastEventId = failure.LastEventId,
+        ProcessedEventIds = processedEventIdsJson,
         Status = (short)failure.Status,
         Error = failure.Error
       });
+  }
+
+  /// <summary>
+  /// Completes perspective events by deleting the specified work items from wh_perspective_events.
+  /// Called per-stream immediately after processing (drain mode — no buffering).
+  /// </summary>
+  public async Task<int> CompletePerspectiveEventsAsync(
+    Guid[] workItemIds,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    return await connection.QuerySingleAsync<int>(
+      "SELECT complete_perspective_events(@p_event_work_ids)",
+      new { p_event_work_ids = workItemIds });
+  }
+
+  /// <summary>
+  /// Batch-fetches events for multiple streams in a single call.
+  /// Returns denormalized rows joining wh_perspective_events with wh_event_store.
+  /// Only returns events leased to the requesting instance.
+  /// </summary>
+  public async Task<List<StreamEventData>> GetStreamEventsAsync(
+    Guid instanceId,
+    Guid[] streamIds,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var now = DateTimeOffset.UtcNow;
+    var results = await connection.QueryAsync<StreamEventRow>(
+      "SELECT * FROM get_stream_events(@p_instance_id, @p_stream_ids, @p_now)",
+      new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now });
+
+    return [.. results.Select(r => new StreamEventData {
+      StreamId = r.out_stream_id,
+      EventId = r.out_event_id,
+      EventType = r.out_event_type,
+      EventData = r.out_event_data,
+      Metadata = r.out_metadata,
+      Scope = r.out_scope,
+      EventWorkId = r.out_event_work_id
+    })];
   }
 
   /// <summary>
@@ -620,6 +738,28 @@ public partial class DapperWorkCoordinator(
     }
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT * FROM public.perform_maintenance()";
+    command.CommandTimeout = 30;
+
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var results = new List<MaintenanceResult>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new MaintenanceResult(
+        reader.GetString(0),
+        reader.GetInt64(1),
+        reader.GetDouble(2),
+        reader.GetString(3)
+      ));
+    }
+    return results;
+  }
+
   #region LoggerMessage Declarations
 
   [LoggerMessage(
@@ -696,7 +836,7 @@ internal class WorkBatchRow {
   public int instance_rank { get; set; }
   public int active_instance_count { get; set; }
   public required string source { get; set; }  // 'outbox', 'inbox', 'receptor', 'perspective'
-  public required Guid work_id { get; set; }
+  public Guid? work_id { get; set; }  // NULL for stream-only perspective rows (drain mode)
   public Guid? work_stream_id { get; set; }
   public int? partition_number { get; set; }  // Partition assignment for load balancing
   public string? destination { get; set; }  // Topic name (outbox) or handler name (inbox)
@@ -709,6 +849,20 @@ internal class WorkBatchRow {
   public bool is_newly_stored { get; set; }
   public bool is_orphaned { get; set; }
   public string? perspective_name { get; set; }
+}
+
+/// <summary>
+/// Internal DTO for mapping get_stream_events function results.
+/// Matches the function's return type structure with snake_case naming (PostgreSQL convention).
+/// </summary>
+internal class StreamEventRow {
+  public Guid out_stream_id { get; set; }
+  public Guid out_event_id { get; set; }
+  public string out_event_type { get; set; } = string.Empty;
+  public string out_event_data { get; set; } = string.Empty;
+  public string? out_metadata { get; set; }
+  public string? out_scope { get; set; }
+  public Guid out_event_work_id { get; set; }
 }
 
 /// <summary>

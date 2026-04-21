@@ -318,6 +318,15 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  /// Used by PerspectiveWorker for lifecycle receptor invocation (AOT-compatible polymorphic deserialization).");
     source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public IReadOnlyList<Type> GetEventTypes() => _allEventTypes;");
+    source.AppendLine();
+
+    // LifecycleStagesWithReceptors — empty by default (no lifecycle receptors in perspective runner registry).
+    // The set would be populated by ReceptorDiscoveryGenerator if lifecycle receptors are registered.
+    // For now, an empty set means PerspectiveWorker can skip all lifecycle invocations.
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+    source.AppendLine("  /// Gets lifecycle stages with registered receptors. Empty means no lifecycle receptors.");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+    source.AppendLine("  public IReadOnlySet<global::Whizbang.Core.Messaging.LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<global::Whizbang.Core.Messaging.LifecycleStage>();");
     source.AppendLine("}");
     source.AppendLine();
   }
@@ -349,6 +358,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       source.AppendLine($"    services.AddScoped<{perspective.RunnerName}>();");
     }
 
+    source.AppendLine();
+    source.AppendLine("    // TURNKEY: Register shutdown service BEFORE workers (LIFO: stops AFTER workers)");
+    source.AppendLine("    // Ensures graceful deregistration runs after all workers finish in-flight work");
+    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.WhizbangShutdownService>();");
     source.AppendLine();
     source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
     source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");

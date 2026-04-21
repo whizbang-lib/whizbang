@@ -315,6 +315,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -350,7 +352,7 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert - work coordinator should have been called
-    await Assert.That(workStrategy.QueuedInboxCount).IsGreaterThanOrEqualTo(1)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
       .Because("Handler should queue inbox message via strategy");
   }
 
@@ -371,6 +373,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -399,11 +403,9 @@ public class TransportConsumerWorkerCoverageTests {
 
     cts.Cancel();
 
-    // Assert - message was queued but flush returned no work (duplicate)
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1)
-      .Because("Message should be queued even if it's a duplicate");
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1)
-      .Because("Flush should be called to check for duplicates");
+    // Assert - message was stored via StoreInboxMessagesAsync (duplicate detection happens downstream)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("Message should be stored even if it's a duplicate");
   }
 
   // ========================================
@@ -422,6 +424,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -444,10 +448,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - null envelope type should cause InvalidOperationException
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType: null);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType: null);
 
     cts.Cancel();
   }
@@ -464,6 +466,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -486,10 +490,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
 
-    // Act & Assert - empty envelope type should cause InvalidOperationException
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType: "");
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType: "");
 
     cts.Cancel();
   }
@@ -510,6 +512,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -534,10 +538,8 @@ public class TransportConsumerWorkerCoverageTests {
     // Invalid format - no [[ ]] delimiters
     const string invalidEnvelopeType = "SomeType.Without.Brackets";
 
-    // Act & Assert
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, invalidEnvelopeType);
-    });
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, invalidEnvelopeType);
 
     cts.Cancel();
   }
@@ -558,6 +560,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -588,8 +592,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     cts.Cancel();
 
-    // Assert - message was processed (duplicate detection path)
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1);
+    // Assert - message was stored via StoreInboxMessagesAsync
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1);
   }
 
   // ========================================
@@ -610,6 +614,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -640,8 +646,8 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(streamId)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(streamId)
       .Because("StreamId should be extracted from AggregateId metadata");
   }
 
@@ -661,6 +667,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -690,7 +698,7 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.LastQueuedStreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
       .Because("StreamId should fall back to MessageId when no AggregateId metadata");
   }
 
@@ -785,6 +793,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -808,10 +818,8 @@ public class TransportConsumerWorkerCoverageTests {
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act & Assert - exception should propagate
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    });
+    // Act - per-message error isolation catches the exception (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
   }
@@ -833,6 +841,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -867,8 +877,7 @@ public class TransportConsumerWorkerCoverageTests {
     cts.Cancel();
 
     // Assert
-    await Assert.That(workStrategy.QueuedInboxCount).IsEqualTo(1);
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -964,6 +973,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
+    var noOpCoordinator = new NoOpWorkCoordinator();
+    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -1005,8 +1016,8 @@ public class TransportConsumerWorkerCoverageTests {
 
     cts.Cancel();
 
-    // Assert - message was processed (duplicate path since returnEmptyInboxWork=true)
-    await Assert.That(workStrategy.FlushCount).IsGreaterThanOrEqualTo(1);
+    // Assert - message was stored via StoreInboxMessagesAsync
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1);
   }
 
   // ========================================
@@ -1163,6 +1174,7 @@ public class TransportConsumerWorkerCoverageTests {
 
   private sealed class CoverageTransport : ITransport {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<CoverageSubscription> _subscriptions = [];
 
     public int SubscribeCallCount { get; private set; }
@@ -1189,6 +1201,18 @@ public class TransportConsumerWorkerCoverageTests {
       return Task.FromResult<ISubscription>(subscription);
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      _batchHandler = batchHandler;
+      var subscription = new CoverageSubscription();
+      _subscriptions.Add(subscription);
+      return Task.FromResult<ISubscription>(subscription);
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope,
         TransportDestination destination,
@@ -1198,7 +1222,9 @@ public class TransportConsumerWorkerCoverageTests {
       throw new NotSupportedException();
 
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
-      if (_handler != null) {
+      if (_batchHandler != null) {
+        await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+      } else if (_handler != null) {
         await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
@@ -1251,6 +1277,15 @@ public class TransportConsumerWorkerCoverageTests {
       return Task.FromResult<ISubscription>(new CoverageSubscription());
     }
 
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      return Task.FromResult<ISubscription>(new CoverageSubscription());
+    }
+
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
         IMessageEnvelope requestEnvelope,
         TransportDestination destination,
@@ -1278,6 +1313,18 @@ public class TransportConsumerWorkerCoverageTests {
     public Task<ISubscription> SubscribeAsync(
         Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
         TransportDestination destination,
+        CancellationToken cancellationToken = default) {
+      SubscribeCallCount++;
+      if (_failingTopics.Contains(destination.Address)) {
+        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
+      }
+      return Task.FromResult<ISubscription>(new CoverageSubscription());
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination,
+        TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
       if (_failingTopics.Contains(destination.Address)) {
@@ -1361,7 +1408,8 @@ public class TransportConsumerWorkerCoverageTests {
   }
 
   private sealed class ThrowingWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) { }
+    public void QueueInboxMessage(InboxMessage message) =>
+      throw new InvalidOperationException("Simulated flush failure");
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
     public void QueueOutboxMessage(OutboxMessage message) { }
@@ -1369,7 +1417,7 @@ public class TransportConsumerWorkerCoverageTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
     public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-      throw new InvalidOperationException("Simulated flush failure");
+      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     }
   }
 

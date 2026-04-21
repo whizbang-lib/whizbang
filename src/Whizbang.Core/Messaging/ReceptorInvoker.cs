@@ -40,6 +40,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
@@ -50,6 +51,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly LifecycleStageTracker? _stageTracker;
+  private readonly IReceptorDedupStore? _dedupStore;
+  private readonly Configuration.ReceptorInvocationTracking _invocationTracking;
+  private readonly Configuration.DoubleFireBehavior _onDoubleFire;
+  private readonly IReceptorFiringObserver? _firingObserver;
   private ILogger? _logger;
 
   /// <summary>
@@ -121,6 +126,20 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Resolve lifecycle stage tracker for cross-worker dedup (singleton)
     _stageTracker = scopedProvider.GetService<LifecycleStageTracker>();
+
+    // Resolve the receptor dedup store (per-message per-receptor guardrail).
+    // Default registration is EnvelopeReceptorDedupStore via AddWhizbangReceptorRegistry();
+    // a consumer may replace it with a DB-backed impl. Null → guardrail disabled.
+    _dedupStore = scopedProvider.GetService<IReceptorDedupStore>();
+
+    // Resolve guardrail options. Defaults: TrackAndEnforce, Warn on double-fire.
+    var whizbangOptions = scopedProvider.GetService<Microsoft.Extensions.Options.IOptions<Configuration.WhizbangOptions>>()?.Value;
+    var guardrails = whizbangOptions?.Guardrails ?? new Configuration.WhizbangGuardrailsOptions();
+    _invocationTracking = guardrails.ReceptorInvocationTracking;
+    _onDoubleFire = guardrails.OnDoubleFire;
+
+    // Optional test-only observer. Null in production when nothing is registered.
+    _firingObserver = scopedProvider.GetService<IReceptorFiringObserver>();
   }
 
   /// <inheritdoc/>
@@ -178,6 +197,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (isPostInbox && _serviceName is not null && receptors.Count > 0) {
       var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
       if (string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {
+        _ensureLogger();
+        if (_logger is not null) {
+          Log.SkippedSameServicePostInbox(_logger, stage, messageType.Name, envelope.MessageId.Value, _serviceName);
+        }
         return; // same service → already fired at LocalImmediate
       }
     }
@@ -187,6 +210,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       var isOwned = _isOwnedNamespace(messageType.Namespace);
       var isEvent = message is IEvent;
       if (isPreOutbox && (isOwned ? !isEvent : isEvent)) {
+        _ensureLogger();
+        if (_logger is not null) {
+          Log.SkippedOwnedDomainFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+        }
         return; // skip owned commands + non-owned events at outbox stage
       }
     }
@@ -196,23 +223,43 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Only applies when owned domains are configured (preserves backward compat).
     if (_ownedDomains.Count > 0 && isPreOutbox && receptors.Count > 0
         && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       return;
     }
 
     if (receptors.Count == 0) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.NoReceptorsRegistered(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
       return;
     }
 
     // Cross-worker dedup: prevent the same message+stage from being processed twice
-    // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox)
-    if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage)) {
+    // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox).
+    // For perspective-scoped stages the dedup key also includes context.PerspectiveType so
+    // that N perspectives processing the same event each get their own claim — without this,
+    // only the first perspective's Pre/PostPerspective* (and ImmediateDetached) fires.
+    if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage, context?.PerspectiveType)) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedStageTrackerDedup(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       return;
     }
 
-    // Suppress receptors during replay/rebuild unless they opt in with [FireDuringReplay]
+    // Replay/Rebuild filtering: new events pass through, already-processed events keep
+    // only [ReceptorIdempotent(AlwaysFire = true)] receptors.
     receptors = _filterForReplayMode(receptors, context);
     if (receptors.Count == 0) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedReplayModeFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
       return;
     }
 
@@ -370,14 +417,28 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   }
 
   /// <summary>
-  /// Filters receptors during replay/rebuild mode, keeping only those with [FireDuringReplay].
-  /// Returns the original list if not in replay/rebuild mode.
+  /// Filters receptors during Replay/Rebuild based on per-event idempotency semantics.
+  /// <list type="bullet">
+  ///   <item>Live mode → all receptors pass through.</item>
+  ///   <item>Replay/Rebuild + <see cref="ILifecycleContext.IsNewEvent"/> true → all receptors
+  ///   fire (this event has never been processed before).</item>
+  ///   <item>Replay/Rebuild + <c>IsNewEvent</c> false → only receptors declared fully
+  ///   idempotent via <c>[ReceptorIdempotent(AlwaysFire = true)]</c> fire
+  ///   (<see cref="ReceptorInfo.FireDuringReplay"/>).</item>
+  /// </list>
   /// </summary>
   private static IReadOnlyList<ReceptorInfo> _filterForReplayMode(
       IReadOnlyList<ReceptorInfo> receptors,
       ILifecycleContext? context) {
     var processingMode = context?.ProcessingMode;
     if (processingMode is not (ProcessingMode.Replay or ProcessingMode.Rebuild)) {
+      return receptors;
+    }
+
+    // In Replay/Rebuild, new events still fire all receptors — they have never had their
+    // lifecycle invoked before, so there is nothing to be idempotent about. Only
+    // already-processed events need to filter down to AlwaysFire receptors.
+    if (context?.IsNewEvent == true) {
       return receptors;
     }
 
@@ -406,6 +467,14 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <summary>
   /// Invokes a single receptor with tracing, sync awaiting, and event cascading.
   /// </summary>
+  /// <remarks>
+  /// Emits paired structured Debug logs (EventIds 16/17) bracketing the actual receptor
+  /// dispatch so that an operator can observe firing counts per <c>(ReceptorId, MessageId, Stage)</c>
+  /// in Aspire or file sinks. The post-invocation log runs from a <c>finally</c> block so
+  /// exceptions are still reported with <c>IsError=true</c> plus the exception type.
+  /// </remarks>
+  /// <docs>operations/observability/receptor-logging</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerLoggingTests.cs</tests>
   private async ValueTask _invokeReceptorAsync(
       ReceptorInfo receptor,
       ReceptorInvocationContext ctx,
@@ -417,6 +486,77 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
     receptorActivity?.SetTag("whizbang.receptor.message_type", ctx.MessageType.FullName);
     receptorActivity?.SetTag("whizbang.lifecycle.stage", ctx.Stage.ToString());
+
+    // Pre-resolve log fields once per receptor invocation so both the "firing" and "fired" lines
+    // share the same identity tuple. The envelope is single-threaded per message, so these values
+    // do not change between the two log calls.
+    var messageId = ctx.Envelope.MessageId.Value;
+    var streamId = ctx.ExtractedStreamId ?? Guid.Empty;
+    var messageTypeName = ctx.MessageType.FullName ?? ctx.MessageType.Name;
+    Guid correlationId = Guid.Empty;
+    string sourceService = string.Empty;
+    if (ctx.Envelope.Hops is { Count: > 0 } hops) {
+      correlationId = hops[0].CorrelationId?.Value ?? Guid.Empty;
+      sourceService = hops[^1].ServiceInstance.ServiceName ?? string.Empty;
+    }
+
+    _ensureLogger();
+
+    // Guardrail: consult the dedup store for a prior invocation of this receptor against
+    // this envelope. Per-receptor (not per-stage), so a filter bug that lets the same
+    // receptor fire at both LocalImmediateInline AND PreOutboxInline is caught here.
+    // Receptors declared [ReceptorIdempotent] bypass — they've opted in to re-firing.
+    //
+    // Perspective-scoped stages (Pre/PostPerspective*, ImmediateDetached under a
+    // perspective) are exempt because the SAME receptor legitimately fires once per
+    // perspective per event (N perspectives → N fires). A prior invocation whose stage
+    // is itself perspective-scoped doesn't indicate a double-fire bug; it indicates
+    // normal per-perspective fan-out.
+    var currentIsPerspectiveScoped = ctx.LifecycleContext?.PerspectiveType is not null
+      || ctx.Stage is LifecycleStage.PrePerspectiveInline
+                   or LifecycleStage.PrePerspectiveDetached
+                   or LifecycleStage.PostPerspectiveInline
+                   or LifecycleStage.PostPerspectiveDetached;
+    if (_invocationTracking == Configuration.ReceptorInvocationTracking.TrackAndEnforce
+        && _dedupStore is not null
+        && !receptor.IsIdempotent
+        && !currentIsPerspectiveScoped) {
+      var prior = await _dedupStore.TryGetPriorInvocationAsync(ctx.Envelope, receptor.ReceptorId, cancellationToken).ConfigureAwait(false);
+      if (prior is not null) {
+        if (_onDoubleFire == Configuration.DoubleFireBehavior.Throw) {
+          throw new DuplicateReceptorFireException(
+            receptorId: receptor.ReceptorId,
+            currentStage: ctx.Stage,
+            priorStage: prior.Stage,
+            messageId: messageId,
+            priorInvocation: prior);
+        }
+        // Warn + skip. Log first so operators always see the duplicate even if downstream state is suspicious.
+        if (_logger is not null) {
+          Log.ReceptorAlreadyFiredSkip(
+            _logger,
+            receptor.ReceptorId,
+            ctx.Stage,
+            prior.Stage,
+            messageId,
+            streamId,
+            sourceService,
+            prior.CompletedAt);
+        }
+        return;
+      }
+    }
+
+    if (_logger is not null) {
+      Log.ReceptorFiring(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService);
+    }
+    if (_firingObserver is not null) {
+      await _firingObserver.OnReceptorFiringAsync(receptor.ReceptorId, ctx.Stage, messageId, ctx.Envelope, cancellationToken).ConfigureAwait(false);
+    }
+    var stopwatch = Stopwatch.StartNew();
+    bool isError = false;
+    string? exceptionTypeName = null;
+    Exception? capturedException = null;
 
     try {
       // Await perspective sync if needed - returns SyncContext to set in THIS execution context
@@ -446,11 +586,46 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       if (result is not null && _eventCascader is not null) {
         await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
       }
+
+      // Record the invocation on success. Skipped when tracking is Off; the
+      // RecordInvocationAsync call itself is the only mutation of the envelope's
+      // ReceptorInvocations list, so on exception (caught below) nothing is recorded
+      // and a retry can re-fire cleanly.
+      if (_invocationTracking != Configuration.ReceptorInvocationTracking.Off && _dedupStore is not null) {
+        var record = new ReceptorInvocationRecord {
+          ReceptorId = receptor.ReceptorId,
+          Stage = ctx.Stage,
+          CompletedAt = DateTimeOffset.UtcNow,
+          Duration = stopwatch.Elapsed,
+          ServiceName = _serviceName ?? string.Empty
+        };
+        await _dedupStore.RecordInvocationAsync(ctx.Envelope, record, cancellationToken).ConfigureAwait(false);
+      }
     } catch (Exception ex) {
+      isError = true;
+      exceptionTypeName = ex.GetType().FullName;
+      capturedException = ex;
       receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      receptorActivity?.SetTag("exception.type", ex.GetType().FullName);
+      receptorActivity?.SetTag("exception.type", exceptionTypeName);
       receptorActivity?.SetTag("exception.message", ex.Message);
       throw;
+    } finally {
+      stopwatch.Stop();
+      if (_logger is not null) {
+        Log.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService, stopwatch.ElapsedMilliseconds, isError, exceptionTypeName);
+      }
+      if (_firingObserver is not null) {
+        // ConfigureAwait to the same context — finally block may run on any sync context.
+        // The observer's exception, if any, rides out with whatever is already propagating.
+        await _firingObserver.OnReceptorFiredAsync(
+          receptor.ReceptorId,
+          ctx.Stage,
+          messageId,
+          ctx.Envelope,
+          stopwatch.Elapsed,
+          capturedException,
+          cancellationToken).ConfigureAwait(false);
+      }
     }
   }
 
@@ -508,13 +683,21 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       ILifecycleContext? context,
       CancellationToken cancellationToken) {
     var eventTypes = syncAttr.EventTypes?.ToArray();
-    // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
+
+    // When EventTypes is explicitly specified, the events being waited for may differ
+    // from the current message (cross-scope sync). In that case, we must NOT pass
+    // context.EventId as eventIdToAwait — it would be the current message's ID (e.g.,
+    // a command ID), not the ID of the tracked event. This would cause Priority 1 in
+    // _resolveExpectedEventIds to return the wrong ID, bypassing the correct
+    // stream-based lookup (Priority 2) and returning immediately without waiting.
+    var eventIdToAwait = eventTypes is { Length: > 0 } ? null : context?.EventId;
+
     var syncResult = await _syncAwaiter!.WaitForStreamAsync(
         syncAttr.PerspectiveType,
         streamId,
         eventTypes,
         timeout,
-        eventIdToAwait: context?.EventId,
+        eventIdToAwait: eventIdToAwait,
         cancellationToken).ConfigureAwait(false);
 
     // Create SyncContext - caller sets it on AsyncLocal to ensure it flows to receptor
@@ -582,12 +765,97 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     return false;
   }
 
+  private void _ensureLogger() {
+    _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");
+  }
+
   private static partial class Log {
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Debug,
       Message = "Invoking receptor {ReceptorId} called from {CallerInfo}")]
     public static partial void ReceptorInvokedFromCaller(ILogger logger, string receptorId, string callerInfo);
+
+    [LoggerMessage(
+      EventId = 10,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): same-service PostInbox (source={ServiceName})")]
+    public static partial void SkippedSameServicePostInbox(ILogger logger, LifecycleStage stage, string messageType, Guid messageId, string serviceName);
+
+    [LoggerMessage(
+      EventId = 11,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): owned-domain namespace filter")]
+    public static partial void SkippedOwnedDomainFilter(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 12,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): LocalDispatch flag at PreOutbox")]
+    public static partial void SkippedLocalDispatchPreOutbox(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 13,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): LifecycleStageTracker dedup (already claimed)")]
+    public static partial void SkippedStageTrackerDedup(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 14,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Skipped {Stage} for {MessageType} ({MessageId}): all receptors filtered by replay mode")]
+    public static partial void SkippedReplayModeFilter(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 15,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] No receptors registered for {Stage} / {MessageType} ({MessageId})")]
+    public static partial void NoReceptorsRegistered(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
+
+    [LoggerMessage(
+      EventId = 16,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Firing {ReceptorId} at {Stage} for {MessageType} (MessageId={MessageId}, StreamId={StreamId}, CorrelationId={CorrelationId}, SourceService={SourceService})")]
+    public static partial void ReceptorFiring(
+      ILogger logger,
+      string receptorId,
+      LifecycleStage stage,
+      Guid messageId,
+      Guid streamId,
+      string messageType,
+      Guid correlationId,
+      string sourceService);
+
+    [LoggerMessage(
+      EventId = 17,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] Fired {ReceptorId} at {Stage} for {MessageType} in {ElapsedMs}ms (MessageId={MessageId}, StreamId={StreamId}, CorrelationId={CorrelationId}, SourceService={SourceService}, IsError={IsError}, ExceptionType={ExceptionType})")]
+    public static partial void ReceptorFired(
+      ILogger logger,
+      string receptorId,
+      LifecycleStage stage,
+      Guid messageId,
+      Guid streamId,
+      string messageType,
+      Guid correlationId,
+      string sourceService,
+      long elapsedMs,
+      bool isError,
+      string? exceptionType);
+
+    [LoggerMessage(
+      EventId = 18,
+      Level = LogLevel.Warning,
+      Message = "[ReceptorInvoker] Receptor {ReceptorId} already fired at {PriorStage}, skipping duplicate attempt at {CurrentStage} (MessageId={MessageId}, StreamId={StreamId}, SourceService={SourceService}, PriorCompletedAt={PriorCompletedAt})")]
+    public static partial void ReceptorAlreadyFiredSkip(
+      ILogger logger,
+      string receptorId,
+      LifecycleStage currentStage,
+      LifecycleStage priorStage,
+      Guid messageId,
+      Guid streamId,
+      string sourceService,
+      DateTimeOffset priorCompletedAt);
   }
 }
 

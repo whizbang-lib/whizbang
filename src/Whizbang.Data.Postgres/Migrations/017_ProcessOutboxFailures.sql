@@ -4,6 +4,8 @@
 --              Implements exponential backoff retry with scheduled_for timestamp.
 -- Dependencies: 001-016 (requires wh_outbox table)
 
+SELECT __SCHEMA__.drop_all_overloads('process_outbox_failures');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_failures(
   p_failures JSONB,
   p_now TIMESTAMPTZ

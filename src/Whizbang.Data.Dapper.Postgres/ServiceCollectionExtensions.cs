@@ -131,6 +131,10 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
+    // Register perspective snapshot and rewind options
+    services.AddOptions<PerspectiveSnapshotOptions>();
+    services.AddOptions<PerspectiveRewindOptions>();
+
     // Register perspective snapshot store and stream locker
     services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
@@ -151,6 +155,14 @@ public static class ServiceCollectionExtensions {
     // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
     // Resolved explicitly (admin command / migration), not run automatically.
     services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
+    // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
+    // still update projection tables but wh_perspective_cursors would stay at whatever live
+    // processing last wrote. See IPerspectiveCheckpointCompleter.
+    services.TryAddSingleton<IPerspectiveCheckpointCompleter>(sp =>
+      new DapperPostgresPerspectiveCheckpointCompleter(
+        connectionString,
+        sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
 
     return services;
   }
@@ -240,6 +252,10 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
+    // Register perspective snapshot and rewind options
+    services.AddOptions<PerspectiveSnapshotOptions>();
+    services.AddOptions<PerspectiveRewindOptions>();
+
     // Register perspective snapshot store and stream locker
     services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
@@ -263,6 +279,14 @@ public static class ServiceCollectionExtensions {
     // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
     // Resolved explicitly (admin command / migration), not run automatically.
     services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
+    // Cursor-checkpoint persistence for PerspectiveRebuilder. Without this, rebuild would
+    // still update projection tables but wh_perspective_cursors would stay at whatever live
+    // processing last wrote. See IPerspectiveCheckpointCompleter.
+    services.TryAddSingleton<IPerspectiveCheckpointCompleter>(sp =>
+      new DapperPostgresPerspectiveCheckpointCompleter(
+        connectionString,
+        sp.GetService<ILogger<DapperPostgresPerspectiveCheckpointCompleter>>()));
 
     return services;
   }

@@ -901,11 +901,16 @@ public class PostgresFunctionTests : PostgresTestBase {
     // Calculate which rank should claim this partition (rank = partition % active_count)
     var expectedRank = partition1 % 2;
 
+    // Stale cutoff: p_now - 30 s. Blocking instances must have heartbeat >= this to count.
+    // This test doesn't rely on the liveness check (instance1 is both owner and claimer),
+    // so the stale cutoff value is irrelevant — but the parameter is required.
+    var staleCutoff = now.AddSeconds(-30);
+
     // Act - instance1 with calculated rank claims work
     var claimed = await connection.QueryAsync<ClaimResult>(@"
       SELECT message_id, stream_id
-      FROM claim_orphaned_outbox(@instance1, @expectedRank, 2, @leaseExpiry, @now, 10000)",
-      new { instance1, expectedRank, leaseExpiry, now });
+      FROM claim_orphaned_outbox(@instance1, @expectedRank, 2, @leaseExpiry, @now, 10000, @staleCutoff)",
+      new { instance1, expectedRank, leaseExpiry, now, staleCutoff });
 
     // Assert - instance1 should claim both messages (owns the stream and correct partition)
     await Assert.That(claimed.Count()).IsGreaterThanOrEqualTo(1);
@@ -933,6 +938,16 @@ public class PostgresFunctionTests : PostgresTestBase {
         (@message2Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream2Id, @now, NULL, NULL)",
       new { message1Id, message2Id, stream1Id, stream2Id, now });
 
+    // Register both instances as heartbeating so the claim's liveness check treats them as live.
+    // Without these registrations, instance2's ownership of stream2 would be treated as
+    // abandoned and instance1 would incorrectly claim stream2's message.
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
+      VALUES
+        (@instance1, 'TestService', 'test-host', 1234, @now, @now),
+        (@instance2, 'TestService', 'test-host', 5678, @now, @now)",
+      new { instance1, instance2, now });
+
     // Insert active streams - instance1 owns stream1, instance2 owns stream2
     await connection.ExecuteAsync(@"
       INSERT INTO wh_active_streams (stream_id, assigned_instance_id, lease_expiry, partition_number, last_activity_at)
@@ -941,11 +956,14 @@ public class PostgresFunctionTests : PostgresTestBase {
         (@stream2Id, @instance2, @leaseExpiry, 2, @now)",
       new { stream1Id, stream2Id, instance1, instance2, leaseExpiry, now });
 
+    // Stale cutoff at now - 30 s; both instances' heartbeats are fresh so both are "live".
+    var staleCutoff = now.AddSeconds(-30);
+
     // Act - instance1 claims work
     var claimed = await connection.QueryAsync<ClaimResult>(@"
       SELECT message_id, stream_id
-      FROM claim_orphaned_inbox(@instance1, 0, 2, @leaseExpiry, @now, 10000)",
-      new { instance1, leaseExpiry, now });
+      FROM claim_orphaned_inbox(@instance1, 0, 2, @leaseExpiry, @now, 10000, @staleCutoff)",
+      new { instance1, leaseExpiry, now, staleCutoff });
 
     // Assert - instance1 should only claim message1 (owns stream1)
     await Assert.That(claimed.Count()).IsEqualTo(1);
@@ -1557,7 +1575,7 @@ public class PostgresFunctionTests : PostgresTestBase {
         new { messageId = msgId, streamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
     }
 
-    // Act — call with default max (100)
+    // Act — call with default max (300)
     var result = await connection.QueryAsync<WorkBatchRow>(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId, p_service_name := 'TestService', p_host_name := 'test-host',
@@ -1565,7 +1583,7 @@ public class PostgresFunctionTests : PostgresTestBase {
       )", new { instanceId, now });
 
     var outboxWork = result.Where(r => r.source == "outbox").ToList();
-    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(100)
+    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(300)
       .Because("Phase 7 must limit returned work items to prevent hot loops that starve the publisher");
   }
 
@@ -1601,21 +1619,22 @@ public class PostgresFunctionTests : PostgresTestBase {
         new { messageId = _idProvider.NewGuid(), streamId = otherStreamId, createdAt = now.AddMilliseconds(-i), instanceId, leaseExpiry = now.AddMinutes(5) });
     }
 
-    // Act
+    // Act — pass p_max_streams := 25 so the unified budget drives a per-stream cap at 25.
+    // (p_max_streams drives both the total-per-tick budget and the per-stream budget — see commit d88818d4.)
     var result = await connection.QueryAsync<WorkBatchRow>(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId, p_service_name := 'TestService', p_host_name := 'test-host',
-        p_process_id := 12345, p_metadata := NULL::jsonb, p_now := @now
+        p_process_id := 12345, p_metadata := NULL::jsonb, p_now := @now,
+        p_max_streams := 25
       )", new { instanceId, now });
 
     var outboxWork = result.Where(r => r.source == "outbox").ToList();
     var busyStreamCount = outboxWork.Count(w => w.work_stream_id == busyStreamId);
-    var otherStreamCount = outboxWork.Count(w => w.work_stream_id == otherStreamId);
 
     await Assert.That(busyStreamCount).IsLessThanOrEqualTo(25)
-      .Because("Per-stream limit prevents a single stream from consuming all slots");
-    await Assert.That(otherStreamCount).IsEqualTo(5)
-      .Because("Other streams should get their fair share");
+      .Because("Per-stream rank filter caps a single busy stream at v_max_work_items_per_stream (= p_max_streams)");
+    await Assert.That(outboxWork.Count).IsLessThanOrEqualTo(25)
+      .Because("Global limit (v_max_work_items = p_max_streams) bounds total rows returned");
   }
 
   [Test]

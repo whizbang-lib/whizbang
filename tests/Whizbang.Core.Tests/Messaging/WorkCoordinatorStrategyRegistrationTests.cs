@@ -124,10 +124,9 @@ public class WorkCoordinatorStrategyRegistrationTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
     await strategy.FlushAsync(WorkBatchOptions.None);
 
-    // Assert — channel writes no longer happen during flush (work is persisted to DB,
-    // coordinator loop picks it up on next tick)
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(testWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
 
     // Cleanup
     await strategy.DisposeAsync();
@@ -157,10 +156,9 @@ public class WorkCoordinatorStrategyRegistrationTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage());
     await strategy.FlushAsync(WorkBatchOptions.None);
 
-    // Assert — channel writes no longer happen during flush (work is persisted to DB,
-    // coordinator loop picks it up on next tick)
+    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(testWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync no longer writes outbox work to channel");
+      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
 
     // Cleanup
     await strategy.DisposeAsync();
@@ -500,6 +498,12 @@ public class WorkCoordinatorStrategyRegistrationTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
@@ -508,6 +512,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   }
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public void ClearInFlight() { }
     private readonly List<OutboxWork> _writtenWork = [];
     public IReadOnlyList<OutboxWork> WrittenWork => _writtenWork;
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -525,6 +530,10 @@ public class WorkCoordinatorStrategyRegistrationTests {
     public bool IsInFlight(Guid messageId) => false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
+    public event Action? OnNewWorkAvailable;
+    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
+    public event Action? OnNewPerspectiveWorkAvailable;
+    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
   private sealed class RegFakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
@@ -561,6 +570,12 @@ public class WorkCoordinatorStrategyRegistrationTests {
     public Task ReportPerspectiveFailureAsync(
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,

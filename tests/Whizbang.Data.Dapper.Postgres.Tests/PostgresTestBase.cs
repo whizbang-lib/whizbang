@@ -19,6 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Dapper type handlers for TrackedGuid and DateTimeOffset are registered via
 /// <see cref="DapperTypeHandlers"/> module initializer.
 /// </remarks>
+[NotInParallel("PostgreSQL")]
 public abstract class PostgresTestBase : IAsyncDisposable {
   static PostgresTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
@@ -134,6 +135,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "src", "Whizbang.Data.Postgres", "Migrations");
 
     var functionFiles = new[] {
+      "000_MigrationTracking.sql",
       "001_CreateComputePartitionFunction.sql",
       "002_CreateAcquireReceptorProcessingFunction.sql",
       "003_CreateCompleteReceptorProcessingFunction.sql",
@@ -163,7 +165,9 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "027_ClaimOrphanedPerspectiveEvents.sql",
       "028_EventStorageErrorTracking.sql",
       "029_ProcessWorkBatch.sql",
-      "030_ReconcilePerspectiveRegistry.sql"
+      "030_ReconcilePerspectiveRegistry.sql",
+      "036_DeregisterInstance.sql",
+      "037_CompletePerspectiveEvents.sql"
     };
 
     foreach (var functionFile in functionFiles) {

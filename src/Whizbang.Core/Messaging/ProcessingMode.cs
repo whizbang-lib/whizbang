@@ -8,7 +8,8 @@ namespace Whizbang.Core.Messaging;
 /// <para>
 /// During replay and rebuild, side-effect receptors (email, webhooks, cache busting) should typically
 /// NOT fire, as those side effects already occurred during original processing. Use
-/// <see cref="FireDuringReplayAttribute"/> to opt specific receptors into replay/rebuild invocation.
+/// <see cref="ReceptorIdempotentAttribute"/> with <c>AlwaysFire = true</c> to opt specific receptors
+/// into firing for every applied event during replay and rebuild.
 /// </para>
 /// <para>
 /// <strong>Example:</strong> Receptor that branches on processing mode:
@@ -41,13 +42,15 @@ public enum ProcessingMode {
 
   /// <summary>
   /// Rewind replay triggered by a late-arriving event.
-  /// Receptors are suppressed by default unless decorated with <see cref="FireDuringReplayAttribute"/>.
+  /// Receptors are suppressed for already-processed events by default. Receptors decorated
+  /// with <see cref="ReceptorIdempotentAttribute"/> (AlwaysFire = true) fire for every event.
   /// </summary>
   Replay = 1,
 
   /// <summary>
   /// Full or partial perspective rebuild.
-  /// Receptors are suppressed by default unless decorated with <see cref="FireDuringReplayAttribute"/>.
+  /// Receptors are suppressed for already-processed events by default. Receptors decorated
+  /// with <see cref="ReceptorIdempotentAttribute"/> (AlwaysFire = true) fire for every event.
   /// </summary>
   Rebuild = 2
 }

@@ -1,8 +1,10 @@
 -- Migration: 021_StoreInboxMessages.sql
 -- Date: 2025-12-25
--- Description: Creates store_inbox_messages function for inserting new inbox messages with immediate lease.
+-- Description: Creates store_inbox_messages function for inserting new inbox messages without lease.
 --              Returns message IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-020 (requires wh_inbox, wh_active_streams tables, compute_partition function)
+
+SELECT __SCHEMA__.drop_all_overloads('store_inbox_messages');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
   p_messages JSONB,
@@ -34,6 +36,11 @@ BEGIN
       (elem->>'StreamId')::UUID as stream_id,
       (elem->>'IsEvent')::BOOLEAN as is_event
     FROM jsonb_array_elements(p_messages) as elem
+    -- Sort by stream_id so the UPSERT on wh_active_streams below acquires row locks in
+    -- a canonical order across all concurrent callers — prevents A→B vs B→A deadlock
+    -- cycles. NULLS FIRST keeps the null-stream path stable. msg_id as tiebreaker for
+    -- determinism within the same stream.
+    ORDER BY (elem->>'StreamId')::UUID NULLS FIRST, (elem->>'MessageId')::UUID
   LOOP
     -- Deduplication: Try to insert into deduplication table first
     -- If message_id already exists, this returns 0 rows and we skip the inbox insert
@@ -52,7 +59,7 @@ BEGIN
         v_partition := NULL;
       END IF;
 
-      -- Insert message with immediate lease (ON CONFLICT for idempotency)
+      -- Insert message without lease — WorkCoordinatorPublisherWorker claims via claim_orphaned_inbox
       INSERT INTO wh_inbox (
       message_id,
       handler_name,
@@ -81,31 +88,18 @@ BEGIN
       1,  -- Stored flag
       0,  -- Initial attempts
       p_now,
-      p_instance_id,  -- Immediate lease
-      p_lease_expiry
+      NULL,  -- No lease — immediately claimable by WorkCoordinatorPublisherWorker
+      NULL
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
-      -- Update active streams for stream ownership tracking
-      IF v_msg.stream_id IS NOT NULL THEN
-        INSERT INTO __SCHEMA__.wh_active_streams (
-          stream_id,
-          assigned_instance_id,
-          lease_expiry,
-          partition_number,
-          last_activity_at
-        ) VALUES (
-          v_msg.stream_id,
-          p_instance_id,
-          p_lease_expiry,
-          v_partition,
-          p_now
-        )
-        ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
-          assigned_instance_id = p_instance_id,
-          lease_expiry = p_lease_expiry,
-          last_activity_at = p_now;
-      END IF;
+      -- NOTE: wh_active_streams refresh is deliberately NOT done here. It is driven
+      -- from process_work_batch end-of-tick in a single batched, sorted UPSERT
+      -- covering all four stream sources. Keeping the inbox write path free of
+      -- wh_active_streams means store_inbox_messages never takes a row lock on a
+      -- shared resource — only wh_message_deduplication and wh_inbox per-message-id
+      -- rows, both keyed on unique UUIDv7 message ids. Eliminates the 40P01 cycle
+      -- class observed in a consumer application.
 
       -- Return message as newly created (deduplication succeeded)
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, (v_was_new = 1) AS was_newly_created;
@@ -115,4 +109,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages IS
-'Stores new inbox messages with immediate lease to current instance. Calculates partition for load balancing, updates active streams for ownership tracking. Returns message IDs for NewlyStored flag in orchestrator response.';
+'Stores new inbox messages without lease (immediately claimable by WorkCoordinatorPublisherWorker). Calculates partition for load balancing, updates active streams for ownership tracking. Returns message IDs for NewlyStored flag in orchestrator response.';

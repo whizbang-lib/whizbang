@@ -2,6 +2,12 @@ name: Build (Reusable)
 
 on:
   workflow_call:
+    inputs:
+      version:
+        description: 'Version to stamp into assemblies (from GitVersion). If empty, uses Directory.Build.props default.'
+        required: false
+        type: string
+        default: ''
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -41,7 +47,12 @@ jobs:
         run: dotnet clean --configuration Release
 
       - name: Build Solution
-        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+        run: |
+          VERSION_ARGS=""
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION_ARGS="-p:Version=${{ inputs.version }}"
+          fi
+          dotnet build --no-restore --configuration Release -maxcpucount:1 $VERSION_ARGS
 
       - name: Verify Code Formatting
         run: dotnet format --verify-no-changes --no-restore

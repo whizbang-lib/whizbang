@@ -143,13 +143,21 @@ __PHYSICAL_FIELD_CONFIGS__
     // JsonSerializerOptions are created from JsonContextRegistry (auto-discovers all registered contexts)
     services.AddScoped<global::Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      var jsonOptions = global::Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
+      var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
         jsonOptions
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
+    services.AddScoped<global::Whizbang.Core.Perspectives.IPerspectiveReplayReader>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      var eventStore = sp.GetRequiredService<global::Whizbang.Core.Messaging.IEventStore>();
+      return new global::Whizbang.Data.EFCore.Postgres.Perspectives.EFCorePerspectiveReplayReader<__DBCONTEXT_FQN__>(
+        context,
+        eventStore
+      );
+    });
 
     // Register WorkCoordinatorOptions singleton
     // Supports both direct registration AND IOptions<T> pattern (Configure<WorkCoordinatorOptions>())

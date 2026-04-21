@@ -4,6 +4,8 @@
 --              Extensible — add new maintenance operations here over time.
 -- Dependencies: 001-031
 
+SELECT __SCHEMA__.drop_all_overloads('perform_maintenance');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.perform_maintenance()
 RETURNS TABLE(
   task_name TEXT,
@@ -14,6 +16,8 @@ RETURNS TABLE(
 DECLARE
   v_start TIMESTAMPTZ;
   v_rows BIGINT;
+  v_dedup_retention_days INTEGER;
+  v_stuck_inbox_retention_days INTEGER;
 BEGIN
   -- ========================================
   -- Task 1: Purge completed outbox messages
@@ -52,17 +56,82 @@ BEGIN
     'ok'::TEXT;
 
   -- ========================================
-  -- Future tasks go here
+  -- Task 4: Purge old deduplication entries
   -- ========================================
-  -- Examples:
-  -- - Purge orphaned active_streams older than X days
-  -- - Archive old event_store entries
-  -- - Clean up stale service_instances
-  -- - Rebuild bloated indexes (REINDEX)
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'dedup_retention_days'),
+    30
+  ) INTO v_dedup_retention_days;
+
+  v_start := clock_timestamp();
+  DELETE FROM wh_message_deduplication
+  WHERE first_seen_at < NOW() - (v_dedup_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_old_deduplication'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 5: Purge ancient stuck inbox messages
+  -- ========================================
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
+    7
+  ) INTO v_stuck_inbox_retention_days;
+
+  v_start := clock_timestamp();
+  DELETE FROM wh_inbox
+  WHERE processed_at IS NULL
+    AND lease_expiry IS NULL
+    AND instance_id IS NULL
+    AND received_at < NOW() - (v_stuck_inbox_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_stuck_inbox'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 6: Purge abandoned active-stream rows
+  -- ========================================
+  -- Removes wh_active_streams entries whose assigned_instance_id no longer exists
+  -- in wh_service_instances. After the heartbeat-recency liveness check in
+  -- claim_orphaned_inbox / claim_orphaned_outbox (migrations 024/025) these rows
+  -- are already non-blocking, but they accumulate indefinitely because
+  -- cleanup_stale_instances only nulls assigned_instance_id in the tick where the
+  -- instance is deleted, and the field can be re-populated by concurrent UPSERTs
+  -- via the COALESCE preserve-existing-ownership clause in process_work_batch
+  -- Phase 5.5. No age guard — a missing wh_service_instances row means the
+  -- instance is fully gone (UUIDv7 IDs never repeat).
+  v_start := clock_timestamp();
+  DELETE FROM __SCHEMA__.wh_active_streams
+  WHERE assigned_instance_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_service_instances si
+      WHERE si.instance_id = __SCHEMA__.wh_active_streams.assigned_instance_id
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_abandoned_active_streams'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
 END;
 $$ LANGUAGE plpgsql;
 
+-- Seed default retention settings
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('dedup_retention_days', '30', 'integer', 'Days to retain message deduplication entries')
+ON CONFLICT (setting_key) DO NOTHING;
+
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('stuck_inbox_retention_days', '7', 'integer', 'Days to retain inbox messages that were never processed')
+ON CONFLICT (setting_key) DO NOTHING;
+
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance IS
-'Runs startup maintenance tasks: purges completed messages, reclaims space.
+'Runs maintenance tasks: purges completed messages, old deduplication entries, stuck inbox messages, and abandoned active-stream ownership rows.
 Returns a result set with task name, rows affected, duration, and status.
-Extensible — add new maintenance operations as needed.';
+Retention periods configurable via wh_settings (dedup_retention_days, stuck_inbox_retention_days). Abandoned active-streams purge has no retention knob — a missing wh_service_instances row is sufficient evidence that the owner is gone.';

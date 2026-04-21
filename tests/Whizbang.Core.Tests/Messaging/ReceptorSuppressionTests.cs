@@ -88,7 +88,9 @@ public class ReceptorSuppressionTests {
 
   [Test]
   public async Task InvokeAsync_ReplayMode_SuppressesReceptorWithoutFireDuringReplayAsync() {
-    // Arrange
+    // Arrange — attribute-less receptor + Replay + already-processed event (IsNewEvent=false)
+    // is the one combination where the filter suppresses. New events still fire all receptors
+    // even in Replay mode, because nothing was side-effected yet.
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.RegisterReceptor<TestMessage>("NormalReceptor", LifecycleStage.PostPerspectiveInline, fireDuringReplay: false);
@@ -96,7 +98,8 @@ public class ReceptorSuppressionTests {
     var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var context = new LifecycleExecutionContext {
       CurrentStage = LifecycleStage.PostPerspectiveInline,
-      ProcessingMode = ProcessingMode.Replay
+      ProcessingMode = ProcessingMode.Replay,
+      IsNewEvent = false
     };
 
     // Act
@@ -133,7 +136,8 @@ public class ReceptorSuppressionTests {
 
   [Test]
   public async Task InvokeAsync_RebuildMode_SuppressesReceptorWithoutFireDuringReplayAsync() {
-    // Arrange
+    // Arrange — Rebuild replays already-processed events, so IsNewEvent=false is the
+    // canonical state for suppression of attribute-less receptors.
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.RegisterReceptor<TestMessage>("NormalReceptor", LifecycleStage.PostPerspectiveInline, fireDuringReplay: false);
@@ -141,7 +145,8 @@ public class ReceptorSuppressionTests {
     var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var context = new LifecycleExecutionContext {
       CurrentStage = LifecycleStage.PostPerspectiveInline,
-      ProcessingMode = ProcessingMode.Rebuild
+      ProcessingMode = ProcessingMode.Rebuild,
+      IsNewEvent = false
     };
 
     // Act
@@ -235,7 +240,8 @@ public class ReceptorSuppressionTests {
 
   [Test]
   public async Task InvokeAsync_ReplayMode_MixedReceptors_OnlyOptedInFiresAsync() {
-    // Arrange — one receptor with FireDuringReplay, one without
+    // Arrange — one receptor with FireDuringReplay, two without. During Replay of an
+    // already-processed event (IsNewEvent=false), only the opted-in receptor fires.
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.RegisterReceptor<TestMessage>("EmailReceptor", LifecycleStage.PostPerspectiveInline, fireDuringReplay: false);
@@ -245,7 +251,8 @@ public class ReceptorSuppressionTests {
     var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var context = new LifecycleExecutionContext {
       CurrentStage = LifecycleStage.PostPerspectiveInline,
-      ProcessingMode = ProcessingMode.Replay
+      ProcessingMode = ProcessingMode.Replay,
+      IsNewEvent = false
     };
 
     // Act
@@ -258,7 +265,8 @@ public class ReceptorSuppressionTests {
 
   [Test]
   public async Task InvokeAsync_RebuildMode_AllSuppressed_ReturnsEarlyAsync() {
-    // Arrange — all receptors without FireDuringReplay
+    // Arrange — all receptors without FireDuringReplay during Rebuild of an
+    // already-processed event → all suppressed.
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.RegisterReceptor<TestMessage>("Receptor1", LifecycleStage.PostPerspectiveInline, fireDuringReplay: false);
@@ -267,7 +275,8 @@ public class ReceptorSuppressionTests {
     var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var context = new LifecycleExecutionContext {
       CurrentStage = LifecycleStage.PostPerspectiveInline,
-      ProcessingMode = ProcessingMode.Rebuild
+      ProcessingMode = ProcessingMode.Rebuild,
+      IsNewEvent = false
     };
 
     // Act
@@ -279,7 +288,9 @@ public class ReceptorSuppressionTests {
 
   [Test]
   public async Task InvokeAsync_ReplayMode_MultipleOptedIn_AllFireAsync() {
-    // Arrange — multiple receptors with FireDuringReplay
+    // Arrange — multiple AlwaysFire receptors + one attribute-less. During Replay
+    // of an already-processed event (IsNewEvent=false), opted-in receptors fire,
+    // attribute-less is suppressed.
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.RegisterReceptor<TestMessage>("Updater1", LifecycleStage.PostPerspectiveInline, fireDuringReplay: true);
@@ -289,7 +300,8 @@ public class ReceptorSuppressionTests {
     var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var context = new LifecycleExecutionContext {
       CurrentStage = LifecycleStage.PostPerspectiveInline,
-      ProcessingMode = ProcessingMode.Replay
+      ProcessingMode = ProcessingMode.Replay,
+      IsNewEvent = false
     };
 
     // Act

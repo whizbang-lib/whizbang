@@ -92,9 +92,9 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync() {
     // Arrange
-    var workProcessingStartedFired = false;
+    var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var (worker, coordinator, _) = _createWorker();
-    worker.OnWorkProcessingStarted += () => { workProcessingStartedFired = true; };
+    worker.OnWorkProcessingStarted += () => { startedSignal.TrySetResult(); };
 
     // Return work on first call
     var streamId = Guid.NewGuid();
@@ -110,11 +110,15 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+
+    // Wait for OnWorkProcessingStarted (fires after batch completes, AFTER completion is reported)
+    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await startedSignal.Task.WaitAsync(timeoutCts.Token);
+
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert
-    await Assert.That(workProcessingStartedFired).IsTrue()
+    await Assert.That(startedSignal.Task.IsCompleted).IsTrue()
       .Because("OnWorkProcessingStarted should fire when work appears");
     await Assert.That(worker.IsIdle).IsFalse()
       .Because("Worker should be active after processing work");
@@ -187,10 +191,12 @@ public class PerspectiveWorkerCoverageTests {
     var (worker, _, dbCheck) = _createWorker();
     dbCheck.IsReady = false;
 
-    // Act — wait for readiness check to be called (signal-based, not Task.Delay)
+    // Act — wait for enough readiness checks that the main loop has run multiple iterations.
+    // Startup calls IsReadyAsync 2x (processInitialCheckpoints + scanAndRepairRewinds) before
+    // entering the main loop. Wait for 6 total to ensure multiple main-loop increments.
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await dbCheck.WaitForChecksAsync(3, TimeSpan.FromSeconds(10));
+    await dbCheck.WaitForChecksAsync(6, TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -547,7 +553,7 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(options.PollingIntervalMilliseconds).IsEqualTo(1000);
     await Assert.That(options.LeaseSeconds).IsEqualTo(300);
-    await Assert.That(options.StaleThresholdSeconds).IsEqualTo(600);
+    await Assert.That(options.AbandonStaleInstanceThresholdSeconds).IsEqualTo(30);
     await Assert.That(options.DebugMode).IsFalse();
     await Assert.That(options.PartitionCount).IsEqualTo(10_000);
     await Assert.That(options.IdleThresholdPolls).IsEqualTo(2);
@@ -561,7 +567,7 @@ public class PerspectiveWorkerCoverageTests {
     var options = new PerspectiveWorkerOptions {
       PollingIntervalMilliseconds = 500,
       LeaseSeconds = 60,
-      StaleThresholdSeconds = 120,
+      AbandonStaleInstanceThresholdSeconds = 120,
       DebugMode = true,
       PartitionCount = 5000,
       IdleThresholdPolls = 5,
@@ -574,7 +580,7 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(options.PollingIntervalMilliseconds).IsEqualTo(500);
     await Assert.That(options.LeaseSeconds).IsEqualTo(60);
-    await Assert.That(options.StaleThresholdSeconds).IsEqualTo(120);
+    await Assert.That(options.AbandonStaleInstanceThresholdSeconds).IsEqualTo(120);
     await Assert.That(options.DebugMode).IsTrue();
     await Assert.That(options.PartitionCount).IsEqualTo(5000);
     await Assert.That(options.IdleThresholdPolls).IsEqualTo(5);
@@ -1395,6 +1401,80 @@ public class PerspectiveWorkerCoverageTests {
       .Because("Worker should exit gracefully when service provider is disposed during shutdown");
   }
 
+  [Test]
+  public async Task Worker_WhenScopeFactoryDisposedDuringRegistryInit_ExitsGracefullyAsync() {
+    // Reproduces: Kestrel fails to bind → host disposes DI container → PerspectiveWorker startup crashes
+    // The scope factory throws ObjectDisposedException on the second CreateScope call
+    // (call 1 = constructor logger, call 2 = _initializePerspectiveRegistryAsync).
+    var services = new ServiceCollection();
+    services.AddLogging();
+    await using var realProvider = services.BuildServiceProvider();
+
+    // throwAfterCalls: 1 → constructor scope (call 1) succeeds, registry init (call 2) throws
+    var scopeFactory = new CountingDisposedScopeFactory(
+      realProvider.GetRequiredService<IServiceScopeFactory>(), throwAfterCalls: 1);
+
+    var worker = new PerspectiveWorker(
+      new FakeServiceInstanceProvider(),
+      scopeFactory,
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })
+    );
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask!;
+
+    // Worker should complete (either gracefully or by catching ObjectDisposedException)
+    try {
+      await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    } catch (ObjectDisposedException) {
+      // Expected — scope factory disposed during startup
+    }
+    await Assert.That(executeTask.IsCompleted).IsTrue()
+      .Because("Worker should complete when scope factory is disposed during registry init");
+  }
+
+  [Test]
+  public async Task Worker_WhenScopeFactoryDisposedDuringScanAndRepairRewinds_ExitsGracefullyAsync() {
+    // Reproduces: Kestrel bind failure → DI disposed → _scanAndRepairRewindsOnStartupAsync crashes host.
+    // Scope factory allows constructor (call 1) + registry init (call 2), then throws on call 3+.
+    // Empty registry → _reconcileOrphanedLifecyclesAsync returns early (no scope consumed).
+    // DB not ready for initial checkpoints → no processWorkBatch scope consumed.
+    // DB ready for startup scan → triggers the failing CreateAsyncScope (call 3).
+    var services = new ServiceCollection();
+    services.AddLogging();
+    await using var realProvider = services.BuildServiceProvider();
+
+    // throwAfterCalls: 2 → constructor (1) + registry init (2) succeed, scan (3) throws
+    var scopeFactory = new CountingDisposedScopeFactory(
+      realProvider.GetRequiredService<IServiceScopeFactory>(), throwAfterCalls: 2);
+
+    // false → _processInitialCheckpointsAsync skips processWorkBatch (no extra scope)
+    // true  → _scanAndRepairRewindsOnStartupAsync proceeds to CreateAsyncScope → throws
+    var databaseReadiness = new SequentialDatabaseReadinessCheck(false, true);
+
+    var worker = new PerspectiveWorker(
+      new FakeServiceInstanceProvider(),
+      scopeFactory,
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask!;
+
+    try {
+      await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    } catch (ObjectDisposedException) {
+      // Expected — scope factory disposed during startup scan
+    }
+    await Assert.That(executeTask.IsCompleted).IsTrue()
+      .Because("Worker should complete when scope factory disposed during startup rewind scan");
+  }
+
   #endregion
 
   #region Test Types
@@ -1474,6 +1554,12 @@ public class PerspectiveWorkerCoverageTests {
       return Task.CompletedTask;
     }
 
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
         Guid streamId,
         string perspectiveName,
@@ -1544,6 +1630,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1559,6 +1646,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1574,6 +1662,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1589,6 +1678,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   /// <summary>
@@ -1604,9 +1694,11 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];
+    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
@@ -1628,6 +1720,7 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class TypeAwarePerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
@@ -1650,6 +1743,7 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class ThrowingPerspectiveRunner : IPerspectiveRunner {
+    public Type PerspectiveType => typeof(object);
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
@@ -1714,6 +1808,8 @@ public class PerspectiveWorkerCoverageTests {
       => Task.FromResult(true);
 
     public void UnregisterAwaiter(Guid awaiterId) { }
+
+    public int CleanupStaleEntries(TimeSpan maxAge) => 0;
   }
 
   private sealed class FakeEventStore : IEventStore {
@@ -1784,6 +1880,8 @@ public class PerspectiveWorkerCoverageTests {
       => Task.FromResult(new List<MessageEnvelope<TMessage>>());
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default)
       => Task.FromResult(-1L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
   private sealed class FakeEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
@@ -1859,5 +1957,32 @@ public class PerspectiveWorkerCoverageTests {
     }
   }
 
+  /// <summary>
+  /// Scope factory that delegates the first N CreateScope calls to the inner factory,
+  /// then throws ObjectDisposedException to simulate DI container disposal during startup.
+  /// </summary>
+  private sealed class CountingDisposedScopeFactory(IServiceScopeFactory inner, int throwAfterCalls) : IServiceScopeFactory {
+    private int _callCount;
+
+    public IServiceScope CreateScope() {
+      var count = Interlocked.Increment(ref _callCount);
+      ObjectDisposedException.ThrowIf(count > throwAfterCalls, nameof(IServiceProvider));
+      return inner.CreateScope();
+    }
+  }
+
+  /// <summary>
+  /// Database readiness check that returns each bool in sequence, then true for any further calls.
+  /// </summary>
+  private sealed class SequentialDatabaseReadinessCheck(params bool[] responses) : IDatabaseReadinessCheck {
+    private readonly Queue<bool> _responses = new(responses);
+
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      var ready = _responses.Count > 0 ? _responses.Dequeue() : true;
+      return Task.FromResult(ready);
+    }
+  }
+
   #endregion
+
 }
