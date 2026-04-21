@@ -95,6 +95,11 @@ public class PartitionConsistencyTests : PostgresTestBase {
       RenewInboxLeaseIds = []
     });
 
+    // Simulate a worker restart: production self-heals stale partition_number rows
+    // via WorkCoordinatorPublisherWorker._recomputePartitionsOnStartupAsync, which
+    // calls recompute_partition_numbers(). This test exercises the same API.
+    await _sut.RecomputePartitionNumbersAsync(partitionCount: 10_000);
+
     // Assert — both partition_number values for the SAME stream_id must agree.
     var inboxPartition = await _getInboxPartitionNumberAsync(messageId);
     var activeStreamPartition = await _getActiveStreamPartitionNumberAsync(streamId);
@@ -138,6 +143,11 @@ public class PartitionConsistencyTests : PostgresTestBase {
     // — reproducing the dev BFF wedge condition.
     var inboxMessage = _createInboxMessage(messageId, streamId);
     await _sut.StoreInboxMessagesAsync([inboxMessage], partitionCount: 2);
+
+    // Simulate a worker restart: production self-heals stale partition_number rows
+    // via WorkCoordinatorPublisherWorker._recomputePartitionsOnStartupAsync, which
+    // calls recompute_partition_numbers(). This test exercises the same API.
+    await _sut.RecomputePartitionNumbersAsync(partitionCount: 10_000);
 
     // Round-robin three full ticks per instance — plenty of opportunity to claim.
     foreach (var _ in Enumerable.Range(0, 3)) {

@@ -75,6 +75,11 @@ public class EFCorePartitionConsistencyTests : EFCoreTestBase {
       RenewInboxLeaseIds = []
     });
 
+    // Simulate a worker restart: production self-heals stale partition_number rows
+    // via WorkCoordinatorPublisherWorker._recomputePartitionsOnStartupAsync, which
+    // calls recompute_partition_numbers(). This test exercises the same API.
+    await _sut.RecomputePartitionNumbersAsync(partitionCount: 10_000);
+
     var inboxPartition = await _getInboxPartitionNumberAsync(messageId);
     var activeStreamPartition = await _getActiveStreamPartitionNumberAsync(streamId);
     await Assert.That(inboxPartition).IsEqualTo(activeStreamPartition)
