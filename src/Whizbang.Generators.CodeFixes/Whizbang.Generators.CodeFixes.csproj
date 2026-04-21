@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IsPackable>true</IsPackable>
+    <!-- Not packable as a standalone NuGet: Whizbang.Generators bundles this DLL into its -->
+    <!-- analyzers/dotnet/cs/ output so consumers get analyzer + code fixes in one package. -->
+    <IsPackable>false</IsPackable>
     <Description>Roslyn code fix providers for Whizbang analyzers — e.g., inserts [PinnedId("&lt;new-guid&gt;")] on WHIZ110/WHIZ111.</Description>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Generators.CodeFixes</RootNamespace>
