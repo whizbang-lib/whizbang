@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -154,6 +155,25 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   }
 
   [Test]
+  public async Task PopulateAsync_SummaryLog_IncludesPinnedAndUnpinnedCountsAsync() {
+    var catalog = new FakeCatalog([
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned1, Sample", "event", "11111111-1111-1111-1111-111111111111"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Pinned2, Sample", "command", "22222222-2222-2222-2222-222222222222"),
+      new MessageTypeCatalogEntry(typeof(SamplePinned), "Sample.Unpinned1, Sample", "event", null),
+    ]);
+    var logger = new CapturingLogger<DapperMessageTypeRegistryPopulator>();
+
+    var populator = new DapperMessageTypeRegistryPopulator(catalog, _connectionFactory!, logger);
+    await populator.PopulateAsync();
+
+    var summary = logger.Messages.FirstOrDefault(m => m.Contains("Message type registry populated", StringComparison.Ordinal));
+    await Assert.That(summary).IsNotNull();
+    await Assert.That(summary!).Contains("3 entries");
+    await Assert.That(summary!).Contains("2 pinned");
+    await Assert.That(summary!).Contains("1 unpinned");
+  }
+
+  [Test]
   public async Task PopulateAsync_EmptyCatalog_LeavesRegistryUntouchedAsync() {
     var populator = new DapperMessageTypeRegistryPopulator(new FakeCatalog([]), _connectionFactory!);
     await populator.PopulateAsync();
@@ -174,6 +194,19 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
 
   private sealed class FakeCatalog(IReadOnlyList<MessageTypeCatalogEntry> entries) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
+  }
+
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    public List<string> Messages { get; } = new();
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      Messages.Add(formatter(state, exception));
+    }
+    private sealed class NullScope : IDisposable {
+      public static readonly NullScope Instance = new();
+      public void Dispose() { }
+    }
   }
 
   private sealed record SamplePinned;

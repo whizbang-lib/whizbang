@@ -59,11 +59,14 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     var inserted = 0;
     var updated = 0;
     var drifted = 0;
+    var pinnedCount = 0;
+    var unpinnedCount = 0;
 
     foreach (var entry in entries) {
       cancellationToken.ThrowIfCancellationRequested();
 
       if (entry.PinnedId is not null) {
+        pinnedCount++;
         var existing = await connection.QueryFirstOrDefaultAsync<(Guid TypeId, string ClrTypeName)?>(
           new CommandDefinition(
             @"SELECT type_id AS TypeId, clr_type_name AS ClrTypeName
@@ -105,6 +108,7 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
             entry.ClrTypeName);
         }
       } else {
+        unpinnedCount++;
         var affected = await connection.ExecuteAsync(
           new CommandDefinition(
             @"INSERT INTO wh_message_type_registry (clr_type_name, kind, updated_at)
@@ -122,7 +126,7 @@ public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPop
     }
 
     _logger?.LogInformation(
-      "Message type registry populated: {Total} catalog entries ({Inserted} inserted, {Updated} updated, {Drifted} drifted).",
-      entries.Count, inserted, updated, drifted);
+      "Message type registry populated: {Total} entries ({Pinned} pinned, {Unpinned} unpinned; {Inserted} inserted, {Updated} updated, {Drifted} drifted).",
+      entries.Count, pinnedCount, unpinnedCount, inserted, updated, drifted);
   }
 }
