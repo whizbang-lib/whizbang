@@ -30,13 +30,15 @@ public class TransportManagerPublishingTests {
       }
     };
 
-    // Track published messages
+    // Track published messages via completion signal (no polling / delays)
     var publishedEnvelopes = new List<IMessageEnvelope>();
+    var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
           publishedEnvelopes.Add(msg.Envelope);
         }
+        received.TrySetResult(true);
       },
       new TransportDestination("test-destination"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
@@ -45,7 +47,7 @@ public class TransportManagerPublishingTests {
 
     // Act
     await manager.PublishToTargetsAsync(message, targets);
-    await Task.Delay(50); // Allow async processing
+    await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(publishedEnvelopes).Count().IsEqualTo(1);
@@ -76,15 +78,18 @@ public class TransportManagerPublishingTests {
       }
     };
 
-    // Track published messages
+    // Track published messages via completion signals (no polling / delays)
     var publishedToDest1 = new List<IMessageEnvelope>();
     var publishedToDest2 = new List<IMessageEnvelope>();
+    var receivedDest1 = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receivedDest2 = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport1.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
           publishedToDest1.Add(msg.Envelope);
         }
+        receivedDest1.TrySetResult(true);
       },
       new TransportDestination("dest1"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
@@ -96,6 +101,7 @@ public class TransportManagerPublishingTests {
         foreach (var msg in batch) {
           publishedToDest2.Add(msg.Envelope);
         }
+        receivedDest2.TrySetResult(true);
       },
       new TransportDestination("dest2"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
@@ -104,7 +110,7 @@ public class TransportManagerPublishingTests {
 
     // Act
     await manager.PublishToTargetsAsync(message, targets);
-    await Task.Delay(50); // Allow async processing
+    await Task.WhenAll(receivedDest1.Task, receivedDest2.Task).WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(publishedToDest1).Count().IsEqualTo(1);
@@ -127,10 +133,12 @@ public class TransportManagerPublishingTests {
       }
     };
 
-    // Track published destinations
-    var capturedDestinations = new List<TransportDestination>();
+    // Track published destinations via completion signal
+    var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => { },
+      async (batch, ct) => {
+        received.TrySetResult(true);
+      },
       new TransportDestination("dest"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
@@ -140,7 +148,7 @@ public class TransportManagerPublishingTests {
     await manager.PublishToTargetsAsync(message, targets);
 
     // Assert - verify message was published (implicitly tests routing key was passed)
-    await Task.Delay(50);
+    await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
   }
 
   [Test]
@@ -168,13 +176,15 @@ public class TransportManagerPublishingTests {
       }
     };
 
-    // Track published messages
+    // Track published messages via completion signal
     var publishedEnvelopes = new List<IMessageEnvelope>();
+    var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
           publishedEnvelopes.Add(msg.Envelope);
         }
+        received.TrySetResult(true);
       },
       new TransportDestination("dest"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
@@ -183,7 +193,7 @@ public class TransportManagerPublishingTests {
 
     // Act
     await manager.PublishToTargetsAsync(message, targets, context);
-    await Task.Delay(50);
+    await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(publishedEnvelopes).Count().IsEqualTo(1);
@@ -205,13 +215,15 @@ public class TransportManagerPublishingTests {
       }
     };
 
-    // Track published messages
+    // Track published messages via completion signal
     var publishedEnvelopes = new List<IMessageEnvelope>();
+    var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
           publishedEnvelopes.Add(msg.Envelope);
         }
+        received.TrySetResult(true);
       },
       new TransportDestination("dest"),
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
@@ -220,7 +232,7 @@ public class TransportManagerPublishingTests {
 
     // Act
     await manager.PublishToTargetsAsync(message, targets);
-    await Task.Delay(50);
+    await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert
     await Assert.That(publishedEnvelopes).Count().IsEqualTo(1);

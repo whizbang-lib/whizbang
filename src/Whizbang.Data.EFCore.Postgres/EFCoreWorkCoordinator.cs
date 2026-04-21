@@ -785,9 +785,53 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Event storage and perspective creation happen on the next tick when
   /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
   /// </summary>
+  /// <inheritdoc />
+  public async Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
+    int partitionCount,
+    CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "recompute_partition_numbers");
+
+    long inbox = 0;
+    long outbox = 0;
+    long active = 0;
+
+    var connection = _dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync(cancellationToken);
+    }
+    await using var cmd = connection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT table_name, rows_recomputed FROM {functionName}(@p_partition_count)";
+#pragma warning restore S2077
+    var p = cmd.CreateParameter();
+    p.ParameterName = "p_partition_count";
+    p.Value = partitionCount;
+    cmd.Parameters.Add(p);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      var name = reader.GetString(0);
+      var count = reader.GetInt64(1);
+      switch (name) {
+        case "wh_inbox": inbox = count; break;
+        case "wh_outbox": outbox = count; break;
+        case "wh_active_streams": active = count; break;
+      }
+    }
+
+    return new PartitionRecomputeResult {
+      InboxRowsRecomputed = inbox,
+      OutboxRowsRecomputed = outbox,
+      ActiveStreamsRowsRecomputed = active
+    };
+  }
+
   public async Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
-    int partitionCount = 2,
+    int partitionCount,
     CancellationToken cancellationToken = default) {
     if (messages.Length == 0) {
       return;
