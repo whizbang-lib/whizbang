@@ -148,6 +148,10 @@ public static class ServiceCollectionExtensions {
     // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
     services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
 
+    // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
+    // Resolved explicitly (admin command / migration), not run automatically.
+    services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
+
     return services;
   }
 
@@ -255,6 +259,10 @@ public static class ServiceCollectionExtensions {
     // Message type registry populator — reconciles wh_message_type_registry at startup
     // using IMessageTypeCatalog (auto-registered by AddWhizbang via a module initializer).
     services.TryAddSingleton<IMessageTypeRegistryPopulator, DapperMessageTypeRegistryPopulator>();
+
+    // Event-type rename tool — detects pinned-id drift and rewrites stored CLR type names.
+    // Resolved explicitly (admin command / migration), not run automatically.
+    services.TryAddSingleton<IEventTypeRenameTool, DapperEventTypeRenameTool>();
 
     return services;
   }
