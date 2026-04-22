@@ -37,7 +37,6 @@ public static class SharedPostgresContainer {
   private const string DATABASE = "whizbang_test";
   private const int CONTAINER_PORT = 5432;
   private const string BANNER_LINE = "================================================================================";
-  private const string DOCKER_FILE_NAME = "docker";
 
   private static readonly SemaphoreSlim _initLock = new(1, 1);
   private static string? _connectionString;
@@ -222,7 +221,7 @@ public static class SharedPostgresContainer {
   private static async Task<int> _createContainerWithDockerAsync(CancellationToken ct) {
     // Use docker run with --detach and --publish to create a persistent container
     var psi = new ProcessStartInfo {
-      FileName = DOCKER_FILE_NAME,
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"run --detach --name {CONTAINER_NAME} " +
                   $"-e POSTGRES_USER={USERNAME} " +
                   $"-e POSTGRES_PASSWORD={PASSWORD} " +
@@ -318,7 +317,7 @@ public static class SharedPostgresContainer {
 
   private static async Task<string?> _getContainerStateAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = DOCKER_FILE_NAME,
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -343,7 +342,7 @@ public static class SharedPostgresContainer {
 
   private static async Task _startContainerAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = DOCKER_FILE_NAME,
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"start {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -359,7 +358,7 @@ public static class SharedPostgresContainer {
 
   private static async Task<int?> _getPortAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = DOCKER_FILE_NAME,
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"port {CONTAINER_NAME} {CONTAINER_PORT}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
