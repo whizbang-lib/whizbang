@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -235,6 +236,7 @@ public sealed partial class PerspectiveRebuilder(
 
   [LoggerMessage(Level = LogLevel.Debug,
       Message = "Rebuild {Perspective}: stream {StreamId} replayed to event {LastEventId} (status {Status}) in {ElapsedMs}ms ({Processed}/{Total})")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method — parameter list mirrors the structured log template placeholders and cannot be grouped without losing structured-logging semantics.")]
   private static partial void LogStreamReplayed(ILogger logger, string perspective, Guid streamId,
       Guid lastEventId, PerspectiveProcessingStatus status, long elapsedMs, int processed, int total);
 

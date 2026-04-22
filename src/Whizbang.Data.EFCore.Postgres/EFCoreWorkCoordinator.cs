@@ -1098,9 +1098,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new PerspectiveCursorInfo {
         StreamId = reader.GetGuid(0),
         PerspectiveName = reader.GetString(1),
-        LastEventId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        LastEventId = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
         Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
-        RewindTriggerEventId = reader.IsDBNull(4) ? null : reader.GetGuid(4)
+        RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4)
       });
     }
 
@@ -1381,8 +1381,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new RewindCursorInfo(
         reader.GetGuid(0),
         reader.GetString(1),
-        reader.IsDBNull(2) ? null : reader.GetGuid(2),
-        reader.IsDBNull(3) ? null : reader.GetGuid(3)));
+        await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
+        await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(3)));
     }
 
     return results;
@@ -1467,8 +1467,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventId = reader.GetGuid(reader.GetOrdinal("out_event_id")),
         EventType = reader.GetString(reader.GetOrdinal("out_event_type")),
         EventData = reader.GetString(reader.GetOrdinal("out_event_data")),
-        Metadata = reader.IsDBNull(metadataOrdinal) ? null : reader.GetString(metadataOrdinal),
-        Scope = reader.IsDBNull(scopeOrdinal) ? null : reader.GetString(scopeOrdinal),
+        Metadata = await reader.IsDBNullAsync(metadataOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(metadataOrdinal),
+        Scope = await reader.IsDBNullAsync(scopeOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(scopeOrdinal),
         EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id"))
       });
     }

@@ -31,7 +31,6 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
   private const string RECEPTOR_INTERFACE_PREFIX = "Whizbang.Core.IReceptor<";
   private const string SYNC_RECEPTOR_INTERFACE_PREFIX = "Whizbang.Core.ISyncReceptor<";
   private const string FIRE_AT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
-  private const string LIFECYCLE_STAGE_TYPE = "Whizbang.Core.Messaging.LifecycleStage";
 
   private static readonly string[] _dangerousMethods = ["WaitForStreamAsync", "WaitAsync"];
 

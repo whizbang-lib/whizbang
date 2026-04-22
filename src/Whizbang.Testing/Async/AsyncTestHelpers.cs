@@ -228,9 +228,10 @@ public static class AsyncTestHelpers {
     cts.CancelAfter(timeout);
 
     try {
-      T value;
-      while (!predicate(value = getValue())) {
+      var value = getValue();
+      while (!predicate(value)) {
         await Task.Delay(interval, cts.Token);
+        value = getValue();
       }
       return value;
     } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {

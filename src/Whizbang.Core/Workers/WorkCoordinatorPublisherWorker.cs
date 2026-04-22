@@ -780,8 +780,9 @@ public partial class WorkCoordinatorPublisherWorker(
     }
 
     // Fallback: direct invocation when coordinator not registered
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_ASYNC, traceContext, stoppingToken);
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_INLINE, traceContext, stoppingToken);
+    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, LIFECYCLE_PRE_OUTBOX_ASYNC, tracingOptions, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, LIFECYCLE_PRE_OUTBOX_INLINE, tracingOptions, stoppingToken);
     return (null, outboxTypedEnvelope);
   }
 
@@ -827,21 +828,29 @@ public partial class WorkCoordinatorPublisherWorker(
       return;
     }
 
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxDetached, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_ASYNC, traceContext, stoppingToken);
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_INLINE, traceContext, stoppingToken);
+    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxDetached, work.Attempts, LIFECYCLE_POST_OUTBOX_ASYNC, tracingOptions, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, LIFECYCLE_POST_OUTBOX_INLINE, tracingOptions, stoppingToken);
   }
+
+  /// <summary>
+  /// Groups the tracing-related flags and parent context used by lifecycle invocation paths so
+  /// helpers don't need a long trailing parameter list.
+  /// </summary>
+  private readonly record struct LifecycleTracingOptions(
+    bool EnableLifecycleSpans,
+    ActivityContext TraceContext);
 
   private static async Task _invokeLifecycleDirectAsync(
     IReceptorInvoker receptorInvoker,
     IMessageEnvelope typedEnvelope,
     LifecycleStage stage,
     int attempts,
-    bool enableLifecycleSpans,
     string activityName,
-    ActivityContext traceContext,
+    LifecycleTracingOptions tracingOptions,
     CancellationToken stoppingToken) {
 
-    using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(activityName, ActivityKind.Internal, parentContext: traceContext) : null) {
+    using (tracingOptions.EnableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(activityName, ActivityKind.Internal, parentContext: tracingOptions.TraceContext) : null) {
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = stage,
         MessageSource = MessageSource.Outbox,
@@ -1209,33 +1218,6 @@ public partial class WorkCoordinatorPublisherWorker(
         LogWorkProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
     }
-  }
-
-  /// <summary>
-  /// Obsolete — ack counts were extracted from SQL-returned metadata which
-  /// silently disappears when the response has no outbox/inbox/perspective-stream
-  /// rows (post-burst idle). Replaced by acknowledging the local sent-count
-  /// directly after a successful ProcessWorkBatchAsync. Kept for reference; can
-  /// be deleted once no downstream consumer relies on its signature.
-  /// </summary>
-  private static Dictionary<string, JsonElement>? _extractMetadataRow(WorkBatch workBatch) {
-    var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
-    if (outboxFirstRow?.Metadata != null) {
-      return outboxFirstRow.Metadata;
-    }
-    var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
-    if (inboxFirstRow?.Metadata != null) {
-      return inboxFirstRow.Metadata;
-    }
-    var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
-    return perspectiveFirstRow?.Metadata;
-  }
-
-  private static int _extractAckCount(Dictionary<string, JsonElement>? metadataRow, string key) {
-    if (metadataRow != null && metadataRow.TryGetValue(key, out var value)) {
-      return value.GetInt32();
-    }
-    return 0;
   }
 
   /// <summary>
