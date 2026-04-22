@@ -159,29 +159,28 @@ public class MessageTagDiscoveryGeneratorTests {
   }
 
   /// <summary>
-  /// Test that generator handles IncludeEvent property.
+  /// Generator never emits the "__event" key. The old IncludeEvent property was removed
+  /// to stop callers from shipping the entire event object alongside extracted Properties.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_WithIncludeEvent_GeneratesPayloadWithEventAsync() {
-    // Arrange
+  public async Task Generator_NeverEmitsEventKeyInPayloadAsync() {
     const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-updated", IncludeEvent = true)]
+            [SignalTag(Tag = "order-updated")]
             public record OrderUpdatedEvent(Guid OrderId, string Status);
             """;
 
-    // Act
     var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
 
-    // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).Contains("__event");
+    await Assert.That(code!).DoesNotContain("__event");
+    await Assert.That(code!).DoesNotContain("IncludeEvent");
   }
 
   /// <summary>
@@ -640,53 +639,85 @@ public class MessageTagDiscoveryGeneratorTests {
   }
 
   /// <summary>
-  /// Test that generator handles IncludeEvent boolean via constructor argument.
-  /// Verifies GetBoolValue correctly reads constructor arguments.
+  /// Properties = [] (explicit empty) must produce an empty payload — it is NOT
+  /// treated as "not specified". Null (unset) still falls back to all type properties
+  /// for backward compat.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_WithBoolInConstructor_ExtractsValueAsync() {
-    // Arrange - Define custom attribute with bool in constructor
+  public async Task Generator_WithEmptyPropertiesArray_EmitsEmptyPayloadAsync() {
     const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
             namespace TestApp;
 
-            /// <summary>
-            /// Custom tag attribute with includeEvent in constructor.
-            /// </summary>
-            public class FullEventTagAttribute : MessageTagAttribute {
-              public FullEventTagAttribute(string tag, bool includeEvent) {
-                Tag = tag;
-                IncludeEvent = includeEvent;
-              }
-            }
-
-            [FullEventTag("payments", true)]
-            public record PaymentProcessedEvent(Guid PaymentId, decimal Amount);
-
-            [FullEventTag("refunds", false)]
-            public record RefundIssuedEvent(Guid RefundId, decimal Amount);
+            [SignalTag(Tag = "tab-created", Properties = new string[0])]
+            public record TabCreatedEvent(Guid TabId, string Name, string Route);
             """;
 
-    // Act
     var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
 
-    // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TabCreatedEvent");
+    // No field assignments inside the payload builder
+    await Assert.That(code!).DoesNotContain("dict[\"TabId\"]");
+    await Assert.That(code!).DoesNotContain("dict[\"Name\"]");
+    await Assert.That(code!).DoesNotContain("dict[\"Route\"]");
+  }
 
-    // Both events should be registered
-    await Assert.That(code).Contains("PaymentProcessedEvent");
-    await Assert.That(code).Contains("RefundIssuedEvent");
+  /// <summary>
+  /// Properties left unset (null) falls back to extracting every public property on
+  /// the event type. Preserved for backward compat with existing tag attributes.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithoutPropertiesSpecified_ExtractsAllTypePropertiesAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
 
-    // PaymentProcessedEvent should have __event in payload (IncludeEvent = true)
-    // The generated code will have IncludeEvent = true for PaymentProcessedEvent
-    await Assert.That(code).Contains("IncludeEvent = true");
+            namespace TestApp;
 
-    // Should also have IncludeEvent = false for RefundIssuedEvent
-    await Assert.That(code).Contains("IncludeEvent = false");
+            [SignalTag(Tag = "fallback")]
+            public record FallbackEvent(Guid Id, string Name);
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("dict[\"Id\"]");
+    await Assert.That(code!).Contains("dict[\"Name\"]");
+  }
+
+  /// <summary>
+  /// Test that generator extracts exactly the properties declared on the tag attribute
+  /// and nothing else. Verifies the post-IncludeEvent world: callers opt in to fields explicitly.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithExplicitProperties_EmitsOnlyDeclaredFieldsAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [SignalTag(Tag = "payments", Properties = ["PaymentId"])]
+            public record PaymentProcessedEvent(Guid PaymentId, decimal Amount, string InternalNote);
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("PaymentProcessedEvent");
+    await Assert.That(code!).Contains("dict[\"PaymentId\"]");
+    await Assert.That(code!).DoesNotContain("dict[\"Amount\"]");
+    await Assert.That(code!).DoesNotContain("dict[\"InternalNote\"]");
+    await Assert.That(code!).DoesNotContain("__event");
   }
 
   // ============================================================================
