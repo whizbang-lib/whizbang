@@ -1043,96 +1043,127 @@ public partial class WorkCoordinatorPublisherWorker(
       LogNoWorkClaimed(_logger, _options.PartitionCount, _instanceProvider.InstanceId);
     }
 
-    // Write outbox work to channel for publisher loop
-    if (workBatch.OutboxWork.Count > 0) {
-      // Sort by MessageId (UUIDv7 has time-based ordering)
-      var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
-
-      foreach (var work in orderedOutboxWork) {
-        if (!_workChannelWriter.IsInFlight(work.MessageId)) {
-          await _workChannelWriter.WriteAsync(work, cancellationToken);
-        } else if (_workChannelWriter.ShouldRenewLease(work.MessageId)) {
-          // Only renew when nearing lease expiry (>half the lease duration)
-          _leaseRenewals.Add(work.MessageId);
-        }
-      }
-    }
-
-    // Process inbox work from process_work_batch (orphaned messages)
-    if (workBatch.InboxWork.Count > 0) {
-      List<InboxWork> newInboxWork = [];
-      foreach (var work in workBatch.InboxWork) {
-        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
-          newInboxWork.Add(work);
-        } else {
-          _inboxLeaseRenewals.Add(work.MessageId);
-        }
-      }
-      if (newInboxWork.Count > 0) {
-        await _processInboxWorkAsync(newInboxWork, cancellationToken);
-      }
-    }
-
-    // Drain inbox channel (work routed from ANY caller of process_work_batch)
-    if (inboxChannelWriter is not null) {
-      List<InboxWork> channelInboxWork = [];
-      while (inboxChannelWriter.Reader.TryRead(out var work)) {
-        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
-          channelInboxWork.Add(work);
-        } else {
-          _inboxLeaseRenewals.Add(work.MessageId);
-        }
-      }
-      if (channelInboxWork.Count > 0) {
-        await _processInboxWorkAsync(channelInboxWork, cancellationToken);
-
-        // Flush completions to DB immediately — don't wait for next poll.
-        // _processInboxWorkAsync queued completions in _inboxCompletions.
-        // Send them now so the inbox messages are marked processed right away.
-        var immediateCompletions = _inboxCompletions.GetPending();
-        if (immediateCompletions.Length > 0) {
-          var immediateSentAt = DateTimeOffset.UtcNow;
-          _inboxCompletions.MarkAsSent(immediateCompletions, immediateSentAt);
-          try {
-            await using var flushScope = _scopeFactory.CreateAsyncScope();
-            var flushCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-            await flushCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchRequest {
-              InstanceId = _instanceProvider.InstanceId,
-              ServiceName = _instanceProvider.ServiceName,
-              HostName = _instanceProvider.HostName,
-              ProcessId = _instanceProvider.ProcessId,
-              InboxCompletions = [.. immediateCompletions.Select(c => c.Completion)],
-              OutboxCompletions = [],
-              OutboxFailures = [],
-              InboxFailures = [],
-              ReceptorCompletions = [],
-              ReceptorFailures = [],
-              PerspectiveCompletions = [],
-              PerspectiveEventCompletions = [],
-              PerspectiveFailures = [],
-              NewOutboxMessages = [],
-              NewInboxMessages = [],
-              RenewOutboxLeaseIds = [],
-              RenewInboxLeaseIds = [],
-              Flags = WorkBatchOptions.SkipInboxClaiming,
-              PartitionCount = _options.PartitionCount,
-              LeaseSeconds = _options.LeaseSeconds,
-              AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
-            }, cancellationToken);
-            _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
-          } catch (Exception ex) {
-            LogErrorProcessingWorkBatch(_logger, ex);
-            // Completions stay in Sent status, will be retried via ResetStale
-          }
-        }
-
-        foreach (var work in channelInboxWork) {
-          inboxChannelWriter.RemoveInFlight(work.MessageId);
-        }
-      }
-    }
+    await _enqueueOutboxWorkToChannelAsync(workBatch, cancellationToken);
+    await _processBatchInboxWorkAsync(workBatch, cancellationToken);
+    await _drainInboxChannelAsync(cancellationToken);
 
     _trackWorkStateTransitions(workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0);
+  }
+
+  /// <summary>
+  /// Writes claimed outbox work onto the publisher channel in UUIDv7 order, renewing leases for
+  /// any message IDs still in-flight from a previous cycle.
+  /// </summary>
+  private async Task _enqueueOutboxWorkToChannelAsync(WorkBatch workBatch, CancellationToken cancellationToken) {
+    if (workBatch.OutboxWork.Count == 0) {
+      return;
+    }
+    // Sort by MessageId (UUIDv7 has time-based ordering)
+    var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
+    foreach (var work in orderedOutboxWork) {
+      if (!_workChannelWriter.IsInFlight(work.MessageId)) {
+        await _workChannelWriter.WriteAsync(work, cancellationToken);
+      } else if (_workChannelWriter.ShouldRenewLease(work.MessageId)) {
+        // Only renew when nearing lease expiry (>half the lease duration)
+        _leaseRenewals.Add(work.MessageId);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Processes inbox work returned by process_work_batch (orphan recovery). New message IDs run
+  /// through _processInboxWorkAsync; already-in-flight IDs get their lease renewed instead.
+  /// </summary>
+  private async Task _processBatchInboxWorkAsync(WorkBatch workBatch, CancellationToken cancellationToken) {
+    if (workBatch.InboxWork.Count == 0) {
+      return;
+    }
+    List<InboxWork> newInboxWork = [];
+    foreach (var work in workBatch.InboxWork) {
+      if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+        newInboxWork.Add(work);
+      } else {
+        _inboxLeaseRenewals.Add(work.MessageId);
+      }
+    }
+    if (newInboxWork.Count > 0) {
+      await _processInboxWorkAsync(newInboxWork, cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Drains any inbox work the external <c>IInboxChannelWriter</c> queued between poll cycles
+  /// (e.g. RabbitMQ immediate hand-off), processes it, and flushes inbox completions straight
+  /// to the DB so the messages are marked processed without waiting for the next coordinator tick.
+  /// </summary>
+  private async Task _drainInboxChannelAsync(CancellationToken cancellationToken) {
+    if (inboxChannelWriter is null) {
+      return;
+    }
+    List<InboxWork> channelInboxWork = [];
+    while (inboxChannelWriter.Reader.TryRead(out var work)) {
+      if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+        channelInboxWork.Add(work);
+      } else {
+        _inboxLeaseRenewals.Add(work.MessageId);
+      }
+    }
+    if (channelInboxWork.Count == 0) {
+      return;
+    }
+
+    await _processInboxWorkAsync(channelInboxWork, cancellationToken);
+    await _flushImmediateInboxCompletionsAsync(cancellationToken);
+
+    foreach (var work in channelInboxWork) {
+      inboxChannelWriter.RemoveInFlight(work.MessageId);
+    }
+  }
+
+  /// <summary>
+  /// Sends any pending inbox completions straight to the coordinator (SkipInboxClaiming flag) so
+  /// the corresponding messages are marked processed immediately rather than waiting for the
+  /// next _processWorkBatchAsync cycle. On failure, completions stay in Sent state and will be
+  /// retried via ResetStale.
+  /// </summary>
+  private async Task _flushImmediateInboxCompletionsAsync(CancellationToken cancellationToken) {
+    var immediateCompletions = _inboxCompletions.GetPending();
+    if (immediateCompletions.Length == 0) {
+      return;
+    }
+    var immediateSentAt = DateTimeOffset.UtcNow;
+    _inboxCompletions.MarkAsSent(immediateCompletions, immediateSentAt);
+    try {
+      await using var flushScope = _scopeFactory.CreateAsyncScope();
+      var flushCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await flushCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchRequest {
+        InstanceId = _instanceProvider.InstanceId,
+        ServiceName = _instanceProvider.ServiceName,
+        HostName = _instanceProvider.HostName,
+        ProcessId = _instanceProvider.ProcessId,
+        InboxCompletions = [.. immediateCompletions.Select(c => c.Completion)],
+        OutboxCompletions = [],
+        OutboxFailures = [],
+        InboxFailures = [],
+        ReceptorCompletions = [],
+        ReceptorFailures = [],
+        PerspectiveCompletions = [],
+        PerspectiveEventCompletions = [],
+        PerspectiveFailures = [],
+        NewOutboxMessages = [],
+        NewInboxMessages = [],
+        RenewOutboxLeaseIds = [],
+        RenewInboxLeaseIds = [],
+        Flags = WorkBatchOptions.SkipInboxClaiming,
+        PartitionCount = _options.PartitionCount,
+        LeaseSeconds = _options.LeaseSeconds,
+        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
+      }, cancellationToken);
+      _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
+    } catch (Exception ex) {
+      LogErrorProcessingWorkBatch(_logger, ex);
+      // Completions stay in Sent status, will be retried via ResetStale
+    }
   }
 
   private void _trackWorkStateTransitions(bool hasWork) {
