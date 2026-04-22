@@ -57,7 +57,7 @@ public class PerspectiveWorkerStrategyTests {
     // Act - Run worker for multiple poll cycles
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(500); // Let at least 2 cycles complete (generous for parallel execution)
+    await coordinator.WaitForProcessWorkBatchCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try {
@@ -115,10 +115,10 @@ public class PerspectiveWorkerStrategyTests {
       databaseReadiness
     );
 
-    // Act - Run worker for one poll cycle
+    // Act - Run worker and wait for the instant strategy to report completion
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
     try {
@@ -185,10 +185,10 @@ public class PerspectiveWorkerStrategyTests {
         databaseReadiness
       );
 
-      // Act - Run worker for one poll cycle
+      // Act - Run worker and wait for the failure to propagate through the strategy
       using var cts = new CancellationTokenSource();
       var workerTask = worker.StartAsync(cts.Token);
-      await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
+      await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(5));
       cts.Cancel();
 
       try {
@@ -397,11 +397,18 @@ public class PerspectiveWorkerStrategyTests {
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     private readonly TaskCompletionSource _completionReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _failureReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock _cycleLock = new();
+    private int _processBatchCallCount;
+    private int _reportCompletionCallCount;
+    private int _reportFailureCallCount;
+    private int _cycleTarget;
+    private TaskCompletionSource? _cycleTargetReached;
 
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
-    public int ProcessWorkBatchCallCount { get; private set; }
-    public int ReportCompletionCallCount { get; private set; }
-    public int ReportFailureCallCount { get; private set; }
+    public int ProcessWorkBatchCallCount => Volatile.Read(ref _processBatchCallCount);
+    public int ReportCompletionCallCount => Volatile.Read(ref _reportCompletionCallCount);
+    public int ReportFailureCallCount => Volatile.Read(ref _reportFailureCallCount);
     public List<PerspectiveCursorCompletion> CompletionsReceivedViaProcessWorkBatch { get; } = [];
     public List<PerspectiveCursorFailure> FailuresReceivedViaProcessWorkBatch { get; } = [];
     public bool ReturnWorkOnEveryCycle { get; set; }
@@ -419,14 +426,55 @@ public class PerspectiveWorkerStrategyTests {
       }
     }
 
+    /// <summary>
+    /// Waits for a failure to be reported via ReportPerspectiveFailureAsync.
+    /// </summary>
+    public async Task WaitForFailureReportedAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _failureReported.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException($"Failure was not reported within {timeout}");
+      }
+    }
+
+    /// <summary>
+    /// Waits until ProcessWorkBatchAsync has been called at least <paramref name="minCycles"/> times.
+    /// </summary>
+    public async Task WaitForProcessWorkBatchCyclesAsync(int minCycles, TimeSpan timeout) {
+      TaskCompletionSource tcs;
+      lock (_cycleLock) {
+        if (Volatile.Read(ref _processBatchCallCount) >= minCycles) {
+          return;
+        }
+        _cycleTarget = minCycles;
+        _cycleTargetReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tcs = _cycleTargetReached;
+      }
+
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await tcs.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException(
+          $"ProcessWorkBatchAsync was called {ProcessWorkBatchCallCount} time(s); expected at least {minCycles} within {timeout}");
+      }
+    }
+
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
+      var count = Interlocked.Increment(ref _processBatchCallCount);
 
       // Track completions received via ProcessWorkBatchAsync parameters
       CompletionsReceivedViaProcessWorkBatch.AddRange(request.PerspectiveCompletions);
       FailuresReceivedViaProcessWorkBatch.AddRange(request.PerspectiveFailures);
+
+      lock (_cycleLock) {
+        if (_cycleTargetReached is not null && count >= _cycleTarget) {
+          _cycleTargetReached.TrySetResult();
+        }
+      }
 
       // Return work
       List<PerspectiveWork> work;
@@ -447,7 +495,7 @@ public class PerspectiveWorkerStrategyTests {
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
-      ReportCompletionCallCount++;
+      Interlocked.Increment(ref _reportCompletionCallCount);
       _completionReported.TrySetResult();
       return Task.CompletedTask;
     }
@@ -455,7 +503,8 @@ public class PerspectiveWorkerStrategyTests {
     public Task ReportPerspectiveFailureAsync(
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
-      ReportFailureCallCount++;
+      Interlocked.Increment(ref _reportFailureCallCount);
+      _failureReported.TrySetResult();
       return Task.CompletedTask;
     }
 
