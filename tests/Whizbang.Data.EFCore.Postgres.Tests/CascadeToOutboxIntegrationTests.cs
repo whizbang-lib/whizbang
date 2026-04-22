@@ -245,7 +245,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
 
     // Act - Queue directly and flush
     strategy.QueueOutboxMessage(testMessage);
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None);
+    var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Should have returned work
     await Assert.That(workBatch.OutboxWork).Count().IsGreaterThan(0)

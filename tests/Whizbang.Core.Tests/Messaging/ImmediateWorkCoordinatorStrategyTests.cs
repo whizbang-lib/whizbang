@@ -74,7 +74,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     });
 
     // Act
-    _ = await sut.FlushAsync(WorkBatchOptions.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - FlushAsync should immediately call ProcessWorkBatchAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -132,7 +132,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxMessage(outboxMessage);
-    _ = await sut.FlushAsync(WorkBatchOptions.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
@@ -185,7 +185,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxMessage(inboxMessage);
-    _ = await sut.FlushAsync(WorkBatchOptions.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
@@ -712,7 +712,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act & Assert - should not throw
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
   }
 
@@ -743,7 +743,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act & Assert - should handle ChannelClosedException gracefully
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
   }
 
