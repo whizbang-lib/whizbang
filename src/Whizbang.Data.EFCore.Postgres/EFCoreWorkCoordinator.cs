@@ -50,6 +50,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
+  private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
 
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -971,7 +972,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, "wh_perspective_cursors");
+    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, PERSPECTIVE_CURSORS_TABLE);
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 #pragma warning restore S2077
@@ -1041,7 +1042,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var sql = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 #pragma warning restore S2077
@@ -1077,7 +1078,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     var dbConnection = _dbContext.Database.GetDbConnection();
     if (dbConnection.State != System.Data.ConnectionState.Open) {
@@ -1182,7 +1183,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
-    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
     var completionsTable = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
 
     var cutoff = DateTimeOffset.UtcNow - lookbackWindow;
@@ -1359,7 +1360,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     var sql = $@"
       SELECT stream_id, perspective_name, last_event_id, rewind_trigger_event_id

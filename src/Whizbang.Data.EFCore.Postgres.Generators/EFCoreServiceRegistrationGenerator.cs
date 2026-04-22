@@ -54,6 +54,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
   private const string CLOSE_BRACE_INDENT_4 = "    });";
   private const string CLOSE_BRACE_INDENT_6 = "      });";
+  private const string CLOSE_BRACE_INDENT_8 = "        });";
+  private const string CLOSE_BRACE_ONLY_INDENT_6 = "      }";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -735,7 +737,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
-    sb.AppendLine("        });");
+    sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
 
@@ -771,7 +773,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     sb.AppendLine($"          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
-    sb.AppendLine("        });");
+    sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
 
@@ -806,6 +808,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         .Select(g => g.First())
         .ToList();
 
+    // S3267: Loop has side effects (reporting diagnostics) and early break — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var query in uniqueCombinations) {
       // Check if ALL model types are known perspectives for this DbContext
       var allModelsKnown = true;
@@ -858,9 +862,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();");
       sb.AppendLine("          var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();");
       sb.AppendLine($"          return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<{typeArgs}>(context, tableNames, scopeContextAccessor, whizbangOptions);");
-      sb.AppendLine("        });");
+      sb.AppendLine(CLOSE_BRACE_INDENT_8);
       sb.AppendLine();
     }
+#pragma warning restore S3267
   }
 
   /// <summary>
@@ -1277,7 +1282,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
 
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine();
   }
 
@@ -1629,7 +1634,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("          connStringBuilder.Timeout = timeout;");
     sb.AppendLine("        if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
     sb.AppendLine("          connStringBuilder.CommandTimeout = commandTimeout;");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine("      connectionString = connStringBuilder.ToString();");
     sb.AppendLine();
     sb.AppendLine("      // Build NpgsqlDataSource synchronously at registration time");
@@ -1663,7 +1668,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          createCmd.CommandText = \"CREATE EXTENSION vector\";");
       sb.AppendLine("          createCmd.ExecuteNonQuery();");
       sb.AppendLine("        }");
-      sb.AppendLine("      }");
+      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine();
     }
     sb.AppendLine("      var dataSource = dataSourceBuilder.Build();");
@@ -1687,12 +1692,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          // Auto-configured: pgvector support for EF Core");
       sb.AppendLine("          npgsqlOptions.UseVector();");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-      sb.AppendLine("        });");
+      sb.AppendLine(CLOSE_BRACE_INDENT_8);
     } else {
       sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
       sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-      sb.AppendLine("        });");
+      sb.AppendLine(CLOSE_BRACE_INDENT_8);
     }
     // Register physical field interceptors (query rewriting + materialization hydration)
     if (hasPhysicalFields) {
@@ -1746,7 +1751,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("          return;");
     sb.AppendLine("        }");
     sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, scope.ServiceProvider, ct);");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
   }

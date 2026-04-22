@@ -48,6 +48,8 @@ public partial class PerspectiveWorker(
   IOptions<PerspectiveRewindOptions>? rewindOptions = null
 ) : BackgroundService {
 #pragma warning restore S107
+  private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
+
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -69,7 +71,7 @@ public partial class PerspectiveWorker(
 
   private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
   private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions?.Value ?? new PerspectiveRewindOptions();
-  private readonly ILogger _startupScanLogger = scopeFactory.CreateScope().ServiceProvider
+  private readonly ILogger _startupScanLog = scopeFactory.CreateScope().ServiceProvider
     .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
     ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
@@ -441,13 +443,13 @@ public partial class PerspectiveWorker(
 
       var rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
       if (rewindCursors.Count == 0) {
-        PerspectiveStartupScanLog.LogStartupRewindScanClean(_startupScanLogger);
+        PerspectiveStartupScanLog.LogStartupRewindScanClean(_startupScanLog);
         return;
       }
 
       var streamCount = rewindCursors.Select(c => c.StreamId).Distinct().Count();
       var perspectiveCount = rewindCursors.Count;
-      PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLogger, streamCount, perspectiveCount);
+      PerspectiveStartupScanLog.LogStartupRewindScanStarted(_startupScanLog, streamCount, perspectiveCount);
 
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -462,11 +464,11 @@ public partial class PerspectiveWorker(
             break;
           }
         }
-        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLogger, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
+        PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
       }
       // Background mode: normal polling loop will pick them up — individual rewinds log via PerspectiveWorker
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
-      PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLogger, ex);
+      PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLog, ex);
     }
   }
 
@@ -1083,7 +1085,7 @@ public partial class PerspectiveWorker(
       var id = envelope.MessageId.Value;
       batchContext.BatchProcessedEvents.TryAdd(id, (envelope, streamCtx.StreamId));
       // Drain mode has no rewind: every event reaching here is new.
-      batchContext.BatchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
+      batchContext.BatchIsNewByEventId.AddOrUpdate(id, true, (_, _) => true);
     }
 
     // Fire PostPerspectiveInline + ImmediateDetached. The invoker is a no-op when
@@ -1504,7 +1506,7 @@ public partial class PerspectiveWorker(
       LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
         checkpoint?.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
       _metrics?.RewindEventsBehind.Record(eventsBehind,
-        new KeyValuePair<string, object?>("perspective_name", streamCtx.PerspectiveName));
+        new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, streamCtx.PerspectiveName));
 
       var (result, lockSkipped) = await _executeRewindPathAsync(
         runner, streamCtx.StreamId, streamCtx.PerspectiveName, rewindTriggerEventId.Value,
@@ -1589,12 +1591,12 @@ public partial class PerspectiveWorker(
         // Rewind-specific meters
         var hasSnapshot = _snapshotStore is not null;
         _metrics?.Rewinds.Add(1,
-          new KeyValuePair<string, object?>("perspective_name", perspectiveName),
+          new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName),
           new KeyValuePair<string, object?>("has_snapshot", hasSnapshot));
         _metrics?.RewindDuration.Record(rewindDurationMs,
-          new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+          new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
         _metrics?.RewindEventsReplayed.Record(result.EventsProcessed,
-          new KeyValuePair<string, object?>("perspective_name", perspectiveName));
+          new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
 
         // Span enrichment
         activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
@@ -1919,9 +1921,9 @@ public partial class PerspectiveWorker(
 
     // Replay signals — perspectives already completed during the group loop, but
     // expectations may have been registered just above. Replaying ensures WhenAll resolves.
-    foreach (var group in groupedWork) {
-      var gPerspectiveName = group.Key.PerspectiveName;
-      foreach (var (eventId, _) in batchProcessedEvents.Where(e => e.Value.StreamId == group.Key.StreamId)) {
+    foreach (var groupKey in groupedWork.Select(g => g.Key)) {
+      var gPerspectiveName = groupKey.PerspectiveName;
+      foreach (var (eventId, _) in batchProcessedEvents.Where(e => e.Value.StreamId == groupKey.StreamId)) {
         lifecycleCoordinator.SignalPerspectiveComplete(eventId, gPerspectiveName);
       }
     }

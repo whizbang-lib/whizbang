@@ -210,11 +210,14 @@ public partial class ScopedWorkCoordinatorStrategy(
     if (_inboxChannelWriter is null || workBatch.InboxWork.Count == 0) {
       return;
     }
+    // S3267: Loop body has side effects (channel writer mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var inboxWork in workBatch.InboxWork) {
       if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
         _inboxChannelWriter.TryWrite(inboxWork);
       }
     }
+#pragma warning restore S3267
   }
 
   /// <inheritdoc />

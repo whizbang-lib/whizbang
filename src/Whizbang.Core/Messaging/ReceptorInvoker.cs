@@ -189,7 +189,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var receptors = _registry.GetReceptorsFor(messageType, stage);
 
     // Resolve scope for tag processing — use security context or extracted scope from hops
-    var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
+    var scopeForTags = securityContext ?? extracted.Scope;
 
     var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxDetached;
     var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxDetached;
