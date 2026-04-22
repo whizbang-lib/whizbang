@@ -280,7 +280,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       await Task.Delay(50);
 
       // Second flush should detect concurrent flush in progress
-      var secondResult = await sut.FlushAsync(WorkBatchOptions.None);
+      var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - second result is empty (concurrent flush returns empty)
       await Assert.That(secondResult.OutboxWork.Count).IsEqualTo(0)
@@ -310,7 +310,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
     try {
       // Act - flush with nothing queued
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(result.OutboxWork.Count).IsEqualTo(0);

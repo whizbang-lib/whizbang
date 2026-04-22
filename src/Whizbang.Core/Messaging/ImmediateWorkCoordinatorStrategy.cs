@@ -117,14 +117,21 @@ public partial class ImmediateWorkCoordinatorStrategy(
     }
   }
 
+  /// <inheritdoc />
+  public async Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    // Immediate always flushes eagerly regardless of consume-vs-fire-and-forget intent.
+    await FlushAndGetBatchAsync(flags, ct).ConfigureAwait(false);
+  }
+
   /// <summary>
-  /// Immediately flushes all queued operations to the work coordinator.
+  /// Immediately flushes all queued operations to the work coordinator and returns the work batch.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "immediate"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
-    // Immediate strategy always flushes regardless of FlushMode
+  public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    _metrics?.FlushCalls.Add(1,
+      new KeyValuePair<string, object?>("strategy", "immediate"),
+      new KeyValuePair<string, object?>("trigger", "api"));
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
     // are picked up here and included in the current work batch.
@@ -177,7 +184,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
+    FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, ct);
 
   // ========================================
   // High-Performance LoggerMessage Delegates

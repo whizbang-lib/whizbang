@@ -321,7 +321,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - Manual flush should work immediately
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -354,10 +354,9 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - BestEffort should return empty and defer
-      var result = await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
-      await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
         .Because("BestEffort should defer flush to batch/debounce triggers");
     } finally {
@@ -384,7 +383,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -735,7 +734,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - flush with nothing queued
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -1022,7 +1021,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1054,7 +1053,7 @@ public class BatchWorkCoordinatorStrategyTests {
       cts.Cancel();
       Exception? caught = null;
       try {
-        await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token);
+        await sut.FlushAndGetBatchAsync(WorkBatchOptions.None, cts.Token);
       } catch (Exception ex) {
         caught = ex;
       }
@@ -1085,14 +1084,14 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - Start first flush (will be slow)
-      var firstFlush = sut.FlushAsync(WorkBatchOptions.None);
+      var firstFlush = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Wait for the slow coordinator to start processing
       await slowCoordinator.WaitForProcessingStartedAsync(TimeSpan.FromSeconds(5));
 
       // Queue another message and try second flush while first is in progress
       sut.QueueOutboxMessage(_createOutboxMessage());
-      var secondResult = await sut.FlushAsync(WorkBatchOptions.None);
+      var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Release the slow coordinator
       slowCoordinator.ReleaseProcessing();
@@ -1127,7 +1126,7 @@ public class BatchWorkCoordinatorStrategyTests {
       await slowCoordinator.WaitForProcessingStartedAsync(TimeSpan.FromSeconds(5));
 
       sut.QueueOutboxMessage(_createOutboxMessage());
-      var secondResult = await sut.FlushAsync(WorkBatchOptions.None);
+      var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       slowCoordinator.ReleaseProcessing();
       await firstFlush;
@@ -1213,7 +1212,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - coordinator resolved through scope
       await Assert.That(scopeFactory.ScopeCreationCount).IsEqualTo(1);
@@ -1447,7 +1446,7 @@ public class BatchWorkCoordinatorStrategyTests {
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
 
       // Second flush - queues should be empty
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
         .Because("Second flush should be empty (no-op, no ProcessWorkBatch call)");
     } finally {
@@ -1525,10 +1524,9 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
-      await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
     } finally {
       await sut.DisposeAsync();
@@ -1661,7 +1659,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act & Assert - should not throw
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     } finally {
       await sut.DisposeAsync();
@@ -1696,7 +1694,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act & Assert - should handle gracefully
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     } finally {
       await sut.DisposeAsync();

@@ -227,28 +227,36 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   }
 
   /// <summary>
-  /// Flushes all queued operations to the work coordinator immediately.
+  /// Fire-and-forget flush for Batch strategy: items stay queued and are flushed by the
+  /// debounce timer or batch-size trigger (whichever fires first). Use for cascade-to-outbox
+  /// and routed publish/send paths that do not consume the WorkBatch.
+  /// </summary>
+  public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    _metrics?.FlushCalls.Add(1,
+      new KeyValuePair<string, object?>("strategy", "batch"),
+      new KeyValuePair<string, object?>("trigger", "signal"));
+    // Batch waits for debounce / batch-size trigger. Queueing already reset the timer.
+    return Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Forces an immediate flush and returns the resulting WorkBatch. Bypasses the debounce window
+  /// and batch-size trigger. Use for dedup callers that must consume the WorkBatch, or end-of-scope drains.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
-  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    return _flushCoreAsync(flags, mode, FlushTrigger.Manual, skipLifecycle: false, ct);
+  public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    return _flushCoreAsync(flags, FlushTrigger.Manual, skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushMode mode, FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+    _metrics?.FlushCalls.Add(1,
+      new KeyValuePair<string, object?>("strategy", "batch"),
+      new KeyValuePair<string, object?>("trigger", trigger.ToString()));
 
-    // BestEffort: defer flush to debounce/batch triggers
-    if (mode == FlushMode.BestEffort) {
-      return new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      };
-    }
-
-    // Required flush with optional coalescing window
+    // Forced-flush with optional coalescing window
     if (_options.CoalesceWindowMilliseconds > 0) {
       await Task.Delay(_options.CoalesceWindowMilliseconds, ct);
     }
@@ -342,7 +350,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
+    FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, ct);
 
   /// <summary>
   /// Returns total count of queued messages (outbox + inbox). Must be called under lock.
@@ -380,7 +388,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, FlushTrigger.BatchSize, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.BatchSize, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringBatchFlush(_logger, ex);
@@ -404,7 +412,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, FlushTrigger.Debounce, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Debounce, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringDebounceFlush(_logger, ex);
@@ -449,7 +457,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     try {
-      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, FlushTrigger.Manual, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Manual, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);

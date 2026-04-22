@@ -12,9 +12,10 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs</tests>
 public interface IWorkFlusher {
   /// <summary>
-  /// Immediately flushes all queued messages to the database.
-  /// Equivalent to calling FlushAsync with FlushMode.Required on the underlying strategy.
+  /// Immediately flushes all queued messages to the database. Delegates to the
+  /// underlying strategy's <c>FlushAndGetBatchAsync</c>, forcing persistence regardless
+  /// of the strategy's batching window (used by end-of-request middleware).
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs</tests>
   Task FlushAsync(CancellationToken ct = default);
 }

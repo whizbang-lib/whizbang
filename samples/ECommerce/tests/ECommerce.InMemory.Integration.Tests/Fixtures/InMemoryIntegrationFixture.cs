@@ -1074,7 +1074,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       strategy.QueueInboxMessage(newInboxMessage);
 
       // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: ct);
+      var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None, ct);
 
       // 4. Check if work was returned - empty means duplicate (already processed)
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();

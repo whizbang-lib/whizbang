@@ -428,7 +428,11 @@ public class TransportConsumerWorkerBatchHandlerTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       FlushCount++;
 
       if (_returnEmptyInboxWork) {

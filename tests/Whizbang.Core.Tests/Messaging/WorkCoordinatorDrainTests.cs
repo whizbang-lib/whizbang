@@ -27,7 +27,7 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
     // Act
-    _ = await strategy.FlushAsync(WorkBatchOptions.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Deferred messages included in batch request
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -48,7 +48,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(_createTestOutboxMessage(Guid.NewGuid()));
 
     // Act
-    _ = await strategy.FlushAsync(WorkBatchOptions.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Still works without deferred channel
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -67,7 +67,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    _ = await strategy.FlushAsync(WorkBatchOptions.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert: Only the directly queued message
     await Assert.That(workCoordinator.LastRequest).IsNotNull();
@@ -89,7 +89,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAsync(WorkBatchOptions.None);
+    var batch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert: Both messages included
     await Assert.That(workCoordinator.LastRequest).IsNotNull();

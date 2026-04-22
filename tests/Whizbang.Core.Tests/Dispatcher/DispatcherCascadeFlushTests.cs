@@ -15,10 +15,11 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// Pins the cascade-to-outbox flush semantics so a future regression cannot silently
 /// re-introduce per-event synchronous flushing against the Interval strategy
 /// (as happened in commit 8b393c1e when FlushMode was introduced but the cascade path
-/// kept the Required default).
+/// kept the Required default — the bug fixed by splitting the API into FlushAsync
+/// vs FlushAndGetBatchAsync).
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
-[NotInParallel("CascadeFlushMode")]
+[NotInParallel("CascadeFlushMethod")]
 public class DispatcherCascadeFlushTests {
 
   public record CascadeFlushCommand(Guid EntityId);
@@ -30,8 +31,9 @@ public class DispatcherCascadeFlushTests {
     }
   }
 
-  private sealed class ModeRecordingStrategy : IWorkCoordinatorStrategy {
-    public List<FlushMode> ObservedModes { get; } = [];
+  private sealed class MethodRecordingStrategy : IWorkCoordinatorStrategy {
+    public int FlushAsyncCalls { get; private set; }
+    public int FlushAndGetBatchAsyncCalls { get; private set; }
     public List<OutboxMessage> QueuedOutboxMessages { get; } = [];
 
     public void QueueOutboxMessage(OutboxMessage message) => QueuedOutboxMessages.Add(message);
@@ -41,8 +43,13 @@ public class DispatcherCascadeFlushTests {
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-      ObservedModes.Add(mode);
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      FlushAsyncCalls++;
+      return Task.CompletedTask;
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      FlushAndGetBatchAsyncCalls++;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -73,8 +80,8 @@ public class DispatcherCascadeFlushTests {
   }
 
   [Test]
-  public async Task CascadeToOutbox_UsesBestEffortFlushMode_NotRequiredAsync() {
-    var strategy = new ModeRecordingStrategy();
+  public async Task CascadeToOutbox_UsesFireAndForgetFlushAsync_NotFlushAndGetBatchAsyncAsync() {
+    var strategy = new MethodRecordingStrategy();
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
@@ -88,9 +95,9 @@ public class DispatcherCascadeFlushTests {
 
     await Assert.That(strategy.QueuedOutboxMessages.Count).IsGreaterThanOrEqualTo(1)
       .Because("Cascaded event should reach the outbox queue");
-    await Assert.That(strategy.ObservedModes.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Cascade should flush the strategy at least once");
-    await Assert.That(strategy.ObservedModes).DoesNotContain(FlushMode.Required)
-      .Because("Cascade is fire-and-forget — never force synchronous flush, which defeats Interval batching");
+    await Assert.That(strategy.FlushAsyncCalls).IsGreaterThanOrEqualTo(1)
+      .Because("Cascade should signal the strategy via fire-and-forget FlushAsync at least once");
+    await Assert.That(strategy.FlushAndGetBatchAsyncCalls).IsEqualTo(0)
+      .Because("Cascade must never force a synchronous batch-returning flush — that defeats Interval/Batch batching");
   }
 }

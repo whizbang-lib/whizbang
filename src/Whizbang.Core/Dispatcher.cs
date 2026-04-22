@@ -3514,16 +3514,9 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
-    // Flush strategy to execute the batch
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var outboxCount = workBatch.OutboxWork.Count;
-      var inboxCount = workBatch.InboxWork.Count;
-      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: FlushAsync returned OutboxWork={OutboxCount}, InboxWork={InboxCount}",
-        outboxCount, inboxCount);
-    }
-#pragma warning restore CA1848
+    // Fire-and-forget signal — the strategy decides when to actually flush
+    // (Interval=timer, Batch=debounce/size, Immediate/Scoped=now).
+    await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -3575,7 +3568,7 @@ public abstract partial class Dispatcher(
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
       strategy.QueueOutboxMessage(newOutboxMessage);
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
         await asyncDisposable.DisposeAsync();
@@ -3854,7 +3847,7 @@ public abstract partial class Dispatcher(
       strategy.QueueOutboxMessage(newOutboxMessage);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
@@ -3940,7 +3933,7 @@ public abstract partial class Dispatcher(
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -4006,7 +3999,7 @@ public abstract partial class Dispatcher(
       }
 
       // Flush ONCE for all messages
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 
     } finally {
       // Dispose scope asynchronously
