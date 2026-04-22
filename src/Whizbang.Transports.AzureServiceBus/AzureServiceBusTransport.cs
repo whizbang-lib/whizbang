@@ -939,20 +939,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   ) {
     if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
         envelopeTypeObj is not string envelopeTypeName) {
-      if (_logger.IsEnabled(LogLevel.Warning)) {
-        _logger.LogWarning(
-          "DEAD-LETTER reason: Missing EnvelopeType metadata for session message {MessageId} from {TopicName}/{SubscriptionName}",
-          args.Message.MessageId,
-          destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName
-        );
-      }
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MissingEnvelopeType",
+      await _deadLetterSessionMessageAsync(args, destination, "MissingEnvelopeType",
         "Message does not contain EnvelopeType metadata",
-        cancellationToken: args.CancellationToken
-      );
+        "DEAD-LETTER reason: Missing EnvelopeType metadata for session message {MessageId} from {TopicName}/{SubscriptionName}",
+        args.Message.MessageId, destination.Address, destination.RoutingKey ?? _options.DefaultSubscriptionName);
       return (null, null);
     }
 
@@ -961,65 +951,37 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     try {
       var type = Type.GetType(envelopeTypeName);
       if (type is null) {
-        if (_logger.IsEnabled(LogLevel.Warning)) {
-          _logger.LogWarning(
-            "DEAD-LETTER reason: Cannot resolve type {EnvelopeTypeName} for session message {MessageId}",
-            envelopeTypeName,
-            args.Message.MessageId
-          );
-        }
-        await args.DeadLetterMessageAsync(
-          args.Message,
-          "UnresolvableType",
+        await _deadLetterSessionMessageAsync(args, destination, "UnresolvableType",
           $"Cannot resolve type: {envelopeTypeName}",
-          cancellationToken: args.CancellationToken
-        );
+          "DEAD-LETTER reason: Cannot resolve type {EnvelopeTypeName} for session message {MessageId}",
+          envelopeTypeName, args.Message.MessageId);
         return (null, null);
       }
 
       var typeInfo = _jsonOptions.GetTypeInfo(type);
       if (typeInfo is null) {
-        if (_logger.IsEnabled(LogLevel.Warning)) {
-          _logger.LogWarning(
-            "DEAD-LETTER reason: No JsonTypeInfo for {TypeName} for session message {MessageId}",
-            type.Name,
-            args.Message.MessageId
-          );
-        }
-        await args.DeadLetterMessageAsync(
-          args.Message,
-          "MissingJsonTypeInfo",
+        await _deadLetterSessionMessageAsync(args, destination, "MissingJsonTypeInfo",
           $"No JsonTypeInfo for {type.Name}",
-          cancellationToken: args.CancellationToken
-        );
+          "DEAD-LETTER reason: No JsonTypeInfo for {TypeName} for session message {MessageId}",
+          type.Name, args.Message.MessageId);
         return (null, null);
       }
 
       var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
       if (envelope is null) {
-        if (_logger.IsEnabled(LogLevel.Warning)) {
-          _logger.LogWarning(
-            "DEAD-LETTER reason: Failed to deserialize session message {MessageId} as IMessageEnvelope",
-            args.Message.MessageId
-          );
-        }
-        await args.DeadLetterMessageAsync(
-          args.Message,
-          "DeserializationFailed",
+        await _deadLetterSessionMessageAsync(args, destination, "DeserializationFailed",
           "Deserialized object is not IMessageEnvelope",
-          cancellationToken: args.CancellationToken
-        );
+          "DEAD-LETTER reason: Failed to deserialize session message {MessageId} as IMessageEnvelope",
+          args.Message.MessageId);
         return (null, null);
       }
 
       return (envelope, envelopeTypeName);
     } catch (Exception ex) {
       if (_logger.IsEnabled(LogLevel.Warning)) {
-        _logger.LogWarning(
-          ex,
+        _logger.LogWarning(ex,
           "DEAD-LETTER reason: Deserialization exception for session message {MessageId}",
-          args.Message.MessageId
-        );
+          args.Message.MessageId);
       }
       await args.DeadLetterMessageAsync(
         args.Message,
@@ -1029,6 +991,31 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       );
       return (null, null);
     }
+  }
+
+  /// <summary>
+  /// Paired Warning log + DeadLetterMessageAsync call used by the session deserialisation
+  /// guards. Keeps the IsEnabled check consistent and the log/dead-letter arguments aligned —
+  /// the per-call arguments are threaded in via params for the log template placeholders.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2254:Template should be a static expression", Justification = "Varying template is the whole point of this helper — each dead-letter reason logs with its own placeholder shape, and the callers still pass constant templates.")]
+  private async Task _deadLetterSessionMessageAsync(
+      ProcessSessionMessageEventArgs args,
+      TransportDestination destination,
+      string deadLetterReason,
+      string deadLetterDescription,
+      string logTemplate,
+      params object?[] logArgs) {
+    _ = destination; // reserved for future use; passed through so signatures stay consistent.
+    if (_logger.IsEnabled(LogLevel.Warning)) {
+      _logger.LogWarning(logTemplate, logArgs);
+    }
+    await args.DeadLetterMessageAsync(
+      args.Message,
+      deadLetterReason,
+      deadLetterDescription,
+      cancellationToken: args.CancellationToken
+    );
   }
 
   private async Task _handleSessionMessageProcessingErrorAsync(
