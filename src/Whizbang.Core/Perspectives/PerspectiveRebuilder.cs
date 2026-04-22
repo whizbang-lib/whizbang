@@ -75,33 +75,10 @@ public sealed partial class PerspectiveRebuilder(
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
       var pendingCompletions = completer != null ? new List<PerspectiveCursorCompletion>(64) : null;
 
-      // Get stream IDs to process. When the caller didn't supply an explicit list we narrow
-      // to streams that actually contain events of types this perspective handles — otherwise
-      // we'd iterate every stream in wh_event_store for every perspective (most RunAsync calls
-      // end up as no-ops because the stream has no matching events). The perspective's event
-      // types come from the source-generated registry.
-      if (streamIds == null) {
-        var eventStoreQuery = sp.GetRequiredService<IEventStoreQuery>();
-        var perspectiveInfo = registry.GetRegisteredPerspectives()
-            .FirstOrDefault(p => p.ClrTypeName == perspectiveName);
-        var relevantEventTypes = perspectiveInfo?.EventTypes;
-        if (relevantEventTypes is { Count: > 0 }) {
-          streamIds = await eventStoreQuery.Query
-              .Where(e => relevantEventTypes.Contains(e.EventType))
-              .Select(e => e.StreamId)
-              .Distinct()
-              .ToListAsync(ct);
-          LogStreamScoping(logger, perspectiveName, streamIds.Count, relevantEventTypes.Count);
-        } else {
-          // No event-type metadata — fall back to all streams. Rare, but possible if a
-          // perspective's registration info is incomplete.
-          streamIds = await eventStoreQuery.Query
-              .Select(e => e.StreamId)
-              .Distinct()
-              .ToListAsync(ct);
-          LogStreamScopingFallback(logger, perspectiveName, streamIds.Count);
-        }
-      }
+      // When the caller didn't supply an explicit list, narrow to streams that actually contain
+      // events this perspective handles — otherwise we'd iterate every stream for every
+      // perspective (most RunAsync calls become no-ops).
+      streamIds ??= await _resolveStreamIdsToReplayAsync(sp, registry, perspectiveName, ct);
 
       var totalStreams = streamIds.Count;
 
@@ -116,54 +93,14 @@ public sealed partial class PerspectiveRebuilder(
       var previousMode = Current;
       Current = ProcessingMode.Rebuild;
       try {
-        // Process each stream
         foreach (var streamId in streamIds) {
           ct.ThrowIfCancellationRequested();
-
-          var streamSw = Stopwatch.StartNew();
-          try {
-            var completion = await runner.RunAsync(streamId, perspectiveName, null, ct);
-            streamSw.Stop();
-            streamsProcessed++;
-            eventsReplayed++;
-
-            LogStreamReplayed(logger, perspectiveName, streamId, completion.LastEventId,
-                completion.Status, streamSw.ElapsedMilliseconds, streamsProcessed, totalStreams);
-
-            if (pendingCompletions != null) {
-              pendingCompletions.Add(completion);
-              if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
-                var flushSw = Stopwatch.StartNew();
-                var flushCount = pendingCompletions.Count;
-                await completer!.CompleteAsync(pendingCompletions, ct);
-                flushSw.Stop();
-                LogCursorFlushed(logger, perspectiveName, flushCount, flushSw.ElapsedMilliseconds,
-                    streamsProcessed, totalStreams);
-                pendingCompletions.Clear();
-              }
-            }
-
-            if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
-              _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
-              LogRebuildProgress(logger, perspectiveName, streamsProcessed, totalStreams,
-                  sw.ElapsedMilliseconds);
-            }
-          } catch (Exception ex) {
-            streamSw.Stop();
-            LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
-          }
+          (streamsProcessed, eventsReplayed) = await _replayStreamAsync(
+            runner, perspectiveName, streamId, completer, pendingCompletions,
+            status, streamsProcessed, eventsReplayed, totalStreams, sw, ct);
         }
 
-        // Flush any remaining completions at the end of the rebuild.
-        if (pendingCompletions is { Count: > 0 }) {
-          var flushSw = Stopwatch.StartNew();
-          var flushCount = pendingCompletions.Count;
-          await completer!.CompleteAsync(pendingCompletions, ct);
-          flushSw.Stop();
-          LogCursorFlushed(logger, perspectiveName, flushCount, flushSw.ElapsedMilliseconds,
-              streamsProcessed, totalStreams);
-          pendingCompletions.Clear();
-        }
+        await _flushPendingCompletionsAsync(completer, pendingCompletions, perspectiveName, streamsProcessed, totalStreams, ct);
       } finally {
         Current = previousMode;
       }
@@ -179,6 +116,105 @@ public sealed partial class PerspectiveRebuilder(
     } finally {
       _activeRebuilds.TryRemove(perspectiveName, out _);
     }
+  }
+
+  /// <summary>
+  /// Narrows rebuild scope to streams that actually contain events this perspective handles,
+  /// falling back to every stream when the perspective's event-type metadata is missing (rare —
+  /// incomplete registration). The source-generated registry supplies the event-type set.
+  /// </summary>
+  private async Task<List<Guid>> _resolveStreamIdsToReplayAsync(
+      IServiceProvider sp, IPerspectiveRunnerRegistry registry, string perspectiveName, CancellationToken ct) {
+    var eventStoreQuery = sp.GetRequiredService<IEventStoreQuery>();
+    var perspectiveInfo = registry.GetRegisteredPerspectives()
+        .FirstOrDefault(p => p.ClrTypeName == perspectiveName);
+    var relevantEventTypes = perspectiveInfo?.EventTypes;
+
+    if (relevantEventTypes is { Count: > 0 }) {
+      var streamIds = await eventStoreQuery.Query
+          .Where(e => relevantEventTypes.Contains(e.EventType))
+          .Select(e => e.StreamId)
+          .Distinct()
+          .ToListAsync(ct);
+      LogStreamScoping(logger, perspectiveName, streamIds.Count, relevantEventTypes.Count);
+      return streamIds;
+    }
+
+    var fallback = await eventStoreQuery.Query
+        .Select(e => e.StreamId)
+        .Distinct()
+        .ToListAsync(ct);
+    LogStreamScopingFallback(logger, perspectiveName, fallback.Count);
+    return fallback;
+  }
+
+  /// <summary>
+  /// Replays a single stream: runner.RunAsync, log, queue the cursor completion for flush, and
+  /// periodic progress reporting. Exceptions are logged (LogStreamFailed) and swallowed so one
+  /// bad stream doesn't kill the rebuild. Returns the updated (streamsProcessed, eventsReplayed)
+  /// counters so the caller's tuple stays coherent.
+  /// </summary>
+  private async Task<(int StreamsProcessed, int EventsReplayed)> _replayStreamAsync(
+      IPerspectiveRunner runner,
+      string perspectiveName,
+      Guid streamId,
+      IPerspectiveCheckpointCompleter? completer,
+      List<PerspectiveCursorCompletion>? pendingCompletions,
+      RebuildStatus status,
+      int streamsProcessed,
+      int eventsReplayed,
+      int totalStreams,
+      Stopwatch overallSw,
+      CancellationToken ct) {
+    var streamSw = Stopwatch.StartNew();
+    try {
+      var completion = await runner.RunAsync(streamId, perspectiveName, null, ct);
+      streamSw.Stop();
+      streamsProcessed++;
+      eventsReplayed++;
+
+      LogStreamReplayed(logger, perspectiveName, streamId, completion.LastEventId,
+          completion.Status, streamSw.ElapsedMilliseconds, streamsProcessed, totalStreams);
+
+      if (pendingCompletions != null) {
+        pendingCompletions.Add(completion);
+        if (pendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+          await _flushPendingCompletionsAsync(completer, pendingCompletions, perspectiveName, streamsProcessed, totalStreams, ct);
+        }
+      }
+
+      if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
+        _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
+        LogRebuildProgress(logger, perspectiveName, streamsProcessed, totalStreams,
+            overallSw.ElapsedMilliseconds);
+      }
+    } catch (Exception ex) {
+      streamSw.Stop();
+      LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
+    }
+    return (streamsProcessed, eventsReplayed);
+  }
+
+  /// <summary>Flushes any queued cursor completions through the optional
+  /// <see cref="IPerspectiveCheckpointCompleter"/> and logs the batch size + flush time.
+  /// No-op when the completer or pending list is null/empty.</summary>
+  private async Task _flushPendingCompletionsAsync(
+      IPerspectiveCheckpointCompleter? completer,
+      List<PerspectiveCursorCompletion>? pendingCompletions,
+      string perspectiveName,
+      int streamsProcessed,
+      int totalStreams,
+      CancellationToken ct) {
+    if (completer is null || pendingCompletions is not { Count: > 0 }) {
+      return;
+    }
+    var flushSw = Stopwatch.StartNew();
+    var flushCount = pendingCompletions.Count;
+    await completer.CompleteAsync(pendingCompletions, ct);
+    flushSw.Stop();
+    LogCursorFlushed(logger, perspectiveName, flushCount, flushSw.ElapsedMilliseconds,
+        streamsProcessed, totalStreams);
+    pendingCompletions.Clear();
   }
 
   [LoggerMessage(Level = LogLevel.Information,
