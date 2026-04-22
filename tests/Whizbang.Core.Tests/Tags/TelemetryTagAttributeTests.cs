@@ -177,7 +177,6 @@ public class TelemetryTagAttributeTests {
     var attribute = new TelemetryTagAttribute {
       Tag = "payment-processed",
       Properties = ["PaymentId", "Amount", "Currency"],
-      IncludeEvent = true,
       SpanName = "ProcessPayment",
       Kind = SpanKind.Internal,
       RecordAsEvent = true
@@ -187,7 +186,6 @@ public class TelemetryTagAttributeTests {
     await Assert.That(attribute.Tag).IsEqualTo("payment-processed");
     await Assert.That(attribute.Properties).IsNotNull();
     await Assert.That(attribute.Properties!.Length).IsEqualTo(3);
-    await Assert.That(attribute.IncludeEvent).IsTrue();
 
     // Assert - TelemetryTag-specific properties work
     await Assert.That(attribute.SpanName).IsEqualTo("ProcessPayment");

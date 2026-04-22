@@ -9,12 +9,12 @@ using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// CRITICAL: Tests that ServiceBusProcessor (background listener) works with Azure Service Bus Emulator.
+/// <para>CRITICAL: Tests that ServiceBusProcessor (background listener) works with Azure Service Bus Emulator.
 /// This is different from the other sanity tests which use explicit receivers (ReceiveMessageAsync).
-/// If this test FAILS, it confirms the emulator doesn't support processors - only receivers.
+/// If this test FAILS, it confirms the emulator doesn't support processors - only receivers.</para>
 ///
-/// This test belongs in the library, not the samples, because it verifies the emulator
-/// supports the processor pattern that Whizbang transport uses.
+/// <para>This test belongs in the library, not the samples, because it verifies the emulator
+/// supports the processor pattern that Whizbang transport uses.</para>
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]

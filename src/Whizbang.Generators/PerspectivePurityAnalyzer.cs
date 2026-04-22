@@ -314,7 +314,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
             containingType.Contains("DbSet") ||
             containingType.Contains("IPerspectiveStore") ||
             containingType.Contains("ILensQuery") ||
-            methodName.EndsWith("Async", StringComparison.Ordinal) && (
+            (methodName.EndsWith("Async", StringComparison.Ordinal) && (
                 methodName.Contains("Save") ||
                 methodName.Contains("Insert") ||
                 methodName.Contains("Update") ||
@@ -323,7 +323,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
                 methodName.Contains("Query") ||
                 methodName.Contains("Get") ||
                 methodName.Contains("Find")
-            )) {
+            ))) {
           yield return (invocation, $"{containingType}.{methodName}");
         }
       }
@@ -345,10 +345,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         // Check for HTTP operation patterns
         if (containingType.Contains("HttpClient") ||
             containingType.Contains("HttpMessageInvoker") ||
-            methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http") ||
-            methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http") ||
-            methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http") ||
-            methodName.StartsWith("Delete", StringComparison.Ordinal) && containingType.Contains("Http")) {
+            (methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http")) ||
+            (methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http")) ||
+            (methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http")) ||
+            (methodName.StartsWith("Delete", StringComparison.Ordinal) && containingType.Contains("Http"))) {
           yield return (invocation, $"{containingType}.{methodName}");
         }
       }

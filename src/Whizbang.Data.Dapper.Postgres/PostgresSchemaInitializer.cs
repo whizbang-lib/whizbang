@@ -384,11 +384,14 @@ public sealed class PostgresSchemaInitializer {
 
         // Store previous SQL content for rollback support (functions can be re-applied)
         var previousContent = isUpdate ? migration.Sql : null;
-        await _upsertMigrationAsync(connection, migration.Name, hash, versionId, status, desc,
-            cancellationToken, previousContent: previousContent, executionOrder: executionOrder);
+        await _upsertMigrationAsync(connection,
+            new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
+            cancellationToken);
       } catch (Exception ex) {
         // Record failure
-        await _upsertMigrationAsync(connection, migration.Name, hash, versionId, -1, $"Failed: {ex.Message}", cancellationToken);
+        await _upsertMigrationAsync(connection,
+            new MigrationRecord(migration.Name, hash, versionId, -1, $"Failed: {ex.Message}"),
+            cancellationToken);
         throw; // Re-throw to halt migration
       }
     }
@@ -438,8 +441,9 @@ public sealed class PostgresSchemaInitializer {
         cmd.CommandTimeout = 30;
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
-        await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, 4,
-          $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)",
+        await _upsertMigrationAsync(connection,
+          new MigrationRecord(perspectiveName, hash, versionId, 4,
+            $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"),
           cancellationToken, transaction);
         await transaction.CommitAsync(cancellationToken);
         return;
@@ -456,11 +460,15 @@ public sealed class PostgresSchemaInitializer {
         ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
         : "First apply";
 
-      await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, status, desc, cancellationToken, transaction);
+      await _upsertMigrationAsync(connection,
+        new MigrationRecord(perspectiveName, hash, versionId, status, desc),
+        cancellationToken, transaction);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
       await transaction.RollbackAsync(cancellationToken);
-      await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}", cancellationToken);
+      await _upsertMigrationAsync(connection,
+        new MigrationRecord(perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}"),
+        cancellationToken);
       throw;
     }
   }
@@ -505,10 +513,22 @@ public sealed class PostgresSchemaInitializer {
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
 
+  /// <summary>
+  /// Groups the identity and outcome columns for a row in <c>wh_schema_migrations</c>
+  /// that travel together through every upsert call site.
+  /// </summary>
+  private readonly record struct MigrationRecord(
+    string FileName,
+    string Hash,
+    int VersionId,
+    int Status,
+    string Description,
+    string? PreviousContent = null,
+    int? ExecutionOrder = null);
+
   private static async Task _upsertMigrationAsync(
-      NpgsqlConnection connection, string fileName, string hash, int versionId,
-      int status, string desc, CancellationToken cancellationToken,
-      NpgsqlTransaction? transaction = null, string? previousContent = null, int? executionOrder = null) {
+      NpgsqlConnection connection, MigrationRecord record,
+      CancellationToken cancellationToken, NpgsqlTransaction? transaction = null) {
     await using var cmd = connection.CreateCommand();
     if (transaction != null) {
       cmd.Transaction = transaction;
@@ -522,13 +542,13 @@ public sealed class PostgresSchemaInitializer {
         previous_content = COALESCE(EXCLUDED.previous_content, wh_schema_migrations.previous_content),
         execution_order = COALESCE(EXCLUDED.execution_order, wh_schema_migrations.execution_order),
         updated_at = NOW()";
-    cmd.Parameters.AddWithValue("name", fileName);
-    cmd.Parameters.AddWithValue(nameof(hash), hash);
-    cmd.Parameters.AddWithValue(nameof(versionId), versionId);
-    cmd.Parameters.AddWithValue(nameof(status), (short)status);
-    cmd.Parameters.AddWithValue(nameof(desc), desc);
-    cmd.Parameters.AddWithValue("prevContent", (object?)previousContent ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("execOrder", (object?)executionOrder ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("name", record.FileName);
+    cmd.Parameters.AddWithValue("hash", record.Hash);
+    cmd.Parameters.AddWithValue("versionId", record.VersionId);
+    cmd.Parameters.AddWithValue("status", (short)record.Status);
+    cmd.Parameters.AddWithValue("desc", record.Description);
+    cmd.Parameters.AddWithValue("prevContent", (object?)record.PreviousContent ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("execOrder", (object?)record.ExecutionOrder ?? DBNull.Value);
     cmd.CommandTimeout = 10;
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }

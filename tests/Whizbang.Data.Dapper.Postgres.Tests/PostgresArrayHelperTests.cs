@@ -9,6 +9,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Tests for PostgresArrayHelper methods.
 /// Validates type-safe array parameter creation for PostgreSQL.
 /// </summary>
+#pragma warning disable RCS1130 // NpgsqlDbType supports bitwise composition (Array | Uuid) per Npgsql API (third-party enum, cannot add [Flags]).
 public class PostgresArrayHelperTests {
   /// <summary>
   /// Test: ToUuidArray with valid Guid array creates UUID[] parameter

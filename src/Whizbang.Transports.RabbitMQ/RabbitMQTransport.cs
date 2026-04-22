@@ -21,6 +21,8 @@ namespace Whizbang.Transports.RabbitMQ;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private const string UNKNOWN_MESSAGE_ID = "unknown";
+  private const string TRANSPORT_NOT_INITIALIZED_MESSAGE = "RabbitMQ transport is not initialized. Call InitializeAsync() first.";
+  private const string ENVELOPE_TYPE_HEADER = "EnvelopeType";
 
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
@@ -150,7 +152,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(destination);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
@@ -206,7 +208,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       };
 
       // Add envelope type for deserialization
-      properties.Headers["EnvelopeType"] = envelopeTypeName;
+      properties.Headers[ENVELOPE_TYPE_HEADER] = envelopeTypeName;
 
       // Add correlation and causation IDs if present
       _setCorrelationAndCausationHeaders(envelope, properties);
@@ -274,7 +276,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(destination);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     if (items.Count == 0) {
@@ -349,7 +351,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       Headers = new Dictionary<string, object?>()
     };
 
-    properties.Headers["EnvelopeType"] = envelopeTypeName;
+    properties.Headers[ENVELOPE_TYPE_HEADER] = envelopeTypeName;
 
     _setCorrelationAndCausationHeaders(envelope, properties);
 
@@ -417,7 +419,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(batchOptions);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     return _subscribeBatchCoreAsync(batchHandler, destination, batchOptions, cancellationToken);
@@ -526,53 +528,18 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     // If subscription paused, NACK all with requeue
     if (subscription is { IsActive: false }) {
-      foreach (var pending in pendingMessages) {
-        try {
-          await _nackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
-        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
-          // Channel closed — message will be redelivered automatically
-        }
-      }
+      await _nackAllPausedMessagesAsync(pendingMessages);
       return;
     }
 
-    var deserialized = new List<TransportMessage>(pendingMessages.Count);
-    var successfulPending = new List<PendingRabbitMessage>(pendingMessages.Count);
-
-    foreach (var pending in pendingMessages) {
-      try {
-        var envelope = _deserializeMessageFromBody(pending.Args, pending.BodyCopy, out var envelopeTypeName);
-        if (envelope == null) {
-          await _nackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
-          continue;
-        }
-
-        deserialized.Add(new TransportMessage(envelope, envelopeTypeName));
-        successfulPending.Add(pending);
-      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
-        _logger?.LogWarning(ex,
-          "RabbitMQ channel closed while deserializing message {MessageId} from queue {QueueName}",
-          pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
-      }
-    }
-
+    var (deserialized, successfulPending) = await _deserializePendingMessagesAsync(pendingMessages);
     if (deserialized.Count == 0) {
       return;
     }
 
     try {
       await batchHandler(deserialized, CancellationToken.None);
-
-      // Per-message ACK (multiple=false) — safe with AutorecoveringChannel
-      foreach (var pending in successfulPending) {
-        try {
-          await pending.Channel.BasicAckAsync(pending.Args.DeliveryTag, multiple: false, CancellationToken.None);
-        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
-          _logger?.LogWarning(ex,
-            "RabbitMQ channel closed while ACKing message {MessageId} from queue {QueueName} — will be redelivered",
-            pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
-        }
-      }
+      await _ackSuccessfulMessagesAsync(successfulPending);
 
       if (_logger?.IsEnabled(LogLevel.Debug) == true) {
         _logger.LogDebug("Processed batch of {BatchSize} messages from queue {QueueName}", deserialized.Count, queueName);
@@ -583,14 +550,74 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger?.LogError(ex,
         "Error processing batch of {BatchSize} messages from queue {QueueName} — NACKing for redelivery", deserialized.Count, queueName);
+      await _nackFailedBatchAsync(successfulPending);
+    }
+  }
 
-      // Per-message NACK with requeue
-      foreach (var pending in successfulPending) {
-        try {
-          await pending.Channel.BasicNackAsync(pending.Args.DeliveryTag, multiple: false, requeue: true, CancellationToken.None);
-        } catch (Exception nackEx) when (nackEx is AlreadyClosedException or ObjectDisposedException) {
-          // Channel closed — message will be redelivered automatically
+  /// <summary>Pausing subscription path: NACK every pending message with requeue. Channel-closed
+  /// exceptions are swallowed — RabbitMQ redelivers automatically.</summary>
+  private async Task _nackAllPausedMessagesAsync(IReadOnlyList<PendingRabbitMessage> pendingMessages) {
+    foreach (var pending in pendingMessages) {
+      try {
+        await _nackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
+      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+        // Channel closed — message will be redelivered automatically
+      }
+    }
+  }
+
+  /// <summary>
+  /// Deserializes each pending RabbitMQ message into a TransportMessage. Deserialization
+  /// failures are dead-lettered via NACK-without-requeue; channel-closed exceptions are logged
+  /// and the message is dropped (RabbitMQ will redeliver). Returns the successfully deserialized
+  /// transport messages and their backing pending records for later ACK.
+  /// </summary>
+  private async Task<(List<TransportMessage> Deserialized, List<PendingRabbitMessage> SuccessfulPending)>
+      _deserializePendingMessagesAsync(IReadOnlyList<PendingRabbitMessage> pendingMessages) {
+    var deserialized = new List<TransportMessage>(pendingMessages.Count);
+    var successfulPending = new List<PendingRabbitMessage>(pendingMessages.Count);
+
+    foreach (var pending in pendingMessages) {
+      try {
+        var envelope = _deserializeMessageFromBody(pending.Args, pending.BodyCopy, out var envelopeTypeName);
+        if (envelope == null) {
+          await _nackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
+          continue;
         }
+        deserialized.Add(new TransportMessage(envelope, envelopeTypeName));
+        successfulPending.Add(pending);
+      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+        _logger?.LogWarning(ex,
+          "RabbitMQ channel closed while deserializing message {MessageId} from queue {QueueName}",
+          pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
+      }
+    }
+
+    return (deserialized, successfulPending);
+  }
+
+  /// <summary>Per-message ACK with multiple=false (required for AutorecoveringChannel).
+  /// Channel-closed exceptions are logged — RabbitMQ will redeliver the unacked message.</summary>
+  private async Task _ackSuccessfulMessagesAsync(IReadOnlyList<PendingRabbitMessage> successfulPending) {
+    foreach (var pending in successfulPending) {
+      try {
+        await pending.Channel.BasicAckAsync(pending.Args.DeliveryTag, multiple: false, CancellationToken.None);
+      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+        _logger?.LogWarning(ex,
+          "RabbitMQ channel closed while ACKing message {MessageId} from queue {QueueName} — will be redelivered",
+          pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
+      }
+    }
+  }
+
+  /// <summary>Error-path NACK with requeue for each previously successful pending message.
+  /// Channel-closed exceptions are swallowed — RabbitMQ redelivers automatically.</summary>
+  private static async Task _nackFailedBatchAsync(IReadOnlyList<PendingRabbitMessage> successfulPending) {
+    foreach (var pending in successfulPending) {
+      try {
+        await pending.Channel.BasicNackAsync(pending.Args.DeliveryTag, multiple: false, requeue: true, CancellationToken.None);
+      } catch (Exception nackEx) when (nackEx is AlreadyClosedException or ObjectDisposedException) {
+        // Channel closed — message will be redelivered automatically
       }
     }
   }
@@ -606,7 +633,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(destination);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     return _subscribeCoreAsync(handler, destination, cancellationToken);
@@ -1026,7 +1053,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     }
 
     // Get envelope type from headers
-    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+    if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
         envelopeTypeObj is not byte[] envelopeTypeBytes) {
       _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
       return null;
@@ -1061,7 +1088,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     envelopeTypeName = null;
 
     // Get envelope type from headers
-    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+    if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
         envelopeTypeObj is not byte[] envelopeTypeBytes) {
       _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
       return null;

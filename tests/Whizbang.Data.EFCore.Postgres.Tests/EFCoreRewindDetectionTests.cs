@@ -715,11 +715,11 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
         (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @streamId), NOW())
       """, connection);
 
-    cmd.Parameters.AddWithValue("eventId", eventId);
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("eventType", eventType);
-    cmd.Parameters.AddWithValue("eventData", eventData);
-    cmd.Parameters.AddWithValue("metadata", metadata);
+    cmd.Parameters.AddWithValue(nameof(eventId), eventId);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(eventType), eventType);
+    cmd.Parameters.AddWithValue(nameof(eventData), eventData);
+    cmd.Parameters.AddWithValue(nameof(metadata), metadata);
 
     await cmd.ExecuteNonQueryAsync();
   }
@@ -734,10 +734,10 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       VALUES (@messageType, @associationType, @targetName, @serviceName, normalize_event_type(@messageType), NOW(), NOW())
       """, connection);
 
-    cmd.Parameters.AddWithValue("messageType", messageType);
-    cmd.Parameters.AddWithValue("associationType", associationType);
-    cmd.Parameters.AddWithValue("targetName", targetName);
-    cmd.Parameters.AddWithValue("serviceName", serviceName);
+    cmd.Parameters.AddWithValue(nameof(messageType), messageType);
+    cmd.Parameters.AddWithValue(nameof(associationType), associationType);
+    cmd.Parameters.AddWithValue(nameof(targetName), targetName);
+    cmd.Parameters.AddWithValue(nameof(serviceName), serviceName);
 
     await cmd.ExecuteNonQueryAsync();
   }
@@ -752,10 +752,10 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       VALUES (@streamId, @perspectiveName, @lastEventId, @status)
       """, connection);
 
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
-    cmd.Parameters.AddWithValue("lastEventId", (object?)lastEventId ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(perspectiveName), perspectiveName);
+    cmd.Parameters.AddWithValue(nameof(lastEventId), (object?)lastEventId ?? DBNull.Value);
+    cmd.Parameters.AddWithValue(nameof(status), status);
 
     await cmd.ExecuteNonQueryAsync();
   }
@@ -771,8 +771,8 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName
       """, connection);
 
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(perspectiveName), perspectiveName);
 
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
@@ -797,10 +797,10 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName
       """, connection);
 
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
-    cmd.Parameters.AddWithValue("lastEventId", lastEventId);
-    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(perspectiveName), perspectiveName);
+    cmd.Parameters.AddWithValue(nameof(lastEventId), lastEventId);
+    cmd.Parameters.AddWithValue(nameof(status), status);
 
     await cmd.ExecuteNonQueryAsync();
   }
@@ -816,9 +816,9 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING
       """, connection);
 
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
-    cmd.Parameters.AddWithValue("eventId", eventId);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(perspectiveName), perspectiveName);
+    cmd.Parameters.AddWithValue(nameof(eventId), eventId);
 
     await cmd.ExecuteNonQueryAsync();
   }
@@ -834,9 +834,9 @@ public class EFCoreRewindDetectionTests : EFCoreTestBase {
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName AND event_id = @eventId
       """, connection);
 
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("perspectiveName", perspectiveName);
-    cmd.Parameters.AddWithValue("eventId", eventId);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(perspectiveName), perspectiveName);
+    cmd.Parameters.AddWithValue(nameof(eventId), eventId);
 
     var result = await cmd.ExecuteScalarAsync();
     return result is true;

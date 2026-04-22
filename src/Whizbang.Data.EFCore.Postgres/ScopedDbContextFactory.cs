@@ -11,18 +11,18 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// The scope is tracked internally and disposed when the DbContext is disposed.
 /// </summary>
 /// <remarks>
-/// This factory is used instead of AddPooledDbContextFactory to avoid scope validation issues.
+/// <para>This factory is used instead of AddPooledDbContextFactory to avoid scope validation issues.
 /// AddPooledDbContextFactory registers scoped option configurations internally, which causes
-/// "Cannot resolve scoped service from root provider" errors when scope validation is enabled.
+/// "Cannot resolve scoped service from root provider" errors when scope validation is enabled.</para>
 ///
-/// This implementation:
+/// <para>This implementation:
 /// - Is registered as singleton (safe for parallel resolvers)
 /// - Creates scopes for each CreateDbContext() call
 /// - Tracks scopes using ConditionalWeakTable to dispose them when contexts are GC'd
-/// - Works correctly with scope validation enabled
+/// - Works correctly with scope validation enabled</para>
 ///
-/// For HotChocolate parallel resolvers, each resolver gets its own DbContext + scope,
-/// providing the same thread-safety as AddPooledDbContextFactory but without the scope issues.
+/// <para>For HotChocolate parallel resolvers, each resolver gets its own DbContext + scope,
+/// providing the same thread-safety as AddPooledDbContextFactory but without the scope issues.</para>
 /// </remarks>
 /// <typeparam name="TContext">The DbContext type</typeparam>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>

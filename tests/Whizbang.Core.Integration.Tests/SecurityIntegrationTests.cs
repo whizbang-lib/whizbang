@@ -393,13 +393,13 @@ public class SecurityIntegrationTests {
   /// InitiatingContext.
   /// </summary>
   /// <remarks>
-  /// This test reproduces the core issue from a consumer application where cascaded events from
+  /// <para>This test reproduces the core issue from a consumer application where cascaded events from
   /// ReseedSystemEvent were throwing SecurityContextRequiredException because
-  /// the user's InitiatingContext was being used instead of the explicit SYSTEM context.
+  /// the user's InitiatingContext was being used instead of the explicit SYSTEM context.</para>
   ///
-  /// The fix clears CurrentInitiatingContext in DispatcherSecurityBuilder so that
+  /// <para>The fix clears CurrentInitiatingContext in DispatcherSecurityBuilder so that
   /// CurrentContext (the explicit SYSTEM context) takes precedence when
-  /// GetSecurityFromAmbient() is called during outbox message creation.
+  /// GetSecurityFromAmbient() is called during outbox message creation.</para>
   /// </remarks>
   /// <tests>src/Whizbang.Core/Dispatch/DispatcherSecurityBuilder.cs:PublishAsync</tests>
   /// <tests>src/Whizbang.Core/Observability/CascadeContext.cs:GetSecurityFromAmbient</tests>
@@ -428,7 +428,7 @@ public class SecurityIntegrationTests {
       // 3. CLEAR CurrentInitiatingContext (this is the fix)
       var systemExtraction = new SecurityExtraction {
         Scope = new PerspectiveScope {
-          UserId = SecurityContextType.System.ToString(),
+          UserId = nameof(SecurityContextType.System),
           TenantId = null
         },
         Roles = new HashSet<string>(),
@@ -438,7 +438,7 @@ public class SecurityIntegrationTests {
         Source = "Explicit:System",
         ContextType = SecurityContextType.System,
         ActualPrincipal = null,
-        EffectivePrincipal = SecurityContextType.System.ToString()
+        EffectivePrincipal = nameof(SecurityContextType.System)
       };
       var explicitSystemContext = new ImmutableScopeContext(systemExtraction, shouldPropagate: true);
 
@@ -453,7 +453,7 @@ public class SecurityIntegrationTests {
       await Assert.That(ambientSecurity).IsNotNull()
         .Because("GetSecurityFromAmbient should return the explicit SYSTEM context");
 
-      await Assert.That(ambientSecurity!.UserId).IsEqualTo(SecurityContextType.System.ToString())
+      await Assert.That(ambientSecurity!.UserId).IsEqualTo(nameof(SecurityContextType.System))
         .Because("UserId should be 'System' from the explicit context, not 'user-123'");
 
       await Assert.That(ambientSecurity.UserId).IsNotEqualTo("user-123")
@@ -491,7 +491,7 @@ public class SecurityIntegrationTests {
       // Set CurrentContext but DON'T clear CurrentInitiatingContext
       var systemExtraction = new SecurityExtraction {
         Scope = new PerspectiveScope {
-          UserId = SecurityContextType.System.ToString(),
+          UserId = nameof(SecurityContextType.System),
           TenantId = null
         },
         Roles = new HashSet<string>(),
@@ -501,7 +501,7 @@ public class SecurityIntegrationTests {
         Source = "Explicit:System",
         ContextType = SecurityContextType.System,
         ActualPrincipal = null,
-        EffectivePrincipal = SecurityContextType.System.ToString()
+        EffectivePrincipal = nameof(SecurityContextType.System)
       };
       var explicitSystemContext = new ImmutableScopeContext(systemExtraction, shouldPropagate: true);
 
@@ -529,7 +529,7 @@ public class SecurityIntegrationTests {
       // The behavior depends on implementation details. Let's document what we observe:
       if (currentContext is ImmutableScopeContext immutable && immutable.ShouldPropagate) {
         // If we got the explicit context, the bug is not present for this scenario
-        await Assert.That(immutable.Scope.UserId).IsEqualTo(SecurityContextType.System.ToString());
+        await Assert.That(immutable.Scope.UserId).IsEqualTo(nameof(SecurityContextType.System));
       } else if (userContext.ScopeContext is ImmutableScopeContext userImmutable) {
         // If we got the user's context, the bug IS present
         await Assert.That(userImmutable.Scope.UserId).IsEqualTo("user-123");
@@ -552,12 +552,12 @@ public class SecurityIntegrationTests {
   /// This validates the fix for TenantContext being null in [FireAt(LifecycleStage.PostPerspectiveDetached)] handlers.
   /// </summary>
   /// <remarks>
-  /// Root cause: When extraction fails, envelope.GetCurrentScope() returns a ScopeContext that is NOT
+  /// <para>Root cause: When extraction fails, envelope.GetCurrentScope() returns a ScopeContext that is NOT
   /// an ImmutableScopeContext. CascadeContext.GetSecurityFromAmbient() only returns security when
-  /// CurrentContext is ImmutableScopeContext with ShouldPropagate=true.
+  /// CurrentContext is ImmutableScopeContext with ShouldPropagate=true.</para>
   ///
-  /// Fix: PerspectiveWorker now wraps envelope scope in ImmutableScopeContext with shouldPropagate=true
-  /// and invokes callbacks so that lifecycle handlers can access TenantContext.
+  /// <para>Fix: PerspectiveWorker now wraps envelope scope in ImmutableScopeContext with shouldPropagate=true
+  /// and invokes callbacks so that lifecycle handlers can access TenantContext.</para>
   /// </remarks>
   /// <docs>core-concepts/security-context#perspective-worker-propagation</docs>
   /// <tests>src/Whizbang.Core/Workers/PerspectiveWorker.cs:_establishSecurityContextAsync</tests>

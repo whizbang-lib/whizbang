@@ -10,21 +10,21 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <docs>data/turnkey-initialization</docs>
 public static class WhizbangHostExtensions {
   /// <summary>
-  /// Ensures all Whizbang database schemas are initialized before starting the application.
+  /// <para>Ensures all Whizbang database schemas are initialized before starting the application.
   /// This creates all required tables, functions, and extensions (including pgvector if needed).
   /// MUST be called before app.RunAsync() to avoid race conditions where background services
-  /// attempt to use the database before schema is ready.
+  /// attempt to use the database before schema is ready.</para>
   ///
-  /// <example>
+  /// <para><example>
   /// <code>
-  /// var app = builder.Build();
+  /// var app = builder.Build();</para>
   ///
-  /// // Initialize Whizbang database BEFORE starting the app
-  /// await app.EnsureWhizbangInitializedAsync();
+  /// <para>// Initialize Whizbang database BEFORE starting the app
+  /// await app.EnsureWhizbangInitializedAsync();</para>
   ///
-  /// await app.RunAsync();
+  /// <para>await app.RunAsync();
   /// </code>
-  /// </example>
+  /// </example></para>
   /// </summary>
   /// <param name="host">The IHost or WebApplication instance.</param>
   /// <param name="cancellationToken">Cancellation token.</param>

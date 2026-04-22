@@ -13,20 +13,20 @@ namespace Whizbang.Core.Perspectives;
 /// <typeparam name="TModel">The read model type</typeparam>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 [EditorBrowsable(EditorBrowsableState.Never)]
-public interface IPerspectiveBase<TModel> where TModel : class { }
+public interface IPerspectiveBase<TModel> where TModel : class;
 
 /// <summary>Marker for perspectives handling 1 event type.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IPerspectiveBase<TModel, TEvent1> : IPerspectiveBase<TModel>
   where TModel : class
-  where TEvent1 : IEvent { }
+  where TEvent1 : IEvent;
 
 /// <summary>Marker for perspectives handling 2 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IPerspectiveBase<TModel, TEvent1, TEvent2> : IPerspectiveBase<TModel>
   where TModel : class
   where TEvent1 : IEvent
-  where TEvent2 : IEvent { }
+  where TEvent2 : IEvent;
 
 /// <summary>Marker for perspectives handling 3 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -34,7 +34,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3> : IPerspect
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
-  where TEvent3 : IEvent { }
+  where TEvent3 : IEvent;
 
 /// <summary>Marker for perspectives handling 4 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -43,7 +43,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : 
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent
-  where TEvent4 : IEvent { }
+  where TEvent4 : IEvent;
 
 /// <summary>Marker for perspectives handling 5 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -53,7 +53,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent
-  where TEvent5 : IEvent { }
+  where TEvent5 : IEvent;
 
 /// <summary>Marker for perspectives handling 6 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -64,7 +64,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent3 : IEvent
   where TEvent4 : IEvent
   where TEvent5 : IEvent
-  where TEvent6 : IEvent { }
+  where TEvent6 : IEvent;
 
 /// <summary>Marker for perspectives handling 7 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -76,7 +76,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent4 : IEvent
   where TEvent5 : IEvent
   where TEvent6 : IEvent
-  where TEvent7 : IEvent { }
+  where TEvent7 : IEvent;
 
 /// <summary>Marker for perspectives handling 8 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -89,7 +89,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent5 : IEvent
   where TEvent6 : IEvent
   where TEvent7 : IEvent
-  where TEvent8 : IEvent { }
+  where TEvent8 : IEvent;
 
 /// <summary>Marker for perspectives handling 9 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -103,7 +103,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent6 : IEvent
   where TEvent7 : IEvent
   where TEvent8 : IEvent
-  where TEvent9 : IEvent { }
+  where TEvent9 : IEvent;
 
 /// <summary>Marker for perspectives handling 10 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -118,7 +118,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent7 : IEvent
   where TEvent8 : IEvent
   where TEvent9 : IEvent
-  where TEvent10 : IEvent { }
+  where TEvent10 : IEvent;
 
 /// <summary>Marker for perspectives handling 11 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -134,7 +134,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent8 : IEvent
   where TEvent9 : IEvent
   where TEvent10 : IEvent
-  where TEvent11 : IEvent { }
+  where TEvent11 : IEvent;
 
 /// <summary>Marker for perspectives handling 12 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -151,7 +151,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent9 : IEvent
   where TEvent10 : IEvent
   where TEvent11 : IEvent
-  where TEvent12 : IEvent { }
+  where TEvent12 : IEvent;
 
 /// <summary>Marker for perspectives handling 13 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -169,7 +169,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent10 : IEvent
   where TEvent11 : IEvent
   where TEvent12 : IEvent
-  where TEvent13 : IEvent { }
+  where TEvent13 : IEvent;
 
 /// <summary>Marker for perspectives handling 14 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -188,7 +188,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent11 : IEvent
   where TEvent12 : IEvent
   where TEvent13 : IEvent
-  where TEvent14 : IEvent { }
+  where TEvent14 : IEvent;
 
 /// <summary>Marker for perspectives handling 15 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -208,7 +208,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent12 : IEvent
   where TEvent13 : IEvent
   where TEvent14 : IEvent
-  where TEvent15 : IEvent { }
+  where TEvent15 : IEvent;
 
 /// <summary>Marker for perspectives handling 16 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -229,7 +229,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent13 : IEvent
   where TEvent14 : IEvent
   where TEvent15 : IEvent
-  where TEvent16 : IEvent { }
+  where TEvent16 : IEvent;
 
 /// <summary>Marker for perspectives handling 17 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -251,7 +251,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent14 : IEvent
   where TEvent15 : IEvent
   where TEvent16 : IEvent
-  where TEvent17 : IEvent { }
+  where TEvent17 : IEvent;
 
 /// <summary>Marker for perspectives handling 18 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -274,7 +274,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent15 : IEvent
   where TEvent16 : IEvent
   where TEvent17 : IEvent
-  where TEvent18 : IEvent { }
+  where TEvent18 : IEvent;
 
 /// <summary>Marker for perspectives handling 19 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -298,7 +298,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent16 : IEvent
   where TEvent17 : IEvent
   where TEvent18 : IEvent
-  where TEvent19 : IEvent { }
+  where TEvent19 : IEvent;
 
 /// <summary>Marker for perspectives handling 20 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -323,7 +323,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent17 : IEvent
   where TEvent18 : IEvent
   where TEvent19 : IEvent
-  where TEvent20 : IEvent { }
+  where TEvent20 : IEvent;
 
 /// <summary>Marker for perspectives handling 21 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -349,7 +349,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent18 : IEvent
   where TEvent19 : IEvent
   where TEvent20 : IEvent
-  where TEvent21 : IEvent { }
+  where TEvent21 : IEvent;
 
 /// <summary>Marker for perspectives handling 22 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -376,7 +376,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent19 : IEvent
   where TEvent20 : IEvent
   where TEvent21 : IEvent
-  where TEvent22 : IEvent { }
+  where TEvent22 : IEvent;
 
 /// <summary>Marker for perspectives handling 23 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -404,7 +404,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent20 : IEvent
   where TEvent21 : IEvent
   where TEvent22 : IEvent
-  where TEvent23 : IEvent { }
+  where TEvent23 : IEvent;
 
 /// <summary>Marker for perspectives handling 24 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -433,7 +433,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent21 : IEvent
   where TEvent22 : IEvent
   where TEvent23 : IEvent
-  where TEvent24 : IEvent { }
+  where TEvent24 : IEvent;
 
 /// <summary>Marker for perspectives handling 25 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -463,7 +463,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent22 : IEvent
   where TEvent23 : IEvent
   where TEvent24 : IEvent
-  where TEvent25 : IEvent { }
+  where TEvent25 : IEvent;
 
 /// <summary>Marker for perspectives handling 26 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -494,7 +494,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent23 : IEvent
   where TEvent24 : IEvent
   where TEvent25 : IEvent
-  where TEvent26 : IEvent { }
+  where TEvent26 : IEvent;
 
 /// <summary>Marker for perspectives handling 27 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -526,7 +526,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent24 : IEvent
   where TEvent25 : IEvent
   where TEvent26 : IEvent
-  where TEvent27 : IEvent { }
+  where TEvent27 : IEvent;
 
 /// <summary>Marker for perspectives handling 28 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -559,7 +559,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent25 : IEvent
   where TEvent26 : IEvent
   where TEvent27 : IEvent
-  where TEvent28 : IEvent { }
+  where TEvent28 : IEvent;
 
 /// <summary>Marker for perspectives handling 29 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -593,7 +593,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent26 : IEvent
   where TEvent27 : IEvent
   where TEvent28 : IEvent
-  where TEvent29 : IEvent { }
+  where TEvent29 : IEvent;
 
 /// <summary>Marker for perspectives handling 30 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -628,7 +628,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent27 : IEvent
   where TEvent28 : IEvent
   where TEvent29 : IEvent
-  where TEvent30 : IEvent { }
+  where TEvent30 : IEvent;
 
 /// <summary>Marker for perspectives handling 31 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -664,7 +664,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent28 : IEvent
   where TEvent29 : IEvent
   where TEvent30 : IEvent
-  where TEvent31 : IEvent { }
+  where TEvent31 : IEvent;
 
 /// <summary>Marker for perspectives handling 32 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -701,7 +701,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent29 : IEvent
   where TEvent30 : IEvent
   where TEvent31 : IEvent
-  where TEvent32 : IEvent { }
+  where TEvent32 : IEvent;
 
 /// <summary>Marker for perspectives handling 33 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -739,7 +739,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent30 : IEvent
   where TEvent31 : IEvent
   where TEvent32 : IEvent
-  where TEvent33 : IEvent { }
+  where TEvent33 : IEvent;
 
 /// <summary>Marker for perspectives handling 34 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -778,7 +778,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent31 : IEvent
   where TEvent32 : IEvent
   where TEvent33 : IEvent
-  where TEvent34 : IEvent { }
+  where TEvent34 : IEvent;
 
 /// <summary>Marker for perspectives handling 35 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -818,7 +818,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent32 : IEvent
   where TEvent33 : IEvent
   where TEvent34 : IEvent
-  where TEvent35 : IEvent { }
+  where TEvent35 : IEvent;
 
 /// <summary>Marker for perspectives handling 36 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -859,7 +859,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent33 : IEvent
   where TEvent34 : IEvent
   where TEvent35 : IEvent
-  where TEvent36 : IEvent { }
+  where TEvent36 : IEvent;
 
 /// <summary>Marker for perspectives handling 37 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -901,7 +901,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent34 : IEvent
   where TEvent35 : IEvent
   where TEvent36 : IEvent
-  where TEvent37 : IEvent { }
+  where TEvent37 : IEvent;
 
 /// <summary>Marker for perspectives handling 38 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -944,7 +944,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent35 : IEvent
   where TEvent36 : IEvent
   where TEvent37 : IEvent
-  where TEvent38 : IEvent { }
+  where TEvent38 : IEvent;
 
 /// <summary>Marker for perspectives handling 39 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -988,7 +988,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent36 : IEvent
   where TEvent37 : IEvent
   where TEvent38 : IEvent
-  where TEvent39 : IEvent { }
+  where TEvent39 : IEvent;
 
 /// <summary>Marker for perspectives handling 40 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1033,7 +1033,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent37 : IEvent
   where TEvent38 : IEvent
   where TEvent39 : IEvent
-  where TEvent40 : IEvent { }
+  where TEvent40 : IEvent;
 
 /// <summary>Marker for perspectives handling 41 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1079,7 +1079,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent38 : IEvent
   where TEvent39 : IEvent
   where TEvent40 : IEvent
-  where TEvent41 : IEvent { }
+  where TEvent41 : IEvent;
 
 /// <summary>Marker for perspectives handling 42 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1126,7 +1126,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent39 : IEvent
   where TEvent40 : IEvent
   where TEvent41 : IEvent
-  where TEvent42 : IEvent { }
+  where TEvent42 : IEvent;
 
 /// <summary>Marker for perspectives handling 43 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1174,7 +1174,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent40 : IEvent
   where TEvent41 : IEvent
   where TEvent42 : IEvent
-  where TEvent43 : IEvent { }
+  where TEvent43 : IEvent;
 
 /// <summary>Marker for perspectives handling 44 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1223,7 +1223,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent41 : IEvent
   where TEvent42 : IEvent
   where TEvent43 : IEvent
-  where TEvent44 : IEvent { }
+  where TEvent44 : IEvent;
 
 /// <summary>Marker for perspectives handling 45 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1273,7 +1273,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent42 : IEvent
   where TEvent43 : IEvent
   where TEvent44 : IEvent
-  where TEvent45 : IEvent { }
+  where TEvent45 : IEvent;
 
 /// <summary>Marker for perspectives handling 46 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1324,7 +1324,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent43 : IEvent
   where TEvent44 : IEvent
   where TEvent45 : IEvent
-  where TEvent46 : IEvent { }
+  where TEvent46 : IEvent;
 
 /// <summary>Marker for perspectives handling 47 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1376,7 +1376,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent44 : IEvent
   where TEvent45 : IEvent
   where TEvent46 : IEvent
-  where TEvent47 : IEvent { }
+  where TEvent47 : IEvent;
 
 /// <summary>Marker for perspectives handling 48 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1429,7 +1429,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent45 : IEvent
   where TEvent46 : IEvent
   where TEvent47 : IEvent
-  where TEvent48 : IEvent { }
+  where TEvent48 : IEvent;
 
 /// <summary>Marker for perspectives handling 49 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1483,7 +1483,7 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent46 : IEvent
   where TEvent47 : IEvent
   where TEvent48 : IEvent
-  where TEvent49 : IEvent { }
+  where TEvent49 : IEvent;
 
 /// <summary>Marker for perspectives handling 50 event types.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
@@ -1538,5 +1538,5 @@ public interface IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TE
   where TEvent47 : IEvent
   where TEvent48 : IEvent
   where TEvent49 : IEvent
-  where TEvent50 : IEvent { }
+  where TEvent50 : IEvent;
 

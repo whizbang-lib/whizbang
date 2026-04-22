@@ -179,29 +179,45 @@ public partial class ScopedWorkCoordinatorStrategy(
     // Clear queues after successful flush
     _queues.Clear();
 
-    // DIAGNOSTIC: Log what was returned from ProcessWorkBatchAsync
-    if (_logger != null) {
-      LogProcessWorkBatchResult(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count, workBatch.PerspectiveWork.Count);
-      if (workBatch.OutboxWork.Count > 0) {
-        foreach (var work in workBatch.OutboxWork.Take(3)) {
-          var isNewlyStored = (work.Flags & WorkBatchOptions.NewlyStored) != 0;
-          LogReturnedOutboxWork(_logger, work.MessageId, work.Destination, isNewlyStored);
-        }
-      } else if (outboxMessages.Length > 0) {
-        LogNoWorkReturned(_logger, outboxMessages.Length, _instanceProvider.InstanceId);
-      }
-    }
-
-    // Route claimed inbox work to publisher worker via channel (dedup by IsInFlight)
-    if (_inboxChannelWriter is not null && workBatch.InboxWork.Count > 0) {
-      foreach (var inboxWork in workBatch.InboxWork) {
-        if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
-          _inboxChannelWriter.TryWrite(inboxWork);
-        }
-      }
-    }
+    _logPostFlushDiagnostics(workBatch, outboxMessages);
+    _routeClaimedInboxWorkToChannel(workBatch);
 
     return workBatch;
+  }
+
+  /// <summary>Diagnostic log + sample of the first three returned outbox work items; falls
+  /// back to a "no work returned" warning when the batch came back empty despite having
+  /// queued outbox messages. Only fires when a logger is attached.</summary>
+  private void _logPostFlushDiagnostics(WorkBatch workBatch, OutboxMessage[] outboxMessages) {
+    if (_logger is null) {
+      return;
+    }
+    LogProcessWorkBatchResult(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count, workBatch.PerspectiveWork.Count);
+    if (workBatch.OutboxWork.Count > 0) {
+      foreach (var work in workBatch.OutboxWork.Take(3)) {
+        var isNewlyStored = (work.Flags & WorkBatchOptions.NewlyStored) != 0;
+        LogReturnedOutboxWork(_logger, work.MessageId, work.Destination, isNewlyStored);
+      }
+    } else if (outboxMessages.Length > 0) {
+      LogNoWorkReturned(_logger, outboxMessages.Length, _instanceProvider.InstanceId);
+    }
+  }
+
+  /// <summary>Routes claimed inbox work to the publisher worker via the in-memory channel,
+  /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
+  /// no inbox rows.</summary>
+  private void _routeClaimedInboxWorkToChannel(WorkBatch workBatch) {
+    if (_inboxChannelWriter is null || workBatch.InboxWork.Count == 0) {
+      return;
+    }
+    // S3267: Loop body has side effects (channel writer mutation) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var inboxWork in workBatch.InboxWork) {
+      if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
+        _inboxChannelWriter.TryWrite(inboxWork);
+      }
+    }
+#pragma warning restore S3267
   }
 
   /// <inheritdoc />

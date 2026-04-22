@@ -43,23 +43,8 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
       return;
     }
 
-    var schema = _resolveSchema();
-    var tableName = _buildQualifiedName(schema, "wh_perspective_cursors");
-
-#pragma warning disable S2077 // schema-qualified table name built from DbContext metadata; values are positional parameters.
-    var sql = $@"
-      INSERT INTO {tableName}
-        (stream_id, perspective_name, last_event_id, status, processed_at)
-      VALUES ({{0}}, {{1}}, {{2}}, {{3}}, NOW())
-      ON CONFLICT (stream_id, perspective_name) DO UPDATE SET
-        last_event_id = EXCLUDED.last_event_id,
-        status = EXCLUDED.status,
-        processed_at = EXCLUDED.processed_at,
-        error = NULL,
-        rewind_trigger_event_id = NULL,
-        rewind_flagged_at = NULL,
-        rewind_first_flagged_at = NULL;";
-#pragma warning restore S2077
+    var tableName = _buildQualifiedName(_resolveSchema(), "wh_perspective_cursors");
+    var sql = _buildCursorUpsertSql(tableName);
 
     var transaction = _dbContext.Database.CurrentTransaction;
     var ownsTransaction = transaction == null;
@@ -71,32 +56,10 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
     var skippedEmpty = 0;
     try {
       foreach (var completion in completions) {
-        // Skip completions with no event processed. A cursor row whose last_event_id references
-        // nothing is not useful, and the wh_perspective_cursors.last_event_id FK to
-        // wh_event_store.event_id rejects Guid.Empty. This matches the "No events processed —
-        // skip checkpoint" branch in the live work coordinator path.
-        if (completion.LastEventId == Guid.Empty) {
+        if (await _tryUpsertCursorAsync(completion, sql, cancellationToken)) {
+          persisted++;
+        } else {
           skippedEmpty++;
-          if (logger?.IsEnabled(LogLevel.Debug) == true) {
-            LogSkippedEmptyLastEventId(logger, completion.StreamId, completion.PerspectiveName);
-          }
-          continue;
-        }
-
-        await _dbContext.Database.ExecuteSqlRawAsync(
-            sql,
-            [
-              completion.StreamId,
-              completion.PerspectiveName,
-              completion.LastEventId,
-              (short)completion.Status
-            ],
-            cancellationToken);
-        persisted++;
-
-        if (logger?.IsEnabled(LogLevel.Debug) == true) {
-          LogCursorUpsert(logger, completion.StreamId, completion.PerspectiveName,
-              completion.LastEventId, completion.Status);
         }
       }
 
@@ -120,6 +83,59 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
         await transaction.DisposeAsync();
       }
     }
+  }
+
+  /// <summary>
+  /// INSERT ... ON CONFLICT DO UPDATE statement for wh_perspective_cursors. Clears
+  /// rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at, and error on update —
+  /// a full rebuild resolves any prior rewind flagging since the entire event log has been
+  /// replayed.
+  /// </summary>
+#pragma warning disable S2077 // schema-qualified table name built from DbContext metadata; values are positional parameters.
+  private static string _buildCursorUpsertSql(string tableName) => $@"
+      INSERT INTO {tableName}
+        (stream_id, perspective_name, last_event_id, status, processed_at)
+      VALUES ({{0}}, {{1}}, {{2}}, {{3}}, NOW())
+      ON CONFLICT (stream_id, perspective_name) DO UPDATE SET
+        last_event_id = EXCLUDED.last_event_id,
+        status = EXCLUDED.status,
+        processed_at = EXCLUDED.processed_at,
+        error = NULL,
+        rewind_trigger_event_id = NULL,
+        rewind_flagged_at = NULL,
+        rewind_first_flagged_at = NULL;";
+#pragma warning restore S2077
+
+  /// <summary>
+  /// Upserts a single cursor, skipping Guid.Empty last-event-ids (matches the "no events
+  /// processed — skip checkpoint" branch in the live work coordinator path; the
+  /// wh_perspective_cursors.last_event_id FK to wh_event_store.event_id rejects Guid.Empty).
+  /// Returns true if the cursor was persisted, false if skipped.
+  /// </summary>
+  private async Task<bool> _tryUpsertCursorAsync(
+      PerspectiveCursorCompletion completion, string sql, CancellationToken cancellationToken) {
+    if (completion.LastEventId == Guid.Empty) {
+      if (logger?.IsEnabled(LogLevel.Debug) == true) {
+        LogSkippedEmptyLastEventId(logger, completion.StreamId, completion.PerspectiveName);
+      }
+      return false;
+    }
+
+    await _dbContext.Database.ExecuteSqlRawAsync(
+        sql,
+        [
+          completion.StreamId,
+          completion.PerspectiveName,
+          completion.LastEventId,
+          (short)completion.Status
+        ],
+        cancellationToken);
+
+    if (logger?.IsEnabled(LogLevel.Debug) == true) {
+      LogCursorUpsert(logger, completion.StreamId, completion.PerspectiveName,
+          completion.LastEventId, completion.Status);
+    }
+    return true;
   }
 
   [LoggerMessage(Level = LogLevel.Debug,

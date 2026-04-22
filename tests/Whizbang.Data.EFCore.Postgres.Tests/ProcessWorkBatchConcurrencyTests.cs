@@ -9,20 +9,20 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Concurrency regression tests for the wh_active_streams UPSERT inside
+/// <para>Concurrency regression tests for the wh_active_streams UPSERT inside
 /// store_outbox_messages / store_inbox_messages. Calls those functions directly rather
 /// than going through the full process_work_batch request shape — the deadlock site is
 /// the row-lock ordering on wh_active_streams inside those functions, and the full
 /// request/envelope contract has grown heavy enough that end-to-end reproduction is
-/// more setup than signal.
+/// more setup than signal.</para>
 ///
-/// Simulates N synthetic service instances each storing outbox messages for an overlapping
+/// <para>Simulates N synthetic service instances each storing outbox messages for an overlapping
 /// set of streams in a shuffled order. Without deterministic stream_id-sorted UPSERT
 /// ordering, two concurrent calls can lock wh_active_streams rows A→B and B→A and deadlock
-/// (40P01) — matching the a consumer application BFF symptom we observed in production.
+/// (40P01) — matching the a consumer application BFF symptom we observed in production.</para>
 ///
-/// LOCK-IN: once the fix lands (ORDER BY stream_id inside store_outbox_messages and
-/// store_inbox_messages loops), zero 40P01 surfaces across N concurrent callers.
+/// <para>LOCK-IN: once the fix lands (ORDER BY stream_id inside store_outbox_messages and
+/// store_inbox_messages loops), zero 40P01 surfaces across N concurrent callers.</para>
 /// </summary>
 public class ProcessWorkBatchConcurrencyTests : EFCoreTestBase {
 
@@ -101,7 +101,7 @@ public class ProcessWorkBatchConcurrencyTests : EFCoreTestBase {
     for (var i = 0; i < InstanceCount; i++) {
       var taskIndex = i;
       var instanceId = TrackedGuid.NewMedo().Value;
-      var json = _buildOutboxJson(sharedStreams, seed: taskIndex * 37 + 7);
+      var json = _buildOutboxJson(sharedStreams, seed: (taskIndex * 37) + 7);
       tasks[i] = Task.Run(() => _callStoreOutboxMessagesAsync(instanceId, json, cts.Token), cts.Token);
     }
 

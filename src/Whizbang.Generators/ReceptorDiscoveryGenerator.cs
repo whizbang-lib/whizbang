@@ -47,6 +47,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
   private const string INDENT_6 = "      ";
   private const string INDENT_6_CLOSE_BRACE = "      }";
+  private const string BOOL_TRUE_LITERAL = "true";
+  private const string BOOL_FALSE_LITERAL = "false";
   private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();";
 
   private const string PLACEHOLDER_INDEX = "__INDEX__";
@@ -281,32 +283,45 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // [FireAt(LifecycleStage.PostPerspectiveDetached)]
-      // Constructor argument is LifecycleStage enum value
-      if (attribute.ConstructorArguments.Length > 0) {
-        var stageArg = attribute.ConstructorArguments[0];
-        if (stageArg.Value is int stageValue) {
-          // Get the enum type to convert int to enum name
-          var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
-              .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
-              ?.Parameters.FirstOrDefault()?.Type;
-
-          if (stageType is INamedTypeSymbol enumType) {
-            // Find the enum member with this value
-            var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-                .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
-
-            if (enumMember is not null) {
-              // Store fully qualified enum value (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveDetached")
-              var fullyQualifiedStage = $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
-              stages.Add(fullyQualifiedStage);
-            }
-          }
-        }
+      var stage = _tryExtractFireAtStage(attribute);
+      if (stage is not null) {
+        stages.Add(stage);
       }
     }
 
     return [.. stages];
+  }
+
+  /// <summary>
+  /// Parses a single <c>[FireAt(LifecycleStage.X)]</c> attribute and returns the fully-qualified
+  /// enum member name (e.g. <c>Whizbang.Core.LifecycleStage.PostPerspectiveDetached</c>). Returns
+  /// null when the constructor argument is missing, isn't an int, or the attribute's first
+  /// parameter isn't a discoverable enum — callers silently skip those instead of emitting
+  /// garbage into the generated routing.
+  /// </summary>
+  private static string? _tryExtractFireAtStage(AttributeData attribute) {
+    if (attribute.ConstructorArguments.Length == 0
+        || attribute.ConstructorArguments[0].Value is not int stageValue
+        || attribute.AttributeClass is null) {
+      return null;
+    }
+
+    var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
+        .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
+        ?.Parameters.FirstOrDefault()?.Type;
+
+    if (stageType is not INamedTypeSymbol enumType) {
+      return null;
+    }
+
+    var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
+        .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+
+    if (enumMember is null) {
+      return null;
+    }
+
+    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
   }
 
   /// <summary>
@@ -393,44 +408,46 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     var sb = new StringBuilder();
     sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo[] { ");
-
     for (int i = 0; i < syncAttributes.Length; i++) {
-      var attr = syncAttributes[i];
-
-      sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
-      sb.Append($"PerspectiveType: typeof({attr.PerspectiveType}), ");
-
-      // EventTypes
-      if (attr.EventTypes is { Length: > 0 }) {
-        sb.Append("EventTypes: new global::System.Type[] { ");
-        for (int j = 0; j < attr.EventTypes.Length; j++) {
-          if (j > 0) {
-            sb.Append(", ");
-          }
-          sb.Append($"typeof({attr.EventTypes[j]})");
-        }
-        sb.Append(" }, ");
-      } else {
-        sb.Append("EventTypes: null, ");
-      }
-
-      sb.Append($"TimeoutMs: {attr.TimeoutMs}, ");
-      var fireBehaviorValue = attr.FireBehavior switch {
-        0 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess",
-        1 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways",
-        2 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent",
-        _ => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess"
-      };
-      sb.Append($"FireBehavior: {fireBehaviorValue})");
-
+      _appendSyncAttributeEntry(sb, syncAttributes[i]);
       if (i < syncAttributes.Length - 1) {
         sb.Append(", ");
       }
     }
-
     sb.Append(" }");
     return sb.ToString();
   }
+
+  /// <summary>Emits one <c>ReceptorSyncAttributeInfo(...)</c> constructor call — flattens
+  /// PerspectiveType, EventTypes (null or Type[] literal), TimeoutMs, and the FireBehavior
+  /// enum member mapping.</summary>
+  private static void _appendSyncAttributeEntry(StringBuilder sb, SyncAttributeInfo attr) {
+    sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
+    sb.Append($"PerspectiveType: typeof({attr.PerspectiveType}), ");
+    sb.Append("EventTypes: ");
+    sb.Append(_formatEventTypesLiteral(attr.EventTypes));
+    sb.Append(", ");
+    sb.Append($"TimeoutMs: {attr.TimeoutMs}, ");
+    sb.Append($"FireBehavior: {_mapSyncFireBehavior(attr.FireBehavior)})");
+  }
+
+  /// <summary>Renders the EventTypes array literal or the string <c>null</c>.</summary>
+  private static string _formatEventTypesLiteral(string[]? eventTypes) {
+    if (eventTypes is not { Length: > 0 }) {
+      return "null";
+    }
+    var elements = string.Join(", ", eventTypes.Select(t => $"typeof({t})"));
+    return $"new global::System.Type[] {{ {elements} }}";
+  }
+
+  /// <summary>Maps the integer FireBehavior enum value onto its fully-qualified member name.
+  /// Unknown values fall through to FireOnSuccess (the declared default).</summary>
+  private static string _mapSyncFireBehavior(int fireBehavior) => fireBehavior switch {
+    0 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess",
+    1 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways",
+    2 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent",
+    _ => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess"
+  };
 
   /// <summary>
   /// Generates C# code for sync await operations to be inserted into invoker delegates.
@@ -1065,7 +1082,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       string syncRegistrationSnippet,
       string voidSyncRegistrationSnippet) {
     if (receptor.IsSync) {
-      var interfaceName = StandardInterfaceNames.I_SYNC_RECEPTOR;
+      const string interfaceName = StandardInterfaceNames.I_SYNC_RECEPTOR;
       var snippet = receptor.IsVoid ? voidSyncRegistrationSnippet : syncRegistrationSnippet;
       var result = snippet
           .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, interfaceName)
@@ -1073,7 +1090,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
       return receptor.IsVoid ? result : result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!);
     } else {
-      var interfaceName = StandardInterfaceNames.I_RECEPTOR;
+      const string interfaceName = StandardInterfaceNames.I_RECEPTOR;
       var snippet = receptor.IsVoid ? voidRegistrationSnippet : registrationSnippet;
       var result = snippet
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, interfaceName)
@@ -1089,6 +1106,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
+    Justification = "Explanatory prose comments (containing parentheses/method-like phrasing) are misidentified as commented-out code. The comments describe the surrounding generated code intent and are not executable C#.")]
   private static string _generateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
@@ -1511,12 +1530,18 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       useCancellationToken: false, useStageFiltering: true);
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
+    Justification = "Explanatory prose comment (mentioning 'sourceEnvelope' / cascade-path semantics) is misidentified as commented-out code; it documents the surrounding routing logic and is not executable C#.")]
   private static string _buildReceptorInvocationsCore(
       string messageType,
       Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
       string receptorInterface,
       bool useCancellationToken,
       bool useStageFiltering) {
+    if (!receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
+      return string.Empty;
+    }
+
     var sb = new StringBuilder();
     var handleArgs = useCancellationToken ? "typedEvt, cancellationToken" : "typedEvt";
     // Publish path (no cancellation token) has no outer isDefaultDispatch declaration;
@@ -1525,60 +1550,75 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // only when there are explicit receptors to gate (otherwise CS0219 fires).
     var publishPathDeclaresIsDefaultDispatch = !useCancellationToken && useStageFiltering;
 
-    if (receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
-      // Separate typed (with response) and void receptors
-      var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
-      var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
+    var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
+    var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
 
-      // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results)
-      foreach (var receptor in typedReceptors) {
-        sb.AppendLine($"          {{");
-        sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}, object>>(\"{receptor.ClassName}\");");
-        sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
-        sb.AppendLine($"          }}");
-      }
+    // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results).
+    foreach (var receptor in typedReceptors) {
+      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: true, indent: "          ");
+    }
 
-      if (useStageFiltering) {
-        // Void receptors (IReceptor<T>) — stage-aware: skip explicit [FireAt] during default dispatch
-        var defaultVoidReceptors = voidReceptors.Where(r => r.HasDefaultStage).ToList();
-        var explicitVoidReceptors = voidReceptors.Where(r => !r.HasDefaultStage).ToList();
-
-        // Default-stage void receptors — always fire
-        foreach (var receptor in defaultVoidReceptors) {
-          sb.AppendLine($"          {{");
-          sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
-          sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
-          sb.AppendLine($"          }}");
-        }
-
-        // Explicit [FireAt] void receptors. Behavior depends on path:
-        //  - Cascade path: emit `if (!isDefaultDispatch)` gate; receptors fire only when
-        //    sourceEnvelope.DispatchContext.IsDefaultDispatch is false (explicit invoke).
-        //  - Publish path: do not emit at all; [FireAt] receptors fire later via
-        //    ReceptorInvoker at their declared lifecycle stage. Emitting them here
-        //    would cause double-fire (the engineer's reported bug).
-        if (explicitVoidReceptors.Count > 0 && !publishPathDeclaresIsDefaultDispatch) {
-          sb.AppendLine($"          if (!isDefaultDispatch) {{");
-          foreach (var receptor in explicitVoidReceptors) {
-            sb.AppendLine($"            {{");
-            sb.AppendLine($"              var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
-            sb.AppendLine($"              if (r is not null) await r.HandleAsync({handleArgs});");
-            sb.AppendLine($"            }}");
-          }
-          sb.AppendLine($"          }}");
-        }
-      } else {
-        // No stage filtering — all void receptors fire (used by PublishAsync)
-        foreach (var receptor in voidReceptors) {
-          sb.AppendLine($"          {{");
-          sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
-          sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
-          sb.AppendLine($"          }}");
-        }
+    if (useStageFiltering) {
+      _appendStageFilteredVoidReceptors(sb, messageType, receptorInterface, voidReceptors, handleArgs, publishPathDeclaresIsDefaultDispatch);
+    } else {
+      // No stage filtering — all void receptors fire (used by PublishAsync)
+      foreach (var receptor in voidReceptors) {
+        _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");
       }
     }
 
     return sb.ToString().TrimEnd();
+  }
+
+  /// <summary>
+  /// Emits the stage-aware void receptor section. Default-stage void receptors fire
+  /// unconditionally; explicit [FireAt] void receptors fire gated by <c>if (!isDefaultDispatch)</c>
+  /// on the cascade path and are skipped entirely on the publish path (they fire later via
+  /// ReceptorInvoker at their declared lifecycle stage — emitting them here would double-fire).
+  /// </summary>
+  private static void _appendStageFilteredVoidReceptors(
+      StringBuilder sb,
+      string messageType,
+      string receptorInterface,
+      List<ReceptorInfo> voidReceptors,
+      string handleArgs,
+      bool publishPathDeclaresIsDefaultDispatch) {
+    var defaultVoidReceptors = voidReceptors.Where(r => r.HasDefaultStage).ToList();
+    var explicitVoidReceptors = voidReceptors.Where(r => !r.HasDefaultStage).ToList();
+
+    foreach (var receptor in defaultVoidReceptors) {
+      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");
+    }
+
+    if (explicitVoidReceptors.Count == 0 || publishPathDeclaresIsDefaultDispatch) {
+      return;
+    }
+
+    sb.AppendLine("          if (!isDefaultDispatch) {");
+    foreach (var receptor in explicitVoidReceptors) {
+      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "            ");
+    }
+    sb.AppendLine("          }");
+  }
+
+  /// <summary>
+  /// Emits a single receptor invocation block — resolves the keyed service, null-guards it,
+  /// awaits HandleAsync. <paramref name="typedResponse"/> picks the 2-arg IReceptor generic form
+  /// (with <c>object</c> response type) versus the void 1-arg form.
+  /// </summary>
+  private static void _appendReceptorInvocationBlock(
+      StringBuilder sb,
+      string messageType,
+      string receptorInterface,
+      string receptorClassName,
+      string handleArgs,
+      bool typedResponse,
+      string indent) {
+    var typeArgs = typedResponse ? $"{messageType}, object" : messageType;
+    sb.AppendLine($"{indent}{{");
+    sb.AppendLine($"{indent}  var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptorClassName}\");");
+    sb.AppendLine($"{indent}  if (r is not null) await r.HandleAsync({handleArgs});");
+    sb.AppendLine($"{indent}}}");
   }
 
   /// <summary>
@@ -1607,11 +1647,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Expand polymorphic receptors: for each concrete subtype, add a routing entry
-    foreach (var entry in routingEntries.ToList()) {
-      if (entry.Receptor.IsPolymorphicMessageType) {
-        var concreteTypes = _findConcreteSubtypes(compilation, entry.Receptor.MessageType);
+    foreach (var (_, receptor, stage) in routingEntries.ToList()) {
+      if (receptor.IsPolymorphicMessageType) {
+        var concreteTypes = _findConcreteSubtypes(compilation, receptor.MessageType);
         foreach (var concreteType in concreteTypes) {
-          routingEntries.Add((concreteType, entry.Receptor, entry.Stage));
+          routingEntries.Add((concreteType, receptor, stage));
         }
       }
     }
@@ -1737,8 +1777,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
         .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode)
-        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? "true" : "false")
-        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? "true" : "false");
+        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
+        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL);
 
     if (!receptor.IsVoid && receptor.ResponseType is not null) {
       result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
@@ -1781,8 +1821,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("  },");
     sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
-    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? "true" : "false")},");
-    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? "true" : "false")}");
+    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)},");
+    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)}");
     sb.Append(')');
 
     return sb.ToString();

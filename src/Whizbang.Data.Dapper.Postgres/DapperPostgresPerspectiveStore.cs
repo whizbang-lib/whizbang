@@ -44,27 +44,33 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, new PerspectiveScope(), false, null, cancellationToken);
+    _upsertCoreAsync(streamId, model, new PerspectiveScope(), false, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, false, null, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, false, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, null, cancellationToken);
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, cancellationToken);
 
+#pragma warning disable RCS1163, IDE0060 // Interface (IPerspectiveStore) signature; Dapper store accepts parameter for API parity with EF Core split-mode store
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope = null, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, physicalFieldValues, cancellationToken);
+    // Dapper store does not materialize physical fields; physicalFieldValues is accepted for
+    // API parity with stores that do (split-mode EF Core, etc.) but is intentionally ignored.
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), false, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
-    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, physicalFieldValues, cancellationToken);
+    // Dapper store does not materialize physical fields; physicalFieldValues is accepted for
+    // API parity with stores that do (split-mode EF Core, etc.) but is intentionally ignored.
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, cancellationToken);
+#pragma warning restore RCS1163, IDE0060
 
   /// <inheritdoc/>
   public async Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
@@ -74,17 +80,17 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, new PerspectiveScope(), false, null, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, new PerspectiveScope(), false, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, false, null, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, false, cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull =>
-    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, forceUpdateScope, null, cancellationToken);
+    _upsertCoreAsync(_convertPartitionKeyToGuid(partitionKey), model, scope, forceUpdateScope, cancellationToken);
 
   /// <inheritdoc/>
   public Task FlushAsync(CancellationToken cancellationToken = default) =>
@@ -108,7 +114,6 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
   private async Task _upsertCoreAsync(
       Guid id, TModel model, PerspectiveScope scope, bool forceUpdateScope,
-      IDictionary<string, object?>? physicalFieldValues,
       CancellationToken cancellationToken) {
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync(cancellationToken);
@@ -120,7 +125,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
 
     var dataJson = JsonSerializer.Serialize(model, dataTypeInfo);
     var scopeJson = JsonSerializer.Serialize(scope, scopeTypeInfo);
-    var metadataJson = "{}"; // Default metadata for Dapper store
+    const string metadataJson = "{}"; // Default metadata for Dapper store
     var now = DateTime.UtcNow;
 
     // Build SET clause based on forceUpdateScope

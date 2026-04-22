@@ -25,12 +25,12 @@ public class ReceptorInvokerScopePropagationTests {
   private sealed record TestEvent(string Data) : IEvent;
 
   /// <summary>
-  /// Verifies that when a receptor returns an event, the security context is available
-  /// via CascadeContext.GetSecurityFromAmbient() during cascading.
+  /// <para>Verifies that when a receptor returns an event, the security context is available
+  /// via CascadeContext.GetSecurityFromAmbient() during cascading.</para>
   ///
-  /// This test reproduces the bug where scope is not propagated to cascaded events
+  /// <para>This test reproduces the bug where scope is not propagated to cascaded events
   /// because ReceptorInvoker sets a non-ImmutableScopeContext on the accessor,
-  /// and GetSecurityFromAmbient() only works with ImmutableScopeContext.
+  /// and GetSecurityFromAmbient() only works with ImmutableScopeContext.</para>
   /// </summary>
   [Test]
   public async Task InvokeAsync_WhenReceptorReturnsEvent_GetSecurityFromAmbientShouldReturnScopeAsync() {
@@ -84,12 +84,12 @@ public class ReceptorInvokerScopePropagationTests {
   }
 
   /// <summary>
-  /// Verifies that when the security provider returns NULL but the envelope has scope in hops,
-  /// the scope is STILL available via GetSecurityFromAmbient() during event cascading.
+  /// <para>Verifies that when the security provider returns NULL but the envelope has scope in hops,
+  /// the scope is STILL available via GetSecurityFromAmbient() during event cascading.</para>
   ///
-  /// This is the EXACT BUG SCENARIO: Events arrive from another service with scope in hops,
+  /// <para>This is the EXACT BUG SCENARIO: Events arrive from another service with scope in hops,
   /// but no JWT/token extraction happens (security provider returns null). The scope from
-  /// hops should still be wrapped in ImmutableScopeContext and propagated.
+  /// hops should still be wrapped in ImmutableScopeContext and propagated.</para>
   /// </summary>
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsNull_ButEnvelopeHasScopeInHops_GetSecurityFromAmbientShouldReturnScopeAsync() {

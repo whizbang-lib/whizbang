@@ -53,48 +53,37 @@ public class DispatcherCoverageWave3Tests {
   // TEST DISPATCHER (concrete subclass)
   // ========================================
 
-  private sealed class TestDispatcher : Core.Dispatcher {
-    private readonly ReceptorInvoker<object>? _invoker;
-    private readonly VoidReceptorInvoker? _voidInvoker;
-    private readonly SyncReceptorInvoker<object>? _syncInvoker;
-    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker;
-    private readonly Func<object, ValueTask<object?>>? _anyInvoker;
-    private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher;
-    private readonly DispatchModes? _defaultRouting;
-    private readonly Type? _handleMessageType;
-
-    public TestDispatcher(
-      IServiceProvider sp,
-      ITraceStore? traceStore = null,
-      IEnvelopeSerializer? envelopeSerializer = null,
-      IEnvelopeRegistry? envelopeRegistry = null,
-      IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-      IStreamIdExtractor? streamIdExtractor = null,
-      IScopedEventTracker? scopedEventTracker = null,
-      ReceptorInvoker<object>? invoker = null,
-      VoidReceptorInvoker? voidInvoker = null,
-      SyncReceptorInvoker<object>? syncInvoker = null,
-      VoidSyncReceptorInvoker? voidSyncInvoker = null,
-      Func<object, ValueTask<object?>>? anyInvoker = null,
-      Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
-      DispatchModes? defaultRouting = null,
-      Type? handleMessageType = null
-      ) : base(sp, new ServiceInstanceProvider(configuration: null),
-        traceStore: traceStore,
-        envelopeSerializer: envelopeSerializer,
-        envelopeRegistry: envelopeRegistry,
-        outboxRoutingStrategy: outboxRoutingStrategy,
-        streamIdExtractor: streamIdExtractor,
-        scopedEventTracker: scopedEventTracker) {
-      _invoker = invoker;
-      _voidInvoker = voidInvoker;
-      _syncInvoker = syncInvoker;
-      _voidSyncInvoker = voidSyncInvoker;
-      _anyInvoker = anyInvoker;
-      _untypedPublisher = untypedPublisher;
-      _defaultRouting = defaultRouting;
-      _handleMessageType = handleMessageType ?? typeof(W3Command);
-    }
+  private sealed class TestDispatcher(
+    IServiceProvider sp,
+    ITraceStore? traceStore = null,
+    IEnvelopeSerializer? envelopeSerializer = null,
+    IEnvelopeRegistry? envelopeRegistry = null,
+    IOutboxRoutingStrategy? outboxRoutingStrategy = null,
+    IStreamIdExtractor? streamIdExtractor = null,
+    IScopedEventTracker? scopedEventTracker = null,
+    ReceptorInvoker<object>? invoker = null,
+    VoidReceptorInvoker? voidInvoker = null,
+    SyncReceptorInvoker<object>? syncInvoker = null,
+    VoidSyncReceptorInvoker? voidSyncInvoker = null,
+    Func<object, ValueTask<object?>>? anyInvoker = null,
+    Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
+    DispatchModes? defaultRouting = null,
+    Type? handleMessageType = null
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+      traceStore: traceStore,
+      envelopeSerializer: envelopeSerializer,
+      envelopeRegistry: envelopeRegistry,
+      outboxRoutingStrategy: outboxRoutingStrategy,
+      streamIdExtractor: streamIdExtractor,
+      scopedEventTracker: scopedEventTracker) {
+    private readonly ReceptorInvoker<object>? _invoker = invoker;
+    private readonly VoidReceptorInvoker? _voidInvoker = voidInvoker;
+    private readonly SyncReceptorInvoker<object>? _syncInvoker = syncInvoker;
+    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker = voidSyncInvoker;
+    private readonly Func<object, ValueTask<object?>>? _anyInvoker = anyInvoker;
+    private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher = untypedPublisher;
+    private readonly DispatchModes? _defaultRouting = defaultRouting;
+    private readonly Type? _handleMessageType = handleMessageType ?? typeof(W3Command);
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (_invoker != null && messageType == _handleMessageType) {
@@ -272,8 +261,8 @@ public class DispatcherCoverageWave3Tests {
     var sp = _buildProvider(workStrategy, deferredChannel);
     return new TestDispatcher(sp,
       traceStore: traceStore,
-      envelopeRegistry: envelopeRegistry,
       envelopeSerializer: envelopeSerializer,
+      envelopeRegistry: envelopeRegistry,
       scopedEventTracker: scopedEventTracker,
       invoker: invoker,
       voidInvoker: voidInvoker,

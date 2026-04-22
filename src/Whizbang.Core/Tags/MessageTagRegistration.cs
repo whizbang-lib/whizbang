@@ -37,11 +37,6 @@ public sealed record MessageTagRegistration {
   public string[]? Properties { get; init; }
 
   /// <summary>
-  /// Whether to include the full event under "__event" key.
-  /// </summary>
-  public bool IncludeEvent { get; init; }
-
-  /// <summary>
   /// Extra JSON to merge into the payload.
   /// </summary>
   public string? ExtraJson { get; init; }

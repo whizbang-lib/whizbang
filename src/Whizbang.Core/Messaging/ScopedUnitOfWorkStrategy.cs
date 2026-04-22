@@ -30,14 +30,12 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     // Create unit on first message
-    if (_currentUnit == null) {
-      _currentUnit = new DispatchUnitOfWork {
-        UnitId = Uuid7.NewUuid7().ToGuid(),
-        Messages = [],
-        CreatedAt = DateTimeOffset.UtcNow,
-        LifecycleStages = []
-      };
-    }
+    _currentUnit ??= new DispatchUnitOfWork {
+      UnitId = Uuid7.NewUuid7().ToGuid(),
+      Messages = [],
+      CreatedAt = DateTimeOffset.UtcNow,
+      LifecycleStages = []
+    };
 
     // Add message to current unit
     _currentUnit.Messages.Add(message);

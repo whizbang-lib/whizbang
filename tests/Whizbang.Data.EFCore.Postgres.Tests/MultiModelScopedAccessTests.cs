@@ -1,5 +1,4 @@
-#pragma warning disable CS0618
-#pragma warning disable WHIZ400
+#pragma warning disable CS0618, WHIZ400
 
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;

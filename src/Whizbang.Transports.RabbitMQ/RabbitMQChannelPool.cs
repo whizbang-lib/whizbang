@@ -118,8 +118,11 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
       _allChannels.Clear();
     }
 
-    // Drain available bag (channels already disposed above)
-    while (_availableChannels.TryTake(out _)) { }
+    // Drain available bag (channels already disposed above).
+    // The side effect is TryTake itself — body intentionally empty.
+    while (_availableChannels.TryTake(out _)) {
+      // Intentional no-op: each iteration removes a stale channel reference.
+    }
 
     // Reset semaphore to full capacity so new channels can be created
     // Drain any existing permits, then release maxChannels

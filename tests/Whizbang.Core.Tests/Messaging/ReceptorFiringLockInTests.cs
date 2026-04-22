@@ -208,7 +208,7 @@ public class ReceptorFiringLockInTests {
 
       await Assert.That(sharedFires.Count).IsEqualTo(2);
       await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(2);
-      var ids = envelope.ReceptorInvocations!.Select(r => r.ReceptorId).OrderBy(s => s).ToList();
+      var ids = envelope.ReceptorInvocations!.Select(r => r.ReceptorId).Order().ToList();
       await Assert.That(ids).IsEquivalentTo(["ReceptorA", "ReceptorB"]);
     }
   }
@@ -242,8 +242,8 @@ public class ReceptorFiringLockInTests {
       await Assert.That(envelopeB.ReceptorInvocations![0].ReceptorId).IsEqualTo("ReceptorX");
       // The records' timestamps may match the Stopwatch tick but the envelope identities differ —
       // confirm the bag's messageIds match the two envelopes.
-      var firedIds = sharedFires.Select(f => f.Item2).OrderBy(g => g).ToList();
-      var envelopeIds = new[] { envelopeA.MessageId.Value, envelopeB.MessageId.Value }.OrderBy(g => g).ToList();
+      var firedIds = sharedFires.Select(f => f.Item2).Order().ToList();
+      var envelopeIds = new[] { envelopeA.MessageId.Value, envelopeB.MessageId.Value }.Order().ToList();
       await Assert.That(firedIds).IsEquivalentTo(envelopeIds);
     }
   }

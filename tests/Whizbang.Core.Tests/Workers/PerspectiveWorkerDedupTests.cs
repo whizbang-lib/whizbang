@@ -559,9 +559,8 @@ public class PerspectiveWorkerDedupTests {
       Task.CompletedTask;
   }
 
-  private sealed class SingleRunnerRegistry : IPerspectiveRunnerRegistry {
-    private readonly IPerspectiveRunner _runner;
-    public SingleRunnerRegistry(IPerspectiveRunner runner) => _runner = runner;
+  private sealed class SingleRunnerRegistry(IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
+    private readonly IPerspectiveRunner _runner = runner;
 
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => _runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
@@ -678,14 +677,9 @@ public class PerspectiveWorkerDedupTests {
   /// Minimal fake event store that returns a single event for GetEventsBetweenPolymorphicAsync.
   /// All other methods throw NotImplementedException.
   /// </summary>
-  private sealed class MinimalFakeEventStore : IEventStore {
-    private readonly Guid _streamId;
-    private readonly Guid _eventId;
-
-    public MinimalFakeEventStore(Guid streamId, Guid eventId) {
-      _streamId = streamId;
-      _eventId = eventId;
-    }
+  private sealed class MinimalFakeEventStore(Guid streamId, Guid eventId) : IEventStore {
+    private readonly Guid _streamId = streamId;
+    private readonly Guid _eventId = eventId;
 
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes,

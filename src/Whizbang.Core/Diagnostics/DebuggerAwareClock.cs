@@ -166,7 +166,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private sealed class ActiveStopwatch : IActiveStopwatch {
     private readonly DebuggerAwareClock _clock;
     private readonly Stopwatch _wallStopwatch;
-    private TimeSpan _startCpuTime;
+    private readonly TimeSpan _startCpuTime;
     private TimeSpan? _stoppedActiveElapsed;
     private TimeSpan? _stoppedWallElapsed;
     private bool _stopped;

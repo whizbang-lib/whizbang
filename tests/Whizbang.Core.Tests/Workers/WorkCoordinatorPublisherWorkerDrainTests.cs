@@ -381,7 +381,7 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
     public TaskCompletionSource PollAfterAckSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _callsAfterFirstCompletion;
     private readonly Queue<List<OutboxWork>> _scriptedWork = new();
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public void EnqueueWorkForNextClaim(List<OutboxWork> work) => _scriptedWork.Enqueue(work);
 
@@ -626,15 +626,11 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
   /// work item, then empty batches forever. Used to prove the backoff reset
   /// path: after the full batch, _consecutiveEmptyPolls must return to zero.
   /// </summary>
-  private sealed class EmptyThenFullCoordinator : IWorkCoordinator, IDisposable {
-    private readonly int _emptyCountBeforeWork;
+  private sealed class EmptyThenFullCoordinator(int emptyCountBeforeWork) : IWorkCoordinator, IDisposable {
+    private readonly int _emptyCountBeforeWork = emptyCountBeforeWork;
     private readonly SemaphoreSlim _claimCounter = new(0, int.MaxValue);
     public int ClaimCount { get; private set; }
     public List<DateTimeOffset> ClaimTimestamps { get; } = [];
-
-    public EmptyThenFullCoordinator(int emptyCountBeforeWork) {
-      _emptyCountBeforeWork = emptyCountBeforeWork;
-    }
 
     public void Dispose() => _claimCounter.Dispose();
 
@@ -812,15 +808,11 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
   // Always returns MaxStreamsPerBatch-sized batches; records claim timestamps.
   // ==========================================================================
 
-  private sealed class InfiniteFullBatchCoordinator : IWorkCoordinator, IDisposable {
-    private readonly int _batchSize;
+  private sealed class InfiniteFullBatchCoordinator(int batchSize) : IWorkCoordinator, IDisposable {
+    private readonly int _batchSize = batchSize;
     private readonly SemaphoreSlim _claimCounter = new(0, int.MaxValue);
     public int ClaimCount { get; private set; }
     public List<DateTimeOffset> ClaimTimestamps { get; } = [];
-
-    public InfiniteFullBatchCoordinator(int batchSize) {
-      _batchSize = batchSize;
-    }
 
     public void Dispose() => _claimCounter.Dispose();
 

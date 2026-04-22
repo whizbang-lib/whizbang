@@ -193,7 +193,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     ITypeSymbol? messageType = null;
 
     // For SendAsync and PublishAsync, look at the first argument
-    if (invocation.ArgumentList.Arguments.Count > 0) {
+    if (invocation.ArgumentList.Arguments.Any()) {
       var firstArg = invocation.ArgumentList.Arguments[0].Expression;
       var argTypeInfo = semanticModel.GetTypeInfo(firstArg, cancellationToken);
       messageType = argTypeInfo.Type;

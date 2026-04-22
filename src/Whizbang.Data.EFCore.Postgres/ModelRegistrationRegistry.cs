@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 public static class ModelRegistrationRegistry {
   private static readonly List<Action<IServiceCollection, Type, IDbUpsertStrategy>> _registrars = [];
   private static readonly ConditionalWeakTable<IServiceCollection, HashSet<(Type dbContextType, int callbackIndex)>> _invoked = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Registers a callback that will register discovered perspective models.

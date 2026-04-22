@@ -202,9 +202,9 @@ public class MessageTagParameterAnalyzerTests {
 
             [AttributeUsage(AttributeTargets.Class)]
             public class MyTagAttribute : MessageTagAttribute {
-              public MyTagAttribute(string tag, bool includeEvent) {
+              public MyTagAttribute(string tag, string extraJson) {
                 Tag = tag;
-                IncludeEvent = includeEvent;
+                ExtraJson = extraJson;
               }
             }
             """;

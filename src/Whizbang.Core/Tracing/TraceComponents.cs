@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tracing;
 /// </remarks>
 /// <docs>operations/observability/tracing#components</docs>
 [Flags]
-#pragma warning disable S4070 // All values are powers of 2; ~None is intentional flags pattern for All
+#pragma warning disable S4070, RCS1154 // S4070: ~None is intentional flags "All" pattern. RCS1154: members grouped by subsystem, not alphabetically.
 public enum TraceComponents {
   /// <summary>No tracing enabled.</summary>
   None = 0,

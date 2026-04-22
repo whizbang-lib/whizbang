@@ -138,7 +138,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
 
     // Verify it's our event
     var expectedType = typeof(CascadeTestEvent).AssemblyQualifiedName ?? throw new InvalidOperationException("AssemblyQualifiedName is null");
-    var messageTypes = outboxMessages.Select(m => m.MessageType).ToList();
+    var messageTypes = outboxMessages.ConvertAll(m => m.MessageType);
     await Assert.That(messageTypes).Contains(expectedType);
   }
 
@@ -267,17 +267,17 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   public record AsSystemTestEvent([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>
-  /// **RED TEST**: Replicates the a consumer application scenario where AsSystem().PublishAsync()
+  /// <para>**RED TEST**: Replicates the a consumer application scenario where AsSystem().PublishAsync()
   /// stores an event to outbox, but when the event is retrieved and processed,
-  /// MessageHopSecurityExtractor fails to extract the security context.
+  /// MessageHopSecurityExtractor fails to extract the security context.</para>
   ///
-  /// This test verifies the full end-to-end flow:
+  /// <para>This test verifies the full end-to-end flow:
   /// 1. dispatcher.AsSystem().ForTenant().PublishAsync() creates envelope with ScopeDelta
   /// 2. Event is stored in PostgreSQL outbox via work coordinator
   /// 3. Event is retrieved via ProcessWorkBatchAsync
-  /// 4. MessageHopSecurityExtractor successfully extracts SYSTEM context from hops
+  /// 4. MessageHopSecurityExtractor successfully extracts SYSTEM context from hops</para>
   ///
-  /// If this test FAILS, the bug is in the Dispatcher → Outbox → Extractor flow.
+  /// <para>If this test FAILS, the bug is in the Dispatcher → Outbox → Extractor flow.</para>
   /// </summary>
   /// <summary>
   /// This test verifies the full AsSystem() → Outbox → PostgreSQL → SecurityExtractor flow works.
@@ -429,18 +429,18 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// **RED TEST**: Tests that CASCADED events from AsSystem().SendAsync() inherit the SYSTEM security context.
+  /// <para>**RED TEST**: Tests that CASCADED events from AsSystem().SendAsync() inherit the SYSTEM security context.</para>
   ///
-  /// This tests the actual a consumer application scenario:
+  /// <para>This tests the actual a consumer application scenario:
   /// 1. AsSystem().WithTenant().SendAsync(command) - sends command with explicit SYSTEM context
   /// 2. Receptor handles command and returns an event
   /// 3. Event is cascaded to outbox via CascadeToOutboxAsync
-  /// 4. The cascaded event should have SYSTEM context, NOT the handler's context
+  /// 4. The cascaded event should have SYSTEM context, NOT the handler's context</para>
   ///
-  /// The key difference from AsSystem_PublishAsync test:
+  /// <para>The key difference from AsSystem_PublishAsync test:
   /// - PublishAsync directly publishes an event
   /// - SendAsync triggers a receptor that cascades an event
-  /// The cascade flow uses different code path (sourceEnvelope inheritance).
+  /// The cascade flow uses different code path (sourceEnvelope inheritance).</para>
   /// </summary>
   [Test]
   [NotInParallel]
@@ -558,9 +558,9 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   public record EventStoreSecurityTestEvent([property: StreamId] Guid StreamId) : IEvent;
 
   /// <summary>
-  /// **RED TEST**: Replicates the a consumer application PerspectiveWorker failure scenario.
+  /// <para>**RED TEST**: Replicates the a consumer application PerspectiveWorker failure scenario.</para>
   ///
-  /// This tests the ACTUAL failing path in a consumer application:
+  /// <para>This tests the ACTUAL failing path in a consumer application:
   /// 1. Event is stored to event store when ScopeContextAccessor.CurrentContext is null
   ///    (or not an ImmutableScopeContext with propagation enabled)
   /// 2. SecurityContextEventStoreDecorator calls GetSecurityFromAmbient() which returns null
@@ -568,10 +568,10 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   /// 4. PerspectiveWorker reads event via GetEventsBetweenPolymorphicAsync
   /// 5. _establishSecurityContextAsync calls EstablishContextAsync
   /// 6. MessageHopSecurityExtractor returns null (no scope on hops)
-  /// 7. DefaultMessageSecurityContextProvider throws SecurityContextRequiredException
+  /// 7. DefaultMessageSecurityContextProvider throws SecurityContextRequiredException</para>
   ///
-  /// If this test PASSES, the bug is not reproducible.
-  /// If this test FAILS with SecurityContextRequiredException, we've replicated the a consumer application bug.
+  /// <para>If this test PASSES, the bug is not reproducible.
+  /// If this test FAILS with SecurityContextRequiredException, we've replicated the a consumer application bug.</para>
   /// </summary>
   [Test]
   [NotInParallel]
@@ -783,21 +783,21 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   #endregion
 
   /// <summary>
-  /// **RED → GREEN TEST**: Tests the InitiatingContext shadowing bug fix.
+  /// <para>**RED → GREEN TEST**: Tests the InitiatingContext shadowing bug fix.</para>
   ///
-  /// BEFORE FIX (RED): This test FAILS because:
+  /// <para>BEFORE FIX (RED): This test FAILS because:
   /// 1. ReceptorInvoker sets BOTH:
   ///    - accessor.Current = ImmutableScopeContext (with ShouldPropagate=true)
   ///    - accessor.InitiatingContext = messageContext (where messageContext.ScopeContext may be null)
   /// 2. ScopeContextAccessor.CurrentContext getter returns InitiatingContext.ScopeContext first
   /// 3. GetSecurityFromAmbient() checks for ImmutableScopeContext, gets null, returns null
-  /// 4. SecurityContextEventStoreDecorator stores event with Scope=null on hops
+  /// 4. SecurityContextEventStoreDecorator stores event with Scope=null on hops</para>
   ///
-  /// AFTER FIX (GREEN): This test PASSES because:
+  /// <para>AFTER FIX (GREEN): This test PASSES because:
   /// 1. ScopeContextAccessor.CurrentContext getter now checks _current.Value first
   ///    if it's an ImmutableScopeContext with ShouldPropagate=true
   /// 2. GetSecurityFromAmbient() finds the ImmutableScopeContext
-  /// 3. SecurityContextEventStoreDecorator stores event with proper ScopeDelta on hops
+  /// 3. SecurityContextEventStoreDecorator stores event with proper ScopeDelta on hops</para>
   /// </summary>
   [Test]
   [NotInParallel]

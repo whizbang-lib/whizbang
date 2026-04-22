@@ -17,12 +17,12 @@ using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// Integration tests for NamespaceRoutingStrategy with real Azure Service Bus transport.
-/// Verifies that messages are routed to correct topics based on namespace patterns.
+/// <para>Integration tests for NamespaceRoutingStrategy with real Azure Service Bus transport.
+/// Verifies that messages are routed to correct topics based on namespace patterns.</para>
 ///
-/// Note: Azure Service Bus requires topics to be pre-provisioned. These tests verify
+/// <para>Note: Azure Service Bus requires topics to be pre-provisioned. These tests verify
 /// the routing strategy logic and test transport delivery using predefined topics
-/// (topic-00, topic-01) from the emulator configuration.
+/// (topic-00, topic-01) from the emulator configuration.</para>
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]

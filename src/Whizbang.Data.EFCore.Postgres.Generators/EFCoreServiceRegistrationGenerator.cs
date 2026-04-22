@@ -54,6 +54,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
   private const string CLOSE_BRACE_INDENT_4 = "    });";
   private const string CLOSE_BRACE_INDENT_6 = "      });";
+  private const string CLOSE_BRACE_INDENT_8 = "        });";
+  private const string CLOSE_BRACE_ONLY_INDENT_6 = "      }";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -356,14 +358,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var segments = namespaceName.Split('.');
 
     // Take the last segment (e.g., "InventoryWorker", "API")
-    var lastSegment = segments[segments.Length - 1];
+    var lastSegment = segments[^1];
 
     // If last segment is generic (API, Service, etc.), take second-to-last
     if ((lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
          lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
          lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) &&
         segments.Length > 1) {
-      lastSegment = segments[segments.Length - 2];
+      lastSegment = segments[^2];
     }
 
     // Remove common suffixes (case-insensitive)
@@ -711,7 +713,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        // Register physical field hydrator for {model.ModelTypeName}");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
     sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
-    sb.AppendLine($"          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
+    sb.AppendLine("          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
 
     foreach (var field in model.PhysicalFields) {
       if (field.IsVector) {
@@ -719,7 +721,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
         sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
         sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine($"          }}");
+        sb.AppendLine("          }");
       } else {
         // Non-vector fields: direct type cast
         var clrType = field.TypeName;
@@ -728,14 +730,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
           sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
           sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine($"          }}");
+          sb.AppendLine("          }");
         } else {
           sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
         }
       }
     }
 
-    sb.AppendLine("        });");
+    sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
 
@@ -747,7 +749,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        // Register ChangeTracker-based hydrator for {model.ModelTypeName} (zero reflection, AOT-safe)");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof({rowType}), entry => {{");
     sb.AppendLine($"          var row = ({rowType})entry.Entity;");
-    sb.AppendLine($"          if (row.Data is null) {{ return; }}");
+    sb.AppendLine("          if (row.Data is null) { return; }");
 
     foreach (var field in model.PhysicalFields) {
       if (field.IsVector) {
@@ -755,7 +757,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
         sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
         sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine($"          }}");
+        sb.AppendLine("          }");
       } else {
         var clrType = field.TypeName;
         var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
@@ -763,15 +765,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
           sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
           sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine($"          }}");
+          sb.AppendLine("          }");
         } else {
           sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
         }
       }
     }
 
-    sb.AppendLine($"          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
-    sb.AppendLine("        });");
+    sb.AppendLine("          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
+    sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
 
@@ -806,6 +808,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         .Select(g => g.First())
         .ToList();
 
+    // S3267: Loop has side effects (reporting diagnostics) and early break — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var query in uniqueCombinations) {
       // Check if ALL model types are known perspectives for this DbContext
       var allModelsKnown = true;
@@ -858,9 +862,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();");
       sb.AppendLine("          var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();");
       sb.AppendLine($"          return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<{typeArgs}>(context, tableNames, scopeContextAccessor, whizbangOptions);");
-      sb.AppendLine("        });");
+      sb.AppendLine(CLOSE_BRACE_INDENT_8);
       sb.AppendLine();
     }
+#pragma warning restore S3267
   }
 
   /// <summary>
@@ -1069,7 +1074,56 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       ImmutableArray<DbContextInfo> dbContexts,
       ImmutableArray<MultiLensQueryInfo> multiLensQueries) {
 
-    // DEBUG: Always report that we're running
+    _reportRegistrationDebugDiagnostic(context, perspectives, dbContexts, multiLensQueries);
+
+    if (dbContexts.IsEmpty) {
+      return;  // No DbContext found - nothing to register
+    }
+
+    var dbContextGroups = _groupPerspectivesByDbContext(perspectives, dbContexts);
+    var totalUniqueModels = perspectives.IsEmpty ? 0 : perspectives.GroupBy(p => p.ModelTypeName).Count();
+
+    if (!_tryLoadRegistrationSnippets(context, out var infrastructureSnippet, out var perspectiveSnippet)) {
+      return;
+    }
+
+    var sb = new StringBuilder();
+    var consumerNamespace = dbContextGroups[0].DbContext.Namespace;
+
+    _appendRegistrationFileHeader(sb, dbContextGroups, consumerNamespace, totalUniqueModels);
+
+    foreach (var group in dbContextGroups) {
+      _appendRegistrationForDbContextGroup(
+        context, sb, group, infrastructureSnippet, perspectiveSnippet, multiLensQueries);
+    }
+
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
+    sb.AppendLine();
+
+    foreach (var (dbContext, models) in dbContextGroups) {
+      var dbContextHasVectorFields = models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
+      var dbContextHasPhysicalFields = models.Any(m => m.PhysicalFields.Length > 0);
+      _generateDbContextRegistrationCallback(sb, dbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
+    }
+
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+
+    context.AddSource("EFCoreModelRegistration.g.cs", sb.ToString());
+
+    var hasAnyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
+    _generateVectorConfigurationRegistry(context, consumerNamespace, hasAnyVectorFields);
+
+    _reportRegistrationCompletionDiagnostic(context, totalUniqueModels, dbContextGroups.Count);
+  }
+
+  /// <summary>Emits the "generator is running" debug diagnostic (EFCORE106). Always fires so
+  /// we can trace whether the generator was invoked even when there are no perspectives.</summary>
+  private static void _reportRegistrationDebugDiagnostic(
+      SourceProductionContext context,
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<DbContextInfo> dbContexts,
+      ImmutableArray<MultiLensQueryInfo> multiLensQueries) {
     var debugDescriptor = new DiagnosticDescriptor(
         id: "EFCORE106",
         title: "GenerateRegistrationMetadata Running",
@@ -1078,13 +1132,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
     context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length, dbContexts.Length, multiLensQueries.Length));
+  }
 
-    if (dbContexts.IsEmpty) {
-      return;  // No DbContext found - nothing to register
-    }
-
-    // Group perspectives by DbContext (may be empty if no perspectives)
-    var dbContextGroups = dbContexts.Select(dbContext => {
+  /// <summary>Groups perspective models by their owning DbContext, deduping by ModelTypeName so
+  /// a duplicate perspective registration across assemblies resolves to one entry.</summary>
+  private static List<(DbContextInfo DbContext, List<PerspectiveModelInfo> Models)> _groupPerspectivesByDbContext(
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<DbContextInfo> dbContexts) {
+    return dbContexts.Select(dbContext => {
       var matchingPerspectives = perspectives.IsEmpty
           ? []
           : perspectives
@@ -1094,17 +1149,16 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
               .ToList();
       return (DbContext: dbContext, Models: matchingPerspectives);
     }).ToList();
+  }
 
-    // Count total unique models across all DbContexts
-    var totalUniqueModels = perspectives.IsEmpty ? 0 : perspectives
-        .GroupBy(p => p.ModelTypeName)
-        .Count();
-
-    // Load snippets from EFCoreSnippets.cs
+  /// <summary>Loads the shared infra + perspective registration snippets from
+  /// EFCoreSnippets.cs. Reports EFCORE999 and returns false on load failure so the caller can
+  /// abort generation instead of emitting broken output.</summary>
+  private static bool _tryLoadRegistrationSnippets(
+      SourceProductionContext context,
+      out string infrastructureSnippet,
+      out string perspectiveSnippet) {
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
-    string infrastructureSnippet;
-    string perspectiveSnippet;
-
     try {
       infrastructureSnippet = TemplateUtilities.ExtractSnippet(
           assembly,
@@ -1118,6 +1172,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           "REGISTER_PERSPECTIVE_MODEL_SNIPPET",
           "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
       );
+      return true;
     } catch (Exception ex) {
       var errorDescriptor = new DiagnosticDescriptor(
           id: "EFCORE999",
@@ -1127,12 +1182,21 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           defaultSeverity: DiagnosticSeverity.Error,
           isEnabledByDefault: true);
       context.ReportDiagnostic(Diagnostic.Create(errorDescriptor, Location.None, ex.Message));
-      return;
+      infrastructureSnippet = string.Empty;
+      perspectiveSnippet = string.Empty;
+      return false;
     }
+  }
 
-    var sb = new StringBuilder();
-
-    // File header
+  /// <summary>Emits the auto-generated header, conditional pgvector usings, consumer namespace,
+  /// and the GeneratedModelRegistration class + ModuleInitializer opening. pgvector usings are
+  /// only included when any perspective across all DbContexts declared vector or physical
+  /// fields, so consuming assemblies without vector columns don't pull Pgvector.</summary>
+  private static void _appendRegistrationFileHeader(
+      StringBuilder sb,
+      List<(DbContextInfo DbContext, List<PerspectiveModelInfo> Models)> dbContextGroups,
+      string consumerNamespace,
+      int totalUniqueModels) {
     sb.AppendLine(AUTO_GENERATED_HEADER);
     sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine(DO_NOT_EDIT_COMMENT);
@@ -1148,7 +1212,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.EntityFrameworkCore.Diagnostics;");
     sb.AppendLine("using global::Whizbang.Core.Lenses;");
     sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres;");
-    // Add pgvector usings if ANY DbContext has vector fields
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
     var anyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
@@ -1162,9 +1225,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
 
-    // Use consumer assembly's namespace to avoid collisions when multiple assemblies reference same generator
-    // Each consumer assembly (e.g., ECommerce.BFF.API, ECommerce.InventoryWorker) gets its own .Generated namespace
-    var consumerNamespace = dbContextGroups[0].DbContext.Namespace;
     sb.AppendLine($"namespace {consumerNamespace}.Generated;");
     sb.AppendLine();
 
@@ -1184,76 +1244,68 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("    // Register callback with the library's registry");
     sb.AppendLine("    ModelRegistrationRegistry.RegisterModels((services, dbContextType, upsertStrategy) => {");
     sb.AppendLine();
+  }
 
-    // Generate conditional registration per DbContext
-    foreach (var group in dbContextGroups) {
-      var keysDisplay = string.Join(", ", group.DbContext.Keys.Select(k => $"\"{k}\""));
-      sb.AppendLine($"      // {group.DbContext.ClassName} (keys: [{keysDisplay}])");
-      sb.AppendLine($"      if (dbContextType == typeof({group.DbContext.FullyQualifiedName})) {{");
+  /// <summary>Emits the `if (dbContextType == typeof(T))` block for a single DbContext group:
+  /// infrastructure snippet, per-model snippet loop, physical-field registrations + hydrators,
+  /// and the multi-model ILensQuery block.</summary>
+  private static void _appendRegistrationForDbContextGroup(
+      SourceProductionContext context,
+      StringBuilder sb,
+      (DbContextInfo DbContext, List<PerspectiveModelInfo> Models) group,
+      string infrastructureSnippet,
+      string perspectiveSnippet,
+      ImmutableArray<MultiLensQueryInfo> multiLensQueries) {
+    var keysDisplay = string.Join(", ", group.DbContext.Keys.Select(k => $"\"{k}\""));
+    sb.AppendLine($"      // {group.DbContext.ClassName} (keys: [{keysDisplay}])");
+    sb.AppendLine($"      if (dbContextType == typeof({group.DbContext.FullyQualifiedName})) {{");
 
-      // Generate infrastructure registration (Inbox, Outbox, EventStore) - once per DbContext
-      var infraCode = infrastructureSnippet
-          .Replace("__DBCONTEXT_FQN__", group.DbContext.FullyQualifiedName);
-      sb.AppendLine(TemplateUtilities.IndentCode(infraCode, "        "));
-      sb.AppendLine();
-
-      // Generate perspective model registrations - one per model
-      foreach (var model in group.Models) {
-        var perspectiveCode = perspectiveSnippet
-            .Replace("__MODEL_TYPE__", model.ModelTypeName)
-            .Replace("__DBCONTEXT_FQN__", group.DbContext.FullyQualifiedName)
-            .Replace("__TABLE_NAME__", model.TableName);
-        sb.AppendLine(TemplateUtilities.IndentCode(perspectiveCode, "        "));
-        sb.AppendLine();
-      }
-
-      // Generate physical field registrations for query rewriting and materialization hydration
-      foreach (var model in group.Models) {
-        if (model.PhysicalFields.Length > 0) {
-          // Register field mappings for PhysicalFieldExpressionVisitor (WHERE/ORDER BY rewriting)
-          foreach (var field in model.PhysicalFields) {
-            var isVector = field.IsVector ? "true" : "false";
-            sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
-          }
-          sb.AppendLine();
-
-          // Register hydrator for IMaterializationInterceptor (Split-mode field hydration after query)
-          _generatePhysicalFieldHydratorRegistration(sb, model);
-
-          // Register ChangeTracker-based hydrator for post-query hydration (zero reflection, AOT-safe)
-          _generateChangeTrackerHydratorRegistration(sb, model);
-        }
-      }
-
-      // Generate multi-model ILensQuery registrations (auto-detected from constructor parameters)
-      _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
-
-      sb.AppendLine("      }");
-      sb.AppendLine();
-    }
-
-    sb.AppendLine(CLOSE_BRACE_INDENT_4);
+    // Inbox/Outbox/EventStore — once per DbContext
+    var infraCode = infrastructureSnippet.Replace("__DBCONTEXT_FQN__", group.DbContext.FullyQualifiedName);
+    sb.AppendLine(TemplateUtilities.IndentCode(infraCode, "        "));
     sb.AppendLine();
 
-    // Generate DbContext registration callbacks for each DbContext
-    // This enables turnkey setup via .WithEFCore<T>().WithDriver.Postgres
-    foreach (var group in dbContextGroups) {
-      var dbContextHasVectorFields = group.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
-      var dbContextHasPhysicalFields = group.Models.Any(m => m.PhysicalFields.Length > 0);
-      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
+    foreach (var model in group.Models) {
+      var perspectiveCode = perspectiveSnippet
+          .Replace("__MODEL_TYPE__", model.ModelTypeName)
+          .Replace("__DBCONTEXT_FQN__", group.DbContext.FullyQualifiedName)
+          .Replace("__TABLE_NAME__", model.TableName);
+      sb.AppendLine(TemplateUtilities.IndentCode(perspectiveCode, "        "));
+      sb.AppendLine();
     }
 
-    sb.AppendLine("  }");
-    sb.AppendLine("}");
+    foreach (var model in group.Models) {
+      if (model.PhysicalFields.Length > 0) {
+        _appendPhysicalFieldRegistrations(sb, model);
+      }
+    }
 
-    context.AddSource("EFCoreModelRegistration.g.cs", sb.ToString());
+    _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
 
-    // Generate VectorConfigurationRegistry for turnkey pgvector support
-    // Check if ANY perspective across all DbContexts has vector fields
-    var hasAnyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
-    _generateVectorConfigurationRegistry(context, consumerNamespace, hasAnyVectorFields);
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
+    sb.AppendLine();
+  }
 
-    // Report diagnostic
+  /// <summary>Emits PhysicalFieldRegistry.Register calls for WHERE/ORDER-BY rewriting and wires
+  /// up both the IMaterializationInterceptor and ChangeTracker hydrators used for Split-mode
+  /// field hydration.</summary>
+  private static void _appendPhysicalFieldRegistrations(StringBuilder sb, PerspectiveModelInfo model) {
+    foreach (var field in model.PhysicalFields) {
+      var isVector = field.IsVector ? "true" : "false";
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
+    }
+    sb.AppendLine();
+
+    _generatePhysicalFieldHydratorRegistration(sb, model);
+    _generateChangeTrackerHydratorRegistration(sb, model);
+  }
+
+  /// <summary>Emits the EFCORE100 completion diagnostic summarising how many models/DbContexts
+  /// were wired up.</summary>
+  private static void _reportRegistrationCompletionDiagnostic(
+      SourceProductionContext context,
+      int totalUniqueModels,
+      int dbContextGroupCount) {
     var descriptor = new DiagnosticDescriptor(
         id: "EFCORE100",
         title: "EF Core Registration Metadata Generated",
@@ -1261,8 +1313,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         category: DIAGNOSTIC_CATEGORY,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
-
-    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, totalUniqueModels, dbContextGroups.Count));
+    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, totalUniqueModels, dbContextGroupCount));
   }
 
   /// <summary>
@@ -1583,7 +1634,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("          connStringBuilder.Timeout = timeout;");
     sb.AppendLine("        if (int.TryParse(poolSection[\"CommandTimeout\"], out var commandTimeout))");
     sb.AppendLine("          connStringBuilder.CommandTimeout = commandTimeout;");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine("      connectionString = connStringBuilder.ToString();");
     sb.AppendLine();
     sb.AppendLine("      // Build NpgsqlDataSource synchronously at registration time");
@@ -1617,7 +1668,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          createCmd.CommandText = \"CREATE EXTENSION vector\";");
       sb.AppendLine("          createCmd.ExecuteNonQuery();");
       sb.AppendLine("        }");
-      sb.AppendLine("      }");
+      sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
       sb.AppendLine();
     }
     sb.AppendLine("      var dataSource = dataSourceBuilder.Build();");
@@ -1641,12 +1692,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("          // Auto-configured: pgvector support for EF Core");
       sb.AppendLine("          npgsqlOptions.UseVector();");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-      sb.AppendLine("        });");
+      sb.AppendLine(CLOSE_BRACE_INDENT_8);
     } else {
       sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
       sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
       sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-      sb.AppendLine("        });");
+      sb.AppendLine(CLOSE_BRACE_INDENT_8);
     }
     // Register physical field interceptors (query rewriting + materialization hydration)
     if (hasPhysicalFields) {
@@ -1700,7 +1751,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("          return;");
     sb.AppendLine("        }");
     sb.AppendLine("        await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, null, scope.ServiceProvider, ct);");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_ONLY_INDENT_6);
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
   }

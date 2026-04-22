@@ -223,12 +223,8 @@ public class ValidationException : Exception {
 
 #region Test Mutations
 
-public class OrderTrackingGraphQLMutation : GraphQLMutationBase<TrackingCommand, TrackingResult> {
-  private readonly List<string> _executionOrder;
-
-  public OrderTrackingGraphQLMutation(List<string> executionOrder) {
-    _executionOrder = executionOrder;
-  }
+public class OrderTrackingGraphQLMutation(List<string> executionOrder) : GraphQLMutationBase<TrackingCommand, TrackingResult> {
+  private readonly List<string> _executionOrder = executionOrder;
 
   protected override ValueTask OnBeforeExecuteAsync(
       TrackingCommand command,
@@ -283,12 +279,8 @@ public class ValidatingGraphQLMutation : GraphQLMutationBase<ValidatableCommand,
       => ExecuteAsync(cmd, ct);
 }
 
-public class NotifyingGraphQLMutation : GraphQLMutationBase<NotifiableCommand, NotifiableResult> {
-  private readonly List<string> _notifications;
-
-  public NotifyingGraphQLMutation(List<string> notifications) {
-    _notifications = notifications;
-  }
+public class NotifyingGraphQLMutation(List<string> notifications) : GraphQLMutationBase<NotifiableCommand, NotifiableResult> {
+  private readonly List<string> _notifications = notifications;
 
   protected override ValueTask<NotifiableResult> DispatchCommandAsync(
       NotifiableCommand command,
@@ -420,12 +412,8 @@ public class CancellationAwareGraphQLMutation : GraphQLMutationBase<CancellableC
       => ExecuteAsync(cmd, ct);
 }
 
-public class LoggingGraphQLMutation : GraphQLMutationBase<LoggableCommand, LoggableResult> {
-  private readonly List<string> _logs;
-
-  public LoggingGraphQLMutation(List<string> logs) {
-    _logs = logs;
-  }
+public class LoggingGraphQLMutation(List<string> logs) : GraphQLMutationBase<LoggableCommand, LoggableResult> {
+  private readonly List<string> _logs = logs;
 
   protected override ValueTask OnBeforeExecuteAsync(
       LoggableCommand command,

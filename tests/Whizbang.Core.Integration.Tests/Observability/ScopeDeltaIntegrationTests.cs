@@ -433,20 +433,20 @@ public class ScopeDeltaIntegrationTests {
     }
 
     // Add roles as Set operation
-    if (roles != null && roles.Length > 0) {
+    if (roles is { Length: > 0 }) {
       var rolesElement = JsonSerializer.SerializeToElement(roles);
       collections[ScopeProp.Roles] = new CollectionChanges { Set = rolesElement };
     }
 
     // Add permissions as Set operation
-    if (permissions != null && permissions.Length > 0) {
+    if (permissions is { Length: > 0 }) {
       var permsArray = permissions.Select(p => p.Value).ToArray();
       var permsElement = JsonSerializer.SerializeToElement(permsArray);
       collections[ScopeProp.Perms] = new CollectionChanges { Set = permsElement };
     }
 
     // Add principals as Set operation
-    if (principals != null && principals.Length > 0) {
+    if (principals is { Length: > 0 }) {
       var principalsArray = principals.Select(p => p.Value).ToArray();
       var principalsElement = JsonSerializer.SerializeToElement(principalsArray);
       collections[ScopeProp.Principals] = new CollectionChanges { Set = principalsElement };
@@ -617,13 +617,13 @@ public class ScopeDeltaIntegrationTests {
   #region RED TEST: InfrastructureJsonContext Round-Trip Tests
 
   /// <summary>
-  /// RED TEST: Verifies ScopeDelta round-trips correctly using InfrastructureJsonContext.
+  /// <para>RED TEST: Verifies ScopeDelta round-trips correctly using InfrastructureJsonContext.
   /// This test reproduces the issue where AsSystem() security context is lost after
-  /// outbox serialization/deserialization.
+  /// outbox serialization/deserialization.</para>
   ///
-  /// The outbox uses InfrastructureJsonContext for AOT-compatible serialization.
+  /// <para>The outbox uses InfrastructureJsonContext for AOT-compatible serialization.
   /// If Dictionary&lt;ScopeProp, JsonElement&gt; doesn't serialize correctly with the
-  /// source-generated context, MessageHopSecurityExtractor will fail to find ScopeProp.Scope.
+  /// source-generated context, MessageHopSecurityExtractor will fail to find ScopeProp.Scope.</para>
   /// </summary>
   [Test]
   [Category("RED")]

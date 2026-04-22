@@ -43,7 +43,7 @@ public class TransportPublishStrategyTests {
 
     public Task<Exception?> PublishResult { get; set; } = Task.FromResult<Exception?>(null);
 
-    public OutboxWork? LastPublishedWork { get; private set; }
+    public OutboxWork? LastPublishedWork { get; }
     public IMessageEnvelope? LastPublishedEnvelope { get; private set; }
     public TransportDestination? LastPublishedDestination { get; private set; }
 
@@ -895,7 +895,7 @@ public class TransportPublishStrategyTests {
     await Assert.That(results.All(r => r.Success)).IsTrue();
     await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(3);
 
-    var addresses = transport.PublishBatchCalls.Select(c => c.Destination.Address).OrderBy(a => a).ToList();
+    var addresses = transport.PublishBatchCalls.Select(c => c.Destination.Address).Order().ToList();
     await Assert.That(addresses).Contains("inbox");
     await Assert.That(addresses).Contains("myapp.orders.events");
     await Assert.That(addresses).Contains("myapp.users.events");

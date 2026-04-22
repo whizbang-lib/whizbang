@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core;
 using Whizbang.Core.Async;
 using Whizbang.Core.Observability;
@@ -107,6 +108,7 @@ public static class SubscriptionWarmup {
   /// <param name="initialDelay">Delay before first publish attempt.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown if warmup doesn't complete within timeout.</exception>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public testing API surface — changing the signature is a source break for downstream test suites. Each parameter is a distinct warmup concern (transport, destination, envelope factory, signal, three independent timing knobs, cancellation).")]
   public static async Task WarmupAsync<TEnvelope>(
     ITransport transport,
     TransportDestination destination,

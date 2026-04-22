@@ -57,7 +57,7 @@ public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPop
       while (await reader.ReadAsync(cancellationToken)) {
         var action = reader.GetString(0);
         var currentClr = reader.GetString(2);
-        var storedClr = reader.IsDBNull(3) ? null : reader.GetString(3);
+        var storedClr = await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(3);
         switch (action) {
           case "inserted": inserted++; break;
           case "updated": updated++; break;

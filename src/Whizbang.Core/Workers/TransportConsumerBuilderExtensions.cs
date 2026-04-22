@@ -165,9 +165,7 @@ public static class TransportConsumerBuilderExtensions {
       subscriptionBuilder.ConfigureOptions(options);
 
       // Add any additional custom destinations
-      foreach (var destination in additionalDestinations) {
-        options.Destinations.Add(destination);
-      }
+      options.Destinations.AddRange(additionalDestinations);
 
       return options;
     });
@@ -295,9 +293,7 @@ public static class TransportConsumerBuilderExtensions {
       subscriptionBuilder.ConfigureOptions(options);
 
       // Add any additional custom destinations
-      foreach (var destination in additionalDestinations) {
-        options.Destinations.Add(destination);
-      }
+      options.Destinations.AddRange(additionalDestinations);
 
       return options;
     });

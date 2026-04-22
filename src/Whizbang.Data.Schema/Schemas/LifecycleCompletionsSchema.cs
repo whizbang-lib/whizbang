@@ -18,7 +18,7 @@ public static class LifecycleCompletionsSchema {
   /// </summary>
   public static readonly TableDefinition Table = new(
     Name: TABLE_NAME,
-    Columns: ImmutableArray.Create(
+    Columns: [
       new ColumnDefinition(
         Name: Columns.EVENT_ID,
         DataType: WhizbangDataType.UUID,
@@ -36,7 +36,7 @@ public static class LifecycleCompletionsSchema {
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
-    ),
+    ],
     Indexes: [
       new IndexDefinition(
         Name: "idx_lifecycle_completions_completed_at",

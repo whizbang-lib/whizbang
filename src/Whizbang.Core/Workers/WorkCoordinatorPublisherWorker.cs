@@ -326,25 +326,13 @@ public partial class WorkCoordinatorPublisherWorker(
   private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
     await _processInitialWorkBatchAsync(stoppingToken);
 
-    // Subscribe to readiness changes to wake immediately instead of waiting for next poll
     var readinessSignal = new SemaphoreSlim(0, 1);
-    _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
-
-    // Subscribe to new work signals so the coordinator polls immediately when outbox entries are flushed
-    _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
-
-    // Subscribe to inbox channel signals so commands are processed immediately
-    if (inboxChannelWriter is not null) {
-      inboxChannelWriter.OnNewInboxWorkAvailable += RequestImmediatePoll;
-    }
+    _subscribeToWakeSignals(readinessSignal);
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          // Wait for either the poll interval OR a readiness change signal (whichever comes first)
-          try {
-            await readinessSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
-          } catch (OperationCanceledException) {
+          if (!await _waitForReadinessOrIntervalAsync(readinessSignal, stoppingToken)) {
             break;
           }
           continue;
@@ -356,44 +344,83 @@ public partial class WorkCoordinatorPublisherWorker(
         LogErrorProcessingWorkBatch(_logger, ex);
       }
 
-      // Periodic maintenance check (dedup cleanup, stuck inbox purge)
       if (_options.MaintenanceInterval > TimeSpan.Zero &&
           DateTimeOffset.UtcNow - _lastMaintenanceRun > _options.MaintenanceInterval) {
         await _runPeriodicMaintenanceAsync(stoppingToken);
       }
 
-      // Drain pattern: if the last claim returned a full batch, there's more work
-      // waiting — loop immediately without a poll wait. Respects the runaway-drain
-      // cap (_options.MaxConsecutiveFullDrains); 0 disables the cap entirely.
-      //
-      // IMPORTANT: do NOT touch _wakeSignaled here. That flag is a guard paired
-      // with _pollWakeSignal (1-count semaphore): RequestImmediatePoll uses CAS
-      // 0→1 to permit a single Release, and the post-WaitAsync reset restores 0
-      // after WaitAsync consumes the semaphore. Resetting the guard here without
-      // consuming the semaphore would let a subsequent external signal call
-      // Release() on an already-full semaphore → SemaphoreFullException. Any
-      // pending signal accumulated during drain will be consumed naturally on
-      // the first WaitAsync after drain ends.
-      var capEnabled = _options.MaxConsecutiveFullDrains > 0;
-      if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
-        _lastBatchWasFull = false;
-        _consecutiveFullDrains++;
+      if (_shouldLoopImmediatelyAfterFullBatch()) {
         continue;
       }
-      _consecutiveFullDrains = 0;
 
-      try {
-        // Wait for either the adaptive polling interval OR an external wake signal (whichever comes first).
-        // RequestImmediatePoll() releases the semaphore, waking this loop early regardless of backoff depth.
-        var waitMs = _computeAdaptivePollWaitMs();
-        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(waitMs), stoppingToken);
-        Interlocked.Exchange(ref _wakeSignaled, 0);
-      } catch (OperationCanceledException) {
+      if (!await _waitForPollOrWakeAsync(stoppingToken)) {
         break;
       }
     }
 
     _workChannelWriter.Complete();
+  }
+
+  /// <summary>Wires up the three wake paths — database-readiness change, outbox channel flush,
+  /// and inbox channel signal — so the coordinator loop never has to wait the full polling
+  /// interval when new work or a state change lands between ticks.</summary>
+  private void _subscribeToWakeSignals(SemaphoreSlim readinessSignal) {
+    _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
+    _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
+    if (inboxChannelWriter is not null) {
+      inboxChannelWriter.OnNewInboxWorkAvailable += RequestImmediatePoll;
+    }
+  }
+
+  /// <summary>Waits for either the poll interval or a readiness-change signal when the database
+  /// is not ready. Returns true to signal "continue looping" and false when the wait was
+  /// cancelled so the outer loop can break out cleanly.</summary>
+  private async Task<bool> _waitForReadinessOrIntervalAsync(
+      SemaphoreSlim readinessSignal, CancellationToken stoppingToken) {
+    try {
+      await readinessSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+      return true;
+    } catch (OperationCanceledException) {
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Drain pattern: when the last claim returned a full batch there is almost certainly more
+  /// work waiting — loop immediately without a poll wait. Respects the runaway-drain cap
+  /// (<see cref="WorkCoordinatorPublisherOptions.MaxConsecutiveFullDrains"/>); 0 disables it.
+  /// </summary>
+  /// <remarks>
+  /// Do NOT touch _wakeSignaled here. That flag is a guard paired with _pollWakeSignal (a
+  /// 1-count semaphore): RequestImmediatePoll uses CAS 0→1 to permit a single Release, and the
+  /// post-WaitAsync reset restores 0 after WaitAsync consumes the semaphore. Resetting the
+  /// guard here without consuming the semaphore would let a subsequent external signal call
+  /// Release() on an already-full semaphore → SemaphoreFullException. Any pending signal
+  /// accumulated during drain will be consumed naturally on the first WaitAsync after drain.
+  /// </remarks>
+  private bool _shouldLoopImmediatelyAfterFullBatch() {
+    var capEnabled = _options.MaxConsecutiveFullDrains > 0;
+    if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
+      _lastBatchWasFull = false;
+      _consecutiveFullDrains++;
+      return true;
+    }
+    _consecutiveFullDrains = 0;
+    return false;
+  }
+
+  /// <summary>Waits for either the adaptive poll interval or an external wake signal
+  /// (RequestImmediatePoll releases the semaphore). Returns true to signal "continue looping"
+  /// and false when the wait was cancelled so the outer loop can break out cleanly.</summary>
+  private async Task<bool> _waitForPollOrWakeAsync(CancellationToken stoppingToken) {
+    try {
+      var waitMs = _computeAdaptivePollWaitMs();
+      await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(waitMs), stoppingToken);
+      Interlocked.Exchange(ref _wakeSignaled, 0);
+      return true;
+    } catch (OperationCanceledException) {
+      return false;
+    }
   }
 
   /// <summary>
@@ -579,15 +606,13 @@ public partial class WorkCoordinatorPublisherWorker(
       var (work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans) = batchContexts[i];
       var result = results.FirstOrDefault(r => r.MessageId == work.MessageId);
 
-      if (result is null) {
-        result = new MessagePublishResult {
-          MessageId = work.MessageId,
-          Success = false,
-          CompletedStatus = work.Status,
-          Error = "No result returned from batch publish",
-          Reason = MessageFailureReason.Unknown
-        };
-      }
+      result ??= new MessagePublishResult {
+        MessageId = work.MessageId,
+        Success = false,
+        CompletedStatus = work.Status,
+        Error = "No result returned from batch publish",
+        Reason = MessageFailureReason.Unknown
+      };
 
       LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
@@ -753,8 +778,9 @@ public partial class WorkCoordinatorPublisherWorker(
     }
 
     // Fallback: direct invocation when coordinator not registered
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_ASYNC, traceContext, stoppingToken);
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_INLINE, traceContext, stoppingToken);
+    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, LIFECYCLE_PRE_OUTBOX_ASYNC, tracingOptions, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, LIFECYCLE_PRE_OUTBOX_INLINE, tracingOptions, stoppingToken);
     return (null, outboxTypedEnvelope);
   }
 
@@ -800,21 +826,29 @@ public partial class WorkCoordinatorPublisherWorker(
       return;
     }
 
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxDetached, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_ASYNC, traceContext, stoppingToken);
-    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_INLINE, traceContext, stoppingToken);
+    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxDetached, work.Attempts, LIFECYCLE_POST_OUTBOX_ASYNC, tracingOptions, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, LIFECYCLE_POST_OUTBOX_INLINE, tracingOptions, stoppingToken);
   }
+
+  /// <summary>
+  /// Groups the tracing-related flags and parent context used by lifecycle invocation paths so
+  /// helpers don't need a long trailing parameter list.
+  /// </summary>
+  private readonly record struct LifecycleTracingOptions(
+    bool EnableLifecycleSpans,
+    ActivityContext TraceContext);
 
   private static async Task _invokeLifecycleDirectAsync(
     IReceptorInvoker receptorInvoker,
     IMessageEnvelope typedEnvelope,
     LifecycleStage stage,
     int attempts,
-    bool enableLifecycleSpans,
     string activityName,
-    ActivityContext traceContext,
+    LifecycleTracingOptions tracingOptions,
     CancellationToken stoppingToken) {
 
-    using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(activityName, ActivityKind.Internal, parentContext: traceContext) : null) {
+    using (tracingOptions.EnableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(activityName, ActivityKind.Internal, parentContext: tracingOptions.TraceContext) : null) {
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = stage,
         MessageSource = MessageSource.Outbox,
@@ -1043,96 +1077,127 @@ public partial class WorkCoordinatorPublisherWorker(
       LogNoWorkClaimed(_logger, _options.PartitionCount, _instanceProvider.InstanceId);
     }
 
-    // Write outbox work to channel for publisher loop
-    if (workBatch.OutboxWork.Count > 0) {
-      // Sort by MessageId (UUIDv7 has time-based ordering)
-      var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
-
-      foreach (var work in orderedOutboxWork) {
-        if (!_workChannelWriter.IsInFlight(work.MessageId)) {
-          await _workChannelWriter.WriteAsync(work, cancellationToken);
-        } else if (_workChannelWriter.ShouldRenewLease(work.MessageId)) {
-          // Only renew when nearing lease expiry (>half the lease duration)
-          _leaseRenewals.Add(work.MessageId);
-        }
-      }
-    }
-
-    // Process inbox work from process_work_batch (orphaned messages)
-    if (workBatch.InboxWork.Count > 0) {
-      List<InboxWork> newInboxWork = [];
-      foreach (var work in workBatch.InboxWork) {
-        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
-          newInboxWork.Add(work);
-        } else {
-          _inboxLeaseRenewals.Add(work.MessageId);
-        }
-      }
-      if (newInboxWork.Count > 0) {
-        await _processInboxWorkAsync(newInboxWork, cancellationToken);
-      }
-    }
-
-    // Drain inbox channel (work routed from ANY caller of process_work_batch)
-    if (inboxChannelWriter is not null) {
-      List<InboxWork> channelInboxWork = [];
-      while (inboxChannelWriter.Reader.TryRead(out var work)) {
-        if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
-          channelInboxWork.Add(work);
-        } else {
-          _inboxLeaseRenewals.Add(work.MessageId);
-        }
-      }
-      if (channelInboxWork.Count > 0) {
-        await _processInboxWorkAsync(channelInboxWork, cancellationToken);
-
-        // Flush completions to DB immediately — don't wait for next poll.
-        // _processInboxWorkAsync queued completions in _inboxCompletions.
-        // Send them now so the inbox messages are marked processed right away.
-        var immediateCompletions = _inboxCompletions.GetPending();
-        if (immediateCompletions.Length > 0) {
-          var immediateSentAt = DateTimeOffset.UtcNow;
-          _inboxCompletions.MarkAsSent(immediateCompletions, immediateSentAt);
-          try {
-            await using var flushScope = _scopeFactory.CreateAsyncScope();
-            var flushCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-            await flushCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchRequest {
-              InstanceId = _instanceProvider.InstanceId,
-              ServiceName = _instanceProvider.ServiceName,
-              HostName = _instanceProvider.HostName,
-              ProcessId = _instanceProvider.ProcessId,
-              InboxCompletions = [.. immediateCompletions.Select(c => c.Completion)],
-              OutboxCompletions = [],
-              OutboxFailures = [],
-              InboxFailures = [],
-              ReceptorCompletions = [],
-              ReceptorFailures = [],
-              PerspectiveCompletions = [],
-              PerspectiveEventCompletions = [],
-              PerspectiveFailures = [],
-              NewOutboxMessages = [],
-              NewInboxMessages = [],
-              RenewOutboxLeaseIds = [],
-              RenewInboxLeaseIds = [],
-              Flags = WorkBatchOptions.SkipInboxClaiming,
-              PartitionCount = _options.PartitionCount,
-              LeaseSeconds = _options.LeaseSeconds,
-              AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
-            }, cancellationToken);
-            _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
-          } catch (Exception ex) {
-            LogErrorProcessingWorkBatch(_logger, ex);
-            // Completions stay in Sent status, will be retried via ResetStale
-          }
-        }
-
-        foreach (var work in channelInboxWork) {
-          inboxChannelWriter.RemoveInFlight(work.MessageId);
-        }
-      }
-    }
+    await _enqueueOutboxWorkToChannelAsync(workBatch, cancellationToken);
+    await _processBatchInboxWorkAsync(workBatch, cancellationToken);
+    await _drainInboxChannelAsync(cancellationToken);
 
     _trackWorkStateTransitions(workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0);
+  }
+
+  /// <summary>
+  /// Writes claimed outbox work onto the publisher channel in UUIDv7 order, renewing leases for
+  /// any message IDs still in-flight from a previous cycle.
+  /// </summary>
+  private async Task _enqueueOutboxWorkToChannelAsync(WorkBatch workBatch, CancellationToken cancellationToken) {
+    if (workBatch.OutboxWork.Count == 0) {
+      return;
+    }
+    // Sort by MessageId (UUIDv7 has time-based ordering)
+    var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
+    foreach (var work in orderedOutboxWork) {
+      if (!_workChannelWriter.IsInFlight(work.MessageId)) {
+        await _workChannelWriter.WriteAsync(work, cancellationToken);
+      } else if (_workChannelWriter.ShouldRenewLease(work.MessageId)) {
+        // Only renew when nearing lease expiry (>half the lease duration)
+        _leaseRenewals.Add(work.MessageId);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Processes inbox work returned by process_work_batch (orphan recovery). New message IDs run
+  /// through _processInboxWorkAsync; already-in-flight IDs get their lease renewed instead.
+  /// </summary>
+  private async Task _processBatchInboxWorkAsync(WorkBatch workBatch, CancellationToken cancellationToken) {
+    if (workBatch.InboxWork.Count == 0) {
+      return;
+    }
+    List<InboxWork> newInboxWork = [];
+    foreach (var work in workBatch.InboxWork) {
+      if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+        newInboxWork.Add(work);
+      } else {
+        _inboxLeaseRenewals.Add(work.MessageId);
+      }
+    }
+    if (newInboxWork.Count > 0) {
+      await _processInboxWorkAsync(newInboxWork, cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Drains any inbox work the external <c>IInboxChannelWriter</c> queued between poll cycles
+  /// (e.g. RabbitMQ immediate hand-off), processes it, and flushes inbox completions straight
+  /// to the DB so the messages are marked processed without waiting for the next coordinator tick.
+  /// </summary>
+  private async Task _drainInboxChannelAsync(CancellationToken cancellationToken) {
+    if (inboxChannelWriter is null) {
+      return;
+    }
+    List<InboxWork> channelInboxWork = [];
+    while (inboxChannelWriter.Reader.TryRead(out var work)) {
+      if (_inFlightInbox.TryAdd(work.MessageId, 0)) {
+        channelInboxWork.Add(work);
+      } else {
+        _inboxLeaseRenewals.Add(work.MessageId);
+      }
+    }
+    if (channelInboxWork.Count == 0) {
+      return;
+    }
+
+    await _processInboxWorkAsync(channelInboxWork, cancellationToken);
+    await _flushImmediateInboxCompletionsAsync(cancellationToken);
+
+    foreach (var work in channelInboxWork) {
+      inboxChannelWriter.RemoveInFlight(work.MessageId);
+    }
+  }
+
+  /// <summary>
+  /// Sends any pending inbox completions straight to the coordinator (SkipInboxClaiming flag) so
+  /// the corresponding messages are marked processed immediately rather than waiting for the
+  /// next _processWorkBatchAsync cycle. On failure, completions stay in Sent state and will be
+  /// retried via ResetStale.
+  /// </summary>
+  private async Task _flushImmediateInboxCompletionsAsync(CancellationToken cancellationToken) {
+    var immediateCompletions = _inboxCompletions.GetPending();
+    if (immediateCompletions.Length == 0) {
+      return;
+    }
+    var immediateSentAt = DateTimeOffset.UtcNow;
+    _inboxCompletions.MarkAsSent(immediateCompletions, immediateSentAt);
+    try {
+      await using var flushScope = _scopeFactory.CreateAsyncScope();
+      var flushCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await flushCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchRequest {
+        InstanceId = _instanceProvider.InstanceId,
+        ServiceName = _instanceProvider.ServiceName,
+        HostName = _instanceProvider.HostName,
+        ProcessId = _instanceProvider.ProcessId,
+        InboxCompletions = [.. immediateCompletions.Select(c => c.Completion)],
+        OutboxCompletions = [],
+        OutboxFailures = [],
+        InboxFailures = [],
+        ReceptorCompletions = [],
+        ReceptorFailures = [],
+        PerspectiveCompletions = [],
+        PerspectiveEventCompletions = [],
+        PerspectiveFailures = [],
+        NewOutboxMessages = [],
+        NewInboxMessages = [],
+        RenewOutboxLeaseIds = [],
+        RenewInboxLeaseIds = [],
+        Flags = WorkBatchOptions.SkipInboxClaiming,
+        PartitionCount = _options.PartitionCount,
+        LeaseSeconds = _options.LeaseSeconds,
+        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds
+      }, cancellationToken);
+      _inboxCompletions.MarkAsAcknowledged(immediateCompletions.Length);
+    } catch (Exception ex) {
+      LogErrorProcessingWorkBatch(_logger, ex);
+      // Completions stay in Sent status, will be retried via ResetStale
+    }
   }
 
   private void _trackWorkStateTransitions(bool hasWork) {
@@ -1151,33 +1216,6 @@ public partial class WorkCoordinatorPublisherWorker(
         LogWorkProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
     }
-  }
-
-  /// <summary>
-  /// Obsolete — ack counts were extracted from SQL-returned metadata which
-  /// silently disappears when the response has no outbox/inbox/perspective-stream
-  /// rows (post-burst idle). Replaced by acknowledging the local sent-count
-  /// directly after a successful ProcessWorkBatchAsync. Kept for reference; can
-  /// be deleted once no downstream consumer relies on its signature.
-  /// </summary>
-  private static Dictionary<string, JsonElement>? _extractMetadataRow(WorkBatch workBatch) {
-    var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
-    if (outboxFirstRow?.Metadata != null) {
-      return outboxFirstRow.Metadata;
-    }
-    var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
-    if (inboxFirstRow?.Metadata != null) {
-      return inboxFirstRow.Metadata;
-    }
-    var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
-    return perspectiveFirstRow?.Metadata;
-  }
-
-  private static int _extractAckCount(Dictionary<string, JsonElement>? metadataRow, string key) {
-    if (metadataRow != null && metadataRow.TryGetValue(key, out var value)) {
-      return value.GetInt32();
-    }
-    return 0;
   }
 
   /// <summary>
@@ -1279,6 +1317,8 @@ public partial class WorkCoordinatorPublisherWorker(
       return;
     }
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var work in workToProcess) {
       try {
         var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
@@ -1321,6 +1361,7 @@ public partial class WorkCoordinatorPublisherWorker(
         LogInboxLifecycleError(_logger, work.MessageId, stageName, ex);
       }
     }
+#pragma warning restore S3267
   }
 
   /// <summary>
@@ -1555,21 +1596,21 @@ public partial class WorkCoordinatorPublisherWorker(
   static partial void LogProcessingInboxWork(ILogger logger, int count);
 
   [LoggerMessage(
-    EventId = 25,
+    EventId = 30,
     Level = LogLevel.Warning,
     Message = "Purging inbox message {MessageId}: attempts ({Attempts}) exceeded max ({MaxAttempts})"
   )]
   static partial void LogInboxMessagePurged(ILogger logger, Guid messageId, int attempts, int maxAttempts);
 
   [LoggerMessage(
-    EventId = 26,
+    EventId = 35,
     Level = LogLevel.Error,
     Message = "Error in {Stage} lifecycle for inbox message {MessageId}"
   )]
   static partial void LogInboxLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
   [LoggerMessage(
-    EventId = 27,
+    EventId = 36,
     Level = LogLevel.Debug,
     Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId}: missing dependencies (deserializer={NoDeserializer}, invoker={NoInvoker})"
   )]

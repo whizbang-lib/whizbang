@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Azure.Messaging.ServiceBus;
+using Whizbang.Testing.Containers;
 
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
@@ -346,7 +347,7 @@ services:
     CancellationToken cancellationToken = default
   ) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"compose -f \"{composeFile}\" {arguments}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -373,7 +374,7 @@ services:
   ) {
     try {
       var psi = new ProcessStartInfo {
-        FileName = "docker",
+        FileName = DockerExecutable.PathOrThrow,
         Arguments = $"compose -f \"{composeFile}\" {arguments}",
         RedirectStandardOutput = true,
         RedirectStandardError = true,
@@ -396,7 +397,7 @@ services:
     CancellationToken cancellationToken = default
   ) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"logs {containerName}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -423,7 +424,7 @@ services:
   private static async Task _removeNetworkAsync(string networkName, CancellationToken cancellationToken = default) {
     try {
       var psi = new ProcessStartInfo {
-        FileName = "docker",
+        FileName = DockerExecutable.PathOrThrow,
         Arguments = $"network rm {networkName}",
         RedirectStandardOutput = true,
         RedirectStandardError = true,
@@ -446,7 +447,7 @@ services:
   /// </summary>
   private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"inspect --format={{{{.State.Status}}}} {containerName}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -478,7 +479,7 @@ services:
     foreach (var containerName in containerNames) {
       try {
         var psi = new ProcessStartInfo {
-          FileName = "docker",
+          FileName = DockerExecutable.PathOrThrow,
           Arguments = $"rm -f {containerName}",
           RedirectStandardOutput = true,
           RedirectStandardError = true,
@@ -499,7 +500,7 @@ services:
     // Also prune any dangling networks
     try {
       var psi = new ProcessStartInfo {
-        FileName = "docker",
+        FileName = DockerExecutable.PathOrThrow,
         Arguments = "network prune -f",
         RedirectStandardOutput = true,
         RedirectStandardError = true,

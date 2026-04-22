@@ -4,12 +4,12 @@ namespace Whizbang.Core.Security.Exceptions;
 /// Exception thrown when security context is required but could not be established.
 /// </summary>
 /// <remarks>
-/// This exception is thrown when:
+/// <para>This exception is thrown when:
 /// - MessageSecurityOptions.AllowAnonymous is false
-/// - No extractor could establish a security context
+/// - No extractor could establish a security context</para>
 ///
-/// This indicates a security policy violation - the message was expected
-/// to carry authentication/authorization information but none was found.
+/// <para>This indicates a security policy violation - the message was expected
+/// to carry authentication/authorization information but none was found.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#exceptions</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_NoExtractors_AllowAnonymousFalse_ThrowsSecurityContextRequiredExceptionAsync</tests>

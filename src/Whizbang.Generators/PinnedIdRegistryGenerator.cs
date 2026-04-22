@@ -82,9 +82,10 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var kind = isPerspective ? "perspective"
-        : TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND) ? "command"
+    var messageKind = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND)
+        ? "command"
         : "event";
+    var kind = isPerspective ? "perspective" : messageKind;
 
     return new PinnedIdInfo(
         TypeName: TypeNameHelper.GetFullyQualifiedName(typeSymbol),

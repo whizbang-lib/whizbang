@@ -258,41 +258,54 @@ public sealed class SyncEventTracker : ISyncEventTracker {
     var cutoff = DateTime.UtcNow - maxAge;
     var removedCount = 0;
 
-    // Find entries older than maxAge
     var staleKeys = _trackedEvents
         .Where(kvp => kvp.Value.TrackedAt <= cutoff)
         .Select(kvp => kvp.Key)
         .ToList();
 
     foreach (var key in staleKeys) {
-      if (_trackedEvents.TryRemove(key, out _)) {
-        removedCount++;
-
-        // Signal perspective-specific waiters
-        if (_perspectiveWaiters.TryRemove(key, out var perspectiveWaiters)) {
-          foreach (var kvp in perspectiveWaiters) {
-            kvp.Value.TrySetResult(true);
-          }
-        }
-
-        // Check if ALL perspectives for this event are now processed
-        var hasRemainingPerspectives = _trackedEvents.Keys.Any(k => k.EventId == key.EventId);
-        if (!hasRemainingPerspectives && _allPerspectivesWaiters.TryRemove(key.EventId, out var allWaiters)) {
-          foreach (var kvp in allWaiters) {
-            kvp.Value.TrySetResult(true);
-          }
-        }
-
-        // Signal event-specific waiters
-        if (_eventWaiters.TryRemove(key.EventId, out var eventWaiters)) {
-          foreach (var kvp in eventWaiters) {
-            kvp.Value.TrySetResult(true);
-          }
-        }
+      if (!_trackedEvents.TryRemove(key, out _)) {
+        continue;
       }
+      removedCount++;
+      _signalPerspectiveSpecificWaiters(key);
+      _signalAllPerspectivesWaitersIfNoRemainingPerspectives(key);
+      _signalEventSpecificWaiters(key.EventId);
     }
 
     return removedCount;
+  }
+
+  /// <summary>Removes and signals all per-perspective waiters for the given event+perspective key.</summary>
+  private void _signalPerspectiveSpecificWaiters((Guid EventId, string PerspectiveName) key) {
+    if (!_perspectiveWaiters.TryRemove(key, out var perspectiveWaiters)) {
+      return;
+    }
+    foreach (var kvp in perspectiveWaiters) {
+      kvp.Value.TrySetResult(true);
+    }
+  }
+
+  /// <summary>Signals the "all perspectives for this event are done" waiters, but only when the
+  /// tracker no longer has any perspectives still pending for this event id.</summary>
+  private void _signalAllPerspectivesWaitersIfNoRemainingPerspectives((Guid EventId, string PerspectiveName) key) {
+    var hasRemainingPerspectives = _trackedEvents.Keys.Any(k => k.EventId == key.EventId);
+    if (hasRemainingPerspectives || !_allPerspectivesWaiters.TryRemove(key.EventId, out var allWaiters)) {
+      return;
+    }
+    foreach (var kvp in allWaiters) {
+      kvp.Value.TrySetResult(true);
+    }
+  }
+
+  /// <summary>Removes and signals all event-id waiters regardless of perspective.</summary>
+  private void _signalEventSpecificWaiters(Guid eventId) {
+    if (!_eventWaiters.TryRemove(eventId, out var eventWaiters)) {
+      return;
+    }
+    foreach (var kvp in eventWaiters) {
+      kvp.Value.TrySetResult(true);
+    }
   }
 
   /// <summary>

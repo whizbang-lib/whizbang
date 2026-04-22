@@ -195,7 +195,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveInvokerGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
-    result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", routingCode.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", routingCode);
 
     context.AddSource("PerspectiveInvoker.g.cs", result);
   }

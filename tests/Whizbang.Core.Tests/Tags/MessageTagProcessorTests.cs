@@ -1583,4 +1583,166 @@ public class MessageTagProcessorTests {
     await Assert.That(hookA.InvokedCount).IsEqualTo(1);
     await Assert.That(hookB.InvokedCount).IsEqualTo(1);
   }
+
+  #region Payload Size Threshold Tests
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadExceedsErrorThreshold_ThrowsAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "large");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeErrorThresholdBytes = 16
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await Assert.That(async () =>
+      await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion))
+      .ThrowsExactly<InvalidOperationException>();
+
+    // Hook must NOT fire when payload is over the error threshold
+    await Assert.That(hook.InvokedCount).IsEqualTo(0);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadBelowErrorThreshold_DoesNotThrowAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "small");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeErrorThresholdBytes = 100_000
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new LargePayloadMessage("short");
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadExceedsWarningThreshold_LogsWarningAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "warn-me");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 16
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var scopeFactory = new LoggingScopeFactory(capturingLogger, hook);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings.Any(w => w.Contains("warn-me", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(capturingLogger.Warnings.Any(w => w.Contains("LargePayloadMessage", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PayloadBelowWarningThreshold_DoesNotLogAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "quiet");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 100_000
+    };
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var scopeFactory = new LoggingScopeFactory(capturingLogger, hook);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new LargePayloadMessage("short");
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings).IsEmpty();
+  }
+
+  [Test]
+  public async Task TagOptions_PayloadSizeWarningThreshold_DefaultsTo8192Async() {
+    var options = new TagOptions();
+    await Assert.That(options.PayloadSizeWarningThresholdBytes).IsEqualTo(8192);
+  }
+
+  [Test]
+  public async Task TagOptions_PayloadSizeErrorThreshold_DefaultsToNullAsync() {
+    var options = new TagOptions();
+    await Assert.That(options.PayloadSizeErrorThresholdBytes).IsNull();
+  }
+
+  private sealed record LargePayloadMessage(string Body);
+
+  private sealed class PayloadSizeCapturingLogger : Microsoft.Extensions.Logging.ILogger {
+    public List<string> Warnings { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) {
+        Warnings.Add(formatter(state, exception));
+      }
+    }
+  }
+
+  private sealed class PayloadSizeLoggerFactory(Microsoft.Extensions.Logging.ILogger logger) : Microsoft.Extensions.Logging.ILoggerFactory {
+    public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => logger;
+    public void Dispose() { }
+  }
+
+  private sealed class LoggingScopeFactory(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceScopeFactory {
+    private readonly Microsoft.Extensions.Logging.ILogger _logger = logger;
+    private readonly TrackingHook _hook = hook;
+
+    public IServiceScope CreateScope() => new LoggingScope(_logger, _hook);
+  }
+
+  private sealed class LoggingScope(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceScope, IAsyncDisposable {
+    public IServiceProvider ServiceProvider { get; } = new LoggingServiceProvider(logger, hook);
+    public void Dispose() { }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+  }
+
+  private sealed class LoggingServiceProvider(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceProvider {
+    public object? GetService(Type serviceType) {
+      if (serviceType == typeof(Microsoft.Extensions.Logging.ILoggerFactory)) {
+        return new PayloadSizeLoggerFactory(logger);
+      }
+      if (serviceType == typeof(TrackingHook)) {
+        return hook;
+      }
+      return null;
+    }
+  }
+
+  #endregion
 }

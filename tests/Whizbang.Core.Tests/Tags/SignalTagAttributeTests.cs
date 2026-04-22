@@ -144,7 +144,6 @@ public class SignalTagAttributeTests {
     var attribute = new SignalTagAttribute {
       Tag = "order-updated",
       Properties = ["OrderId", "Status"],
-      IncludeEvent = true,
       ExtraJson = """{"source": "api"}""",
       Group = "tenant-{TenantId}",
       Priority = SignalPriority.High
@@ -154,7 +153,6 @@ public class SignalTagAttributeTests {
     await Assert.That(attribute.Tag).IsEqualTo("order-updated");
     await Assert.That(attribute.Properties).IsNotNull();
     await Assert.That(attribute.Properties!.Length).IsEqualTo(2);
-    await Assert.That(attribute.IncludeEvent).IsTrue();
     await Assert.That(attribute.ExtraJson).IsEqualTo("""{"source": "api"}""");
 
     // Assert - SignalTag-specific properties work

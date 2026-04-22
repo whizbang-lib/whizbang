@@ -34,16 +34,16 @@ public static class TemplateUtilities {
   // CA1861: Prefer static readonly over constant array arguments for better performance
   private static readonly string[] _lineSeparators = ["\r\n", "\r", "\n"];
   /// <summary>
-  /// Replaces a #region block with generated code, preserving indentation.
-  /// Regex pattern matches: #region NAME ... #endregion with any content/whitespace between.
+  /// <para>Replaces a #region block with generated code, preserving indentation.
+  /// Regex pattern matches: #region NAME ... #endregion with any content/whitespace between.</para>
   ///
-  /// Example:
+  /// <para>Example:
   /// <code>
   /// var template = "  #region ROUTING\n  // placeholder\n  #endregion";
   /// var code = "if (x) {\n  DoSomething();\n}";
   /// var result = ReplaceRegion(template, "ROUTING", code);
   /// // Result preserves the 2-space indentation from the #region line
-  /// </code>
+  /// </code></para>
   /// </summary>
   /// <param name="template">The template containing #region markers</param>
   /// <param name="regionName">The name of the region to replace (e.g., "SEND_ROUTING")</param>

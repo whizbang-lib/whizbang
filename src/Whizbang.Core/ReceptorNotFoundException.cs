@@ -19,6 +19,7 @@ public class ReceptorNotFoundException(Type messageType) : Exception(_formatMess
   public ReceptorNotFoundException() : this(typeof(object)) {
   }
 
+#pragma warning disable RCS1163, IDE0060 // Standard Exception constructor shape required by CA1032; message is generated from type
   /// <summary>Initializes a new instance of the <see cref="ReceptorNotFoundException"/> class with a message string.</summary>
   /// <param name="message">The error message (unused; message is generated from the default type).</param>
   public ReceptorNotFoundException(string? message) : this(typeof(object)) {
@@ -29,6 +30,7 @@ public class ReceptorNotFoundException(Type messageType) : Exception(_formatMess
   /// <param name="innerException">The inner exception (unused; delegates to primary constructor).</param>
   public ReceptorNotFoundException(string? message, Exception? innerException) : this(typeof(object)) {
   }
+#pragma warning restore RCS1163, IDE0060
 
   /// <summary>
   /// The type of message that has no receptor.

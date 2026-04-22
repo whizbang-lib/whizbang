@@ -895,8 +895,10 @@ function New-SonarScanFolder {
                 $dirPath = Join-Path $tempDir $dir
                 if (Test-Path $dirPath) { Remove-Item -Recurse -Force $dirPath }
             }
-            # Also recursively remove bin/obj inside subdirectories
-            Get-ChildItem -Path $tempDir -Directory -Recurse -Include 'bin', 'obj' -ErrorAction SilentlyContinue |
+            # Recursively remove build/dep dirs that may be nested under samples, tools, tests, etc.
+            # node_modules especially: pnpm-managed UIs have thousands of symlinks that make the sonar
+            # scanner's toRealPath() → lstat() walk stall for many minutes.
+            Get-ChildItem -Path $tempDir -Directory -Recurse -Include 'bin', 'obj', 'node_modules', '.next', '.angular', 'dist' -ErrorAction SilentlyContinue |
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         } else {
             # Non-APFS: rsync with exclusions
@@ -922,7 +924,8 @@ function New-SonarScanFolder {
                 $dirPath = Join-Path $tempDir $dir
                 if (Test-Path $dirPath) { Remove-Item -Recurse -Force $dirPath }
             }
-            Get-ChildItem -Path $tempDir -Directory -Recurse -Include 'bin', 'obj' -ErrorAction SilentlyContinue |
+            # See macOS branch — strip the same nested build/dep dirs to avoid sonar scanner stalls.
+            Get-ChildItem -Path $tempDir -Directory -Recurse -Include 'bin', 'obj', 'node_modules', '.next', '.angular', 'dist' -ErrorAction SilentlyContinue |
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         } else {
             $rsyncExcludes = $excludedDirs | ForEach-Object { "--exclude=$_" }

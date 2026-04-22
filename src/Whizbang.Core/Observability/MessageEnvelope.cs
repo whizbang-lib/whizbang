@@ -375,10 +375,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     }
 
     // Walk forwards through current hops only to maintain chronological order
-    return Hops
+    return [.. Hops
       .Where(h => h.Type == HopType.Current && h.Trail != null)
-      .SelectMany(hop => hop.Trail!.Decisions)
-      .ToList();
+      .SelectMany(hop => hop.Trail!.Decisions)];
   }
 
   /// <summary>

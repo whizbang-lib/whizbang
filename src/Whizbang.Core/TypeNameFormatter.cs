@@ -8,19 +8,19 @@ namespace Whizbang.Core;
 /// Ensures all code paths use the same "TypeName, AssemblyName" format for type matching.
 /// </summary>
 /// <remarks>
-/// Why this format?
+/// <para>Why this format?
 /// - Matches wh_message_associations format used in perspective auto-checkpoint creation
 /// - Compatible with fuzzy matching in migration 006 (handles Version/Culture/PublicKeyToken differences)
 /// - Deterministic and consistent across .NET versions
-/// - Works with Type.GetType() for deserialization
+/// - Works with Type.GetType() for deserialization</para>
 ///
-/// Format: "Namespace.TypeName, AssemblyName"
-/// Example: "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts"
+/// <para>Format: "Namespace.TypeName, AssemblyName"
+/// Example: "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts"</para>
 ///
-/// NOT using:
+/// <para>NOT using:
 /// - Type.Name (too short, can't deserialize)
 /// - Type.FullName (no assembly info, can't deserialize across assemblies)
-/// - Type.AssemblyQualifiedName (includes version info that changes across builds)
+/// - Type.AssemblyQualifiedName (includes version info that changes across builds)</para>
 /// </remarks>
 public static class TypeNameFormatter {
   /// <summary>

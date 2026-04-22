@@ -9,14 +9,14 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// REPRODUCTION TESTS: These tests replicate the user's exact scenario.
+/// <para>REPRODUCTION TESTS: These tests replicate the user's exact scenario.</para>
 ///
-/// User's scenario:
+/// <para>User's scenario:
 /// - Request 1: Command A → Receptor A → Returns Event B → Event B should be tracked
 /// - Request 2: Command E with [AwaitPerspectiveSync(typeof(C), EventTypes=[typeof(EventB)])]
-///              → Should wait for Perspective C to process Event B BEFORE firing
+///              → Should wait for Perspective C to process Event B BEFORE firing</para>
 ///
-/// ACTUAL BUG: Command E's receptor fires BEFORE Perspective C processes Event B
+/// <para>ACTUAL BUG: Command E's receptor fires BEFORE Perspective C processes Event B</para>
 /// </summary>
 /// <remarks>
 /// These tests use the shared static SyncEventTypeRegistrations, so they must run
@@ -26,15 +26,15 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 public class UserScenarioReproductionTests {
 
   /// <summary>
-  /// CRITICAL: Test that demonstrates the complete cross-scope tracking flow.
+  /// <para>CRITICAL: Test that demonstrates the complete cross-scope tracking flow.</para>
   ///
-  /// This simulates:
+  /// <para>This simulates:
   /// 1. Scope 1: Event B is emitted and tracked in singleton tracker
   /// 2. Scope 2: Command E waits for sync
   /// 3. Perspective: Processes Event B and calls MarkProcessed
-  /// 4. Result: Command E's await completes AFTER MarkProcessed
+  /// 4. Result: Command E's await completes AFTER MarkProcessed</para>
   ///
-  /// Uses TaskCompletionSource signals for deterministic coordination instead of Task.Delay.
+  /// <para>Uses TaskCompletionSource signals for deterministic coordination instead of Task.Delay.</para>
   /// </summary>
   [Test]
   public async Task CrossScope_EventEmittedInScope1_AwaitedInScope2_WaitsForPerspectiveAsync() {

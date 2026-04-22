@@ -124,15 +124,15 @@ public sealed class AzureServiceBusSubscription : ISubscription {
     if (_isProcessing) {
       if (_processor is not null) {
         _processor.StopProcessingAsync().GetAwaiter().GetResult();
-      } else if (_sessionProcessor is not null) {
-        _sessionProcessor.StopProcessingAsync().GetAwaiter().GetResult();
+      } else {
+        _sessionProcessor?.StopProcessingAsync().GetAwaiter().GetResult();
       }
     }
 
     if (_processor is not null) {
       _processor.DisposeAsync().AsTask().GetAwaiter().GetResult();
-    } else if (_sessionProcessor is not null) {
-      _sessionProcessor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    } else {
+      _sessionProcessor?.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     _logger.LogInformation("Disposed Service Bus subscription");

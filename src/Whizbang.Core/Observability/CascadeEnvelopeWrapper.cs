@@ -11,16 +11,11 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <docs>fundamentals/dispatcher/dispatcher#cascade-default-dispatch</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherStageFireTests.cs</tests>
-internal sealed class CascadeEnvelopeWrapper : IMessageEnvelope {
-  private readonly IMessageEnvelope _inner;
-
-  public CascadeEnvelopeWrapper(IMessageEnvelope inner) {
-    _inner = inner;
-    DispatchContext = inner.DispatchContext.WithDefaultDispatch();
-  }
+internal sealed class CascadeEnvelopeWrapper(IMessageEnvelope inner) : IMessageEnvelope {
+  private readonly IMessageEnvelope _inner = inner;
 
   public int Version => _inner.Version;
-  public MessageDispatchContext DispatchContext { get; }
+  public MessageDispatchContext DispatchContext { get; } = inner.DispatchContext.WithDefaultDispatch();
   public MessageId MessageId => _inner.MessageId;
   public object Payload => _inner.Payload;
   public List<MessageHop> Hops => _inner.Hops;

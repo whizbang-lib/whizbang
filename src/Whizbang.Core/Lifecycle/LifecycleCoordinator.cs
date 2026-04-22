@@ -24,19 +24,12 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
-public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
+public sealed partial class LifecycleCoordinator(LifecycleCoordinatorMetrics? metrics = null) : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
   private readonly ConcurrentBag<Task> _abandonedDetachedTasks = [];
-  private readonly LifecycleCoordinatorMetrics? _metrics;
-
-  /// <summary>
-  /// Creates a new lifecycle coordinator with optional metrics.
-  /// </summary>
-  public LifecycleCoordinator(LifecycleCoordinatorMetrics? metrics = null) {
-    _metrics = metrics;
-  }
+  private readonly LifecycleCoordinatorMetrics? _metrics = metrics;
 
   /// <inheritdoc/>
   public ILifecycleTracking BeginTracking(
@@ -192,19 +185,11 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   /// PostLifecycle fires only after all expected perspectives signal complete.
   /// Thread-safe with full state exposure for debugging/observers.
   /// </summary>
-  private sealed class PerspectiveWhenAllState {
-    private readonly HashSet<string> _expected;
+  private sealed class PerspectiveWhenAllState(IReadOnlyList<string> perspectiveNames) {
+    private readonly HashSet<string> _expected = [.. perspectiveNames];
     private readonly HashSet<string> _completed = [];
     private readonly Lock _lock = new();
     private bool _allComplete;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="PerspectiveWhenAllState"/> class.
-    /// </summary>
-    /// <param name="perspectiveNames">The perspective names expected to signal completion.</param>
-    public PerspectiveWhenAllState(IReadOnlyList<string> perspectiveNames) {
-      _expected = [.. perspectiveNames];
-    }
 
     /// <summary>Fast-path check for completion.</summary>
     public bool IsComplete {
@@ -238,19 +223,11 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     }
   }
 
-  private sealed class WhenAllState {
-    private readonly HashSet<PostLifecycleCompletionSource> _expected;
+  private sealed class WhenAllState(PostLifecycleCompletionSource[] sources) {
+    private readonly HashSet<PostLifecycleCompletionSource> _expected = [.. sources];
     private readonly ConcurrentDictionary<PostLifecycleCompletionSource, bool> _completed = new();
     private readonly Lock _lock = new();
     private bool _fired;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="WhenAllState"/> class.
-    /// </summary>
-    /// <param name="sources">The completion sources expected to signal before PostLifecycle fires.</param>
-    public WhenAllState(PostLifecycleCompletionSource[] sources) {
-      _expected = [.. sources];
-    }
 
     /// <summary>
     /// Atomically signals a source as complete and returns <c>true</c> exactly once —

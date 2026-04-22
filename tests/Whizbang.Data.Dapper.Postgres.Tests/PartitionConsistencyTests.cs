@@ -13,17 +13,17 @@ using Whizbang.Data.Dapper.Postgres;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Partition consistency invariant: for any given stream_id, the partition_number
+/// <para>Partition consistency invariant: for any given stream_id, the partition_number
 /// computed and stored in wh_inbox must equal the partition_number stored in
 /// wh_active_streams. A mismatch causes claim_orphaned_inbox to deadlock — the
 /// partition-modulo filter routes a message to instance rank A while the
 /// stream-ownership NOT EXISTS clause is satisfied by a live instance at rank B,
-/// leaving the message permanently unclaimable.
+/// leaving the message permanently unclaimable.</para>
 ///
-/// Observed in a consumer BFF dev on 2026-04-20: 201 inbox rows wedged across three
+/// <para>Observed in a consumer BFF dev on 2026-04-20: 201 inbox rows wedged across three
 /// live/heartbeating pods because wh_inbox.partition_number used p_partition_count=2
 /// (IWorkCoordinator.StoreInboxMessagesAsync default) while wh_active_streams used
-/// p_partition_count=10_000 (WorkCoordinatorPublisherOptions.PartitionCount default).
+/// p_partition_count=10_000 (WorkCoordinatorPublisherOptions.PartitionCount default).</para>
 /// </summary>
 [Category("Integration")]
 public class PartitionConsistencyTests : PostgresTestBase {
@@ -51,16 +51,16 @@ public class PartitionConsistencyTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// RED anchor. Reproduces the shipped bug by exercising the two store paths
-  /// that TransportConsumerWorker and WorkCoordinatorPublisherWorker actually use:
+  /// <para>RED anchor. Reproduces the shipped bug by exercising the two store paths
+  /// that TransportConsumerWorker and WorkCoordinatorPublisherWorker actually use:</para>
   ///
-  ///   - StoreInboxMessagesAsync (direct, fast path) — partitionCount default = 2
-  ///   - ProcessWorkBatchAsync with NewInboxMessages (publisher path) — PartitionCount default = 10_000
+  /// <para>  - StoreInboxMessagesAsync (direct, fast path) — partitionCount default = 2
+  ///   - ProcessWorkBatchAsync with NewInboxMessages (publisher path) — PartitionCount default = 10_000</para>
   ///
-  /// For the same stream_id, both wh_inbox.partition_number (from the first call)
+  /// <para>For the same stream_id, both wh_inbox.partition_number (from the first call)
   /// and wh_active_streams.partition_number (refreshed end-of-tick by the second)
   /// must agree — otherwise claim_orphaned_inbox cannot route the message to the
-  /// instance that owns the stream.
+  /// instance that owns the stream.</para>
   /// </summary>
   [Test]
   public async Task WhenStoreInboxAndProcessBatchUseDefaults_PartitionNumbersMustMatchAsync() {
@@ -338,21 +338,20 @@ public class PartitionConsistencyTests : PostgresTestBase {
     Guid instanceB = _idProvider.NewGuid();
     await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
 
-    using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
-      await connection.OpenAsync();
-      var nullPartitionMsgId = _idProvider.NewGuid();
-      await connection.ExecuteAsync(@"
+    using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    var nullPartitionMsgId = _idProvider.NewGuid();
+    await connection.ExecuteAsync(@"
         INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES (@id, NOW());
         INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, stream_id, partition_number, is_event, status, attempts, received_at, instance_id, lease_expiry)
         VALUES (@id, 'TestHandler', 'TestMessage, TestAssembly', '{}'::jsonb, '{}'::jsonb, 'null'::jsonb, NULL, NULL, false, 1, 0, NOW(), NULL, NULL);",
-        new { id = nullPartitionMsgId });
+      new { id = nullPartitionMsgId });
 
-      await _sut.ProcessWorkBatchAsync(_emptyTickRequest(instanceB));
+    await _sut.ProcessWorkBatchAsync(_emptyTickRequest(instanceB));
 
-      var unclaimed = await _countUnclaimedAsync([nullPartitionMsgId]);
-      await Assert.That(unclaimed).IsEqualTo(0)
-        .Because("inbox rows with NULL partition_number (no stream binding) must be claimable by any instance — guards the explicit fallback in migration 025 line 31");
-    }
+    var unclaimed = await _countUnclaimedAsync([nullPartitionMsgId]);
+    await Assert.That(unclaimed).IsEqualTo(0)
+      .Because("inbox rows with NULL partition_number (no stream binding) must be claimable by any instance — guards the explicit fallback in migration 025 line 31");
   }
 
   /// <summary>
@@ -490,7 +489,7 @@ public class PartitionConsistencyTests : PostgresTestBase {
     // Find a stream whose partition (at PartitionCount=10_000) modulo 3 does NOT
     // equal the owner's rank. Forcing the deadlock: owner = rank X, partition
     // routes to rank Y ≠ X.
-    var orderedInstances = new[] { instanceA, instanceB, instanceC }.OrderBy(x => x).ToArray();
+    var orderedInstances = new[] { instanceA, instanceB, instanceC }.Order().ToArray();
     var (streamId, messageId, ownerRank, partitionRank) =
       await _findOwnershipPartitionDisagreementStreamAsync(orderedInstances);
     var owner = orderedInstances[ownerRank];
@@ -595,7 +594,7 @@ public class PartitionConsistencyTests : PostgresTestBase {
     await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
     await _insertServiceInstanceAsync(instanceC, "TestService", "test-host-c", 33333);
 
-    var orderedInstances = new[] { instanceA, instanceB, instanceC }.OrderBy(x => x).ToArray();
+    var orderedInstances = new[] { instanceA, instanceB, instanceC }.Order().ToArray();
     var (streamId, messageId, ownerRank, partitionRank) =
       await _findOwnershipPartitionDisagreementStreamAsync(orderedInstances);
     var owner = orderedInstances[ownerRank];
@@ -701,7 +700,7 @@ public class PartitionConsistencyTests : PostgresTestBase {
     await connection.OpenAsync();
     var largePart = await connection.QuerySingleAsync<int>(
       "SELECT compute_partition(@s, 10000)", new { s = streamId });
-    var ranks = new[] { a, b, c }.OrderBy(x => x).ToArray();
+    var ranks = new[] { a, b, c }.Order().ToArray();
     return ranks[largePart % 3];
   }
 

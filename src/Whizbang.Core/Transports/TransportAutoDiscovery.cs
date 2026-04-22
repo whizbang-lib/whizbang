@@ -5,7 +5,7 @@ using System.Linq;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
-/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ExactMatch_ShouldMatchAsync</tests>
+/// <para><tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ExactMatch_ShouldMatchAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldMatchAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldNotMatchDifferentNamespaceAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardPrefix_ShouldMatchAsync</tests>
@@ -27,14 +27,14 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_GetMessageTypesToSubscribe_ShouldReturnExplicitTypesAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_DiscoverReceptors_ShouldNotThrowAsync</tests>
 /// Auto-discovery for transport subscriptions based on local receptors.
-/// Supports explicit type subscription, namespace patterns, and full receptor discovery.
+/// Supports explicit type subscription, namespace patterns, and full receptor discovery.</para>
 ///
-/// Usage:
+/// <para>Usage:
 /// options.Transports.AutoSubscribe(discovery => {
 ///     discovery.DiscoverReceptors();  // Auto-discover all IReceptor implementations
 ///     discovery.SubscribeToNamespace("MyApp.Orders.*");  // Pattern-based
 ///     discovery.Subscribe&lt;OrderCreated&gt;();  // Explicit type
-/// });
+/// });</para>
 /// </summary>
 public class TransportAutoDiscovery {
   private readonly List<NamespacePattern> _patterns = [];

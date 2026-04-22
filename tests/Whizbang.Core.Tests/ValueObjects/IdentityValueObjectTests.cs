@@ -49,7 +49,7 @@ public class IdentityValueObjectTests {
     // Assert - UUIDv7 should be sortable by creation time
     // When sorted, they should maintain creation order
     var ids = new[] { id3, id1, id2 };
-    var sortedIds = ids.OrderBy(g => g).ToArray();
+    var sortedIds = ids.Order().ToArray();
 
     await Assert.That(sortedIds[0]).IsEqualTo(id1);
     await Assert.That(sortedIds[1]).IsEqualTo(id2);
@@ -69,7 +69,7 @@ public class IdentityValueObjectTests {
         .ToList();
 
     // Assert - IDs should already be in ascending order (time-ordered)
-    var sortedIds = ids.OrderBy(g => g).ToList();
+    var sortedIds = ids.Order().ToList();
     await Assert.That(ids).Count().IsEqualTo(sortedIds.Count);
     for (int i = 0; i < ids.Count; i++) {
       await Assert.That(ids[i]).IsEqualTo(sortedIds[i]);
@@ -96,7 +96,7 @@ public class IdentityValueObjectTests {
     };
 
     // Should not throw - UUIDv7 are comparable
-    var sorted = guids.OrderBy(g => g).ToArray();
+    var sorted = guids.Order().ToArray();
     await Assert.That(sorted).Count().IsEqualTo(4);
   }
 
