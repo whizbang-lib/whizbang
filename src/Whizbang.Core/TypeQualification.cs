@@ -12,6 +12,7 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>fundamentals/identity/type-qualification</docs>
 [Flags]
+#pragma warning disable RCS1154 // Members are intentionally grouped: component flags first, then composite presets.
 public enum TypeQualifications {
   /// <summary>
   /// No formatting applied. Use this as a base for custom combinations.
@@ -95,3 +96,4 @@ public enum TypeQualifications {
   /// </summary>
   FullyQualifiedWithVersion = Namespace | TypeName | Assembly | Version | Culture | PublicKeyToken
 }
+#pragma warning restore RCS1154

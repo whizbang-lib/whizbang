@@ -101,7 +101,7 @@ public class ProcessWorkBatchConcurrencyTests : EFCoreTestBase {
     for (var i = 0; i < InstanceCount; i++) {
       var taskIndex = i;
       var instanceId = TrackedGuid.NewMedo().Value;
-      var json = _buildOutboxJson(sharedStreams, seed: taskIndex * 37 + 7);
+      var json = _buildOutboxJson(sharedStreams, seed: (taskIndex * 37) + 7);
       tasks[i] = Task.Run(() => _callStoreOutboxMessagesAsync(instanceId, json, cts.Token), cts.Token);
     }
 

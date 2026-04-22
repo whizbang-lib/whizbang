@@ -65,18 +65,18 @@ public class MessageSecurityContextProviderTests {
     var callOrder = new List<string>();
     var extractor1 = new TestExtractor(
       priority: 100,
-      onExtract: () => callOrder.Add("100"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("100")
     );
     var extractor2 = new TestExtractor(
       priority: 50,
-      onExtract: () => callOrder.Add("50"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("50")
     );
     var extractor3 = new TestExtractor(
       priority: 200,
-      onExtract: () => callOrder.Add("200"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("200")
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = true };
@@ -109,13 +109,13 @@ public class MessageSecurityContextProviderTests {
 
     var extractor1 = new TestExtractor(
       priority: 50,
-      onExtract: () => callOrder.Add("50"),
-      extraction: extraction // Returns successfully
+      extraction: extraction, // Returns successfully
+      onExtract: () => callOrder.Add("50")
     );
     var extractor2 = new TestExtractor(
       priority: 100,
-      onExtract: () => callOrder.Add("100"),
-      extraction: null
+      extraction: null,
+      onExtract: () => callOrder.Add("100")
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };
@@ -150,13 +150,13 @@ public class MessageSecurityContextProviderTests {
 
     var extractor1 = new TestExtractor(
       priority: 50,
-      onExtract: () => callOrder.Add("50"),
-      extraction: null // Returns null
+      extraction: null, // Returns null
+      onExtract: () => callOrder.Add("50")
     );
     var extractor2 = new TestExtractor(
       priority: 100,
-      onExtract: () => callOrder.Add("100"),
-      extraction: extraction // Returns successfully
+      extraction: extraction, // Returns successfully
+      onExtract: () => callOrder.Add("100")
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };
@@ -239,8 +239,8 @@ public class MessageSecurityContextProviderTests {
     var extractorCalled = false;
     var extractor = new TestExtractor(
       priority: 100,
-      onExtract: () => extractorCalled = true,
-      extraction: null
+      extraction: null,
+      onExtract: () => extractorCalled = true
     );
 
     var options = new MessageSecurityOptions {
@@ -289,8 +289,8 @@ public class MessageSecurityContextProviderTests {
     // Arrange
     var extractor = new TestExtractor(
       priority: 100,
-      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct),
-      extraction: null
+      extraction: null,
+      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct)
     );
 
     var options = new MessageSecurityOptions {
@@ -352,8 +352,8 @@ public class MessageSecurityContextProviderTests {
     // Arrange
     var extractor = new TestExtractor(
       priority: 100,
-      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct),
-      extraction: null
+      extraction: null,
+      onExtractAsync: async ct => await Task.Delay(TimeSpan.FromSeconds(10), ct)
     );
 
     var options = new MessageSecurityOptions { AllowAnonymous = false };
@@ -381,8 +381,8 @@ public class MessageSecurityContextProviderTests {
     var receivedValidateFlag = false;
     var extractor = new TestExtractor(
       priority: 100,
-      onExtract: () => { },
       extraction: null,
+      onExtract: () => { },
       onExtractWithContext: (envelope, options) => {
         receivedValidateFlag = options.ValidateCredentials;
       }

@@ -310,7 +310,7 @@ public abstract class TransportOptions {
   /// <param name="capabilities">The capabilities reported by the transport.</param>
   /// <param name="logger">Optional logger for emitting warnings. When <c>null</c>, validation is silent.</param>
   public virtual void ValidateForCapabilities(TransportCapabilities capabilities, ILogger? logger) {
-    if (logger is null || !logger.IsEnabled(LogLevel.Warning)) {
+    if (logger?.IsEnabled(LogLevel.Warning) != true) {
       return;
     }
 

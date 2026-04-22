@@ -45,6 +45,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   public string Name => $"Parallel(max:{_maxConcurrency})";
 
   /// <inheritdoc/>
+#pragma warning disable RCS1229 // Fast-path uses sync semaphore acquire + sync-completed handler result; forcing async would defeat zero-allocation path.
   public ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
     Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
@@ -85,6 +86,7 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     // Slow path: async wait (allocates if we need to wait)
     return _slowPathAsync(envelope, handler, context, ct);
   }
+#pragma warning restore RCS1229
 
   private static async ValueTask<TResult> _awaitAndReleaseAsync<TResult>(
     ValueTask<TResult> task,

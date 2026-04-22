@@ -223,12 +223,8 @@ public class ValidationException : Exception {
 
 #region Test Endpoints
 
-public class OrderTrackingMutationEndpoint : RestMutationEndpointBase<TrackingCommand, TrackingResult> {
-  private readonly List<string> _executionOrder;
-
-  public OrderTrackingMutationEndpoint(List<string> executionOrder) {
-    _executionOrder = executionOrder;
-  }
+public class OrderTrackingMutationEndpoint(List<string> executionOrder) : RestMutationEndpointBase<TrackingCommand, TrackingResult> {
+  private readonly List<string> _executionOrder = executionOrder;
 
   protected override ValueTask OnBeforeExecuteAsync(
       TrackingCommand command,
@@ -283,12 +279,8 @@ public class ValidatingMutationEndpoint : RestMutationEndpointBase<ValidatableCo
       => ExecuteAsync(cmd, ct);
 }
 
-public class NotifyingMutationEndpoint : RestMutationEndpointBase<NotifiableCommand, NotifiableResult> {
-  private readonly List<string> _notifications;
-
-  public NotifyingMutationEndpoint(List<string> notifications) {
-    _notifications = notifications;
-  }
+public class NotifyingMutationEndpoint(List<string> notifications) : RestMutationEndpointBase<NotifiableCommand, NotifiableResult> {
+  private readonly List<string> _notifications = notifications;
 
   protected override ValueTask<NotifiableResult> DispatchCommandAsync(
       NotifiableCommand command,
@@ -420,12 +412,8 @@ public class CancellationAwareMutationEndpoint : RestMutationEndpointBase<Cancel
       => ExecuteAsync(cmd, ct);
 }
 
-public class LoggingMutationEndpoint : RestMutationEndpointBase<LoggableCommand, LoggableResult> {
-  private readonly List<string> _logs;
-
-  public LoggingMutationEndpoint(List<string> logs) {
-    _logs = logs;
-  }
+public class LoggingMutationEndpoint(List<string> logs) : RestMutationEndpointBase<LoggableCommand, LoggableResult> {
+  private readonly List<string> _logs = logs;
 
   protected override ValueTask OnBeforeExecuteAsync(
       LoggableCommand command,

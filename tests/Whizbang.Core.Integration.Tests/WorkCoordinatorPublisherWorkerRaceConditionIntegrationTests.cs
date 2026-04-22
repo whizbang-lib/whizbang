@@ -39,7 +39,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionIntegrationTests {
   /// </summary>
   private sealed class SynchronizedWorkCoordinator : IWorkCoordinator {
     private readonly Random _random = new();
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly ConcurrentDictionary<Guid, bool> _claimedMessages = new();
     private int _processWorkBatchCallCount;
     private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);

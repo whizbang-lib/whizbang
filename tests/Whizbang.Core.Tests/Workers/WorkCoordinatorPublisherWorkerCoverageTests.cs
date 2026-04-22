@@ -147,7 +147,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
   private sealed class CoverageTestWorkCoordinator : IWorkCoordinator {
     private int _callCount;
-    private readonly object _callCountLock = new();
+    private readonly Lock _callCountLock = new();
     private readonly List<(int TargetCount, TaskCompletionSource Signal)> _callCountWaiters = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public List<InboxWork> InboxWorkToReturn { get; set; } = [];
@@ -346,7 +346,7 @@ public class WorkCoordinatorPublisherWorkerCoverageTests {
 
   private sealed class ControlledDatabaseReadinessCheck : IDatabaseReadinessCheck {
     private int _callCount;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly List<(int TargetCount, TaskCompletionSource Signal)> _waiters = [];
 
     public bool IsReady { get; set; } = true;

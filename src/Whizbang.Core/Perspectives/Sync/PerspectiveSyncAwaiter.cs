@@ -451,9 +451,9 @@ public sealed partial class PerspectiveSyncAwaiter(
   private void _throwIfInsideInlineStage() {
     if (_lifecycleContextAccessor?.Current is { } ctx && !ctx.CurrentStage.IsDetached()) {
       throw new InvalidOperationException(
-        $"WaitForStreamAsync/WaitAsync cannot be called inside an Inline lifecycle " +
+        "WaitForStreamAsync/WaitAsync cannot be called inside an Inline lifecycle " +
         $"receptor (current stage: {ctx.CurrentStage}). This would deadlock the work " +
-        $"coordinator. Use a Detached stage or event enrichment instead.");
+        "coordinator. Use a Detached stage or event enrichment instead.");
     }
   }
 }

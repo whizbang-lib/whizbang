@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for InventoryRestockedEvent
 /// </summary>
 public class InventoryRestockedEventTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task InventoryRestockedEvent_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act

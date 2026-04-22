@@ -11,7 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <docs>data/turnkey-initialization</docs>
 public static class DbContextInitializationRegistry {
   private static readonly List<DbContextInitializer> _initializers = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
   private static int _initialized;
 
   /// <summary>

@@ -188,7 +188,7 @@ public class EnvelopeRegistryTests {
     var messages = Enumerable.Range(0, 100)
       .Select(i => new TestMessage($"message-{i}"))
       .ToList();
-    var envelopes = messages.Select(_createEnvelope).ToList();
+    var envelopes = messages.ConvertAll(_createEnvelope);
 
     // Act - concurrent registration
     await Parallel.ForEachAsync(

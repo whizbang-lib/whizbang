@@ -117,7 +117,7 @@ public class ReceptorFiringObserverTests {
 
       await Assert.That(observer.Firings.Count).IsEqualTo(1);
       await Assert.That(observer.Completed.Count).IsEqualTo(1);
-      var firing = System.Linq.Enumerable.First(observer.Firings);
+      var firing = observer.Firings.First();
       await Assert.That(firing.ReceptorId).IsEqualTo("Rx");
       await Assert.That(firing.Stage).IsEqualTo(LifecycleStage.PostInboxInline);
     }
@@ -133,7 +133,7 @@ public class ReceptorFiringObserverTests {
         .Throws<InvalidOperationException>();
 
       await Assert.That(observer.Completed.Count).IsEqualTo(1);
-      var fired = System.Linq.Enumerable.First(observer.Completed);
+      var fired = observer.Completed.First();
       await Assert.That(fired.Exception).IsNotNull();
       await Assert.That(fired.Exception!.Message).IsEqualTo("boom");
     }

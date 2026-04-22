@@ -332,15 +332,13 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   }
 
   // S3776: Code generation method — complexity from sequential template building with conditional paths
-#pragma warning disable S3776
-#pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
+#pragma warning disable S3776, S1144 // S3776: code-gen complexity; S1144: called from RegisterSourceOutput lambda at line 78, enabled used in body
   private static void _generateInterceptors(
       SourceProductionContext context,
             ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
-#pragma warning restore S1144
-#pragma warning restore S3776
+#pragma warning restore S3776, S1144
 
     // Report diagnostics for intercepted calls (always, even when disabled)
     foreach (var info in intercepted) {

@@ -54,7 +54,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
     var resourceNames = _assembly
       .GetManifestResourceNames()
       .Where(name => name.StartsWith(_resourcePrefix, StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal))
-      .OrderBy(name => name)
+      .Order()
       .ToList();
 
     var migrations = new List<MigrationScript>();

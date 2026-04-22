@@ -20,6 +20,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// [GraphQLLens(Scope = GraphQLLensScopes.None)]
 /// </example>
 [Flags]
+#pragma warning disable RCS1154 // Members grouped: individual flags first, then presets.
 public enum GraphQLLensScopes {
   /// <summary>
   /// Use system-configured default from <see cref="WhizbangGraphQLOptions.DefaultScope"/>.
@@ -71,3 +72,4 @@ public enum GraphQLLensScopes {
   /// </summary>
   All = Data | Metadata | Scope | SystemFields
 }
+#pragma warning restore RCS1154

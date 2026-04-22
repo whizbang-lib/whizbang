@@ -9,7 +9,10 @@ namespace Whizbang.Core.Tests;
 /// Tests for TypeMatcher static class.
 /// Ensures type name matching works correctly for all MatchStrictness options and regex patterns.
 /// </summary>
-public class TypeMatcherTests {
+public partial class TypeMatcherTests {
+  [GeneratedRegex(@".*Product.*Event.*")]
+  private static partial Regex _productEventRegex();
+
   [Test]
   public async Task Matches_ExactMode_ReturnsTrueForIdenticalStringsAsync() {
     // Arrange
@@ -154,7 +157,7 @@ public class TypeMatcherTests {
   public async Task Matches_RegexPattern_MatchesWildcardsAsync() {
     // Arrange
     const string typeString = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var pattern = new Regex(@".*Product.*Event.*");
+    var pattern = _productEventRegex();
 
     // Act
     var result = TypeMatcher.Matches(typeString, pattern);
@@ -167,7 +170,7 @@ public class TypeMatcherTests {
   public async Task Matches_RegexPattern_DoesNotMatchWhenNoMatchAsync() {
     // Arrange
     const string typeString = "ECommerce.Contracts.Commands.CreateOrder, ECommerce.Contracts";
-    var pattern = new Regex(@".*Product.*Event.*");
+    var pattern = _productEventRegex();
 
     // Act
     var result = TypeMatcher.Matches(typeString, pattern);

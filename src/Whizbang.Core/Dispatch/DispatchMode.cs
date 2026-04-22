@@ -37,6 +37,7 @@ namespace Whizbang.Core.Dispatch;
 /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs</tests>
 [Flags]
+#pragma warning disable RCS1154 // Members are intentionally grouped by semantic category rather than alphabetically.
 public enum DispatchModes {
   /// <summary>
   /// No routing - message is not dispatched.
@@ -89,3 +90,4 @@ public enum DispatchModes {
   /// </summary>
   EventStoreOnly = EventStore
 }
+#pragma warning restore RCS1154

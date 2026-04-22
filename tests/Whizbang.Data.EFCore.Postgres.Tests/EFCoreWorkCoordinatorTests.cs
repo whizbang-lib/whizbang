@@ -1217,7 +1217,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Verify modulo distribution: each instance claims messages where partition % 3 matches its sorted index
     // Determine sorted instance buckets (0, 1, 2) based on UUID ordering
-    var instances = new[] { instance1Id, instance2Id, instance3Id }.OrderBy(id => id).ToArray();
+    var instances = new[] { instance1Id, instance2Id, instance3Id }.Order().ToArray();
     var instance1Bucket = Array.IndexOf(instances, instance1Id);
     var instance2Bucket = Array.IndexOf(instances, instance2Id);
     var instance3Bucket = Array.IndexOf(instances, instance3Id);

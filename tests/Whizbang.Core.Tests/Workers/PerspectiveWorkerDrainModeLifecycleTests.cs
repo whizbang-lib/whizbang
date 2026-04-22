@@ -129,7 +129,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
         IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       DeserializeCallCount++;
-      return new List<MessageEnvelope<IEvent>>(DeserializedEventsToReturn);
+      return [.. DeserializedEventsToReturn];
     }
 
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -146,14 +146,10 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   /// Perspective runner registry that supports multiple perspectives with different event types.
   /// Captures which events each perspective received via RunWithEventsAsync.
   /// </summary>
-  private sealed class FilteringPerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+  private sealed class FilteringPerspectiveRunnerRegistry(List<PerspectiveRegistrationInfo> registrations) : IPerspectiveRunnerRegistry {
     private readonly ConcurrentDictionary<string, List<Guid>> _eventsPerPerspective = new();
-    private readonly List<PerspectiveRegistrationInfo> _registrations;
+    private readonly List<PerspectiveRegistrationInfo> _registrations = registrations;
     private int _runWithEventsCount;
-
-    public FilteringPerspectiveRunnerRegistry(List<PerspectiveRegistrationInfo> registrations) {
-      _registrations = registrations;
-    }
 
     public int RunWithEventsCallCount => Volatile.Read(ref _runWithEventsCount);
 

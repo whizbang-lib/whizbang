@@ -356,7 +356,6 @@ internal sealed class FakeChannelThatThrowsOnBind : FakeChannel {
   }
 }
 
-#pragma warning restore CS0067
-#pragma warning restore CA1822
+#pragma warning restore CS0067, CA1822
 
 #endregion

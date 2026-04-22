@@ -14,7 +14,24 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 [Category("SourceGenerators")]
 [Category("JsonSerialization")]
-public class MessageJsonContextGeneratorTests {
+public partial class MessageJsonContextGeneratorTests {
+  [System.Text.RegularExpressions.GeneratedRegex(@"CreateProperty<[^>]+>\(\s*options,\s*""Name""")]
+  private static partial System.Text.RegularExpressions.Regex _createPropertyNameRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"CreateProperty<[^>]+>\(\s*options,\s*""Value""")]
+  private static partial System.Text.RegularExpressions.Regex _createPropertyValueRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"private JsonTypeInfo<[^>]+> Create_TestApp_Address\(")]
+  private static partial System.Text.RegularExpressions.Regex _createAddressFactoryRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"private JsonTypeInfo<[^>]+> Create_TestApp_Person\(")]
+  private static partial System.Text.RegularExpressions.Regex _createPersonFactoryRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"private JsonTypeInfo<[^>]+> Create_TestApp_TreeNode\(")]
+  private static partial System.Text.RegularExpressions.Regex _createTreeNodeFactoryRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"private JsonTypeInfo<[^>]+> Create_TestApp_Employee\(")]
+  private static partial System.Text.RegularExpressions.Regex _createEmployeeFactoryRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"private JsonTypeInfo<[^>]+> Create_TestApp_Department\(")]
+  private static partial System.Text.RegularExpressions.Regex _createDepartmentFactoryRegex();
+  [System.Text.RegularExpressions.GeneratedRegex(@"private JsonTypeInfo<[^>]+> Create_TestApp_TemplateCreatedEvent\(")]
+  private static partial System.Text.RegularExpressions.Regex _createTemplateCreatedEventFactoryRegex();
+
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -2858,7 +2875,7 @@ public class DerivedWithOverride : BaseWithVirtual, ICommand {
 
     // "Name" should appear exactly once - count occurrences in property definitions
     // Looking for pattern in CreateProperty call: CreateProperty<...>(options, "Name", ...)
-    var matches = System.Text.RegularExpressions.Regex.Matches(code!, @"CreateProperty<[^>]+>\(\s*options,\s*""Name""");
+    var matches = _createPropertyNameRegex().Matches(code!);
     await Assert.That(matches.Count).IsEqualTo(1);
   }
 
@@ -2896,7 +2913,7 @@ public class DerivedWithNew : BaseWithProp, ICommand {
 
     // "Value" should appear exactly once in property definitions
     // Looking for pattern in CreateProperty call: CreateProperty<...>(options, "Value", ...)
-    var matches = System.Text.RegularExpressions.Regex.Matches(code!, @"CreateProperty<[^>]+>\(\s*options,\s*""Value""");
+    var matches = _createPropertyValueRegex().Matches(code!);
     await Assert.That(matches.Count).IsEqualTo(1);
   }
 
@@ -3976,8 +3993,7 @@ public record OrderCreated(Order Order) : IEvent;
 
     // Address should only have ONE factory method definition (not duplicates)
     // Use pattern that matches method definition, not calls
-    var addressFactoryCount = System.Text.RegularExpressions.Regex.Count(
-        code, @"private JsonTypeInfo<[^>]+> Create_TestApp_Address\(");
+    var addressFactoryCount = _createAddressFactoryRegex().Count(code);
     await Assert.That(addressFactoryCount).IsEqualTo(1);
   }
 
@@ -4016,8 +4032,7 @@ public record TeamCreated(Person TeamLead) : IEvent;
     await Assert.That(code).Contains("Person");
 
     // Person should only have ONE factory method definition (not duplicates from circular traversal)
-    var personFactoryCount = System.Text.RegularExpressions.Regex.Count(
-        code, @"private JsonTypeInfo<[^>]+> Create_TestApp_Person\(");
+    var personFactoryCount = _createPersonFactoryRegex().Count(code);
     await Assert.That(personFactoryCount).IsEqualTo(1);
 
     // List<Person> should also be discovered
@@ -4057,8 +4072,7 @@ public record TreeCreated(TreeNode Root) : IEvent;
     // TreeNode should be discovered once
     await Assert.That(code).Contains("TreeNode");
 
-    var treeNodeFactoryCount = System.Text.RegularExpressions.Regex.Count(
-        code, @"private JsonTypeInfo<[^>]+> Create_TestApp_TreeNode\(");
+    var treeNodeFactoryCount = _createTreeNodeFactoryRegex().Count(code);
     await Assert.That(treeNodeFactoryCount).IsEqualTo(1);
   }
 
@@ -4097,12 +4111,10 @@ public record OrgCreated(Department RootDepartment) : IEvent;
     await Assert.That(code).Contains("Employee");
     await Assert.That(code).Contains("Department");
 
-    var employeeFactoryCount = System.Text.RegularExpressions.Regex.Count(
-        code, @"private JsonTypeInfo<[^>]+> Create_TestApp_Employee\(");
+    var employeeFactoryCount = _createEmployeeFactoryRegex().Count(code);
     await Assert.That(employeeFactoryCount).IsEqualTo(1);
 
-    var departmentFactoryCount = System.Text.RegularExpressions.Regex.Count(
-        code, @"private JsonTypeInfo<[^>]+> Create_TestApp_Department\(");
+    var departmentFactoryCount = _createDepartmentFactoryRegex().Count(code);
     await Assert.That(departmentFactoryCount).IsEqualTo(1);
   }
 
@@ -4157,8 +4169,7 @@ public record TemplateCreatedEvent : IEvent {
     await Assert.That(code).Contains("TypeInfoCache[typeof(global::TestApp.TemplateCreatedEvent)]");
 
     // Event should have exactly one factory method
-    var factoryCount = System.Text.RegularExpressions.Regex.Count(
-        code, @"private JsonTypeInfo<[^>]+> Create_TestApp_TemplateCreatedEvent\(");
+    var factoryCount = _createTemplateCreatedEventFactoryRegex().Count(code);
     await Assert.That(factoryCount).IsEqualTo(1);
   }
 

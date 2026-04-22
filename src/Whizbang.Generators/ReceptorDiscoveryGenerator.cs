@@ -1594,11 +1594,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return;
     }
 
-    sb.AppendLine($"          if (!isDefaultDispatch) {{");
+    sb.AppendLine("          if (!isDefaultDispatch) {");
     foreach (var receptor in explicitVoidReceptors) {
       _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "            ");
     }
-    sb.AppendLine($"          }}");
+    sb.AppendLine("          }");
   }
 
   /// <summary>
@@ -1647,11 +1647,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Expand polymorphic receptors: for each concrete subtype, add a routing entry
-    foreach (var entry in routingEntries.ToList()) {
-      if (entry.Receptor.IsPolymorphicMessageType) {
-        var concreteTypes = _findConcreteSubtypes(compilation, entry.Receptor.MessageType);
+    foreach (var (_, receptor, stage) in routingEntries.ToList()) {
+      if (receptor.IsPolymorphicMessageType) {
+        var concreteTypes = _findConcreteSubtypes(compilation, receptor.MessageType);
         foreach (var concreteType in concreteTypes) {
-          routingEntries.Add((concreteType, entry.Receptor, entry.Stage));
+          routingEntries.Add((concreteType, receptor, stage));
         }
       }
     }

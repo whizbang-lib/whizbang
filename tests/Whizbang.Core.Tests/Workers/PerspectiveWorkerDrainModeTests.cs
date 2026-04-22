@@ -169,7 +169,7 @@ public class PerspectiveWorkerDrainModeTests {
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
         IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       DeserializeStreamEventsCallCount++;
-      return new List<MessageEnvelope<IEvent>>(DeserializedEventsToReturn);
+      return [.. DeserializedEventsToReturn];
     }
 
     // IEventStore stubs — not used in drain mode

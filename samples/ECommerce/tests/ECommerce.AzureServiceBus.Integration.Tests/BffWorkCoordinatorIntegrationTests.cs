@@ -34,7 +34,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
   private record TestEvent { }
 
-  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -233,7 +233,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     var timeout = TimeSpan.FromSeconds(10);
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-    while (!testTransport.PublishedMessages.Any() && stopwatch.Elapsed < timeout) {
+    while (testTransport.PublishedMessages.Count == 0 && stopwatch.Elapsed < timeout) {
       await Task.Delay(100);
     }
 
@@ -360,7 +360,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     var timeout = TimeSpan.FromSeconds(10);
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-    while (!testTransport.PublishedMessages.Any() && stopwatch.Elapsed < timeout) {
+    while (testTransport.PublishedMessages.Count == 0 && stopwatch.Elapsed < timeout) {
       await Task.Delay(100);
     }
 

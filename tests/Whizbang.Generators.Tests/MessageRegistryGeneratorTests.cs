@@ -10,6 +10,8 @@ namespace Whizbang.Generators.Tests;
 /// Tests for the MessageRegistryGenerator source generator.
 /// </summary>
 public partial class MessageRegistryGeneratorTests {
+  [System.Text.RegularExpressions.GeneratedRegex("OrderWorkflow")]
+  private static partial System.Text.RegularExpressions.Regex _orderWorkflowRegex();
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -597,9 +599,7 @@ namespace TestNamespace {
     await Assert.That(generatedSource).Contains("LogCommand");
 
     // All three dispatches should be tracked
-    var dispatcherOccurrences = System.Text.RegularExpressions.Regex.Matches(
-        generatedSource!,
-        "OrderWorkflow");
+    var dispatcherOccurrences = _orderWorkflowRegex().Matches(generatedSource!);
     await Assert.That(dispatcherOccurrences.Count).IsGreaterThanOrEqualTo(3);
   }
 

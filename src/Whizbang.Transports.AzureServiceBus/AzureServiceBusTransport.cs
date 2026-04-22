@@ -397,7 +397,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
     );
 
-    return concurrentResults.ToList();
+    return [.. concurrentResults];
   }
 
   private static async Task _sendAndRecordBatchAsync(

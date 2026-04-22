@@ -813,12 +813,8 @@ public class LifecycleCoordinatorSituationTests {
 
   #region Test Helper: Order-capturing registry
 
-  private sealed class OrderCapturingRegistry : IReceptorRegistry {
-    private readonly Action<LifecycleStage> _onStage;
-
-    public OrderCapturingRegistry(Action<LifecycleStage> onStage) {
-      _onStage = onStage;
-    }
+  private sealed class OrderCapturingRegistry(Action<LifecycleStage> onStage) : IReceptorRegistry {
+    private readonly Action<LifecycleStage> _onStage = onStage;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       return [new ReceptorInfo(

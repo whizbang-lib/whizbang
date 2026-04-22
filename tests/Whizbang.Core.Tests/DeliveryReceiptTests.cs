@@ -241,7 +241,7 @@ public class DeliveryReceiptTests {
     var exception = new InvalidOperationException("Test error");
 
     // Act
-    var receipt = DeliveryReceipt.Failed(messageId, destination, streamId: streamId, exception: exception);
+    var receipt = DeliveryReceipt.Failed(messageId, destination, exception: exception, streamId: streamId);
 
     // Assert
     await Assert.That(receipt.StreamId).IsNotNull();

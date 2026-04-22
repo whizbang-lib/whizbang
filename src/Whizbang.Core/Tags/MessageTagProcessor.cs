@@ -402,9 +402,9 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       Type attributeType,
       CancellationToken ct) {
     // Try known built-in attribute types first
-    var builtInResult = await _tryInvokeBuiltInHookAsync(hookInstance, context, attributeType, ct);
-    if (builtInResult.Matched) {
-      return builtInResult.Result;
+    var (matched, result) = await _tryInvokeBuiltInHookAsync(hookInstance, context, attributeType, ct);
+    if (matched) {
+      return result;
     }
 
     // Try dispatcher registry for custom attribute types

@@ -224,8 +224,8 @@ public static class JsonContextRegistry {
   public static string? GetDiscriminator<TBase, TDerived>()
     where TDerived : TBase {
     if (_derivedTypes.TryGetValue(typeof(TBase), out var bag)) {
-      var entry = bag.FirstOrDefault(x => x.derivedType == typeof(TDerived));
-      return entry.discriminator;
+      var (_, discriminator) = bag.FirstOrDefault(x => x.derivedType == typeof(TDerived));
+      return discriminator;
     }
     return null;
   }

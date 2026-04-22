@@ -138,7 +138,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
 
     // Verify it's our event
     var expectedType = typeof(CascadeTestEvent).AssemblyQualifiedName ?? throw new InvalidOperationException("AssemblyQualifiedName is null");
-    var messageTypes = outboxMessages.Select(m => m.MessageType).ToList();
+    var messageTypes = outboxMessages.ConvertAll(m => m.MessageType);
     await Assert.That(messageTypes).Contains(expectedType);
   }
 

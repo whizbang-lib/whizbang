@@ -70,12 +70,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           var parameterIds = data.Right;
 
           // Flatten all IDs into single array
-          var builder = ImmutableArray.CreateBuilder<(WhizbangIdInfo?, Location?, string?)?>();
-          builder.AddRange(typeIds);
-          builder.AddRange(propertyIds);
-          builder.AddRange(parameterIds);
+          ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> allFlat = [.. typeIds, .. propertyIds, .. parameterIds];
 
-          _generateWhizbangIds(ctx, builder.ToImmutable());
+          _generateWhizbangIds(ctx, allFlat);
         }
     );
 
@@ -86,20 +83,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         compilationAndIds,
         static (ctx, data) => {
-          var compilation = data.Left;
-          var idsData = data.Right;
+          var (compilation, idsData) = data;
 
           var typeIds = idsData.Left.Left;
           var propertyIds = idsData.Left.Right;
           var parameterIds = idsData.Right;
 
           // Flatten all IDs into single array
-          var builder = ImmutableArray.CreateBuilder<(WhizbangIdInfo?, Location?, string?)?>();
-          builder.AddRange(typeIds);
-          builder.AddRange(propertyIds);
-          builder.AddRange(parameterIds);
+          ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> allFlat = [.. typeIds, .. propertyIds, .. parameterIds];
 
-          _generateWhizbangIdJsonContext(ctx, compilation, builder.ToImmutable());
+          _generateWhizbangIdJsonContext(ctx, compilation, allFlat);
         }
     );
   }

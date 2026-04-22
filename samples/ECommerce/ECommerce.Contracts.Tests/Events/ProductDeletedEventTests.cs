@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductDeletedEvent
 /// </summary>
 public class ProductDeletedEventTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task ProductDeletedEvent_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act

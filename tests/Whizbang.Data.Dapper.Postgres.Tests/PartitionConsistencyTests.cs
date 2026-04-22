@@ -338,21 +338,20 @@ public class PartitionConsistencyTests : PostgresTestBase {
     Guid instanceB = _idProvider.NewGuid();
     await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
 
-    using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
-      await connection.OpenAsync();
-      var nullPartitionMsgId = _idProvider.NewGuid();
-      await connection.ExecuteAsync(@"
+    using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    var nullPartitionMsgId = _idProvider.NewGuid();
+    await connection.ExecuteAsync(@"
         INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES (@id, NOW());
         INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, stream_id, partition_number, is_event, status, attempts, received_at, instance_id, lease_expiry)
         VALUES (@id, 'TestHandler', 'TestMessage, TestAssembly', '{}'::jsonb, '{}'::jsonb, 'null'::jsonb, NULL, NULL, false, 1, 0, NOW(), NULL, NULL);",
-        new { id = nullPartitionMsgId });
+      new { id = nullPartitionMsgId });
 
-      await _sut.ProcessWorkBatchAsync(_emptyTickRequest(instanceB));
+    await _sut.ProcessWorkBatchAsync(_emptyTickRequest(instanceB));
 
-      var unclaimed = await _countUnclaimedAsync([nullPartitionMsgId]);
-      await Assert.That(unclaimed).IsEqualTo(0)
-        .Because("inbox rows with NULL partition_number (no stream binding) must be claimable by any instance — guards the explicit fallback in migration 025 line 31");
-    }
+    var unclaimed = await _countUnclaimedAsync([nullPartitionMsgId]);
+    await Assert.That(unclaimed).IsEqualTo(0)
+      .Because("inbox rows with NULL partition_number (no stream binding) must be claimable by any instance — guards the explicit fallback in migration 025 line 31");
   }
 
   /// <summary>
@@ -490,7 +489,7 @@ public class PartitionConsistencyTests : PostgresTestBase {
     // Find a stream whose partition (at PartitionCount=10_000) modulo 3 does NOT
     // equal the owner's rank. Forcing the deadlock: owner = rank X, partition
     // routes to rank Y ≠ X.
-    var orderedInstances = new[] { instanceA, instanceB, instanceC }.OrderBy(x => x).ToArray();
+    var orderedInstances = new[] { instanceA, instanceB, instanceC }.Order().ToArray();
     var (streamId, messageId, ownerRank, partitionRank) =
       await _findOwnershipPartitionDisagreementStreamAsync(orderedInstances);
     var owner = orderedInstances[ownerRank];
@@ -595,7 +594,7 @@ public class PartitionConsistencyTests : PostgresTestBase {
     await _insertServiceInstanceAsync(instanceB, "TestService", "test-host-b", 22222);
     await _insertServiceInstanceAsync(instanceC, "TestService", "test-host-c", 33333);
 
-    var orderedInstances = new[] { instanceA, instanceB, instanceC }.OrderBy(x => x).ToArray();
+    var orderedInstances = new[] { instanceA, instanceB, instanceC }.Order().ToArray();
     var (streamId, messageId, ownerRank, partitionRank) =
       await _findOwnershipPartitionDisagreementStreamAsync(orderedInstances);
     var owner = orderedInstances[ownerRank];
@@ -701,7 +700,7 @@ public class PartitionConsistencyTests : PostgresTestBase {
     await connection.OpenAsync();
     var largePart = await connection.QuerySingleAsync<int>(
       "SELECT compute_partition(@s, 10000)", new { s = streamId });
-    var ranks = new[] { a, b, c }.OrderBy(x => x).ToArray();
+    var ranks = new[] { a, b, c }.Order().ToArray();
     return ranks[largePart % 3];
   }
 

@@ -127,9 +127,7 @@ public sealed class TransportSubscriptionBuilder {
     ArgumentNullException.ThrowIfNull(options);
 
     var destinations = BuildDestinations();
-    foreach (var destination in destinations) {
-      options.Destinations.Add(destination);
-    }
+    options.Destinations.AddRange(destinations);
   }
 
   /// <summary>

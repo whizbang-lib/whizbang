@@ -1952,13 +1952,9 @@ public class BatchWorkCoordinatorStrategyTests {
     }
   }
 
-  private sealed class BatchFakeScopeFactory : IServiceScopeFactory {
-    private readonly IWorkCoordinator _coordinator;
+  private sealed class BatchFakeScopeFactory(IWorkCoordinator coordinator) : IServiceScopeFactory {
+    private readonly IWorkCoordinator _coordinator = coordinator;
     public int ScopeCreationCount { get; private set; }
-
-    public BatchFakeScopeFactory(IWorkCoordinator coordinator) {
-      _coordinator = coordinator;
-    }
 
     public IServiceScope CreateScope() {
       ScopeCreationCount++;

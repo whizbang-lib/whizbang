@@ -91,6 +91,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <param name="schema">The schema name (should come from GetSchemaWithFallback).</param>
   /// <param name="identifier">The function or table name.</param>
   /// <returns>Schema-qualified identifier like "\"myschema\".function_name" or just "function_name" for public.</returns>
+#pragma warning disable RCS1158 // Static helper intentionally shared across all generic instantiations — does not depend on TDbContext.
   internal static string BuildSchemaQualifiedName(string schema, string identifier) {
     // CRITICAL: Never produce a leading dot
     if (string.IsNullOrWhiteSpace(schema) || schema == DEFAULT_SCHEMA) {
@@ -99,6 +100,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Quote schema name to handle PostgreSQL reserved words
     return $"\"{schema}\".{identifier}";
   }
+#pragma warning restore RCS1158
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
@@ -369,13 +371,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // Drain mode: stream IDs from dedicated rows (skip PerspectiveWork construction entirely)
     // Legacy: deduplicate stream IDs from per-event rows
-    var perspectiveStreamIds = perspectiveStreamRows.Count > 0
-      ? perspectiveStreamRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).ToList()
-      : perspectiveRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).Distinct().ToList();
+    List<Guid> perspectiveStreamIds = perspectiveStreamRows.Count > 0
+      ? [.. perspectiveStreamRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value)]
+      : [.. perspectiveRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).Distinct()];
 
-    var perspectiveWork = perspectiveStreamRows.Count > 0
-      ? new List<PerspectiveWork>()
-      : perspectiveRows.Select(_mapPerspectiveWork).ToList();
+    List<PerspectiveWork> perspectiveWork = perspectiveStreamRows.Count > 0
+      ? []
+      : [.. perspectiveRows.Select(_mapPerspectiveWork)];
 
     var syncInquiryResults = validResults
       .Where(r => r.Source == "sync_result")
@@ -768,11 +770,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
 
-    var sql = $@"SELECT
-      (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as ""PendingPerspectiveEvents"",
-      (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as ""PendingOutbox"",
-      (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as ""PendingInbox"",
-      (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as ""ActiveStreams""";
+    var sql = $"""
+      SELECT
+        (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as "PendingPerspectiveEvents",
+        (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as "PendingOutbox",
+        (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as "PendingInbox",
+        (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as "ActiveStreams"
+      """;
 
     var result = await _dbContext.Database
       .SqlQueryRaw<WorkCoordinatorStatistics>(sql)
@@ -1089,9 +1093,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     cmd.CommandText = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = ANY(@p_stream_ids)";
 #pragma warning restore S2077
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streamIds
     });
+#pragma warning restore RCS1130
 
     var results = new List<PerspectiveCursorInfo>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -1416,9 +1422,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT {functionName}(@p_event_work_ids)";
 #pragma warning restore S2077
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_event_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = workItemIds
     });
+#pragma warning restore RCS1130
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return result is int count ? count : 0;
@@ -1453,9 +1461,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids)";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streamIds
     });
+#pragma warning restore RCS1130
 
     var results = new List<StreamEventData>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

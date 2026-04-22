@@ -258,7 +258,7 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     return process.ExitCode != 0 ? null : output.Trim();
   }
 
-  private async Task<string> _getDockerLogsAsync(string containerName, CancellationToken cancellationToken = default) {
+  private static async Task<string> _getDockerLogsAsync(string containerName, CancellationToken cancellationToken = default) {
     var psi = new ProcessStartInfo {
       FileName = "docker",
       Arguments = $"logs {containerName}",

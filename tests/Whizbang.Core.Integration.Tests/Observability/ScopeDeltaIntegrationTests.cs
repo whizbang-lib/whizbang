@@ -433,20 +433,20 @@ public class ScopeDeltaIntegrationTests {
     }
 
     // Add roles as Set operation
-    if (roles != null && roles.Length > 0) {
+    if (roles is { Length: > 0 }) {
       var rolesElement = JsonSerializer.SerializeToElement(roles);
       collections[ScopeProp.Roles] = new CollectionChanges { Set = rolesElement };
     }
 
     // Add permissions as Set operation
-    if (permissions != null && permissions.Length > 0) {
+    if (permissions is { Length: > 0 }) {
       var permsArray = permissions.Select(p => p.Value).ToArray();
       var permsElement = JsonSerializer.SerializeToElement(permsArray);
       collections[ScopeProp.Perms] = new CollectionChanges { Set = permsElement };
     }
 
     // Add principals as Set operation
-    if (principals != null && principals.Length > 0) {
+    if (principals is { Length: > 0 }) {
       var principalsArray = principals.Select(p => p.Value).ToArray();
       var principalsElement = JsonSerializer.SerializeToElement(principalsArray);
       collections[ScopeProp.Principals] = new CollectionChanges { Set = principalsElement };
