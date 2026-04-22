@@ -499,104 +499,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       await _ensureInfrastructureExistsAsync(topicName, subscriptionName, cancellationToken);
       await _applySubscriptionFiltersAsync(destination, topicName, subscriptionName, cancellationToken);
 
-      // Batch collector — flush callback deserializes, calls handler, then completes each message
-      var collector = new TransportBatchCollector<PendingServiceBusMessage>(
-        batchOptions,
-        async batch => {
-          var transportMessages = new List<TransportMessage>(batch.Count);
-          var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
-
-          foreach (var pending in batch) {
-            var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
-            if (envelope is not null) {
-              transportMessages.Add(new TransportMessage(envelope, envelopeTypeName));
-              successfulArgs.Add(pending.Args);
-            }
-            // Messages that failed deserialization are already dead-lettered by _deserializeReceivedMessageAsync
-          }
-
-          if (transportMessages.Count > 0) {
-            await batchHandler(transportMessages, CancellationToken.None);
-
-            // Per-message CompleteMessageAsync (ASB has no multi-ACK)
-            foreach (var args in successfulArgs) {
-              try {
-                await args.CompleteMessageAsync(args.Message, cancellationToken: CancellationToken.None);
-              } catch (ServiceBusException ex) {
-                _logger.LogWarning(ex,
-                  "Failed to complete message {MessageId} — will be redelivered after lock expiry",
-                  args.Message.MessageId);
-              }
-            }
-          }
-        }
-      );
-
-      AzureServiceBusSubscription subscription;
-
-      if (_options.EnableSessions) {
-        var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
-          MaxConcurrentSessions = _options.MaxConcurrentSessions,
-          MaxConcurrentCallsPerSession = 1,
-          AutoCompleteMessages = false,
-          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
-        };
-
-        var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
-        subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
-
-        // Session mode: ProcessSessionMessageEventArgs is a different type from ProcessMessageEventArgs.
-        // Fall back to per-message processing with single-item batch.
-        sessionProcessor.ProcessMessageAsync += async args => {
-          if (!subscription.IsActive) {
-            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-            return;
-          }
-
-          try {
-            var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
-            if (envelope is null) {
-              return;
-            }
-
-            await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
-            await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          } catch (Exception ex) {
-            await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
-          }
-        };
-
-        sessionProcessor.ProcessErrorAsync += async args => {
-          await _handleProcessorErrorAsync(args, destination);
-        };
-
-        await sessionProcessor.StartProcessingAsync(cancellationToken);
-      } else {
-        var processorOptions = new ServiceBusProcessorOptions {
-          MaxConcurrentCalls = _options.MaxConcurrentCalls,
-          AutoCompleteMessages = false,
-          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
-        };
-
-        var processor = _client.CreateProcessor(topicName, subscriptionName, processorOptions);
-        subscription = new AzureServiceBusSubscription(processor, _logger);
-
-        // Non-blocking: enqueue to collector, return immediately
-        processor.ProcessMessageAsync += args => {
-          if (!subscription.IsActive) {
-            return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          }
-
-          collector.Enqueue(new PendingServiceBusMessage(args));
-          return Task.CompletedTask;
-        };
-
-        processor.ProcessErrorAsync += async args => {
-          await _handleProcessorErrorAsync(args, destination);
-        };
-
-        await processor.StartProcessingAsync(cancellationToken);
-      }
+      var subscription = _options.EnableSessions
+        ? await _startSessionBatchSubscriptionAsync(
+            topicName, subscriptionName, batchHandler, destination, cancellationToken)
+        : await _startNonSessionBatchSubscriptionAsync(
+            topicName, subscriptionName, batchHandler, batchOptions, destination, cancellationToken);
 
       if (_logger.IsEnabled(LogLevel.Information)) {
         _logger.LogInformation(
@@ -613,6 +520,147 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       throw;
 #pragma warning restore S2139
     }
+  }
+
+  /// <summary>
+  /// Session-enabled batch subscription. ProcessSessionMessageEventArgs is a different type
+  /// from ProcessMessageEventArgs, so we fall back to per-message handling with single-item
+  /// batches. AutoCompleteMessages is disabled — the handler completes on success.
+  /// </summary>
+  private async Task<AzureServiceBusSubscription> _startSessionBatchSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    CancellationToken cancellationToken
+  ) {
+    var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
+      MaxConcurrentSessions = _options.MaxConcurrentSessions,
+      MaxConcurrentCallsPerSession = 1,
+      AutoCompleteMessages = false,
+      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+    };
+
+    var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
+    var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
+
+    sessionProcessor.ProcessMessageAsync += args => _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
+    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
+
+    await sessionProcessor.StartProcessingAsync(cancellationToken);
+    return subscription;
+  }
+
+  /// <summary>
+  /// Per-message handler for session mode. Abandons when subscription is inactive, deserializes
+  /// and dispatches single-item batches, and completes on success. Errors are routed through the
+  /// session-specific error handler (which manages session-lock semantics).
+  /// </summary>
+  private async Task _handleSessionBatchMessageAsync(
+    ProcessSessionMessageEventArgs args,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportDestination destination,
+    AzureServiceBusSubscription subscription
+  ) {
+    if (!subscription.IsActive) {
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      return;
+    }
+
+    try {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+      if (envelope is null) {
+        return;
+      }
+
+      await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
+      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    } catch (Exception ex) {
+      await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
+    }
+  }
+
+  /// <summary>
+  /// Non-session batch subscription. Per-message callbacks enqueue to the TransportBatchCollector,
+  /// which flushes to the batch handler on size/slide/maxWait trigger. Completion is per-message
+  /// (ASB has no multi-ACK) and runs after the handler returns.
+  /// </summary>
+  private async Task<AzureServiceBusSubscription> _startNonSessionBatchSubscriptionAsync(
+    string topicName,
+    string subscriptionName,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportBatchOptions batchOptions,
+    TransportDestination destination,
+    CancellationToken cancellationToken
+  ) {
+    var collector = _buildPendingMessageCollector(batchHandler, batchOptions, destination);
+
+    var processorOptions = new ServiceBusProcessorOptions {
+      MaxConcurrentCalls = _options.MaxConcurrentCalls,
+      AutoCompleteMessages = false,
+      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+    };
+
+    var processor = _client.CreateProcessor(topicName, subscriptionName, processorOptions);
+    var subscription = new AzureServiceBusSubscription(processor, _logger);
+
+    // Non-blocking: enqueue to collector, return immediately
+    processor.ProcessMessageAsync += args => {
+      if (!subscription.IsActive) {
+        return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      }
+      collector.Enqueue(new PendingServiceBusMessage(args));
+      return Task.CompletedTask;
+    };
+
+    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination);
+
+    await processor.StartProcessingAsync(cancellationToken);
+    return subscription;
+  }
+
+  /// <summary>
+  /// Builds a TransportBatchCollector whose flush callback deserializes each pending ServiceBus
+  /// message, invokes the batch handler, and then completes the successful ones. Messages that
+  /// fail deserialization are already dead-lettered by _deserializeReceivedMessageAsync.
+  /// </summary>
+  private TransportBatchCollector<PendingServiceBusMessage> _buildPendingMessageCollector(
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportBatchOptions batchOptions,
+    TransportDestination destination
+  ) {
+    return new TransportBatchCollector<PendingServiceBusMessage>(
+      batchOptions,
+      async batch => {
+        var transportMessages = new List<TransportMessage>(batch.Count);
+        var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
+
+        foreach (var pending in batch) {
+          var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
+          if (envelope is not null) {
+            transportMessages.Add(new TransportMessage(envelope, envelopeTypeName));
+            successfulArgs.Add(pending.Args);
+          }
+        }
+
+        if (transportMessages.Count == 0) {
+          return;
+        }
+
+        await batchHandler(transportMessages, CancellationToken.None);
+
+        // Per-message CompleteMessageAsync (ASB has no multi-ACK)
+        foreach (var args in successfulArgs) {
+          try {
+            await args.CompleteMessageAsync(args.Message, cancellationToken: CancellationToken.None);
+          } catch (ServiceBusException ex) {
+            _logger.LogWarning(ex,
+              "Failed to complete message {MessageId} — will be redelivered after lock expiry",
+              args.Message.MessageId);
+          }
+        }
+      }
+    );
   }
 
   // Keep SubscribeAsync as internal for backward compat during migration
