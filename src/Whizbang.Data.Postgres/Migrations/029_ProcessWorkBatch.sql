@@ -126,6 +126,20 @@ DECLARE
   -- Two-tier budget split
   v_tier1_budget_percent INTEGER;
   v_tier1_max INTEGER;
+
+  -- JSON field-name constants. These mirror the C# contract names used when serializing
+  -- work-batch DTOs; centralizing them keeps ->> lookups consistent across the function
+  -- and satisfies sonar plsql:S1192 (duplicate-literal) without altering behaviour.
+  c_field_stream_id CONSTANT TEXT := 'StreamId';
+  c_field_perspective_name CONSTANT TEXT := 'PerspectiveName';
+  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_hops CONSTANT TEXT := 'Hops';
+  c_field_event_ids CONSTANT TEXT := 'EventIds';
+  c_field_event_type_filter CONSTANT TEXT := 'EventTypeFilter';
+  c_source_outbox CONSTANT TEXT := 'outbox';
+  c_source_inbox CONSTANT TEXT := 'inbox';
+  c_source_perspective CONSTANT TEXT := 'perspective';
+  c_interval_one_hour CONSTANT TEXT := '1 hour';
 BEGIN
   -- Set batch limits from p_max_streams parameter (unified budget for total and per-stream)
   v_max_work_items := p_max_streams;
@@ -269,8 +283,8 @@ BEGIN
   v_completed_events := (
     SELECT jsonb_agg(
       jsonb_build_object(
-        'StreamId', tcp.stream_id,
-        'PerspectiveName', tcp.perspective_name
+        c_field_stream_id, tcp.stream_id,
+        c_field_perspective_name, tcp.perspective_name
       )
     )
     FROM temp_completed_perspectives tcp
@@ -294,17 +308,17 @@ BEGIN
   -- Debug mode cleanup: Purge completed messages older than 1 hour to prevent table bloat
   -- This gives developers time to inspect recent completions while keeping tables bounded
   IF (p_flags & 4) != 0 THEN
-    DELETE FROM wh_outbox WHERE processed_at IS NOT NULL AND processed_at < p_now - INTERVAL '1 hour';
-    DELETE FROM wh_inbox WHERE processed_at IS NOT NULL AND processed_at < p_now - INTERVAL '1 hour';
-    DELETE FROM wh_perspective_events WHERE processed_at IS NOT NULL AND processed_at < p_now - INTERVAL '1 hour';
+    DELETE FROM wh_outbox WHERE processed_at IS NOT NULL AND processed_at < p_now - (c_interval_one_hour)::INTERVAL;
+    DELETE FROM wh_inbox WHERE processed_at IS NOT NULL AND processed_at < p_now - (c_interval_one_hour)::INTERVAL;
+    DELETE FROM wh_perspective_events WHERE processed_at IS NOT NULL AND processed_at < p_now - (c_interval_one_hour)::INTERVAL;
   END IF;
 
   -- Process perspective checkpoint completions (direct completion reports from perspective runners)
   IF jsonb_array_length(p_perspective_completions) > 0 THEN
     FOR v_completion IN
       SELECT
-        (elem->>'StreamId')::UUID as stream_id,
-        elem->>'PerspectiveName' as perspective_name,
+        (elem->>c_field_stream_id)::UUID as stream_id,
+        elem->>c_field_perspective_name as perspective_name,
         (elem->>'LastEventId')::UUID as last_event_id,
         elem->'ProcessedEventIds' as processed_event_ids_json,
         (elem->>'Status')::SMALLINT as status
@@ -346,8 +360,8 @@ BEGIN
   IF jsonb_array_length(p_perspective_failures) > 0 THEN
     FOR v_completion IN
       SELECT
-        (elem->>'StreamId')::UUID as stream_id,
-        elem->>'PerspectiveName' as perspective_name,
+        (elem->>c_field_stream_id)::UUID as stream_id,
+        elem->>c_field_perspective_name as perspective_name,
         (elem->>'LastEventId')::UUID as last_event_id,
         elem->'ProcessedEventIds' as processed_event_ids_json,
         (elem->>'Status')::SMALLINT as status,
@@ -407,7 +421,7 @@ BEGIN
     FROM (
       SELECT
         (inquiry->>'InquiryId')::UUID as inquiry_id,
-        (inquiry->>'StreamId')::UUID as stream_id,
+        (inquiry->>c_field_stream_id)::UUID as stream_id,
         -- Count events that exist in event store but not processed by perspective
         COUNT(es.event_id) FILTER (WHERE pe.processed_at IS NULL)::INTEGER as pending_count,
         COUNT(es.event_id) FILTER (WHERE pe.processed_at IS NOT NULL)::INTEGER as processed_count,
@@ -427,27 +441,27 @@ BEGIN
       -- Start from event store to discover ALL events (processed or not)
       -- This is the key change: we query wh_event_store first, then LEFT JOIN to perspective_events
       LEFT JOIN wh_event_store es
-        ON es.stream_id = (inquiry->>'StreamId')::UUID
+        ON es.stream_id = (inquiry->>c_field_stream_id)::UUID
         AND (
           -- If EventIds is provided, filter to only those events
-          (inquiry->'EventIds') IS NULL
-          OR jsonb_array_length(inquiry->'EventIds') = 0
+          (inquiry->c_field_event_ids) IS NULL
+          OR jsonb_array_length(inquiry->c_field_event_ids) = 0
           OR es.event_id = ANY(
-            ARRAY(SELECT (jsonb_array_elements_text(inquiry->'EventIds'))::UUID)
+            ARRAY(SELECT (jsonb_array_elements_text(inquiry->c_field_event_ids))::UUID)
           )
         )
         AND (
           -- If EventTypeFilter is provided, filter by event type
-          (inquiry->'EventTypeFilter') IS NULL
-          OR jsonb_array_length(inquiry->'EventTypeFilter') = 0
+          (inquiry->c_field_event_type_filter) IS NULL
+          OR jsonb_array_length(inquiry->c_field_event_type_filter) = 0
           OR es.event_type = ANY(
-            ARRAY(SELECT jsonb_array_elements_text(inquiry->'EventTypeFilter'))
+            ARRAY(SELECT jsonb_array_elements_text(inquiry->c_field_event_type_filter))
           )
         )
       -- LEFT JOIN to perspective_events to check which events have been processed
       LEFT JOIN wh_perspective_events pe
         ON pe.event_id = es.event_id
-        AND pe.perspective_name = inquiry->>'PerspectiveName'
+        AND pe.perspective_name = inquiry->>c_field_perspective_name
       WHERE
         -- When DiscoverPendingFromOutbox is true, we require events to exist in event store
         -- When false (explicit EventIds mode), we allow the old behavior
@@ -457,7 +471,7 @@ BEGIN
           ELSE
             true  -- Allow empty results for backwards compatibility
         END
-      GROUP BY inquiry->>'InquiryId', inquiry->>'StreamId', inquiry->>'IncludePendingEventIds', inquiry->>'IncludeProcessedEventIds'
+      GROUP BY inquiry->>'InquiryId', inquiry->>c_field_stream_id, inquiry->>'IncludePendingEventIds', inquiry->>'IncludeProcessedEventIds'
     ) subq;
   END IF;
 
@@ -712,8 +726,8 @@ BEGIN
       -- Build EnvelopeMetadata structure (PascalCase keys for System.Text.Json compatibility)
       -- Handle short names (id, h), PascalCase, and camelCase input from serialization
       jsonb_build_object(
-        'MessageId', COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> 'MessageId', bv.event_data::jsonb -> 'messageId'),
-        'Hops', COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> 'Hops', bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+        c_field_message_id, COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> c_field_message_id, bv.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> c_field_hops, bv.event_data::jsonb -> 'hops', '[]'::jsonb)
       ) as metadata,
       bv.scope,
       bv.base_version + bv.row_num as version,
@@ -837,8 +851,8 @@ BEGIN
       -- Build EnvelopeMetadata structure (PascalCase keys for System.Text.Json compatibility)
       -- Handle short names (id, h), PascalCase, and camelCase input from serialization
       jsonb_build_object(
-        'MessageId', COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> 'MessageId', bv.event_data::jsonb -> 'messageId'),
-        'Hops', COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> 'Hops', bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+        c_field_message_id, COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> c_field_message_id, bv.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> c_field_hops, bv.event_data::jsonb -> 'hops', '[]'::jsonb)
       ) as metadata,
       bv.scope,
       bv.base_version + bv.row_num as version,
@@ -923,7 +937,7 @@ BEGIN
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
     ON es.event_type = ma.normalized_message_type  -- Pre-computed; es.event_type already normalized at Phase 4.5 storage
-    AND ma.association_type = 'perspective'
+    AND ma.association_type = c_source_perspective
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
       SELECT 1 FROM wh_perspective_events pe_check
@@ -988,7 +1002,7 @@ BEGIN
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
     ON es.event_type = ma.normalized_message_type  -- Pre-computed; es.event_type already normalized at Phase 4.5 storage
-    AND ma.association_type = 'perspective'
+    AND ma.association_type = c_source_perspective
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_perspective_cursors pc_check
@@ -1105,7 +1119,7 @@ BEGIN
   SELECT
     v_rank as instance_rank,
     v_count as active_instance_count,
-    'outbox'::VARCHAR(20) as source,
+    c_source_outbox::VARCHAR(20) as source,
     o.message_id as work_id,
     o.stream_id as work_stream_id,
     o.partition_number,
@@ -1160,7 +1174,7 @@ BEGIN
   SELECT
     v_rank as instance_rank,
     v_count as active_instance_count,
-    'inbox'::VARCHAR(20) as source,
+    c_source_inbox::VARCHAR(20) as source,
     i.message_id as work_id,
     i.stream_id as work_stream_id,
     i.partition_number,
