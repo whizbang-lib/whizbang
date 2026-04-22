@@ -233,11 +233,11 @@ public class IntervalWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush (should not wait for 5 second timer)
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Manual flush should work immediately (not wait for timer)
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-      .Because("Manual FlushAsync should flush immediately without waiting for timer");
+      .Because("Manual FlushAndGetBatchAsync should flush immediately without waiting for timer");
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
 
@@ -281,7 +281,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     });
 
     // Manual flush
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -319,7 +319,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -353,7 +353,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Published);
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -387,7 +387,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -422,7 +422,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -629,7 +629,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
 
     // Act
-    await sut.FlushAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode flag should be set
     await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
@@ -771,7 +771,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     });
 
     // Act - start a flush, then immediately try a second flush
-    var firstFlush = sut.FlushAsync(WorkBatchOptions.None);
+    var firstFlush = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
     await Task.Delay(50); // Let first flush acquire the lock
 
     var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
@@ -833,7 +833,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       });
 
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — ExecuteFlushAsync signals publisher but does not write to channel
       await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)

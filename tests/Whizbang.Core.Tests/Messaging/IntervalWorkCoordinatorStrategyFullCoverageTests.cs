@@ -259,7 +259,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(scopedCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -315,7 +315,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -342,7 +342,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -368,7 +368,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -393,7 +393,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -418,7 +418,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -443,7 +443,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);

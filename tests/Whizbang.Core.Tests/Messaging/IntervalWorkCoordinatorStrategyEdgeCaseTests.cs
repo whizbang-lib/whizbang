@@ -141,7 +141,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     try {
       // Act
       var sw = System.Diagnostics.Stopwatch.StartNew();
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       sw.Stop();
 
       // Assert - should have waited at least 50ms for coalesce window
@@ -565,7 +565,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - metrics FlushCalls counter was incremented (no exception means success)
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -726,7 +726,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
@@ -926,7 +926,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(scopedCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)

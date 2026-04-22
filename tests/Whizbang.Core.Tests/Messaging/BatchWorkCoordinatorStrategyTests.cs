@@ -513,7 +513,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
@@ -543,7 +543,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
@@ -569,7 +569,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
@@ -595,7 +595,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Test error");
@@ -621,7 +621,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Inbox error");
@@ -711,7 +711,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err2");
 
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1122,7 +1122,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      var firstFlush = sut.FlushAsync(WorkBatchOptions.None);
+      var firstFlush = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       await slowCoordinator.WaitForProcessingStartedAsync(TimeSpan.FromSeconds(5));
 
       sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1242,7 +1242,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       var result = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
       // Assert
@@ -1398,7 +1398,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueInboxFailure(inboxFailId, MessageProcessingStatus.Failed, "inbox err");
 
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - all operations included
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1442,7 +1442,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err");
 
       // First flush
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
 
       // Second flush - queues should be empty
@@ -1474,7 +1474,7 @@ public class BatchWorkCoordinatorStrategyTests {
     try {
       // Act - flush with items (covers FlushCalls metric)
       sut.QueueOutboxMessage(_createOutboxMessage());
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1498,7 +1498,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - flush with nothing queued (covers EmptyFlushCalls metric)
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
@@ -1620,7 +1620,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — ExecuteFlushAsync signals publisher but does not write to channel
       await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
