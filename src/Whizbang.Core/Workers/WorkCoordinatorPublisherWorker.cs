@@ -606,15 +606,13 @@ public partial class WorkCoordinatorPublisherWorker(
       var (work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans) = batchContexts[i];
       var result = results.FirstOrDefault(r => r.MessageId == work.MessageId);
 
-      if (result is null) {
-        result = new MessagePublishResult {
-          MessageId = work.MessageId,
-          Success = false,
-          CompletedStatus = work.Status,
-          Error = "No result returned from batch publish",
-          Reason = MessageFailureReason.Unknown
-        };
-      }
+      result ??= new MessagePublishResult {
+        MessageId = work.MessageId,
+        Success = false,
+        CompletedStatus = work.Status,
+        Error = "No result returned from batch publish",
+        Reason = MessageFailureReason.Unknown
+      };
 
       LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
@@ -1598,21 +1596,21 @@ public partial class WorkCoordinatorPublisherWorker(
   static partial void LogProcessingInboxWork(ILogger logger, int count);
 
   [LoggerMessage(
-    EventId = 25,
+    EventId = 30,
     Level = LogLevel.Warning,
     Message = "Purging inbox message {MessageId}: attempts ({Attempts}) exceeded max ({MaxAttempts})"
   )]
   static partial void LogInboxMessagePurged(ILogger logger, Guid messageId, int attempts, int maxAttempts);
 
   [LoggerMessage(
-    EventId = 26,
+    EventId = 35,
     Level = LogLevel.Error,
     Message = "Error in {Stage} lifecycle for inbox message {MessageId}"
   )]
   static partial void LogInboxLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
   [LoggerMessage(
-    EventId = 27,
+    EventId = 36,
     Level = LogLevel.Debug,
     Message = "[PublisherWorker] Skipped PreOutbox lifecycle for {MessageId}: missing dependencies (deserializer={NoDeserializer}, invoker={NoInvoker})"
   )]

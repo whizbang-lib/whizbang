@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 public static class PerspectiveRunnerCallbackRegistry {
   private static readonly List<Action<IServiceCollection>> _callbacks = [];
   private static readonly ConditionalWeakTable<IServiceCollection, HashSet<int>> _invoked = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Registers a callback that will register perspective runners with the DI container.

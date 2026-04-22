@@ -371,9 +371,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     // Extract exactly the Properties declared on the attribute. When Properties is null
     // (not specified), fall back to all public properties on the type; when it's an
     // explicit empty array the caller opted out of field extraction entirely.
-    var propsToExtract = tag.Properties is not null
-        ? tag.Properties
-        : tag.TypeProperties;
+    var propsToExtract = tag.Properties ?? tag.TypeProperties;
 
     // S3267: Loop has side effects (appending to StringBuilder) — LINQ not appropriate
 #pragma warning disable S3267

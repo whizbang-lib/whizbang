@@ -94,7 +94,7 @@ public static partial class WhizbangBanner {
 
       // Walk columns, coalescing adjacent same-color characters into segments
       while (col < BANNER_WIDTH) {
-        var idx = (row * BANNER_WIDTH + col) * 3;
+        var idx = ((row * BANNER_WIDTH) + col) * 3;
         var r = colors[idx];
         var g = colors[idx + 1];
         var b = colors[idx + 2];
@@ -102,7 +102,7 @@ public static partial class WhizbangBanner {
         // Find run of same color
         var runStart = col;
         while (col < BANNER_WIDTH) {
-          var nextIdx = (row * BANNER_WIDTH + col) * 3;
+          var nextIdx = ((row * BANNER_WIDTH) + col) * 3;
           if (colors[nextIdx] != r || colors[nextIdx + 1] != g || colors[nextIdx + 2] != b) {
             break;
           }

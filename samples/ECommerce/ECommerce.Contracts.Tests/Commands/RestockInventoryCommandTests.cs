@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for RestockInventoryCommand
 /// </summary>
 public class RestockInventoryCommandTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task RestockInventoryCommand_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act

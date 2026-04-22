@@ -397,7 +397,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results.Count).IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).OrderBy(n => n).ToList();
+    var names = results.Select(r => r.Data.Name).Order().ToList();
     await Assert.That(names).IsEquivalentTo(["Widget Alpha", "Widget Beta"]);
   }
 
@@ -409,12 +409,12 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
     // Act - query by physical boolean column
     var results = await _context!.Set<PerspectiveRow<ProductSearchModel>>()
-        .Where(r => EF.Property<bool>(r, "is_active") == true)
+        .Where(r => EF.Property<bool>(r, "is_active"))
         .ToListAsync(cancellationToken);
 
     // Assert - Alpha and Beta are active, Gamma is not
     await Assert.That(results.Count).IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).OrderBy(n => n).ToList();
+    var names = results.Select(r => r.Data.Name).Order().ToList();
     await Assert.That(names).IsEquivalentTo(["Widget Alpha", "Widget Beta"]);
   }
 

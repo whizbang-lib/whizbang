@@ -1259,7 +1259,7 @@ public class PostgresFunctionTests : PostgresTestBase {
         p_new_outbox_messages := @messages::jsonb
       )", new { instanceId, now, messages });
 
-    await Assert.That(result1.Where(r => r.source == "outbox").Count()).IsEqualTo(1);
+    await Assert.That(result1.Count(r => r.source == "outbox")).IsEqualTo(1);
 
     // Act — call again with NO lease renewal, NO new messages
     var now2 = now.AddSeconds(1);
@@ -1306,7 +1306,7 @@ public class PostgresFunctionTests : PostgresTestBase {
         p_new_inbox_messages := @messages::jsonb
       )", new { instanceId, now, messages });
 
-    await Assert.That(result1.Where(r => r.source == "inbox").Count()).IsEqualTo(1);
+    await Assert.That(result1.Count(r => r.source == "inbox")).IsEqualTo(1);
 
     var now2 = now.AddSeconds(1);
     var result2 = await connection.QueryAsync<WorkBatchRow>(@"

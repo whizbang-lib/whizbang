@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for InventoryAdjustedEvent
 /// </summary>
 public class InventoryAdjustedEventTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task InventoryAdjustedEvent_WithPositiveChange_InitializesSuccessfullyAsync() {
     // Arrange & Act

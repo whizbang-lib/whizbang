@@ -120,7 +120,9 @@ internal static class NpgsqlTestExtensions {
   /// Executes a query and returns the first row as a dynamic ExpandoObject, or null if no rows.
   /// Replaces Dapper's <c>conn.QueryFirstOrDefaultAsync&lt;dynamic&gt;(sql)</c> for existence checks.
   /// </summary>
+#pragma warning disable RCS1164 // Keeps Dapper-compatible generic signature so callers can retain <dynamic> without rewriting call sites.
   public static async Task<dynamic?> QueryFirstOrDefaultAsync<T>(this NpgsqlConnection conn, string sql) {
+#pragma warning restore RCS1164
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
     await using var reader = await cmd.ExecuteReaderAsync();

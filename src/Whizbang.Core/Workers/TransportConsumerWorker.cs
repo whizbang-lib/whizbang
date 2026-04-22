@@ -838,7 +838,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         return null;
       }
 
-      return JsonSerializer.Deserialize(jsonElement, jsonTypeInfo);
+      return jsonElement.Deserialize(jsonTypeInfo);
     } catch (Exception ex) {
       _logger.LogError(ex, "Failed to deserialize event for message {MessageId}", work.MessageId);
       return null;

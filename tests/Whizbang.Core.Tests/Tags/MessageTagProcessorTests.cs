@@ -1719,14 +1719,9 @@ public class MessageTagProcessorTests {
     public void Dispose() { }
   }
 
-  private sealed class LoggingScopeFactory : IServiceScopeFactory {
-    private readonly Microsoft.Extensions.Logging.ILogger _logger;
-    private readonly TrackingHook _hook;
-
-    public LoggingScopeFactory(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) {
-      _logger = logger;
-      _hook = hook;
-    }
+  private sealed class LoggingScopeFactory(Microsoft.Extensions.Logging.ILogger logger, TrackingHook hook) : IServiceScopeFactory {
+    private readonly Microsoft.Extensions.Logging.ILogger _logger = logger;
+    private readonly TrackingHook _hook = hook;
 
     public IServiceScope CreateScope() => new LoggingScope(_logger, _hook);
   }

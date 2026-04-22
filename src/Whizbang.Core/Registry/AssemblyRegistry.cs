@@ -45,7 +45,7 @@ public static class AssemblyRegistry<T> where T : class {
   /// Cached ordered list (invalidated on new registration).
   /// </summary>
   private static List<T>? _orderedContributions;
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Register a contribution. Called from [ModuleInitializer] - runs before Main().

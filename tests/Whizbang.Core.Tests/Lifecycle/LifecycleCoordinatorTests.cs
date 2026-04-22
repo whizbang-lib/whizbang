@@ -1338,12 +1338,8 @@ public class LifecycleCoordinatorTests {
   /// <summary>
   /// Registry that captures the lifecycle context passed to InvokeAsync.
   /// </summary>
-  private sealed class ContextCapturingRegistry : IReceptorRegistry {
-    private readonly Action<ILifecycleContext?> _onInvoke;
-
-    public ContextCapturingRegistry(Action<ILifecycleContext?> onInvoke) {
-      _onInvoke = onInvoke;
-    }
+  private sealed class ContextCapturingRegistry(Action<ILifecycleContext?> onInvoke) : IReceptorRegistry {
+    private readonly Action<ILifecycleContext?> _onInvoke = onInvoke;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       // Return a receptor at every stage so it always fires

@@ -46,20 +46,17 @@ internal sealed class InboxMessageDataConverter : JsonConverter<InboxMessageData
     var root = doc.RootElement;
 
     // Extract MessageId - accept both short and long names
-    JsonElement messageIdElem;
-    if (!root.TryGetProperty("id", out messageIdElem) && !root.TryGetProperty("MessageId", out messageIdElem)) {
+    if (!root.TryGetProperty("id", out var messageIdElem) && !root.TryGetProperty("MessageId", out messageIdElem)) {
       throw new JsonException("Missing required property: MessageId (or id)");
     }
 
     // Extract Payload - accept both short and long names
-    JsonElement payloadElem;
-    if (!root.TryGetProperty("p", out payloadElem) && !root.TryGetProperty("Payload", out payloadElem)) {
+    if (!root.TryGetProperty("p", out var payloadElem) && !root.TryGetProperty("Payload", out payloadElem)) {
       throw new JsonException("Missing required property: Payload (or p)");
     }
 
     // Extract Hops - accept both short and long names
-    JsonElement hopsElem;
-    if (!root.TryGetProperty("h", out hopsElem) && !root.TryGetProperty("Hops", out hopsElem)) {
+    if (!root.TryGetProperty("h", out var hopsElem) && !root.TryGetProperty("Hops", out hopsElem)) {
       throw new JsonException("Missing required property: Hops (or h)");
     }
 

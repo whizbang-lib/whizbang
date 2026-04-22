@@ -76,7 +76,7 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext> : IPerspectiveRepl
         streamId,
         afterEventId: null,
         upToEventId: Guid.Empty,
-        eventTypes.ToArray(),
+        [.. eventTypes],
         cancellationToken);
 
     foreach (var envelope in envelopes) {

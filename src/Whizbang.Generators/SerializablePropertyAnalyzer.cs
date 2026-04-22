@@ -222,7 +222,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
         // For dictionaries or multi-type-argument generics, we'd need to check all type args
         // For simplicity, return the first type argument (usually the element type)
         // Dictionary<K,V> -> check V (the value type)
-        var lastTypeArg = namedType.TypeArguments[namedType.TypeArguments.Length - 1];
+        var lastTypeArg = namedType.TypeArguments[^1];
         return lastTypeArg;
       }
     }

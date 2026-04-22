@@ -14,6 +14,7 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// </remarks>
 /// <param name="batchIndex">Zero-based batch index (always 0 for single emulator)</param>
 public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
+  private static readonly string[] _warmupTopics = ["topic-00", "topic-01"];
   private DirectServiceBusEmulatorFixture? _emulator;
   private readonly int _batchIndex = batchIndex;
   private readonly int _basePort = 5682;
@@ -130,7 +131,7 @@ public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
     try {
       // Send warmup messages to generic topics used by GenericTopicRoutingStrategy
       // These match the topics that InventoryWorker publishes to and BFF subscribes from
-      var warmupTasks = new[] { "topic-00", "topic-01" }.Select(async topicName => {
+      var warmupTasks = _warmupTopics.Select(async topicName => {
         await _sendWarmupMessageAsync(clientToUse, topicName, cancellationToken);
       });
 

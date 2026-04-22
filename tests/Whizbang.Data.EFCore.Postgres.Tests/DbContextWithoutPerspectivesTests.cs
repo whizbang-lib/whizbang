@@ -79,7 +79,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify core Whizbang tables exist
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -103,7 +103,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify process_work_batch function exists
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -123,8 +123,8 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema twice
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - No exception should be thrown
     // Verify tables still exist
@@ -145,7 +145,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify wh_outbox has instance_id and lease_expiry columns (from migration 001)
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -169,7 +169,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
-    await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - Verify wh_inbox has instance_id, lease_expiry, and status columns (from migration 002)
     await using var connection = new NpgsqlConnection(_connectionString);

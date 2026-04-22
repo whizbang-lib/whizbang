@@ -266,7 +266,7 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
     await Assert.That(results).Count().IsEqualTo(3);
 
     // Verify data is correctly loaded
-    var prices = results.Select(r => r.Data.Price).OrderBy(p => p).ToList();
+    var prices = results.Select(r => r.Data.Price).Order().ToList();
     await Assert.That(prices).Contains(50.00m);
     await Assert.That(prices).Contains(75.00m);
     await Assert.That(prices).Contains(100.00m);

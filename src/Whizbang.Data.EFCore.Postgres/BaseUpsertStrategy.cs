@@ -224,9 +224,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
     // Clear and re-add collection items - DO NOT replace the List instances
     target.AllowedPrincipals.Clear();
-    foreach (var principal in source.AllowedPrincipals) {
-      target.AllowedPrincipals.Add(principal);
-    }
+    target.AllowedPrincipals.AddRange(source.AllowedPrincipals);
 
     target.Extensions.Clear();
     foreach (var extension in source.Extensions) {

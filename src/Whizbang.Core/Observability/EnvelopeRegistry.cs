@@ -39,7 +39,7 @@ public sealed class EnvelopeRegistry : IEnvelopeRegistry, IDisposable {
   private const int MAX_POOL_SIZE = 256;
 
   private readonly Dictionary<object, IMessageEnvelope> _entries;
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
 
   /// <summary>
   /// Creates a new EnvelopeRegistry, renting a dictionary from the pool if available.

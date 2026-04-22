@@ -50,7 +50,7 @@ public sealed partial class StreamRateLimiter {
       _ => new StreamState(1, now, null),
       (_, existing) => _updateState(existing, now));
 
-    if (state.CooldownUntil.HasValue && state.CooldownUntil.Value > now) {
+    if (state.CooldownUntil is { } cooldown && cooldown > now) {
       return false; // In cooldown — throttled
     }
 
@@ -73,7 +73,7 @@ public sealed partial class StreamRateLimiter {
 
   private StreamState _updateState(StreamState existing, DateTimeOffset now) {
     // If in cooldown and cooldown has expired → reset everything
-    if (existing.CooldownUntil.HasValue && existing.CooldownUntil.Value <= now) {
+    if (existing.CooldownUntil is { } existingCooldown && existingCooldown <= now) {
       return new StreamState(1, now, null);
     }
 

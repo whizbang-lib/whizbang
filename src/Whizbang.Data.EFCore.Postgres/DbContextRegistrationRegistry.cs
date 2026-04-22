@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 public static class DbContextRegistrationRegistry {
   private static readonly List<DbContextRegistration> _registrations = [];
   private static readonly ConditionalWeakTable<IServiceCollection, HashSet<Type>> _invoked = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Represents a DbContext registration with its configuration callback.

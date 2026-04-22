@@ -358,14 +358,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var segments = namespaceName.Split('.');
 
     // Take the last segment (e.g., "InventoryWorker", "API")
-    var lastSegment = segments[segments.Length - 1];
+    var lastSegment = segments[^1];
 
     // If last segment is generic (API, Service, etc.), take second-to-last
     if ((lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
          lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
          lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) &&
         segments.Length > 1) {
-      lastSegment = segments[segments.Length - 2];
+      lastSegment = segments[^2];
     }
 
     // Remove common suffixes (case-insensitive)
@@ -713,7 +713,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        // Register physical field hydrator for {model.ModelTypeName}");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<{model.ModelTypeName}>((materializationData, entity) => {{");
     sb.AppendLine($"          var row = (global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>)entity;");
-    sb.AppendLine($"          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
+    sb.AppendLine("          if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance");
 
     foreach (var field in model.PhysicalFields) {
       if (field.IsVector) {
@@ -721,7 +721,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<global::Pgvector.Vector?>(\"{field.ColumnName}\");");
         sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
         sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine($"          }}");
+        sb.AppendLine("          }");
       } else {
         // Non-vector fields: direct type cast
         var clrType = field.TypeName;
@@ -730,7 +730,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           sb.AppendLine($"          var _{field.ColumnName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
           sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
           sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine($"          }}");
+          sb.AppendLine("          }");
         } else {
           sb.AppendLine($"          row.Data.{field.PropertyName} = materializationData.GetPropertyValue<{clrType}>(\"{field.ColumnName}\");");
         }
@@ -749,7 +749,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"        // Register ChangeTracker-based hydrator for {model.ModelTypeName} (zero reflection, AOT-safe)");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof({rowType}), entry => {{");
     sb.AppendLine($"          var row = ({rowType})entry.Entity;");
-    sb.AppendLine($"          if (row.Data is null) {{ return; }}");
+    sb.AppendLine("          if (row.Data is null) { return; }");
 
     foreach (var field in model.PhysicalFields) {
       if (field.IsVector) {
@@ -757,7 +757,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"          var _{field.ColumnName} = (global::Pgvector.Vector?)entry.Property(\"{field.ColumnName}\").CurrentValue;");
         sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
         sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName}.ToArray();");
-        sb.AppendLine($"          }}");
+        sb.AppendLine("          }");
       } else {
         var clrType = field.TypeName;
         var isNullable = clrType.EndsWith("?", StringComparison.Ordinal);
@@ -765,14 +765,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           sb.AppendLine($"          var _{field.ColumnName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue;");
           sb.AppendLine($"          if (_{field.ColumnName} is not null) {{");
           sb.AppendLine($"            row.Data.{field.PropertyName} = _{field.ColumnName};");
-          sb.AppendLine($"          }}");
+          sb.AppendLine("          }");
         } else {
           sb.AppendLine($"          row.Data.{field.PropertyName} = ({clrType})entry.Property(\"{field.ColumnName}\").CurrentValue!;");
         }
       }
     }
 
-    sb.AppendLine($"          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
+    sb.AppendLine("          entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;");
     sb.AppendLine(CLOSE_BRACE_INDENT_8);
     sb.AppendLine();
   }
@@ -1100,10 +1100,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
 
-    foreach (var group in dbContextGroups) {
-      var dbContextHasVectorFields = group.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
-      var dbContextHasPhysicalFields = group.Models.Any(m => m.PhysicalFields.Length > 0);
-      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
+    foreach (var (dbContext, models) in dbContextGroups) {
+      var dbContextHasVectorFields = models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
+      var dbContextHasPhysicalFields = models.Any(m => m.PhysicalFields.Length > 0);
+      _generateDbContextRegistrationCallback(sb, dbContext, dbContextHasVectorFields, dbContextHasPhysicalFields);
     }
 
     sb.AppendLine("  }");

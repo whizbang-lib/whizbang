@@ -1,5 +1,4 @@
-#pragma warning disable CA1707
-#pragma warning disable CS0067
+#pragma warning disable CA1707, CS0067
 
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;

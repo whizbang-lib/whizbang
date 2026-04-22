@@ -1175,14 +1175,9 @@ public class RewindScenarioTests {
   /// via the coordinator — mirrors real-world behavior where the store does not contain
   /// events that have not yet been appended.
   /// </summary>
-  private sealed class _arrivalAwareEventStore : IEventStore {
-    private readonly List<MessageEnvelope<IEvent>> _allEvents;
-    private readonly _arrivalScriptCoordinator _coordinator;
-
-    public _arrivalAwareEventStore(List<MessageEnvelope<IEvent>> allEvents, _arrivalScriptCoordinator coordinator) {
-      _allEvents = allEvents;
-      _coordinator = coordinator;
-    }
+  private sealed class _arrivalAwareEventStore(List<MessageEnvelope<IEvent>> allEvents, _arrivalScriptCoordinator coordinator) : IEventStore {
+    private readonly List<MessageEnvelope<IEvent>> _allEvents = allEvents;
+    private readonly _arrivalScriptCoordinator _coordinator = coordinator;
 
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId, Guid? afterEventId, Guid upToEventId,
@@ -1227,27 +1222,18 @@ public class RewindScenarioTests {
   /// index, and a single pending work item. On completion the cursor clears and advances.
   /// The worker sees three separate rewinds rather than a single collapsed one.
   /// </summary>
-  private sealed class _sequentialRewindCoordinator : IWorkCoordinator {
-    private readonly Guid _streamId;
-    private readonly string _perspectiveName;
-    private readonly Guid[] _eventIds;
-    private readonly int[] _lateIndices;
+  private sealed class _sequentialRewindCoordinator(
+    Guid streamId, string perspectiveName,
+    Guid[] eventIds, int[] lateIndices,
+    PerspectiveCursorInfo baseCursor) : IWorkCoordinator {
+    private readonly Guid _streamId = streamId;
+    private readonly string _perspectiveName = perspectiveName;
+    private readonly Guid[] _eventIds = eventIds;
+    private readonly int[] _lateIndices = lateIndices;
     private int _currentLateIdx;
-    private readonly PerspectiveCursorInfo _baseCursor;
-    private PerspectiveCursorInfo _cursor;
+    private readonly PerspectiveCursorInfo _baseCursor = baseCursor;
+    private PerspectiveCursorInfo _cursor = baseCursor;
     private readonly TaskCompletionSource _allRewinds = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public _sequentialRewindCoordinator(
-      Guid streamId, string perspectiveName,
-      Guid[] eventIds, int[] lateIndices,
-      PerspectiveCursorInfo baseCursor) {
-      _streamId = streamId;
-      _perspectiveName = perspectiveName;
-      _eventIds = eventIds;
-      _lateIndices = lateIndices;
-      _baseCursor = baseCursor;
-      _cursor = baseCursor;
-    }
 
     public int CurrentLateIndex => _currentLateIdx < _lateIndices.Length ? _lateIndices[_currentLateIdx] : -1;
 
@@ -1304,14 +1290,9 @@ public class RewindScenarioTests {
   /// as is_new. Simulates the LEFT JOIN behavior in a sequence of rewinds: each cycle sees
   /// exactly one is_new event (the late arrival that triggered that cycle).
   /// </summary>
-  private sealed class _cyclicReplayReader : IPerspectiveReplayReader {
-    private readonly List<MessageEnvelope<IEvent>> _events;
-    private readonly _sequentialRewindCoordinator _coordinator;
-
-    public _cyclicReplayReader(List<MessageEnvelope<IEvent>> events, _sequentialRewindCoordinator coordinator) {
-      _events = events;
-      _coordinator = coordinator;
-    }
+  private sealed class _cyclicReplayReader(List<MessageEnvelope<IEvent>> events, _sequentialRewindCoordinator coordinator) : IPerspectiveReplayReader {
+    private readonly List<MessageEnvelope<IEvent>> _events = events;
+    private readonly _sequentialRewindCoordinator _coordinator = coordinator;
 
     public async IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(
       Guid streamId, string perspectiveName, int fromVersionExclusive,
@@ -1330,14 +1311,9 @@ public class RewindScenarioTests {
   /// if its id appears in the preset is_new set. Simulates the LEFT JOIN against the
   /// perspective work queue that the real Postgres implementation will do.
   /// </summary>
-  private sealed class _scriptedReplayReader : IPerspectiveReplayReader {
-    private readonly List<MessageEnvelope<IEvent>> _events;
-    private readonly HashSet<Guid> _isNew;
-
-    public _scriptedReplayReader(List<MessageEnvelope<IEvent>> events, HashSet<Guid> isNew) {
-      _events = events;
-      _isNew = isNew;
-    }
+  private sealed class _scriptedReplayReader(List<MessageEnvelope<IEvent>> events, HashSet<Guid> isNew) : IPerspectiveReplayReader {
+    private readonly List<MessageEnvelope<IEvent>> _events = events;
+    private readonly HashSet<Guid> _isNew = isNew;
 
     public async IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(
       Guid streamId,

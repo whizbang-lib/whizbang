@@ -932,7 +932,7 @@ public class PerspectiveWorkerCoverageTests {
 
     // Wait a bit for PostLifecycle to fire (it runs after completion reporting)
     try {
-      await trackingInvoker.WaitForPostLifecycleDetached(TimeSpan.FromSeconds(5));
+      await trackingInvoker.WaitForPostLifecycleDetachedAsync(TimeSpan.FromSeconds(5));
     } catch (TimeoutException) {
       // Expected to timeout if PostLifecycle doesn't fire — that's the bug we're looking for
     }
@@ -1939,9 +1939,9 @@ public class PerspectiveWorkerCoverageTests {
       lock (_lock) { return _firedStages.Contains(stage); }
     }
 
-    public Task WaitForPostLifecycleDetached(TimeSpan timeout) {
+    public async Task WaitForPostLifecycleDetachedAsync(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);
-      return _postLifecycleFired.Task.WaitAsync(cts.Token);
+      await _postLifecycleFired.Task.WaitAsync(cts.Token);
     }
 
     public ValueTask InvokeAsync(
@@ -1978,7 +1978,7 @@ public class PerspectiveWorkerCoverageTests {
     private readonly Queue<bool> _responses = new(responses);
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      var ready = _responses.Count > 0 ? _responses.Dequeue() : true;
+      var ready = _responses.Count <= 0 || _responses.Dequeue();
       return Task.FromResult(ready);
     }
   }

@@ -35,12 +35,11 @@ public sealed class PerspectiveWorkerParallelTests {
 
     // Queue work items — one per perspective, same stream
     coordinator.PerspectiveWorkToReturn = perspectiveNames
-      .Select(name => new PerspectiveWork {
+      .ConvertAll(name => new PerspectiveWork {
         WorkId = Guid.CreateVersion7(),
         StreamId = streamId,
         PerspectiveName = name
-      })
-      .ToList();
+      });
 
     var worker = _createWorker(coordinator, registry, maxConcurrentPerspectives: perspectiveCount);
 
@@ -89,12 +88,11 @@ public sealed class PerspectiveWorkerParallelTests {
     var coordinator = new ParallelTestWorkCoordinator();
 
     coordinator.PerspectiveWorkToReturn = perspectiveNames
-      .Select(name => new PerspectiveWork {
+      .ConvertAll(name => new PerspectiveWork {
         WorkId = Guid.CreateVersion7(),
         StreamId = streamId,
         PerspectiveName = name
-      })
-      .ToList();
+      });
 
     var worker = _createWorker(coordinator, registry, maxConcurrentPerspectives: maxConcurrency);
 
@@ -204,19 +202,13 @@ public sealed class PerspectiveWorkerParallelTests {
   /// Perspective runner that gates on entry to measure actual concurrency.
   /// Uses Interlocked for thread-safe concurrency tracking — zero reflection, AOT-safe.
   /// </summary>
-  private sealed class GatedPerspectiveRunner : IPerspectiveRunner {
-    private readonly CountdownEvent _entrySignal;
-    private readonly SemaphoreSlim _gate;
-    private readonly CountdownEvent? _completionSignal;
+  private sealed class GatedPerspectiveRunner(CountdownEvent entrySignal, SemaphoreSlim gate, CountdownEvent? completionSignal = null) : IPerspectiveRunner {
+    private readonly CountdownEvent _entrySignal = entrySignal;
+    private readonly SemaphoreSlim _gate = gate;
+    private readonly CountdownEvent? _completionSignal = completionSignal;
     private int _activeConcurrency;
     private int _peakConcurrency;
     private int _totalRunCount;
-
-    public GatedPerspectiveRunner(CountdownEvent entrySignal, SemaphoreSlim gate, CountdownEvent? completionSignal = null) {
-      _entrySignal = entrySignal;
-      _gate = gate;
-      _completionSignal = completionSignal;
-    }
 
     public int PeakConcurrency => Volatile.Read(ref _peakConcurrency);
     public int TotalRunCount => Volatile.Read(ref _totalRunCount);
@@ -307,9 +299,8 @@ public sealed class PerspectiveWorkerParallelTests {
       runner;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
-      perspectiveNames.Select(n =>
-        new PerspectiveRegistrationInfo(n, $"global::{n}", "global::Test.FakeModel", ["global::Test.FakeEvent"]))
-        .ToList();
+      perspectiveNames.ConvertAll(n =>
+        new PerspectiveRegistrationInfo(n, $"global::{n}", "global::Test.FakeModel", ["global::Test.FakeEvent"]));
 
     public IReadOnlyList<Type> GetEventTypes() => [];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();

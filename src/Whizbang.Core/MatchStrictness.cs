@@ -13,6 +13,7 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>fundamentals/identity/fuzzy-matching</docs>
 [Flags]
+#pragma warning disable RCS1154 // Members are intentionally grouped: base flags first, then composite presets.
 public enum MatchStrictness {
   /// <summary>
   /// Exact matching required - all components must match exactly.
@@ -88,3 +89,4 @@ public enum MatchStrictness {
   /// </summary>
   SimpleNameCaseInsensitive = SimpleName | IgnoreCase
 }
+#pragma warning restore RCS1154

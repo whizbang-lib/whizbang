@@ -846,7 +846,7 @@ public partial class PerspectiveWorker(
 
     // Batch-fetch all events for leased streams in a single SQL call.
     var rawEvents = await workCoordinator.GetStreamEventsAsync(
-      _instanceProvider.InstanceId, streamIds.ToArray(), cancellationToken);
+      _instanceProvider.InstanceId, [.. streamIds], cancellationToken);
 
     if (rawEvents.Count == 0) {
       return null;

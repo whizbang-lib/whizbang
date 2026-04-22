@@ -34,7 +34,10 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// This fixture is shared across ALL integration tests to avoid container startup overhead.
 /// Tests are isolated using unique product IDs and database cleanup between test classes.
 /// </summary>
-public sealed class SharedIntegrationFixture : IAsyncDisposable {
+public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
+  [System.Text.RegularExpressions.GeneratedRegex(@":\d+/;")]
+  private static partial System.Text.RegularExpressions.Regex _portSlashSemiRegex();
+
   private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
   private string? _connectionString;  // Connection string pointing to the fixture's unique database
   private readonly INetwork _network;  // Network for Service Bus + SQL Server
@@ -492,7 +495,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // CRITICAL: Remove trailing slash from endpoint (sb://localhost:PORT/; → sb://localhost:PORT;)
     // The Azure Service Bus client silently fails to receive messages if the trailing slash is present
-    result = System.Text.RegularExpressions.Regex.Replace(result, @":\d+/;", m => m.Value.Replace("/;", ";"));
+    result = _portSlashSemiRegex().Replace(result, m => m.Value.Replace("/;", ";"));
 
     return result;
   }
@@ -502,7 +505,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Polls up to 60 times (60 seconds total) with 1 second delay between attempts.
   /// Increased from 30 to 60 to handle slow container startup on busy systems.
   /// </summary>
-  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 60; // 60 seconds total (increased from 30 for reliability)
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {

@@ -64,12 +64,12 @@ public static class StreamIdGuard {
       [CallerMemberName] string caller = "",
       [CallerFilePath] string file = "",
       [CallerLineNumber] int line = 0) {
-    if (streamId.HasValue && streamId.Value == Guid.Empty) {
+    if (streamId is Guid streamIdValue && streamIdValue == Guid.Empty) {
       throw new InvalidStreamIdException(
           $"StreamId is Guid.Empty (non-null) for {eventType} (MessageId={messageId}) at {context}. " +
           "A null StreamId is valid (no stream concept), but Guid.Empty indicates a bug. " +
           "Either apply [GenerateStreamId] to auto-generate, or provide a StreamId before dispatch.") {
-        StreamId = streamId.Value,
+        StreamId = streamIdValue,
         MessageId = messageId,
         Context = context,
         CallerMemberName = caller,

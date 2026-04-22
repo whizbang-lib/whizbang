@@ -55,52 +55,40 @@ public class DispatcherUncoveredPathsTests {
   // TEST DISPATCHER (concrete subclass)
   // ========================================
 
-  private sealed class TestDispatcher : Core.Dispatcher {
-    private readonly ReceptorInvoker<object>? _invoker;
-    private readonly VoidReceptorInvoker? _voidInvoker;
-    private readonly SyncReceptorInvoker<object>? _syncInvoker;
-    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker;
-    private readonly Func<object, ValueTask<object?>>? _anyInvoker;
-    private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher;
-    private readonly DispatchModes? _defaultRouting;
-    private readonly IReceptorRegistry? _receptorRegistryOverride;
-    private readonly Type? _handleMessageType;
-
-    public TestDispatcher(
-      IServiceProvider sp,
-      ITraceStore? traceStore = null,
-      IEnvelopeSerializer? envelopeSerializer = null,
-      IEnvelopeRegistry? envelopeRegistry = null,
-      IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-      IStreamIdExtractor? streamIdExtractor = null,
-      IScopedEventTracker? scopedEventTracker = null,
-      IReceptorRegistry? receptorRegistry = null,
-      ReceptorInvoker<object>? invoker = null,
-      VoidReceptorInvoker? voidInvoker = null,
-      SyncReceptorInvoker<object>? syncInvoker = null,
-      VoidSyncReceptorInvoker? voidSyncInvoker = null,
-      Func<object, ValueTask<object?>>? anyInvoker = null,
-      Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
-      DispatchModes? defaultRouting = null,
-      Type? handleMessageType = null
-      ) : base(sp, new ServiceInstanceProvider(configuration: null),
-        traceStore: traceStore,
-        envelopeSerializer: envelopeSerializer,
-        envelopeRegistry: envelopeRegistry,
-        outboxRoutingStrategy: outboxRoutingStrategy,
-        streamIdExtractor: streamIdExtractor,
-        scopedEventTracker: scopedEventTracker,
-        receptorRegistry: receptorRegistry) {
-      _invoker = invoker;
-      _voidInvoker = voidInvoker;
-      _syncInvoker = syncInvoker;
-      _voidSyncInvoker = voidSyncInvoker;
-      _anyInvoker = anyInvoker;
-      _untypedPublisher = untypedPublisher;
-      _defaultRouting = defaultRouting;
-      _receptorRegistryOverride = receptorRegistry;
-      _handleMessageType = handleMessageType ?? typeof(TestCommand);
-    }
+  private sealed class TestDispatcher(
+    IServiceProvider sp,
+    ITraceStore? traceStore = null,
+    IEnvelopeSerializer? envelopeSerializer = null,
+    IEnvelopeRegistry? envelopeRegistry = null,
+    IOutboxRoutingStrategy? outboxRoutingStrategy = null,
+    IStreamIdExtractor? streamIdExtractor = null,
+    IScopedEventTracker? scopedEventTracker = null,
+    IReceptorRegistry? receptorRegistry = null,
+    ReceptorInvoker<object>? invoker = null,
+    VoidReceptorInvoker? voidInvoker = null,
+    SyncReceptorInvoker<object>? syncInvoker = null,
+    VoidSyncReceptorInvoker? voidSyncInvoker = null,
+    Func<object, ValueTask<object?>>? anyInvoker = null,
+    Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
+    DispatchModes? defaultRouting = null,
+    Type? handleMessageType = null
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+      traceStore: traceStore,
+      envelopeSerializer: envelopeSerializer,
+      envelopeRegistry: envelopeRegistry,
+      outboxRoutingStrategy: outboxRoutingStrategy,
+      streamIdExtractor: streamIdExtractor,
+      scopedEventTracker: scopedEventTracker,
+      receptorRegistry: receptorRegistry) {
+    private readonly ReceptorInvoker<object>? _invoker = invoker;
+    private readonly VoidReceptorInvoker? _voidInvoker = voidInvoker;
+    private readonly SyncReceptorInvoker<object>? _syncInvoker = syncInvoker;
+    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker = voidSyncInvoker;
+    private readonly Func<object, ValueTask<object?>>? _anyInvoker = anyInvoker;
+    private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher = untypedPublisher;
+    private readonly DispatchModes? _defaultRouting = defaultRouting;
+    private readonly IReceptorRegistry? _receptorRegistryOverride = receptorRegistry;
+    private readonly Type? _handleMessageType = handleMessageType ?? typeof(TestCommand);
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (_invoker != null && messageType == _handleMessageType) {
@@ -219,12 +207,8 @@ public class DispatcherUncoveredPathsTests {
     }
   }
 
-  private sealed class StubEventCompletionAwaiter : IEventCompletionAwaiter {
-    private readonly bool _shouldComplete;
-
-    public StubEventCompletionAwaiter(bool shouldComplete) {
-      _shouldComplete = shouldComplete;
-    }
+  private sealed class StubEventCompletionAwaiter(bool shouldComplete) : IEventCompletionAwaiter {
+    private readonly bool _shouldComplete = shouldComplete;
 
     public Guid AwaiterId { get; } = Guid.NewGuid();
 
@@ -336,8 +320,8 @@ public class DispatcherUncoveredPathsTests {
     var sp = _buildProvider(workStrategy, deferredChannel, eventCompletionAwaiter, receptorInvoker);
     return new TestDispatcher(sp,
       traceStore: traceStore,
-      envelopeRegistry: envelopeRegistry,
       envelopeSerializer: envelopeSerializer,
+      envelopeRegistry: envelopeRegistry,
       scopedEventTracker: scopedEventTracker,
       receptorRegistry: receptorRegistry,
       invoker: invoker,
@@ -366,9 +350,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: false);
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      invoker: _defaultInvoker());
     var command = new TestCommand("wait-timeout");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -388,9 +372,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      invoker: _defaultInvoker());
     var command = new TestCommand("wait-success");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -409,8 +393,8 @@ public class DispatcherUncoveredPathsTests {
     // Arrange - no scoped tracker set, short-circuit
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      invoker: _defaultInvoker());
     var command = new TestCommand("no-tracker");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -430,9 +414,9 @@ public class DispatcherUncoveredPathsTests {
     var tracker = new StubScopedEventTracker();
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      invoker: _defaultInvoker());
     var command = new TestCommand("empty-events");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -452,8 +436,8 @@ public class DispatcherUncoveredPathsTests {
     var tracker = new StubScopedEventTracker();
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
-      scopedEventTracker: tracker);
+      scopedEventTracker: tracker,
+      invoker: _defaultInvoker());
     var command = new TestCommand("no-awaiter");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -494,9 +478,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: false);
     var dispatcher = _createDispatcher(
-      voidInvoker: _defaultVoidInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("void-wait-timeout");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -516,9 +500,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
     var dispatcher = _createDispatcher(
-      voidInvoker: _defaultVoidInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("void-wait-success");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -540,9 +524,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: false);
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      invoker: _defaultInvoker());
     var command = new TestCommand("receipt-wait-timeout");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -562,9 +546,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
     var dispatcher = _createDispatcher(
-      invoker: _defaultInvoker(),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      invoker: _defaultInvoker());
     var command = new TestCommand("receipt-wait-success");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -586,9 +570,9 @@ public class DispatcherUncoveredPathsTests {
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
     var dispatcher = _createDispatcher(
-      syncInvoker: msg => new TestResult(Guid.NewGuid(), true),
       scopedEventTracker: tracker,
-      eventCompletionAwaiter: awaiter);
+      eventCompletionAwaiter: awaiter,
+      syncInvoker: msg => new TestResult(Guid.NewGuid(), true));
     var command = new TestCommand("sync-receipt-wait");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
@@ -725,8 +709,8 @@ public class DispatcherUncoveredPathsTests {
         InvokeAsync: (sp, msg, env, caller, ct) => ValueTask.FromResult<object?>(null)
       ));
     var dispatcher = _createDispatcher(
-      voidSyncInvoker: msg => { invoked = true; },
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      voidSyncInvoker: msg => { invoked = true; });
     var command = new TestCommand("generic-void-sync-immediate");
 
     // Act
@@ -777,8 +761,8 @@ public class DispatcherUncoveredPathsTests {
         InvokeAsync: (sp, msg, env, caller, ct) => ValueTask.FromResult<object?>(null)
       ));
     var dispatcher = _createDispatcher(
-      voidSyncInvoker: msg => { invoked = true; },
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      voidSyncInvoker: msg => { invoked = true; });
     var command = new TestCommand("sync-immediate");
 
     // Act - goes through _localInvokeVoidSyncWithSyncCheckAsync
@@ -802,8 +786,8 @@ public class DispatcherUncoveredPathsTests {
         InvokeAsync: (sp, msg, env, caller, ct) => ValueTask.FromResult<object?>(null)
       ));
     var dispatcher = _createDispatcher(
-      voidSyncInvoker: msg => { invoked = true; },
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      voidSyncInvoker: msg => { invoked = true; });
     var command = new TestCommand("sync-post-lifecycle");
 
     // Act
@@ -840,8 +824,8 @@ public class DispatcherUncoveredPathsTests {
     var registry = new StubReceptorRegistry();
     var dispatcher = _createDispatcher(
       traceStore: traceStore,
-      voidInvoker: _defaultVoidInvoker(),
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("empty-registry");
 
     // Act
@@ -867,9 +851,9 @@ public class DispatcherUncoveredPathsTests {
     var traceStore = new StubTraceStore();
     var dispatcher = _createDispatcher(
       traceStore: traceStore,
-      voidInvoker: _defaultVoidInvoker(),
       receptorRegistry: registry,
-      receptorInvoker: scopedInvoker);
+      receptorInvoker: scopedInvoker,
+      voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("immediate-invoke");
 
     // Act
@@ -1233,8 +1217,8 @@ public class DispatcherUncoveredPathsTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
     var dispatcher = _createDispatcher(
-      workStrategy: strategy,
-      envelopeSerializer: serializer);
+      envelopeSerializer: serializer,
+      workStrategy: strategy);
     var command = new TestCommand("outbox-route");
     var context = MessageContext.New();
 
@@ -1256,8 +1240,8 @@ public class DispatcherUncoveredPathsTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
     var dispatcher = _createDispatcher(
-      workStrategy: strategy,
-      envelopeSerializer: serializer);
+      envelopeSerializer: serializer,
+      workStrategy: strategy);
     var command = new TestCommand("generic-outbox");
 
     // Act
@@ -1290,8 +1274,8 @@ public class DispatcherUncoveredPathsTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
     var dispatcher = _createDispatcher(
-      workStrategy: strategy,
-      envelopeSerializer: serializer);
+      envelopeSerializer: serializer,
+      workStrategy: strategy);
     var command = new TestCommand("generic-outbox-options");
     var options = new DispatchOptions();
 
@@ -1409,8 +1393,8 @@ public class DispatcherUncoveredPathsTests {
       ));
     VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
     var dispatcher = _createDispatcher(
-      voidInvoker: voidInvoker,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      voidInvoker: voidInvoker);
     var command = new TestCommand("immediate-tracing");
 
     // Act
@@ -1435,8 +1419,8 @@ public class DispatcherUncoveredPathsTests {
       ));
     VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
     var dispatcher = _createDispatcher(
-      voidInvoker: voidInvoker,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      voidInvoker: voidInvoker);
     var command = new TestCommand("post-lifecycle-tracing");
 
     // Act

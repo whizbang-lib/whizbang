@@ -129,7 +129,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
+  private static IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Add connection string to configuration for generated turnkey extensions
@@ -214,7 +214,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
+  private static IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Add connection string to configuration for generated turnkey extensions

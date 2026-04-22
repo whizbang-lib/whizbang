@@ -568,7 +568,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
   /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
   /// </summary>
-  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 30; // 30 seconds total
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -761,7 +761,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .Where(a => !eventTypes.Contains(a) && eventTypes.Any(e => e.Contains(a.Replace("global::", ""))))
       .ToList();
 
-    if (mismatches.Any()) {
+    if (mismatches.Count > 0) {
       Console.WriteLine("=== DETECTED TYPE NAME MISMATCHES ===");
       foreach (var mismatch in mismatches) {
         Console.WriteLine($"Association has 'global::' prefix: {mismatch}");
@@ -1052,7 +1052,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// CRITICAL: Must process inbox work (dispatch to handlers, store events) - not just write to inbox!
   /// This creates events which trigger perspective cursors for PerspectiveWorker to process.
   /// </summary>
-  private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
+  private static async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
     try {
       // Validate envelope type is present
       if (string.IsNullOrWhiteSpace(envelopeType)) {

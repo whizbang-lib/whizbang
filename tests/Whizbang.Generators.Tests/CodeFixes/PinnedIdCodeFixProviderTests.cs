@@ -94,7 +94,7 @@ public class PinnedIdCodeFixProviderTests {
     await Assert.That(start).IsGreaterThan(-1);
     var valueStart = start + "[PinnedId(\"".Length;
     var valueEnd = fixedSource.IndexOf('"', valueStart);
-    var guidString = fixedSource.Substring(valueStart, valueEnd - valueStart);
+    var guidString = fixedSource[valueStart..valueEnd];
 
     await Assert.That(Guid.TryParse(guidString, out _)).IsTrue();
   }

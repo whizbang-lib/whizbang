@@ -91,9 +91,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) =>
             (node is RecordDeclarationSyntax rec &&
-                (rec.BaseList?.Types.Count > 0 || rec.AttributeLists.Count > 0 || rec.Parent is TypeDeclarationSyntax)) ||
+                (rec.BaseList?.Types.Any() == true || rec.AttributeLists.Any() || rec.Parent is TypeDeclarationSyntax)) ||
             (node is ClassDeclarationSyntax cls &&
-                (cls.BaseList?.Types.Count > 0 || cls.AttributeLists.Count > 0 || cls.Parent is TypeDeclarationSyntax)),
+                (cls.BaseList?.Types.Any() == true || cls.AttributeLists.Any() || cls.Parent is TypeDeclarationSyntax)),
         transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 

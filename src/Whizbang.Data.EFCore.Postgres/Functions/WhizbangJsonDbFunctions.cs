@@ -33,7 +33,9 @@ public static class WhizbangJsonDbFunctions {
   /// </example>
   /// <remarks>
   /// This function requires a GIN index on the scope column for optimal performance:
-  /// <code>entity.HasIndex(e => e.Scope).HasMethod("GIN").HasOperators("jsonb_path_ops");</code>
+  /// <code>
+  /// entity.HasIndex(e => e.Scope).HasMethod("GIN").HasOperators("jsonb_path_ops");
+  /// </code>
   /// </remarks>
   public static bool AllowedPrincipalsContainsAny(
       this DbFunctions _,

@@ -34,7 +34,7 @@ namespace Whizbang.Core;
 /// </code>
 /// </example>
 public static class ServiceRegistrationCallbacks {
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Callback for registering discovered lens services (ILensQuery implementations).

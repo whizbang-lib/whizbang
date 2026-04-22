@@ -97,7 +97,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
         "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
       );
 
-    var message = JsonSerializer.Deserialize(jsonElement, jsonTypeInfo)
+    var message = jsonElement.Deserialize(jsonTypeInfo)
       ?? throw new InvalidOperationException(
         $"Deserialization of type '{messageTypeName}' returned null. " +
         "This may indicate invalid JSON or a serialization configuration issue."

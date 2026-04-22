@@ -17,20 +17,11 @@ namespace Whizbang.Core.Messaging;
 /// test has actually registered an <see cref="IChaosInjector"/>.
 /// </remarks>
 /// <docs>operations/testing/chaos-injection</docs>
-public sealed class ChaosInjectorInvoker {
-  private readonly IChaosInjector? _injector;
-  private readonly bool _enabled;
-
-  /// <summary>
-  /// Creates a new invoker. <paramref name="injector"/> is optional — when null, all
-  /// <see cref="BeforeCheckpointAsync"/> calls no-op regardless of the options flag.
-  /// </summary>
-  public ChaosInjectorInvoker(
-    IOptions<Configuration.WhizbangOptions>? options,
-    IChaosInjector? injector = null) {
-    _injector = injector;
-    _enabled = options?.Value?.Guardrails.EnableChaosHooks ?? false;
-  }
+public sealed class ChaosInjectorInvoker(
+  IOptions<Configuration.WhizbangOptions>? options,
+  IChaosInjector? injector = null) {
+  private readonly IChaosInjector? _injector = injector;
+  private readonly bool _enabled = options?.Value?.Guardrails.EnableChaosHooks ?? false;
 
   /// <summary>Whether chaos hooks are enabled AND an injector is registered.</summary>
   public bool IsActive => _enabled && _injector is not null;
