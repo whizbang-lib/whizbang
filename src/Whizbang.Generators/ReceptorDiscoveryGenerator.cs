@@ -281,32 +281,45 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // [FireAt(LifecycleStage.PostPerspectiveDetached)]
-      // Constructor argument is LifecycleStage enum value
-      if (attribute.ConstructorArguments.Length > 0) {
-        var stageArg = attribute.ConstructorArguments[0];
-        if (stageArg.Value is int stageValue) {
-          // Get the enum type to convert int to enum name
-          var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
-              .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
-              ?.Parameters.FirstOrDefault()?.Type;
-
-          if (stageType is INamedTypeSymbol enumType) {
-            // Find the enum member with this value
-            var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-                .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
-
-            if (enumMember is not null) {
-              // Store fully qualified enum value (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveDetached")
-              var fullyQualifiedStage = $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
-              stages.Add(fullyQualifiedStage);
-            }
-          }
-        }
+      var stage = _tryExtractFireAtStage(attribute);
+      if (stage is not null) {
+        stages.Add(stage);
       }
     }
 
     return [.. stages];
+  }
+
+  /// <summary>
+  /// Parses a single <c>[FireAt(LifecycleStage.X)]</c> attribute and returns the fully-qualified
+  /// enum member name (e.g. <c>Whizbang.Core.LifecycleStage.PostPerspectiveDetached</c>). Returns
+  /// null when the constructor argument is missing, isn't an int, or the attribute's first
+  /// parameter isn't a discoverable enum — callers silently skip those instead of emitting
+  /// garbage into the generated routing.
+  /// </summary>
+  private static string? _tryExtractFireAtStage(AttributeData attribute) {
+    if (attribute.ConstructorArguments.Length == 0
+        || attribute.ConstructorArguments[0].Value is not int stageValue
+        || attribute.AttributeClass is null) {
+      return null;
+    }
+
+    var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
+        .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
+        ?.Parameters.FirstOrDefault()?.Type;
+
+    if (stageType is not INamedTypeSymbol enumType) {
+      return null;
+    }
+
+    var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
+        .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+
+    if (enumMember is null) {
+      return null;
+    }
+
+    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
   }
 
   /// <summary>
