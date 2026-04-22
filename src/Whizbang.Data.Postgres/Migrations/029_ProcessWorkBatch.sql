@@ -86,6 +86,12 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
 ) AS $$
 DECLARE
   v_lease_expiry TIMESTAMPTZ;
+  -- Stream lease is only refreshed when the existing expiry is within one-third
+  -- of p_lease_duration_seconds from now. Renewing every tick on every owned
+  -- stream generated one dead tuple per stream per tick in production (JDX dev
+  -- slot 3: 1.8B lifetime updates on 5,790 rows) and dominated WAL pressure.
+  -- Orphan-claim SLA is unchanged because streams still expire at lease_expiry.
+  v_refresh_threshold TIMESTAMPTZ;
   v_stale_cutoff TIMESTAMPTZ;
   v_rank INTEGER;
   v_count INTEGER;
@@ -137,8 +143,9 @@ BEGIN
   -- Calculate tier 1 budget cap (Tier 2 gets the remainder + any unused Tier 1 slots)
   v_tier1_max := (v_max_work_items * v_tier1_budget_percent) / 100;
 
-  -- Calculate lease expiry and stale cutoff
+  -- Calculate lease expiry, refresh threshold, and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
+  v_refresh_threshold := p_now + ((p_lease_duration_seconds / 3) || ' seconds')::INTERVAL;
   v_stale_cutoff := p_now - (p_stale_threshold_seconds || ' seconds')::INTERVAL;
 
   -- Create temporary tables for tracking work
@@ -1033,12 +1040,16 @@ BEGIN
       FROM jsonb_array_elements_text(p_renew_perspective_event_lease_ids) as elem
     );
 
-  -- Renew active stream ownership for all streams owned by this instance.
-  -- Keeps stream stickiness alive as long as the instance is heartbeating (~1s ticks).
-  -- Without this, streams with no new messages would lose ownership after lease expiry.
+  -- Renew active stream ownership only for streams whose lease is nearing expiry.
+  -- Keeps stream stickiness alive as long as the instance is heartbeating,
+  -- without generating one dead tuple per owned stream per tick. Streams
+  -- refreshed in the current tick are left alone for another ~2/3 of the
+  -- lease window. Orphan-claim SLA is unchanged — streams still expire at
+  -- lease_expiry, and cross-instance claims still gate on now() > lease_expiry.
   UPDATE __SCHEMA__.wh_active_streams
   SET lease_expiry = v_lease_expiry
-  WHERE assigned_instance_id = p_instance_id;
+  WHERE assigned_instance_id = p_instance_id
+    AND lease_expiry < v_refresh_threshold;
 
   -- ========================================
   -- Phase 7: Return Results

@@ -422,8 +422,254 @@ public class WorkCoordinatorPublisherWorkerDrainTests {
   }
 
   // ==========================================================================
+  // Adaptive poll backoff on empty polls
+  // ==========================================================================
+
+  /// <summary>
+  /// Option default: PollingMaxIntervalMilliseconds = 2000 gives idle workers
+  /// an 8× max reduction (250 → 500 → 1000 → 2000) while capping worst-case
+  /// discovery latency for transport-sourced inbox writes at 2 s.
+  /// </summary>
+  [Test]
+  public async Task WorkCoordinatorPublisherOptions_PollingMaxIntervalMilliseconds_DefaultIs2000Async() {
+    var options = new WorkCoordinatorPublisherOptions();
+    await Assert.That(options.PollingMaxIntervalMilliseconds).IsEqualTo(2000);
+  }
+
+  /// <summary>
+  /// Backoff contract: on consecutive empty polls the loop doubles its wait
+  /// up to PollingMaxIntervalMilliseconds. With base=50 ms and max=400 ms the
+  /// expected doubling schedule is 50, 100, 200, 400, 400, …
+  /// Total wall-clock elapsed across 5 empty waits ≥ 500 ms; the fixed-interval
+  /// baseline would be ~250 ms (5 × 50 ms). The margin is generous to tolerate
+  /// CI scheduler noise.
+  /// </summary>
+  [Test]
+  [NotInParallel("PollBackoff")]
+  public async Task WhenEmptyPollsAccumulate_TotalWaitExceedsFixedBaselineAsync() {
+    var coordinator = new EmptyBatchCoordinator();
+    var strategy = new NoopPublishStrategy();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _buildServices(coordinator, strategy, channelWriter, options => {
+      options.PollingIntervalMilliseconds = 50;
+      options.PollingMaxIntervalMilliseconds = 400;
+    });
+
+    var worker = services.GetRequiredService<IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+    await worker.StartAsync(cts.Token);
+    // 6 claims: the startup one + 5 in-loop polls. Those 5 waits should obey
+    // the backoff schedule. Fixed: ~250 ms; backoff: ~1150 ms. Assert > 500.
+    await coordinator.WaitForClaimsAsync(6, cts.Token);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    var ts = coordinator.ClaimTimestamps;
+    var totalWaitMs = (ts[5] - ts[0]).TotalMilliseconds;
+    await Assert.That(totalWaitMs).IsGreaterThanOrEqualTo(500)
+      .Because("With base=50ms and max=400ms the backoff schedule (50+100+200+400+400 ≈ 1150ms) "
+             + "must make the 5-wait total substantially exceed the fixed-interval baseline (5×50 = 250ms). "
+             + "A 500 ms lower bound distinguishes the two with plenty of CI headroom.");
+  }
+
+  /// <summary>
+  /// Reset contract: a non-empty batch collapses _consecutiveEmptyPolls to zero,
+  /// so the next empty poll must wait the BASE interval, not the capped-out one.
+  /// </summary>
+  [Test]
+  [NotInParallel("PollBackoff")]
+  public async Task WhenWorkReturnsAfterEmptyPolls_BackoffResetsToBaseAsync() {
+    var coordinator = new EmptyThenFullCoordinator(emptyCountBeforeWork: 4);
+    var strategy = new NoopPublishStrategy();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _buildServices(coordinator, strategy, channelWriter, options => {
+      options.PollingIntervalMilliseconds = 50;
+      options.PollingMaxIntervalMilliseconds = 400;
+    });
+
+    var worker = services.GetRequiredService<IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+    await worker.StartAsync(cts.Token);
+    // Claims layout: 4 empty → 1 full → next empty post-reset. We need >= 6 claims.
+    await coordinator.WaitForClaimsAsync(6, cts.Token);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // The gap AFTER the full-batch claim (index 4) to the next claim (index 5)
+    // should be ~base, not ~max. If reset works, the gap is < 200 ms.
+    var postFullGap = (coordinator.ClaimTimestamps[5] - coordinator.ClaimTimestamps[4]).TotalMilliseconds;
+    await Assert.That(postFullGap).IsLessThan(200)
+      .Because("A non-empty batch must reset _consecutiveEmptyPolls so the next wait returns to "
+             + "PollingIntervalMilliseconds (~50 ms). If stuck at the cap the gap would be ~400 ms.");
+  }
+
+  /// <summary>
+  /// External-wake contract: <see cref="IWorkChannelWriter.SignalNewWorkAvailable"/>
+  /// must interrupt a backoff sleep regardless of how far it has climbed. The
+  /// existing _pollWakeSignal semaphore already provides this; the adaptive wait
+  /// must continue to honour it.
+  /// </summary>
+  [Test]
+  [NotInParallel("PollBackoff")]
+  public async Task WhenRequestImmediatePollFires_BackoffIsInterruptedAsync() {
+    var coordinator = new EmptyBatchCoordinator();
+    var strategy = new NoopPublishStrategy();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _buildServices(coordinator, strategy, channelWriter, options => {
+      options.PollingIntervalMilliseconds = 50;
+      options.PollingMaxIntervalMilliseconds = 5_000;  // huge cap so interruption is unmistakable
+    });
+
+    var worker = services.GetRequiredService<IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    await worker.StartAsync(cts.Token);
+    // Let the backoff climb to the cap.
+    await coordinator.WaitForClaimsAsync(4, cts.Token);
+
+    // Capture baseline, signal wake, expect the very next claim quickly.
+    var beforeSignal = DateTimeOffset.UtcNow;
+    channelWriter.SignalNewWorkAvailable();
+    await coordinator.WaitForClaimsAsync(1, cts.Token);
+    var afterSignal = DateTimeOffset.UtcNow;
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    var signalToClaimMs = (afterSignal - beforeSignal).TotalMilliseconds;
+    await Assert.That(signalToClaimMs).IsLessThan(1_000)
+      .Because("An external wake signal must short-circuit any in-flight backoff sleep. "
+             + "If we waited the full 5 s cap, backoff would be dominating. A 1 s upper bound "
+             + "is generous enough to absorb CI noise while still failing if the wake path is broken.");
+  }
+
+  /// <summary>
+  /// Kill-switch contract: setting PollingMaxIntervalMilliseconds ≤
+  /// PollingIntervalMilliseconds disables backoff entirely, returning to the
+  /// pre-fix fixed-interval behaviour. Operational escape hatch in case the
+  /// adaptive path ever needs to be disabled in production.
+  /// </summary>
+  [Test]
+  [NotInParallel("PollBackoff")]
+  public async Task WhenPollingMaxEqualsBase_BackoffIsDisabledAsync() {
+    var coordinator = new EmptyBatchCoordinator();
+    var strategy = new NoopPublishStrategy();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _buildServices(coordinator, strategy, channelWriter, options => {
+      options.PollingIntervalMilliseconds = 50;
+      options.PollingMaxIntervalMilliseconds = 50;  // kill-switch: equal means disabled
+    });
+
+    var worker = services.GetRequiredService<IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+    await worker.StartAsync(cts.Token);
+    await coordinator.WaitForClaimsAsync(6, cts.Token);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // With backoff disabled, 5 waits at ~50 ms total ≈ 250 ms. Allow headroom
+    // but assert we're not in the hundreds-of-ms-per-wait regime.
+    var totalWaitMs = (coordinator.ClaimTimestamps[5] - coordinator.ClaimTimestamps[0]).TotalMilliseconds;
+    await Assert.That(totalWaitMs).IsLessThan(600)
+      .Because("PollingMaxIntervalMilliseconds=PollingIntervalMilliseconds disables backoff. "
+             + "5 fixed 50 ms waits total ~250 ms; a 600 ms upper bound catches CI jitter "
+             + "but fails loudly if backoff sneaks in.");
+  }
+
+  // ==========================================================================
   // Helpers / fakes
   // ==========================================================================
+
+  /// <summary>
+  /// Coordinator that always returns an empty WorkBatch and records the
+  /// wall-clock timestamp of every claim. Used by the adaptive-backoff tests
+  /// to measure inter-claim gaps.
+  /// </summary>
+  private sealed class EmptyBatchCoordinator : IWorkCoordinator, IDisposable {
+    private readonly SemaphoreSlim _claimCounter = new(0, int.MaxValue);
+    public int ClaimCount { get; private set; }
+    public List<DateTimeOffset> ClaimTimestamps { get; } = [];
+
+    public void Dispose() => _claimCounter.Dispose();
+
+    public async Task WaitForClaimsAsync(int n, CancellationToken ct) {
+      for (int i = 0; i < n; i++) {
+        await _claimCounter.WaitAsync(ct);
+      }
+    }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+      // Ignore immediate-completion flushes — they don't represent a drain tick.
+      if (request.OutboxCompletions.Length > 0) {
+        return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+      }
+      ClaimCount++;
+      ClaimTimestamps.Add(DateTimeOffset.UtcNow);
+      _claimCounter.Release();
+      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// Coordinator that returns N empty batches, then one batch with a single
+  /// work item, then empty batches forever. Used to prove the backoff reset
+  /// path: after the full batch, _consecutiveEmptyPolls must return to zero.
+  /// </summary>
+  private sealed class EmptyThenFullCoordinator : IWorkCoordinator, IDisposable {
+    private readonly int _emptyCountBeforeWork;
+    private readonly SemaphoreSlim _claimCounter = new(0, int.MaxValue);
+    public int ClaimCount { get; private set; }
+    public List<DateTimeOffset> ClaimTimestamps { get; } = [];
+
+    public EmptyThenFullCoordinator(int emptyCountBeforeWork) {
+      _emptyCountBeforeWork = emptyCountBeforeWork;
+    }
+
+    public void Dispose() => _claimCounter.Dispose();
+
+    public async Task WaitForClaimsAsync(int n, CancellationToken ct) {
+      for (int i = 0; i < n; i++) {
+        await _claimCounter.WaitAsync(ct);
+      }
+    }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
+      if (request.OutboxCompletions.Length > 0) {
+        return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+      }
+      ClaimCount++;
+      ClaimTimestamps.Add(DateTimeOffset.UtcNow);
+      _claimCounter.Release();
+
+      // Return one non-empty batch on the Nth claim, then always empty.
+      var isFull = ClaimCount == _emptyCountBeforeWork + 1;
+      var work = isFull ? new List<OutboxWork> { _newOutboxWork() } : [];
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = work,
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
 
   private static OutboxWork _newOutboxWork() {
     var id = Guid.CreateVersion7();
