@@ -1104,6 +1104,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
+    Justification = "Explanatory prose comments (containing parentheses/method-like phrasing) are misidentified as commented-out code. The comments describe the surrounding generated code intent and are not executable C#.")]
   private static string _generateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
@@ -1526,6 +1528,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       useCancellationToken: false, useStageFiltering: true);
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
+    Justification = "Explanatory prose comment (mentioning 'sourceEnvelope' / cascade-path semantics) is misidentified as commented-out code; it documents the surrounding routing logic and is not executable C#.")]
   private static string _buildReceptorInvocationsCore(
       string messageType,
       Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,

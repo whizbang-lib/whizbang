@@ -1513,7 +1513,7 @@ public abstract partial class Dispatcher(
     // Get strongly-typed delegate from generated code
     var invoker = GetReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
 
-    return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+    return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
   }
 
   /// <summary>
@@ -1557,7 +1557,7 @@ public abstract partial class Dispatcher(
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
     if (asyncInvoker != null) {
-      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
     }
 
     // Check if there are ImmediateDetached or PostLifecycle receptors — if so, must go through async path
@@ -1600,16 +1600,14 @@ public abstract partial class Dispatcher(
     Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
 
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -1776,16 +1774,14 @@ public abstract partial class Dispatcher(
     Type messageType,
     IMessageContext context,
     VoidReceptorInvoker invoker,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
 
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);

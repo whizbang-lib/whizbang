@@ -135,7 +135,7 @@ public sealed partial class CircuitBreaker<TResult> {
       _onSuccess(result);
       return result;
     } catch (Exception ex) when (ex is not OutOfMemoryException) {
-      _onFailure(ex);
+      _onFailure();
       return fallbackValue;
     }
   }
@@ -152,7 +152,7 @@ public sealed partial class CircuitBreaker<TResult> {
     _cachedResult = result;
   }
 
-  private void _onFailure(Exception exception) {
+  private void _onFailure() {
     _consecutiveFailures++;
     _lastSuccessAt = null; // Invalidate cache on failure
     _cachedResult = default;

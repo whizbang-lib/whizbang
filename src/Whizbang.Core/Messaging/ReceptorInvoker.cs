@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -128,8 +129,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _stageTracker = scopedProvider.GetService<LifecycleStageTracker>();
 
     // Resolve the receptor dedup store (per-message per-receptor guardrail).
-    // Default registration is EnvelopeReceptorDedupStore via AddWhizbangReceptorRegistry();
-    // a consumer may replace it with a DB-backed impl. Null → guardrail disabled.
+    // Default registration is EnvelopeReceptorDedupStore via AddWhizbangReceptorRegistry.
+    // A consumer may replace it with a DB-backed impl. Null means the guardrail is disabled.
     _dedupStore = scopedProvider.GetService<IReceptorDedupStore>();
 
     // Resolve guardrail options. Defaults: TrackAndEnforce, Warn on double-fire.
@@ -530,6 +531,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <summary>
   /// Groups parameters for a single receptor invocation to reduce parameter count.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Positional record whose purpose is to group invocation parameters — it is itself the fix for S107 on methods that would otherwise take these 8 values individually.")]
   private readonly record struct ReceptorInvocationContext(
     object Message,
     Type MessageType,
@@ -605,7 +607,17 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       throw;
     } finally {
       stopwatch.Stop();
-      await _notifyReceptorFiredAsync(receptor, ctx, messageId, streamId, messageTypeName, correlationId, sourceService, stopwatch, isError, exceptionTypeName, capturedException, cancellationToken).ConfigureAwait(false);
+      var fireFields = new ReceptorFireLogFields(
+        messageId,
+        streamId,
+        messageTypeName,
+        correlationId,
+        sourceService,
+        stopwatch,
+        isError,
+        exceptionTypeName,
+        capturedException);
+      await _notifyReceptorFiredAsync(receptor, ctx, fireFields, cancellationToken).ConfigureAwait(false);
     }
   }
 
@@ -723,32 +735,40 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
   }
 
+  /// <summary>
+  /// Groups the pre-resolved log identity and outcome fields that bracket a receptor invocation,
+  /// so the paired Firing/Fired log lines share the same tuple without a long parameter list.
+  /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Positional record whose purpose is to group the fields of a single receptor fire log emission — it is itself the fix for S107 on the notify-fired helper.")]
+  private readonly record struct ReceptorFireLogFields(
+    Guid MessageId,
+    Guid StreamId,
+    string MessageTypeName,
+    Guid CorrelationId,
+    string SourceService,
+    Stopwatch Stopwatch,
+    bool IsError,
+    string? ExceptionTypeName,
+    Exception? CapturedException);
+
   /// <summary>Paired "fired" log + observer notification from the finally block. The observer's
   /// exception rides out with whatever is already propagating.</summary>
   private async ValueTask _notifyReceptorFiredAsync(
       ReceptorInfo receptor,
       ReceptorInvocationContext ctx,
-      Guid messageId,
-      Guid streamId,
-      string messageTypeName,
-      Guid correlationId,
-      string sourceService,
-      Stopwatch stopwatch,
-      bool isError,
-      string? exceptionTypeName,
-      Exception? capturedException,
+      ReceptorFireLogFields fields,
       CancellationToken cancellationToken) {
     if (_logger is not null) {
-      Log.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService, stopwatch.ElapsedMilliseconds, isError, exceptionTypeName);
+      Log.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, fields.MessageId, fields.StreamId, fields.MessageTypeName, fields.CorrelationId, fields.SourceService, fields.Stopwatch.ElapsedMilliseconds, fields.IsError, fields.ExceptionTypeName);
     }
     if (_firingObserver is not null) {
       await _firingObserver.OnReceptorFiredAsync(
         receptor.ReceptorId,
         ctx.Stage,
-        messageId,
+        fields.MessageId,
         ctx.Envelope,
-        stopwatch.Elapsed,
-        capturedException,
+        fields.Stopwatch.Elapsed,
+        fields.CapturedException,
         cancellationToken).ConfigureAwait(false);
     }
   }
@@ -940,6 +960,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       EventId = 16,
       Level = LogLevel.Debug,
       Message = "[ReceptorInvoker] Firing {ReceptorId} at {Stage} for {MessageType} (MessageId={MessageId}, StreamId={StreamId}, CorrelationId={CorrelationId}, SourceService={SourceService})")]
+    [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method — parameter list mirrors the structured log template placeholders and cannot be grouped without losing structured-logging semantics.")]
     public static partial void ReceptorFiring(
       ILogger logger,
       string receptorId,
@@ -954,6 +975,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       EventId = 17,
       Level = LogLevel.Debug,
       Message = "[ReceptorInvoker] Fired {ReceptorId} at {Stage} for {MessageType} in {ElapsedMs}ms (MessageId={MessageId}, StreamId={StreamId}, CorrelationId={CorrelationId}, SourceService={SourceService}, IsError={IsError}, ExceptionType={ExceptionType})")]
+    [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method — parameter list mirrors the structured log template placeholders and cannot be grouped without losing structured-logging semantics.")]
     public static partial void ReceptorFired(
       ILogger logger,
       string receptorId,
@@ -971,6 +993,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       EventId = 18,
       Level = LogLevel.Warning,
       Message = "[ReceptorInvoker] Receptor {ReceptorId} already fired at {PriorStage}, skipping duplicate attempt at {CurrentStage} (MessageId={MessageId}, StreamId={StreamId}, SourceService={SourceService}, PriorCompletedAt={PriorCompletedAt})")]
+    [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method — parameter list mirrors the structured log template placeholders and cannot be grouped without losing structured-logging semantics.")]
     public static partial void ReceptorAlreadyFiredSkip(
       ILogger logger,
       string receptorId,

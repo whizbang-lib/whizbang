@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -49,6 +50,7 @@ public static partial class SubscriptionRetryHelper {
   /// <param name="options">Resilience options.</param>
   /// <param name="logger">Logger for retry attempts.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface — changing the signature is a binary/source break for NuGet consumers; each parameter is a distinct subscription concern (transport, destination, handler, batch options, state, resilience options, logger, cancellation).")]
   public static async Task SubscribeWithRetryAsync(
     ITransport transport,
     TransportDestination destination,

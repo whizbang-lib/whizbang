@@ -211,7 +211,7 @@ public abstract class SequenceProviderContractTests {
     var provider = CreateProvider();
     const string streamKey = "test-stream";
     using var cts = new CancellationTokenSource();
-    cts.Cancel(); // Already cancelled
+    await cts.CancelAsync(); // Already cancelled
 
     // Act & Assert
     await Assert.That(async () => await provider.GetNextAsync(streamKey, cts.Token))

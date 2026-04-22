@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -487,7 +488,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateInterfaceProperties(assembly, allTypes));
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly,
+      new JsonTypeCollections(allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes)));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
@@ -765,6 +767,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Holds pre-loaded snippet templates for GetTypeInfo generation.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Positional record whose purpose is to group the nine per-category snippet strings for GetTypeInfo generation — it is itself the fix for S107 on the load/generate helpers that would otherwise take these values individually.")]
   private sealed record GetTypeInfoSnippets(
       string ValueObject,
       string Message,
@@ -775,6 +778,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       string Dictionary,
       string Enum,
       string NullableEnum
+  );
+
+  /// <summary>
+  /// Groups the per-category type arrays that feed GetTypeInfo generation so helper signatures
+  /// don't need a long parameter list.
+  /// </summary>
+  private sealed record JsonTypeCollections(
+      ImmutableArray<JsonMessageTypeInfo> AllTypes,
+      ImmutableArray<ListTypeInfo> ListTypes,
+      ImmutableArray<ReadOnlyListTypeInfo> IReadOnlyListTypes,
+      ImmutableArray<ArrayTypeInfo> ArrayTypes,
+      ImmutableArray<DictionaryTypeInfo> DictionaryTypes,
+      ImmutableArray<JsonEnumInfo> EnumTypes,
+      ImmutableArray<PolymorphicTypeInfo> PolymorphicTypes
   );
 
   /// <summary>
@@ -796,7 +813,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
   // S3776: Type-info generation for all serializable types — complexity from many type categories (messages, lists, arrays, dicts, enums, polymorphic)
 #pragma warning disable S3776
-  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+  private static string _generateGetTypeInfo(Assembly assembly, JsonTypeCollections collections) {
+    var allTypes = collections.AllTypes;
+    var listTypes = collections.ListTypes;
+    var iReadOnlyListTypes = collections.IReadOnlyListTypes;
+    var arrayTypes = collections.ArrayTypes;
+    var dictionaryTypes = collections.DictionaryTypes;
+    var enumTypes = collections.EnumTypes;
+    var polymorphicTypes = collections.PolymorphicTypes;
 #pragma warning restore S3776
     var sb = new System.Text.StringBuilder();
 
@@ -2741,7 +2765,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var typeSymbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct) as INamedTypeSymbol;
     if (typeSymbol is null || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
-      return default;
+      return ImmutableArray<JsonMessageTypeInfo>.Empty;
     }
 
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
