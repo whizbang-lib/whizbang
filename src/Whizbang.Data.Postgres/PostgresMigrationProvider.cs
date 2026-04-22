@@ -92,6 +92,10 @@ public class PostgresMigrationProvider : IMigrationProvider {
     return new MigrationScript(scriptName, sql);
   }
 
+  // IMigrationProvider.GetMigrations/GetMigration are synchronous public API; switching to
+  // async disposal here would require breaking the contract. Synchronous StreamReader disposal
+  // on an in-memory manifest resource stream has no meaningful cost.
+#pragma warning disable RCS1261 // Resource can be disposed asynchronously
   private string _readEmbeddedResource(string resourceName) {
     using var stream = _assembly.GetManifestResourceStream(resourceName)
       ?? throw new InvalidOperationException($"Embedded resource not found: {resourceName}");
@@ -99,4 +103,5 @@ public class PostgresMigrationProvider : IMigrationProvider {
     using var reader = new StreamReader(stream);
     return reader.ReadToEnd();
   }
+#pragma warning restore RCS1261
 }
