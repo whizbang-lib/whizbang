@@ -55,5 +55,7 @@ public interface IDatabaseReadinessCheck {
   /// should fire this when transitioning between ready and not-ready states.
   /// </remarks>
   /// <docs>operations/workers/database-readiness#change-notification</docs>
+#pragma warning disable S3237 // Accessors are intentionally empty — this is a default-interface no-op; implementations override to subscribe.
   event Action? OnReadinessChanged { add { } remove { } }
+#pragma warning restore S3237
 }

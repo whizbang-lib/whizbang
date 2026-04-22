@@ -210,7 +210,7 @@ public abstract class SequenceProviderContractTests {
     // Arrange
     var provider = CreateProvider();
     const string streamKey = "test-stream";
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     cts.Cancel(); // Already cancelled
 
     // Act & Assert
