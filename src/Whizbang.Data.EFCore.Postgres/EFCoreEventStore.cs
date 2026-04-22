@@ -503,7 +503,23 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       return [];
     }
 
-    // Build type lookup (same pattern as ReadPolymorphicAsync)
+    var typeMap = _buildEventTypeLookup(eventTypes);
+
+    var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
+    foreach (var raw in streamEvents) {
+      var envelope = _tryBuildEnvelopeFromStreamEvent(raw, typeMap);
+      if (envelope is not null) {
+        results.Add(envelope);
+      }
+    }
+
+    return results;
+  }
+
+  /// <summary>Builds a case-sensitive type lookup with one entry per format the producer might
+  /// emit: short (TypeNameFormatter.Format), assembly-qualified, full, and simple name. Matches
+  /// the pattern used by ReadPolymorphicAsync.</summary>
+  private static Dictionary<string, Type> _buildEventTypeLookup(IReadOnlyList<Type> eventTypes) {
     var typeMap = new Dictionary<string, Type>();
     foreach (var type in eventTypes) {
       typeMap[TypeNameFormatter.Format(type)] = type;
@@ -515,54 +531,64 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       }
       typeMap[type.Name] = type;
     }
+    return typeMap;
+  }
 
-    var results = new List<MessageEnvelope<IEvent>>(streamEvents.Count);
-    foreach (var raw in streamEvents) {
-      try {
-        var concreteType = _resolveConcreteType(raw.EventType, typeMap);
-        if (concreteType is null) {
-          continue;  // Skip unknown event types
-        }
-
-        var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-        var eventData = JsonSerializer.Deserialize(raw.EventData, typeInfo);
-        if (eventData is null) {
-          continue;
-        }
-
-        // Reconstruct full envelope from metadata and scope (same as ReadPolymorphicAsync)
-        // AOT-safe: use GetTypeInfo for source-generated serialization
-        EnvelopeMetadata? metadata = null;
-        if (!string.IsNullOrEmpty(raw.Metadata)) {
-          var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-          metadata = (EnvelopeMetadata?)JsonSerializer.Deserialize(raw.Metadata, metadataTypeInfo);
-        }
-
-        PerspectiveScope? scope = null;
-        if (!string.IsNullOrEmpty(raw.Scope)) {
-          var scopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
-          scope = (PerspectiveScope?)JsonSerializer.Deserialize(raw.Scope, scopeTypeInfo);
-        }
-
-        var hops = metadata?.Hops?.ToList() ?? [];
-        // Restore scope into first hop (same pattern as _restoreScopeInHops)
-        if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
-          hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-        }
-
-        results.Add(new MessageEnvelope<IEvent> {
-          MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
-          Payload = (IEvent)eventData,
-          Hops = hops,
-          DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
-        });
-      } catch (Exception) {
-        // Skip events that fail deserialization (type not in JSON context,
-        // corrupted data, schema mismatch). Don't let one bad event block the batch.
-        continue;
+  /// <summary>
+  /// Deserializes a single StreamEventData row into a MessageEnvelope. Returns null to signal
+  /// "skip this row" — unknown event type, null deserialisation result, or any exception
+  /// during deserialisation. Don't let one bad event block the batch.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _tryBuildEnvelopeFromStreamEvent(
+      StreamEventData raw,
+      Dictionary<string, Type> typeMap) {
+    try {
+      var concreteType = _resolveConcreteType(raw.EventType, typeMap);
+      if (concreteType is null) {
+        return null;
       }
-    }
 
-    return results;
+      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
+      var eventData = JsonSerializer.Deserialize(raw.EventData, typeInfo);
+      if (eventData is null) {
+        return null;
+      }
+
+      var metadata = _deserializeMetadataIfPresent(raw.Metadata);
+      var scope = _deserializeScopeIfPresent(raw.Scope);
+
+      var hops = metadata?.Hops?.ToList() ?? [];
+      // Restore scope into first hop (same pattern as _restoreScopeInHops)
+      if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
+        hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+      }
+
+      return new MessageEnvelope<IEvent> {
+        MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
+        Payload = (IEvent)eventData,
+        Hops = hops,
+        DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      };
+    } catch (Exception) {
+      // Skip events that fail deserialization (type not in JSON context,
+      // corrupted data, schema mismatch). Don't let one bad event block the batch.
+      return null;
+    }
+  }
+
+  private EnvelopeMetadata? _deserializeMetadataIfPresent(string? raw) {
+    if (string.IsNullOrEmpty(raw)) {
+      return null;
+    }
+    var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+    return (EnvelopeMetadata?)JsonSerializer.Deserialize(raw, metadataTypeInfo);
+  }
+
+  private PerspectiveScope? _deserializeScopeIfPresent(string? raw) {
+    if (string.IsNullOrEmpty(raw)) {
+      return null;
+    }
+    var scopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
+    return (PerspectiveScope?)JsonSerializer.Deserialize(raw, scopeTypeInfo);
   }
 }
