@@ -383,9 +383,10 @@ public partial class WorkCoordinatorPublisherWorker(
       _consecutiveFullDrains = 0;
 
       try {
-        // Wait for either the polling interval OR an external wake signal (whichever comes first).
-        // RequestImmediatePoll() releases the semaphore, waking this loop early.
-        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+        // Wait for either the adaptive polling interval OR an external wake signal (whichever comes first).
+        // RequestImmediatePoll() releases the semaphore, waking this loop early regardless of backoff depth.
+        var waitMs = _computeAdaptivePollWaitMs();
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(waitMs), stoppingToken);
         Interlocked.Exchange(ref _wakeSignaled, 0);
       } catch (OperationCanceledException) {
         break;
@@ -393,6 +394,25 @@ public partial class WorkCoordinatorPublisherWorker(
     }
 
     _workChannelWriter.Complete();
+  }
+
+  /// <summary>
+  /// Adaptive poll wait: doubles from <see cref="WorkCoordinatorPublisherOptions.PollingIntervalMilliseconds"/>
+  /// per consecutive empty poll, capped at <see cref="WorkCoordinatorPublisherOptions.PollingMaxIntervalMilliseconds"/>.
+  /// Returns the base interval when backoff is disabled (max ≤ base) or when the last tick produced work
+  /// (<see cref="_consecutiveEmptyPolls"/> = 0).
+  /// The shift exponent is clamped to 10 to prevent pathological inputs from overflowing <c>long</c>.
+  /// </summary>
+  private int _computeAdaptivePollWaitMs() {
+    var baseMs = _options.PollingIntervalMilliseconds;
+    var maxMs = _options.PollingMaxIntervalMilliseconds;
+    var empty = Volatile.Read(ref _consecutiveEmptyPolls);
+    if (maxMs <= baseMs || empty <= 0) {
+      return baseMs;
+    }
+    var shift = Math.Min(empty - 1, 10);
+    var doubled = (long)baseMs << shift;
+    return (int)Math.Min(doubled, maxMs);
   }
 
   private async Task _processInitialWorkBatchAsync(CancellationToken stoppingToken) {
@@ -1655,6 +1675,22 @@ public class WorkCoordinatorPublisherOptions {
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_MultipleInstances_NoDuplicatePublishingAsync</tests>
   public int PollingIntervalMilliseconds { get; set; } = 250;
+
+  /// <summary>
+  /// Cap for adaptive poll interval on consecutive empty polls. When set
+  /// strictly above <see cref="PollingIntervalMilliseconds"/>, the loop
+  /// doubles its wait per consecutive empty poll (base, 2×base, 4×base, …)
+  /// up to this cap. Set equal to (or below) <see cref="PollingIntervalMilliseconds"/>
+  /// to disable backoff and restore fixed-interval polling.
+  /// Default: 2000 ms (with default 250 ms base, gives 8× max reduction on
+  /// idle workers: 250 → 500 → 1000 → 2000).
+  /// Locally-produced work still bypasses the wait via <c>RequestImmediatePoll()</c>
+  /// (channel OnNewWorkAvailable / OnNewInboxWorkAvailable signals); transport-
+  /// received inbox writes wait up to this cap to be discovered by the next tick.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/process-work-batch-lease-semantics</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDrainTests.cs:WhenEmptyPollsAccumulate_TotalWaitExceedsFixedBaselineAsync</tests>
+  public int PollingMaxIntervalMilliseconds { get; set; } = 2000;
 
   /// <summary>
   /// Lease duration in seconds.
