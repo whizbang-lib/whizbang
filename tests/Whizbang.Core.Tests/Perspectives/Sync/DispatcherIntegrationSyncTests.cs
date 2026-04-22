@@ -9,13 +9,13 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// Integration tests that verify the FULL Dispatcher flow for perspective sync:
+/// <para>Integration tests that verify the FULL Dispatcher flow for perspective sync:
 /// 1. Command A sent → Receptor A invoked → Returns Event B
 /// 2. Event B cascaded → Tracked in ISyncEventTracker (if registered in ITrackedEventTypeRegistry)
 /// 3. Command E sent → Sync check finds tracked event → Waits for MarkProcessed
-/// 4. Perspective worker calls MarkProcessed → Sync completes → E's receptor fires
+/// 4. Perspective worker calls MarkProcessed → Sync completes → E's receptor fires</para>
 ///
-/// These tests verify the complete end-to-end integration, not just individual components.
+/// <para>These tests verify the complete end-to-end integration, not just individual components.</para>
 /// </summary>
 /// <remarks>
 /// These tests use shared SyncEventTracker instances and SyncEventTypeRegistrations,

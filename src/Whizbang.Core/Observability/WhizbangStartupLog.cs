@@ -26,7 +26,7 @@ public sealed partial class WhizbangStartupLogger(
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken cancellationToken) {
     var serviceName = instanceProvider.ServiceName;
-    var whizbangVersion = WhizbangVersionInfo.Version;
+    const string whizbangVersion = WhizbangVersionInfo.Version;
 
     // Config file overrides code option (Whizbang:ShowBanner in appsettings.json)
     var showBanner = coreOptions.ShowBanner;

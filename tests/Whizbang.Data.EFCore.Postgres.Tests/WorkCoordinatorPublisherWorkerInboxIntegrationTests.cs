@@ -439,7 +439,7 @@ public class WorkCoordinatorPublisherWorkerInboxIntegrationTests : EFCoreTestBas
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", (Guid)actualStreamId);
+      command.Parameters.AddWithValue(nameof(streamId), (Guid)actualStreamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 

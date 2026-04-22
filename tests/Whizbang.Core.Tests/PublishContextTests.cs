@@ -42,8 +42,8 @@ public class PublishContextTests {
   [Test]
   public async Task PublishContext_ToString_ReturnsCorrectNamesAsync() {
     // Arrange & Act
-    var immediateName = PublishContext.Immediate.ToString();
-    var postCommitName = PublishContext.PostCommit.ToString();
+    var immediateName = nameof(PublishContext.Immediate);
+    var postCommitName = nameof(PublishContext.PostCommit);
 
     // Assert
     await Assert.That(immediateName).IsEqualTo("Immediate");

@@ -11,11 +11,11 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Creates a DbContext from the pool and provides ILensQuery instances that share it.
 /// </summary>
 /// <remarks>
-/// Each factory instance owns its own DbContext from the connection pool.
+/// <para>Each factory instance owns its own DbContext from the connection pool.
 /// Multiple <see cref="GetQuery{TModel}"/> calls return queries that share the same DbContext,
-/// enabling joins across different model types when needed.
+/// enabling joins across different model types when needed.</para>
 ///
-/// Registered as Transient - each injection gets a fresh factory with its own DbContext.
+/// <para>Registered as Transient - each injection gets a fresh factory with its own DbContext.</para>
 /// </remarks>
 /// <typeparam name="TDbContext">The DbContext type</typeparam>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>

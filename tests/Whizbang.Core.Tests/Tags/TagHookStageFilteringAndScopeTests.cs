@@ -15,19 +15,19 @@ using Whizbang.Core.Tags;
 namespace Whizbang.Core.Tests.Tags;
 
 /// <summary>
-/// RED/GREEN tests reproducing the a consumer application tag notification failure.
+/// <para>RED/GREEN tests reproducing the a consumer application tag notification failure.</para>
 ///
-/// a consumer application registers tag hooks at PostAllPerspectivesDetached:
+/// <para>a consumer application registers tag hooks at PostAllPerspectivesDetached:
 ///   options.Tags.UseHook&lt;NotificationTagAttribute, ConsumerNotificationTagHook&gt;(
-///     fireAt: LifecycleStage.PostAllPerspectivesDetached);
+///     fireAt: LifecycleStage.PostAllPerspectivesDetached);</para>
 ///
-/// The hooks read scope from IScopeContextAccessor.ScopeContext (AsyncLocal), NOT from TagContext.Scope.
-/// If the hook fires at the wrong stage or scope is null, notifications silently fail.
+/// <para>The hooks read scope from IScopeContextAccessor.ScopeContext (AsyncLocal), NOT from TagContext.Scope.
+/// If the hook fires at the wrong stage or scope is null, notifications silently fail.</para>
 ///
-/// These tests verify:
+/// <para>These tests verify:
 /// 1. Stage filtering: hooks only fire at their registered fireAt stage
 /// 2. Scope propagation: hooks resolved from a DI scope can read scope via IScopeContextAccessor
-/// 3. ProcessTagsAsync respects fireAt via GetHooksFor(type, stage)
+/// 3. ProcessTagsAsync respects fireAt via GetHooksFor(type, stage)</para>
 /// </summary>
 [Category("Core")]
 [Category("Tags")]

@@ -204,13 +204,13 @@ public class ReceptorInvokerTagScopePropagationTests {
   }
 
   /// <summary>
-  /// Verifies that scope propagates from envelope hops to tag hooks at terminal lifecycle
+  /// <para>Verifies that scope propagates from envelope hops to tag hooks at terminal lifecycle
   /// stages (PostAllPerspectivesDetached, PostLifecycleDetached, etc.) even when NO receptors are
-  /// registered at that stage (causing the early-return path in InvokeAsync).
+  /// registered at that stage (causing the early-return path in InvokeAsync).</para>
   ///
-  /// BUG: EnvelopeContextExtractor.ExtractFromHops and ScopeContextAccessor.CurrentContext assignment
+  /// <para>BUG: EnvelopeContextExtractor.ExtractFromHops and ScopeContextAccessor.CurrentContext assignment
   /// were only executed in the receptors.Count > 0 path. Tag hooks at terminal stages
-  /// (which have no registered receptors) never had scope available.
+  /// (which have no registered receptors) never had scope available.</para>
   /// </summary>
   [Test]
   [MethodDataSource(nameof(TerminalLifecycleStages))]
@@ -253,11 +253,11 @@ public class ReceptorInvokerTagScopePropagationTests {
   }
 
   /// <summary>
-  /// Verifies that an accessor-injected hook (like ConsumerSignalRNotificationHook) can read
-  /// scope from the injected IScopeContextAccessor at terminal stages with no receptors.
+  /// <para>Verifies that an accessor-injected hook (like ConsumerSignalRNotificationHook) can read
+  /// scope from the injected IScopeContextAccessor at terminal stages with no receptors.</para>
   ///
-  /// This is the exact code path used by a consumer notification hooks — they resolve
-  /// IScopeContextAccessor via DI injection, not via ScopeContextAccessor.CurrentContext directly.
+  /// <para>This is the exact code path used by a consumer notification hooks — they resolve
+  /// IScopeContextAccessor via DI injection, not via ScopeContextAccessor.CurrentContext directly.</para>
   /// </summary>
   [Test]
   [MethodDataSource(nameof(TerminalLifecycleStages))]

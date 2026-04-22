@@ -13,17 +13,17 @@ using Whizbang.Data.Dapper.Postgres;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Partition consistency invariant: for any given stream_id, the partition_number
+/// <para>Partition consistency invariant: for any given stream_id, the partition_number
 /// computed and stored in wh_inbox must equal the partition_number stored in
 /// wh_active_streams. A mismatch causes claim_orphaned_inbox to deadlock — the
 /// partition-modulo filter routes a message to instance rank A while the
 /// stream-ownership NOT EXISTS clause is satisfied by a live instance at rank B,
-/// leaving the message permanently unclaimable.
+/// leaving the message permanently unclaimable.</para>
 ///
-/// Observed in a consumer BFF dev on 2026-04-20: 201 inbox rows wedged across three
+/// <para>Observed in a consumer BFF dev on 2026-04-20: 201 inbox rows wedged across three
 /// live/heartbeating pods because wh_inbox.partition_number used p_partition_count=2
 /// (IWorkCoordinator.StoreInboxMessagesAsync default) while wh_active_streams used
-/// p_partition_count=10_000 (WorkCoordinatorPublisherOptions.PartitionCount default).
+/// p_partition_count=10_000 (WorkCoordinatorPublisherOptions.PartitionCount default).</para>
 /// </summary>
 [Category("Integration")]
 public class PartitionConsistencyTests : PostgresTestBase {
@@ -51,16 +51,16 @@ public class PartitionConsistencyTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// RED anchor. Reproduces the shipped bug by exercising the two store paths
-  /// that TransportConsumerWorker and WorkCoordinatorPublisherWorker actually use:
+  /// <para>RED anchor. Reproduces the shipped bug by exercising the two store paths
+  /// that TransportConsumerWorker and WorkCoordinatorPublisherWorker actually use:</para>
   ///
-  ///   - StoreInboxMessagesAsync (direct, fast path) — partitionCount default = 2
-  ///   - ProcessWorkBatchAsync with NewInboxMessages (publisher path) — PartitionCount default = 10_000
+  /// <para>  - StoreInboxMessagesAsync (direct, fast path) — partitionCount default = 2
+  ///   - ProcessWorkBatchAsync with NewInboxMessages (publisher path) — PartitionCount default = 10_000</para>
   ///
-  /// For the same stream_id, both wh_inbox.partition_number (from the first call)
+  /// <para>For the same stream_id, both wh_inbox.partition_number (from the first call)
   /// and wh_active_streams.partition_number (refreshed end-of-tick by the second)
   /// must agree — otherwise claim_orphaned_inbox cannot route the message to the
-  /// instance that owns the stream.
+  /// instance that owns the stream.</para>
   /// </summary>
   [Test]
   public async Task WhenStoreInboxAndProcessBatchUseDefaults_PartitionNumbersMustMatchAsync() {

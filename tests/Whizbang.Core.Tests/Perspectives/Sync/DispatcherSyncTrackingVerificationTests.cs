@@ -9,16 +9,16 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// VERIFICATION TESTS: These tests verify the complete tracking chain works correctly.
+/// <para>VERIFICATION TESTS: These tests verify the complete tracking chain works correctly.</para>
 ///
-/// The chain is:
+/// <para>The chain is:
 /// 1. Source generator generates module initializer that calls SyncEventTypeRegistrations.Register()
 /// 2. TrackedEventTypeRegistry (default constructor) reads from SyncEventTypeRegistrations
 /// 3. Dispatcher checks _trackedEventTypeRegistry.GetPerspectiveNames(eventType)
 /// 4. If perspectives are returned, Dispatcher tracks in _syncEventTracker
-/// 5. PerspectiveSyncAwaiter reads from _syncEventTracker
+/// 5. PerspectiveSyncAwaiter reads from _syncEventTracker</para>
 ///
-/// If any step fails, events won't be tracked and sync will fall through to DB discovery.
+/// <para>If any step fails, events won't be tracked and sync will fall through to DB discovery.</para>
 /// </summary>
 /// <remarks>
 /// These tests use the shared static SyncEventTypeRegistrations, so they must run
@@ -296,11 +296,11 @@ public class DispatcherSyncTrackingVerificationTests {
   }
 
   /// <summary>
-  /// BUG DEMONSTRATION: This test shows that the generated code ignores the sync result.
+  /// <para>BUG DEMONSTRATION: This test shows that the generated code ignores the sync result.
   /// When WaitForStreamAsync returns TimedOut, the receptor should NOT fire (default behavior).
-  /// But the current generated code ignores the result and fires anyway!
+  /// But the current generated code ignores the result and fires anyway!</para>
   ///
-  /// This test demonstrates WHAT SHOULD HAPPEN - it will FAIL against the current generated code.
+  /// <para>This test demonstrates WHAT SHOULD HAPPEN - it will FAIL against the current generated code.</para>
   /// </summary>
   [Test]
   public async Task WaitForStreamAsync_WhenTimedOut_ShouldPreventReceptorFromFiringAsync() {

@@ -9,15 +9,15 @@ namespace Whizbang.Core.Security.Extractors;
 /// including roles, permissions, principals, and claims.
 /// </summary>
 /// <remarks>
-/// This is the default extractor for distributed message security propagation.
+/// <para>This is the default extractor for distributed message security propagation.
 /// When a message flows between services, the scope delta is preserved
-/// in the MessageHop.Scope property and can be extracted here.
+/// in the MessageHop.Scope property and can be extracted here.</para>
 ///
-/// Priority: 100 (runs first among default extractors)
+/// <para>Priority: 100 (runs first among default extractors)</para>
 ///
-/// Uses <see cref="ScopeDelta.ApplyTo"/> to merge all hop deltas, producing a full
+/// <para>Uses <see cref="ScopeDelta.ApplyTo"/> to merge all hop deltas, producing a full
 /// <see cref="ScopeContext"/> with all security fields (scope, roles, permissions,
-/// principals, claims, actual/effective principal, context type).
+/// principals, claims, actual/effective principal, context type).</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#message-hop-extractor</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>

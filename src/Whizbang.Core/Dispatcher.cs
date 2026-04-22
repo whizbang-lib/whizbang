@@ -3167,7 +3167,7 @@ public abstract partial class Dispatcher(
     if (message is IEvent) {
       eventId = ValueObjects.TrackedGuid.NewMedo();
       var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
-      _trackEventForSync(message, messageType, eventId.Value, streamId);
+      _trackEventForSync(messageType, eventId.Value, streamId);
     }
 
     // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
@@ -3252,7 +3252,7 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Tracks a cascaded event in both scoped and singleton trackers for perspective sync.
   /// </summary>
-  private void _trackEventForSync(IMessage message, Type messageType, Guid eventId, Guid streamId) {
+  private void _trackEventForSync(Type messageType, Guid eventId, Guid streamId) {
     // Track in scoped tracker (same request scope)
     _scopedEventTracker?.TrackEmittedEvent(streamId, messageType, eventId);
 

@@ -14,16 +14,16 @@ using Whizbang.Transports.Tests.Generated;
 namespace Whizbang.Transports.Tests;
 
 /// <summary>
-/// Tests for DispatcherTransportBridge - a component that connects IDispatcher with ITransport.
+/// <para>Tests for DispatcherTransportBridge - a component that connects IDispatcher with ITransport.
 /// Following TDD: These tests are written BEFORE implementing the bridge.
-/// All tests should FAIL initially (RED phase), then pass after implementation (GREEN phase).
+/// All tests should FAIL initially (RED phase), then pass after implementation (GREEN phase).</para>
 ///
-/// Architecture:
+/// <para>Architecture:
 /// - IDispatcher remains pure (no transport concerns)
 /// - DispatcherTransportBridge handles transport integration
 /// - Bridge serializes/deserializes messages
 /// - Bridge routes incoming transport messages to local dispatcher
-/// - Bridge publishes outgoing messages to transport destinations
+/// - Bridge publishes outgoing messages to transport destinations</para>
 /// </summary>
 public class DispatcherTransportBridgeTests {
   [Test]

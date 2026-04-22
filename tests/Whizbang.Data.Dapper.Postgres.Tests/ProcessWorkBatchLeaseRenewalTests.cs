@@ -11,22 +11,22 @@ using Whizbang.Data.Dapper.Postgres;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Write-volume contract tests for the per-tick maintenance UPDATEs inside
+/// <para>Write-volume contract tests for the per-tick maintenance UPDATEs inside
 /// <c>process_work_batch</c> (migration 029) and <c>register_instance_heartbeat</c>
-/// (migration 010).
+/// (migration 010).</para>
 ///
-/// The system was observed writing every owned stream row on every tick
+/// <para>The system was observed writing every owned stream row on every tick
 /// (a consumer production on 2026-04-21: 1.8 billion lifetime UPDATEs on 5,790 rows)
 /// because both renewal paths had no near-expiry / freshness guard. This test
-/// class locks in conditional behaviour:
+/// class locks in conditional behaviour:</para>
 ///
-///   - <c>wh_active_streams.lease_expiry</c> is refreshed only when the existing
+/// <para>  - <c>wh_active_streams.lease_expiry</c> is refreshed only when the existing
 ///     lease is within one-third of <c>p_lease_duration_seconds</c> of now.
 ///   - <c>wh_service_instances.last_heartbeat_at</c> is refreshed only when the
-///     last heartbeat is more than 10 seconds stale.
+///     last heartbeat is more than 10 seconds stale.</para>
 ///
-/// Evidence + rollback artifacts for the live proof that motivated this change
-/// live at <c>a consumer application/docs/production-vacuum-proof-2026-04-21/</c>.
+/// <para>Evidence + rollback artifacts for the live proof that motivated this change
+/// live at <c>a consumer application/docs/production-vacuum-proof-2026-04-21/</c>.</para>
 /// </summary>
 [Category("Integration")]
 public class ProcessWorkBatchLeaseRenewalTests : PostgresTestBase {

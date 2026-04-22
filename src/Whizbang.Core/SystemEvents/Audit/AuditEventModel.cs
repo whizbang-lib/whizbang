@@ -97,6 +97,7 @@ public static class AuditEventProjection {
   /// Optional custom function to humanize event type names. Receives the raw event type name
   /// and returns a human-readable label, or null to fall back to the default humanizer.
   /// </param>
+#pragma warning disable RCS1163, IDE0060 // Projection Apply signature requires currentData parameter for consistency across projections
   public static AuditEventModel Apply(
       AuditEventModel currentData,
       EventAudited @event,
@@ -120,6 +121,7 @@ public static class AuditEventProjection {
       CausationId = @event.CausationId
     };
   }
+#pragma warning restore RCS1163, IDE0060
 
   /// <summary>
   /// Converts a fully-qualified event type name into a human-readable label.

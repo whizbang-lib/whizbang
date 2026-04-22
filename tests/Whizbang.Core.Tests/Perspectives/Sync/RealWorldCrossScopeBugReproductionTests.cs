@@ -8,20 +8,20 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// BUG REPRODUCTION TESTS: These tests simulate the EXACT real-world cross-scope scenario
-/// that is failing in production.
+/// <para>BUG REPRODUCTION TESTS: These tests simulate the EXACT real-world cross-scope scenario
+/// that is failing in production.</para>
 ///
-/// The scenario:
+/// <para>The scenario:
 /// 1. Request 1: StartActivityCommandHandler returns Route.Local(StartedEvent)
 ///    - Event is stored in wh_event_store
 ///    - wh_perspective_events row is created with processed_at = NULL
 /// 2. Request 2: RequestActivityStatusCommandHandler has [AwaitPerspectiveSync]
 ///    - WaitForStreamAsync is called
 ///    - EXPECTED: Handler should WAIT until event is processed
-///    - ACTUAL BUG: Handler fires immediately!
+///    - ACTUAL BUG: Handler fires immediately!</para>
 ///
-/// The bug: The handler fires BEFORE the perspective has processed the event.
-/// This means WaitForStreamAsync is returning "Synced" incorrectly.
+/// <para>The bug: The handler fires BEFORE the perspective has processed the event.
+/// This means WaitForStreamAsync is returning "Synced" incorrectly.</para>
 /// </summary>
 public class RealWorldCrossScopeBugReproductionTests {
 
@@ -32,21 +32,21 @@ public class RealWorldCrossScopeBugReproductionTests {
   public record SimulatedCompletedEvent;
 
   /// <summary>
-  /// BUG REPRODUCTION TEST #1:
-  /// This test simulates the EXACT scenario where the bug occurs.
+  /// <para>BUG REPRODUCTION TEST #1:
+  /// This test simulates the EXACT scenario where the bug occurs.</para>
   ///
-  /// Setup:
+  /// <para>Setup:
   /// - Event EXISTS in wh_event_store (Request 1 stored it)
   /// - Event EXISTS in wh_perspective_events with processed_at = NULL (worker created it)
-  /// - Perspective has NOT yet called Apply() (processed_at is still NULL)
+  /// - Perspective has NOT yet called Apply() (processed_at is still NULL)</para>
   ///
-  /// Expected behavior:
+  /// <para>Expected behavior:
   /// - WaitForStreamAsync should return TimedOut (or keep polling)
-  /// - Handler should NOT fire until event is processed
+  /// - Handler should NOT fire until event is processed</para>
   ///
-  /// Actual bug:
+  /// <para>Actual bug:
   /// - WaitForStreamAsync returns Synced immediately
-  /// - Handler fires before perspective processes the event
+  /// - Handler fires before perspective processes the event</para>
   /// </summary>
   [Test]
   public async Task BUGREPRO_CrossScope_EventPendingInPerspective_ShouldNotReturnSyncedAsync() {
@@ -111,20 +111,20 @@ public class RealWorldCrossScopeBugReproductionTests {
   }
 
   /// <summary>
-  /// BUG REPRODUCTION TEST #2:
-  /// What happens when SQL returns NO result rows?
+  /// <para>BUG REPRODUCTION TEST #2:
+  /// What happens when SQL returns NO result rows?</para>
   ///
-  /// This could happen if:
+  /// <para>This could happen if:
   /// - EventTypeFilter doesn't match stored format (the bug I fixed earlier)
-  /// - No events exist for the stream
+  /// - No events exist for the stream</para>
   ///
-  /// EXPECTED BEHAVIOR (after BUG FIX):
+  /// <para>EXPECTED BEHAVIOR (after BUG FIX):
   /// When in "discovery mode" (no explicit event IDs tracked) and SQL returns no results,
   /// this means there are NO events matching the criteria in the database.
-  /// Therefore, there's nothing to wait for = Synced.
+  /// Therefore, there's nothing to wait for = Synced.</para>
   ///
-  /// The alternative (keep polling until timeout) would cause handlers to always timeout
-  /// when no events exist, which is bad UX.
+  /// <para>The alternative (keep polling until timeout) would cause handlers to always timeout
+  /// when no events exist, which is bad UX.</para>
   /// </summary>
   [Test]
   public async Task BUGREPRO_CrossScope_NoSQLResults_ReturnsSyncedWhenNothingToWaitForAsync() {
@@ -167,10 +167,10 @@ public class RealWorldCrossScopeBugReproductionTests {
   }
 
   /// <summary>
-  /// BUG REPRODUCTION TEST #3:
-  /// What happens when SQL returns a result with PendingCount = 0 but NO processed events?
+  /// <para>BUG REPRODUCTION TEST #3:
+  /// What happens when SQL returns a result with PendingCount = 0 but NO processed events?</para>
   ///
-  /// This tests the IsFullySynced logic.
+  /// <para>This tests the IsFullySynced logic.</para>
   /// </summary>
   [Test]
   public async Task BUGREPRO_CrossScope_ZeroPendingZeroProcessed_ChecksBehaviorAsync() {

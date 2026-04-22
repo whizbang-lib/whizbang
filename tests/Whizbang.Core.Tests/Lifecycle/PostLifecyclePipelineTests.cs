@@ -18,12 +18,12 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Lifecycle;
 
 /// <summary>
-/// Proves PostLifecycle fires at the end of EVERY pipeline path.
+/// <para>Proves PostLifecycle fires at the end of EVERY pipeline path.
 /// Each worker (Dispatcher, OutboxWorker, TransportConsumer, PerspectiveWorker)
-/// is tested in two scenarios: direct (no WhenAll) and WhenAll (Route.Both).
+/// is tested in two scenarios: direct (no WhenAll) and WhenAll (Route.Both).</para>
 ///
-/// These tests simulate the ACTUAL code path each worker takes and verify
-/// PostLifecycle fires exactly once per event at the pipeline endpoint.
+/// <para>These tests simulate the ACTUAL code path each worker takes and verify
+/// PostLifecycle fires exactly once per event at the pipeline endpoint.</para>
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
 /// <tests>src/Whizbang.Core/Lifecycle/LifecycleCoordinator.cs</tests>

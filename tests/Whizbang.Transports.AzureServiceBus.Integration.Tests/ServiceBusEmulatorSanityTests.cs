@@ -9,11 +9,11 @@ using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// Sanity tests for Azure Service Bus Emulator - verifies emulator is working correctly
-/// without any Whizbang library code. Uses only Azure SDK directly.
+/// <para>Sanity tests for Azure Service Bus Emulator - verifies emulator is working correctly
+/// without any Whizbang library code. Uses only Azure SDK directly.</para>
 ///
-/// These tests belong in the library, not the samples, because they verify the emulator
-/// works correctly before testing Whizbang transport implementation.
+/// <para>These tests belong in the library, not the samples, because they verify the emulator
+/// works correctly before testing Whizbang transport implementation.</para>
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]

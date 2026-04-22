@@ -5,14 +5,14 @@ namespace Whizbang.Core.Transports;
 /// Implementations create topics, exchanges, or other resources that subscribers will use.
 /// </summary>
 /// <remarks>
-/// This interface is used by the TransportConsumerWorker to provision infrastructure
+/// <para>This interface is used by the TransportConsumerWorker to provision infrastructure
 /// for domains this service owns (publishes events to). Infrastructure is provisioned
-/// at worker startup, before subscriptions are created.
+/// at worker startup, before subscriptions are created.</para>
 ///
-/// Examples of provisioning:
+/// <para>Examples of provisioning:
 /// - Azure Service Bus: Create topics via AdminClient
 /// - RabbitMQ: Declare topic exchanges
-/// - Kafka: Create topics via AdminClient
+/// - Kafka: Create topics via AdminClient</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>

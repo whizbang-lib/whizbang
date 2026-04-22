@@ -8,15 +8,15 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// Tests that verify the singleton ISyncEventTracker and ITrackedEventTypeRegistry
-/// work together for cross-scope perspective sync.
+/// <para>Tests that verify the singleton ISyncEventTracker and ITrackedEventTypeRegistry
+/// work together for cross-scope perspective sync.</para>
 ///
-/// The scenario:
+/// <para>The scenario:
 /// 1. Request 1: Handler returns Route.Local(event) - event gets tracked
 /// 2. Singleton tracker persists across requests
 /// 3. Request 2: Different handler with [AwaitPerspectiveSync]
 /// 4. WaitForStreamAsync checks singleton tracker and finds the event
-/// 5. Handler waits until event is processed
+/// 5. Handler waits until event is processed</para>
 /// </summary>
 /// <remarks>
 /// These tests use shared SyncEventTracker instances, so they must run

@@ -206,7 +206,7 @@ public class TransportManager(
 
     // Subscribe to transport via batch API, wrapping per-message handler
     return await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           await handler(msg.Envelope);
         }

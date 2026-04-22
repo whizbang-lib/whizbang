@@ -7,13 +7,13 @@ namespace Whizbang.Core.Security;
 /// Provides additional metadata about when and how the context was established.
 /// </summary>
 /// <remarks>
-/// This class wraps an extracted security context and adds:
+/// <para>This class wraps an extracted security context and adds:
 /// - Immutability guarantees (once established, cannot be changed)
 /// - Source tracking (which extractor created it)
 /// - Timestamp (when it was established)
-/// - Propagation flag (whether to include in outgoing messages)
+/// - Propagation flag (whether to include in outgoing messages)</para>
 ///
-/// The wrapper delegates all IScopeContext methods to the inner context.
+/// <para>The wrapper delegates all IScopeContext methods to the inner context.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#immutable-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs</tests>

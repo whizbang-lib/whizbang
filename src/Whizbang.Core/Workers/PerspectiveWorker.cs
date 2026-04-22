@@ -454,7 +454,7 @@ public partial class PerspectiveWorker(
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         // Keep processing work batches until all rewinds are done
-        var maxIterations = 100;  // Safety limit
+        const int maxIterations = 100;  // Safety limit
         for (var i = 0; i < maxIterations; i++) {
           await _processWorkBatchAsync(ct);
 
@@ -1200,21 +1200,21 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Reconciles completion state and groups work items for processing.
+  /// <para>Reconciles completion state and groups work items for processing.</para>
   ///
-  /// Historically extracted acknowledgement counts from SQL-returned metadata
+  /// <para>Historically extracted acknowledgement counts from SQL-returned metadata
   /// (perspective_completions_processed / _failures_processed). That path is
   /// silently dropped when the SQL response has no perspective/outbox/inbox
   /// rows — post-burst idle cycles leave completions stuck in "Sent" state
   /// until ResetStale resets them (5–60 min backoff), producing repeating
   /// "Perspective batch: completed=N" log entries that resend the same
   /// completions indefinitely. Matches the bug fixed in
-  /// WorkCoordinatorPublisherWorker.
+  /// WorkCoordinatorPublisherWorker.</para>
   ///
-  /// Fix: acknowledge the local sent-count captured at submission time. The
+  /// <para>Fix: acknowledge the local sent-count captured at submission time. The
   /// SQL's perspective_completions_processed is just
   /// jsonb_array_length(p_perspective_completions), so it always equals
-  /// what we sent — the round-trip is redundant.
+  /// what we sent — the round-trip is redundant.</para>
   /// </summary>
   private List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>>
     _reconcileAcknowledgementsAndPrepareWork(

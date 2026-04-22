@@ -8,28 +8,28 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
-/// Tests that simulate the REAL cross-scope scenario:
+/// <para>Tests that simulate the REAL cross-scope scenario:
 /// 1. Request 1: Handler emits event, it goes to event store
 /// 2. Request 2: Different handler with [AwaitPerspectiveSync]
 /// 3. Sync awaiter should detect event is NOT yet applied to perspective
-/// 4. Handler 2 should NOT fire until perspective has processed the event
+/// 4. Handler 2 should NOT fire until perspective has processed the event</para>
 ///
-/// This is testing the bug where RequestActivityStatusCommandHandler fires
-/// BEFORE the perspective has applied StartedEvent.
+/// <para>This is testing the bug where RequestActivityStatusCommandHandler fires
+/// BEFORE the perspective has applied StartedEvent.</para>
 /// </summary>
 public class CrossScopeRealScenarioTests {
 
   /// <summary>
-  /// SCENARIO: Request 1 emits event, Request 2 waits for perspective sync
+  /// <para>SCENARIO: Request 1 emits event, Request 2 waits for perspective sync</para>
   ///
-  /// This simulates:
+  /// <para>This simulates:
   /// - StartActivityCommandHandler returns Route.Local(StartedEvent)
   /// - Event stored in wh_event_store
   /// - RequestActivityStatusCommandHandler has [AwaitPerspectiveSync]
-  /// - Sync awaiter should detect event is PENDING (not yet processed)
+  /// - Sync awaiter should detect event is PENDING (not yet processed)</para>
   ///
-  /// The test should FAIL if the sync awaiter incorrectly returns "synced"
-  /// when the event hasn't been processed yet.
+  /// <para>The test should FAIL if the sync awaiter incorrectly returns "synced"
+  /// when the event hasn't been processed yet.</para>
   /// </summary>
   [Test]
   public async Task CrossScope_EventInEventStore_NotYetProcessedByPerspective_ShouldNotBeSyncedAsync() {

@@ -8,16 +8,16 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// Graceful shutdown service that deregisters the instance from the work coordination system.
+/// <para>Graceful shutdown service that deregisters the instance from the work coordination system.
 /// Releases all leases (outbox, inbox, perspective events, receptors, active streams),
-/// logs shutdown to wh_log, and removes the instance from wh_service_instances.
+/// logs shutdown to wh_log, and removes the instance from wh_service_instances.</para>
 ///
-/// Registration order matters: this service MUST be registered BEFORE the workers
+/// <para>Registration order matters: this service MUST be registered BEFORE the workers
 /// so that .NET hosting stops it AFTER them (LIFO ordering). This ensures workers
-/// finish in-flight work before deregistration releases their leases.
+/// finish in-flight work before deregistration releases their leases.</para>
 ///
-/// K8s compatible: Dockerfile uses <c>exec dotnet</c> (PID 1), so SIGTERM triggers
-/// <c>IHostedService.StopAsync</c>. Default <c>terminationGracePeriodSeconds</c> is 30s.
+/// <para>K8s compatible: Dockerfile uses <c>exec dotnet</c> (PID 1), so SIGTERM triggers
+/// <c>IHostedService.StopAsync</c>. Default <c>terminationGracePeriodSeconds</c> is 30s.</para>
 /// </summary>
 public sealed partial class WhizbangShutdownService(
   IServiceProvider serviceProvider,

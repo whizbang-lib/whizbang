@@ -4,13 +4,13 @@ using Microsoft.Extensions.Logging;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
-/// Abstract base class for transport configuration options.
+/// <para>Abstract base class for transport configuration options.
 /// Each concrete transport (RabbitMQ, Azure Service Bus, etc.) derives from this class
-/// to inherit shared settings while adding transport-specific configuration.
+/// to inherit shared settings while adding transport-specific configuration.</para>
 ///
-/// Settings are validated at startup against the transport's declared capabilities.
+/// <para>Settings are validated at startup against the transport's declared capabilities.
 /// When a setting is configured but the transport lacks the required capability,
-/// a warning is logged and the setting is effectively ignored by the transport.
+/// a warning is logged and the setting is effectively ignored by the transport.</para>
 /// </summary>
 /// <docs>messaging/transports/transport-options</docs>
 public abstract class TransportOptions {

@@ -7,12 +7,12 @@ namespace Whizbang.Generators.Shared.Limits;
 /// Used by source generators to validate names at compile time.
 /// </summary>
 /// <remarks>
-/// Each database provider has different maximum lengths for identifiers:
+/// <para>Each database provider has different maximum lengths for identifiers:
 /// - PostgreSQL: 63 bytes (NAMEDATALEN - 1)
 /// - MySQL: 64 characters
-/// - SQL Server: 128 characters
+/// - SQL Server: 128 characters</para>
 ///
-/// Provider-specific implementations live in their respective generator packages.
+/// <para>Provider-specific implementations live in their respective generator packages.</para>
 /// </remarks>
 public interface IDbProviderLimits {
   /// <summary>

@@ -871,12 +871,12 @@ public class PerspectiveWorkerSecurityContextTests {
   /// This is required for UserContextManagerCallback to set TenantContext in PostPerspectiveDetached handlers.
   /// </summary>
   /// <remarks>
-  /// Root cause: DefaultMessageSecurityContextProvider only invokes callbacks when extraction succeeds.
+  /// <para>Root cause: DefaultMessageSecurityContextProvider only invokes callbacks when extraction succeeds.
   /// When extraction fails, callbacks are NOT invoked, so UserContextManagerCallback doesn't run,
-  /// and _userContextManager.TenantContext remains null.
+  /// and _userContextManager.TenantContext remains null.</para>
   ///
-  /// Fix: PerspectiveWorker should manually invoke callbacks with the envelope's scope when
-  /// securityProvider returns null but envelope.GetCurrentScope() has data.
+  /// <para>Fix: PerspectiveWorker should manually invoke callbacks with the envelope's scope when
+  /// securityProvider returns null but envelope.GetCurrentScope() has data.</para>
   /// </remarks>
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorFailsButEnvelopeHasScope_InvokesCallbacksWithEnvelopeScopeAsync() {
