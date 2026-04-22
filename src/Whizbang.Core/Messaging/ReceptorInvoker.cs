@@ -190,76 +190,27 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Resolve scope for tag processing — use security context or extracted scope from hops
     var scopeForTags = securityContext ?? (IScopeContext?)extracted.Scope;
 
-    // Source-service filtering: PostInbox only fires for messages from OTHER services.
-    // Messages from THIS service already fired at LocalImmediate — skip to prevent double-fire.
     var isPreOutbox = stage == LifecycleStage.PreOutboxInline || stage == LifecycleStage.PreOutboxDetached;
     var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxDetached;
-    if (isPostInbox && _serviceName is not null && receptors.Count > 0) {
-      var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
-      if (string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {
-        _ensureLogger();
-        if (_logger is not null) {
-          Log.SkippedSameServicePostInbox(_logger, stage, messageType.Name, envelope.MessageId.Value, _serviceName);
-        }
-        return; // same service → already fired at LocalImmediate
-      }
-    }
 
-    // PreOutbox ownership filtering (AOT-safe, no reflection):
-    if (_ownedDomains.Count > 0 && receptors.Count > 0) {
-      var isOwned = _isOwnedNamespace(messageType.Namespace);
-      var isEvent = message is IEvent;
-      if (isPreOutbox && (isOwned ? !isEvent : isEvent)) {
-        _ensureLogger();
-        if (_logger is not null) {
-          Log.SkippedOwnedDomainFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
-        }
-        return; // skip owned commands + non-owned events at outbox stage
-      }
-    }
-
-    // Double-fire prevention: if the envelope was dispatched with LocalDispatch flag,
-    // the handler already fired at LocalImmediate → skip PreOutbox.
-    // Only applies when owned domains are configured (preserves backward compat).
-    if (_ownedDomains.Count > 0 && isPreOutbox && receptors.Count > 0
-        && envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
-      _ensureLogger();
-      if (_logger is not null) {
-        Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
-      }
+    if (_shouldSkipSameServicePostInbox(envelope, messageType, stage, receptors, isPostInbox)
+        || _shouldSkipOwnedDomainFilter(envelope, message, messageType, stage, receptors, isPreOutbox)
+        || _shouldSkipLocalDispatchPreOutbox(envelope, messageType, stage, receptors, isPreOutbox)) {
       return;
     }
 
     if (receptors.Count == 0) {
-      _ensureLogger();
-      if (_logger is not null) {
-        Log.NoReceptorsRegistered(_logger, stage, messageType.Name, envelope.MessageId.Value);
-      }
-      await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+      await _handleNoReceptorsRegisteredAsync(message, messageType, stage, envelope, scopeForTags, cancellationToken).ConfigureAwait(false);
       return;
     }
 
-    // Cross-worker dedup: prevent the same message+stage from being processed twice
-    // (e.g., TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox).
-    // For perspective-scoped stages the dedup key also includes context.PerspectiveType so
-    // that N perspectives processing the same event each get their own claim — without this,
-    // only the first perspective's Pre/PostPerspective* (and ImmediateDetached) fires.
-    if (_stageTracker is not null && !_stageTracker.TryClaim(envelope.MessageId.Value, stage, context?.PerspectiveType)) {
-      _ensureLogger();
-      if (_logger is not null) {
-        Log.SkippedStageTrackerDedup(_logger, stage, messageType.Name, envelope.MessageId.Value);
-      }
+    if (!_tryClaimStageTracker(envelope, messageType, stage, context)) {
       return;
     }
 
-    // Replay/Rebuild filtering: new events pass through, already-processed events keep
-    // only [ReceptorIdempotent(AlwaysFire = true)] receptors.
     receptors = _filterForReplayMode(receptors, context);
     if (receptors.Count == 0) {
-      _ensureLogger();
-      if (_logger is not null) {
-        Log.SkippedReplayModeFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
-      }
+      _logSkippedReplayModeFilter(envelope, messageType, stage);
       return;
     }
 
@@ -274,6 +225,131 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Process message tags after all receptors complete at the current lifecycle stage
     await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Source-service filtering: PostInbox only fires for messages from OTHER services. Messages
+  /// from THIS service already fired at LocalImmediate — returning true here skips PostInbox to
+  /// prevent double-fire.
+  /// </summary>
+  private bool _shouldSkipSameServicePostInbox(
+      IMessageEnvelope envelope,
+      Type messageType,
+      LifecycleStage stage,
+      IReadOnlyList<ReceptorInfo> receptors,
+      bool isPostInbox) {
+    if (!isPostInbox || _serviceName is null || receptors.Count == 0) {
+      return false;
+    }
+    var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
+    if (!string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {
+      return false;
+    }
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.SkippedSameServicePostInbox(_logger, stage, messageType.Name, envelope.MessageId.Value, _serviceName);
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// PreOutbox ownership filtering (AOT-safe, no reflection). Skips owned commands and
+  /// non-owned events at the outbox stage so domain-owned commands don't re-fire as events
+  /// and non-owned events aren't pushed back through their originating outbox.
+  /// </summary>
+  private bool _shouldSkipOwnedDomainFilter(
+      IMessageEnvelope envelope,
+      object message,
+      Type messageType,
+      LifecycleStage stage,
+      IReadOnlyList<ReceptorInfo> receptors,
+      bool isPreOutbox) {
+    if (_ownedDomains.Count == 0 || receptors.Count == 0 || !isPreOutbox) {
+      return false;
+    }
+    var isOwned = _isOwnedNamespace(messageType.Namespace);
+    var isEvent = message is IEvent;
+    if (isOwned ? isEvent : !isEvent) {
+      return false;
+    }
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.SkippedOwnedDomainFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// Double-fire prevention: when the envelope was dispatched with the LocalDispatch flag, the
+  /// handler already fired at LocalImmediate — returning true here skips PreOutbox. Only applies
+  /// when owned domains are configured (preserves backward compat).
+  /// </summary>
+  private bool _shouldSkipLocalDispatchPreOutbox(
+      IMessageEnvelope envelope,
+      Type messageType,
+      LifecycleStage stage,
+      IReadOnlyList<ReceptorInfo> receptors,
+      bool isPreOutbox) {
+    if (_ownedDomains.Count == 0 || !isPreOutbox || receptors.Count == 0
+        || !envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
+      return false;
+    }
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// Handles the "no receptors registered" branch: logs the skip and still fires message tags
+  /// so that terminal-stage tag hooks (PostAllPerspectivesDetached, PostLifecycleDetached) run.
+  /// </summary>
+  private async ValueTask _handleNoReceptorsRegisteredAsync(
+      object message,
+      Type messageType,
+      LifecycleStage stage,
+      IMessageEnvelope envelope,
+      IScopeContext? scopeForTags,
+      CancellationToken cancellationToken) {
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.NoReceptorsRegistered(_logger, stage, messageType.Name, envelope.MessageId.Value);
+    }
+    await _processTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Cross-worker dedup: prevents the same message+stage from being processed twice (e.g.
+  /// TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox). For
+  /// perspective-scoped stages the dedup key also includes context.PerspectiveType so each of
+  /// N perspectives gets its own claim. Returns false when the stage was already claimed so the
+  /// caller can short-circuit.
+  /// </summary>
+  private bool _tryClaimStageTracker(
+      IMessageEnvelope envelope,
+      Type messageType,
+      LifecycleStage stage,
+      ILifecycleContext? context) {
+    if (_stageTracker is null) {
+      return true;
+    }
+    if (_stageTracker.TryClaim(envelope.MessageId.Value, stage, context?.PerspectiveType)) {
+      return true;
+    }
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.SkippedStageTrackerDedup(_logger, stage, messageType.Name, envelope.MessageId.Value);
+    }
+    return false;
+  }
+
+  /// <summary>Logs that replay-mode filtering removed every remaining receptor.</summary>
+  private void _logSkippedReplayModeFilter(IMessageEnvelope envelope, Type messageType, LifecycleStage stage) {
+    _ensureLogger();
+    if (_logger is not null) {
+      Log.SkippedReplayModeFilter(_logger, stage, messageType.Name, envelope.MessageId.Value);
+    }
   }
 
   /// <summary>
