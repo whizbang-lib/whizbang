@@ -314,36 +314,39 @@ public abstract class TransportOptions {
       return;
     }
 
-    // Message Processing — gated by PublishSubscribe capability
-    if (!capabilities.HasFlag(TransportCapabilities.PublishSubscribe)) {
-      if (ConcurrentMessageLimit != 10) {
-        _logCapabilityWarning(logger, nameof(ConcurrentMessageLimit), ConcurrentMessageLimit, nameof(TransportCapabilities.PublishSubscribe));
-      }
+    _warnIfMissingCapabilityAffectsSettings(logger, capabilities, TransportCapabilities.PublishSubscribe, [
+      (nameof(ConcurrentMessageLimit), ConcurrentMessageLimit, !ConcurrentMessageLimit.Equals(10)),
+      (nameof(MessagePrefetchCount), MessagePrefetchCount, MessagePrefetchCount != 0)
+    ]);
 
-      if (MessagePrefetchCount != 0) {
-        _logCapabilityWarning(logger, nameof(MessagePrefetchCount), MessagePrefetchCount, nameof(TransportCapabilities.PublishSubscribe));
-      }
+    _warnIfMissingCapabilityAffectsSettings(logger, capabilities, TransportCapabilities.Reliable, [
+      (nameof(FailedMessageRetryLimit), FailedMessageRetryLimit, FailedMessageRetryLimit != 10),
+      (nameof(AutoProvisionDeadLetterInfrastructure), AutoProvisionDeadLetterInfrastructure, !AutoProvisionDeadLetterInfrastructure)
+    ]);
+
+    _warnIfMissingCapabilityAffectsSettings(logger, capabilities, TransportCapabilities.Ordered, [
+      (nameof(EnableOrderedDelivery), EnableOrderedDelivery, EnableOrderedDelivery),
+      (nameof(ConcurrentOrderedStreams), ConcurrentOrderedStreams, ConcurrentOrderedStreams != 64)
+    ]);
+  }
+
+  /// <summary>
+  /// Emits a capability warning for each non-default setting that would be a no-op because the
+  /// transport lacks <paramref name="required"/>. The tuple's <c>IsNonDefault</c> flag selects
+  /// which rows warn; unchanged defaults stay silent.
+  /// </summary>
+  private static void _warnIfMissingCapabilityAffectsSettings(
+      ILogger logger,
+      TransportCapabilities capabilities,
+      TransportCapabilities required,
+      (string Name, object Value, bool IsNonDefault)[] settings) {
+    if (capabilities.HasFlag(required)) {
+      return;
     }
-
-    // Reliability & Dead-Lettering — gated by Reliable capability
-    if (!capabilities.HasFlag(TransportCapabilities.Reliable)) {
-      if (FailedMessageRetryLimit != 10) {
-        _logCapabilityWarning(logger, nameof(FailedMessageRetryLimit), FailedMessageRetryLimit, nameof(TransportCapabilities.Reliable));
-      }
-
-      if (!AutoProvisionDeadLetterInfrastructure) {
-        _logCapabilityWarning(logger, nameof(AutoProvisionDeadLetterInfrastructure), AutoProvisionDeadLetterInfrastructure, nameof(TransportCapabilities.Reliable));
-      }
-    }
-
-    // Ordering — gated by Ordered capability
-    if (!capabilities.HasFlag(TransportCapabilities.Ordered)) {
-      if (EnableOrderedDelivery) {
-        _logCapabilityWarning(logger, nameof(EnableOrderedDelivery), EnableOrderedDelivery, nameof(TransportCapabilities.Ordered));
-      }
-
-      if (ConcurrentOrderedStreams != 64) {
-        _logCapabilityWarning(logger, nameof(ConcurrentOrderedStreams), ConcurrentOrderedStreams, nameof(TransportCapabilities.Ordered));
+    var requiredName = required.ToString();
+    foreach (var (name, value, isNonDefault) in settings) {
+      if (isNonDefault) {
+        _logCapabilityWarning(logger, name, value, requiredName);
       }
     }
   }
