@@ -326,25 +326,13 @@ public partial class WorkCoordinatorPublisherWorker(
   private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
     await _processInitialWorkBatchAsync(stoppingToken);
 
-    // Subscribe to readiness changes to wake immediately instead of waiting for next poll
     var readinessSignal = new SemaphoreSlim(0, 1);
-    _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
-
-    // Subscribe to new work signals so the coordinator polls immediately when outbox entries are flushed
-    _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
-
-    // Subscribe to inbox channel signals so commands are processed immediately
-    if (inboxChannelWriter is not null) {
-      inboxChannelWriter.OnNewInboxWorkAvailable += RequestImmediatePoll;
-    }
+    _subscribeToWakeSignals(readinessSignal);
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
         if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          // Wait for either the poll interval OR a readiness change signal (whichever comes first)
-          try {
-            await readinessSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
-          } catch (OperationCanceledException) {
+          if (!await _waitForReadinessOrIntervalAsync(readinessSignal, stoppingToken)) {
             break;
           }
           continue;
@@ -356,44 +344,83 @@ public partial class WorkCoordinatorPublisherWorker(
         LogErrorProcessingWorkBatch(_logger, ex);
       }
 
-      // Periodic maintenance check (dedup cleanup, stuck inbox purge)
       if (_options.MaintenanceInterval > TimeSpan.Zero &&
           DateTimeOffset.UtcNow - _lastMaintenanceRun > _options.MaintenanceInterval) {
         await _runPeriodicMaintenanceAsync(stoppingToken);
       }
 
-      // Drain pattern: if the last claim returned a full batch, there's more work
-      // waiting — loop immediately without a poll wait. Respects the runaway-drain
-      // cap (_options.MaxConsecutiveFullDrains); 0 disables the cap entirely.
-      //
-      // IMPORTANT: do NOT touch _wakeSignaled here. That flag is a guard paired
-      // with _pollWakeSignal (1-count semaphore): RequestImmediatePoll uses CAS
-      // 0→1 to permit a single Release, and the post-WaitAsync reset restores 0
-      // after WaitAsync consumes the semaphore. Resetting the guard here without
-      // consuming the semaphore would let a subsequent external signal call
-      // Release() on an already-full semaphore → SemaphoreFullException. Any
-      // pending signal accumulated during drain will be consumed naturally on
-      // the first WaitAsync after drain ends.
-      var capEnabled = _options.MaxConsecutiveFullDrains > 0;
-      if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
-        _lastBatchWasFull = false;
-        _consecutiveFullDrains++;
+      if (_shouldLoopImmediatelyAfterFullBatch()) {
         continue;
       }
-      _consecutiveFullDrains = 0;
 
-      try {
-        // Wait for either the adaptive polling interval OR an external wake signal (whichever comes first).
-        // RequestImmediatePoll() releases the semaphore, waking this loop early regardless of backoff depth.
-        var waitMs = _computeAdaptivePollWaitMs();
-        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(waitMs), stoppingToken);
-        Interlocked.Exchange(ref _wakeSignaled, 0);
-      } catch (OperationCanceledException) {
+      if (!await _waitForPollOrWakeAsync(stoppingToken)) {
         break;
       }
     }
 
     _workChannelWriter.Complete();
+  }
+
+  /// <summary>Wires up the three wake paths — database-readiness change, outbox channel flush,
+  /// and inbox channel signal — so the coordinator loop never has to wait the full polling
+  /// interval when new work or a state change lands between ticks.</summary>
+  private void _subscribeToWakeSignals(SemaphoreSlim readinessSignal) {
+    _databaseReadinessCheck.OnReadinessChanged += () => readinessSignal.Release();
+    _workChannelWriter.OnNewWorkAvailable += RequestImmediatePoll;
+    if (inboxChannelWriter is not null) {
+      inboxChannelWriter.OnNewInboxWorkAvailable += RequestImmediatePoll;
+    }
+  }
+
+  /// <summary>Waits for either the poll interval or a readiness-change signal when the database
+  /// is not ready. Returns true to signal "continue looping" and false when the wait was
+  /// cancelled so the outer loop can break out cleanly.</summary>
+  private async Task<bool> _waitForReadinessOrIntervalAsync(
+      SemaphoreSlim readinessSignal, CancellationToken stoppingToken) {
+    try {
+      await readinessSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+      return true;
+    } catch (OperationCanceledException) {
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Drain pattern: when the last claim returned a full batch there is almost certainly more
+  /// work waiting — loop immediately without a poll wait. Respects the runaway-drain cap
+  /// (<see cref="WorkCoordinatorPublisherOptions.MaxConsecutiveFullDrains"/>); 0 disables it.
+  /// </summary>
+  /// <remarks>
+  /// Do NOT touch _wakeSignaled here. That flag is a guard paired with _pollWakeSignal (a
+  /// 1-count semaphore): RequestImmediatePoll uses CAS 0→1 to permit a single Release, and the
+  /// post-WaitAsync reset restores 0 after WaitAsync consumes the semaphore. Resetting the
+  /// guard here without consuming the semaphore would let a subsequent external signal call
+  /// Release() on an already-full semaphore → SemaphoreFullException. Any pending signal
+  /// accumulated during drain will be consumed naturally on the first WaitAsync after drain.
+  /// </remarks>
+  private bool _shouldLoopImmediatelyAfterFullBatch() {
+    var capEnabled = _options.MaxConsecutiveFullDrains > 0;
+    if (_lastBatchWasFull && (!capEnabled || _consecutiveFullDrains < _options.MaxConsecutiveFullDrains)) {
+      _lastBatchWasFull = false;
+      _consecutiveFullDrains++;
+      return true;
+    }
+    _consecutiveFullDrains = 0;
+    return false;
+  }
+
+  /// <summary>Waits for either the adaptive poll interval or an external wake signal
+  /// (RequestImmediatePoll releases the semaphore). Returns true to signal "continue looping"
+  /// and false when the wait was cancelled so the outer loop can break out cleanly.</summary>
+  private async Task<bool> _waitForPollOrWakeAsync(CancellationToken stoppingToken) {
+    try {
+      var waitMs = _computeAdaptivePollWaitMs();
+      await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(waitMs), stoppingToken);
+      Interlocked.Exchange(ref _wakeSignaled, 0);
+      return true;
+    } catch (OperationCanceledException) {
+      return false;
+    }
   }
 
   /// <summary>
