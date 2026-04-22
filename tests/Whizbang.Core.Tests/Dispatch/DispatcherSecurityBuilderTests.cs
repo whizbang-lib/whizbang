@@ -554,12 +554,12 @@ public class DispatcherSecurityBuilderTests {
   }
 
   /// <summary>
-  /// REGRESSION TEST: Replicates JDNext seeder scenario using ACTUAL DispatcherSecurityBuilder.
+  /// <para>REGRESSION TEST: Replicates JDNext seeder scenario using ACTUAL DispatcherSecurityBuilder.
   /// When code inside a message handler calls dispatcher.AsSystem().ForAllTenants().SendAsync(),
-  /// the envelope MUST have SYSTEM context on its hop, not the handler's context.
+  /// the envelope MUST have SYSTEM context on its hop, not the handler's context.</para>
   ///
-  /// This test will FAIL without the fix (clearing InitiatingContext).
-  /// This test will PASS with the fix.
+  /// <para>This test will FAIL without the fix (clearing InitiatingContext).
+  /// This test will PASS with the fix.</para>
   /// </summary>
   [Test]
   public async Task AsSystem_FromInsideMessageHandler_EnvelopeHopMustHaveSystemContext_NotHandlerContextAsync() {
@@ -781,16 +781,16 @@ public class DispatcherSecurityBuilderTests {
   // inherit the explicit security context from AsSystem()/RunAs().
 
   /// <summary>
-  /// REGRESSION TEST: When AsSystem().LocalInvokeAsync() invokes a receptor that returns
+  /// <para>REGRESSION TEST: When AsSystem().LocalInvokeAsync() invokes a receptor that returns
   /// an event (cascaded event), the cascaded event receptor should see SYSTEM context,
-  /// not the handler's InitiatingContext.
+  /// not the handler's InitiatingContext.</para>
   ///
-  /// This replicates the JDNext seeder scenario where ReseedSystemSucceededEvent
+  /// <para>This replicates the JDNext seeder scenario where ReseedSystemSucceededEvent
   /// was getting SecurityContextRequiredException because the cascaded event
-  /// didn't inherit the SYSTEM context.
+  /// didn't inherit the SYSTEM context.</para>
   ///
-  /// Uses Local routing to avoid JSON serialization complexity while still testing
-  /// the core security context propagation issue.
+  /// <para>Uses Local routing to avoid JSON serialization complexity while still testing
+  /// the core security context propagation issue.</para>
   /// </summary>
   [Test]
   [NotInParallel]
@@ -843,11 +843,11 @@ public class DispatcherSecurityBuilderTests {
   }
 
   /// <summary>
-  /// REGRESSION TEST: Verify that CascadeContext.GetSecurityFromAmbient() returns SYSTEM context
-  /// during cascade when AsSystem() is used, even when InitiatingContext exists.
+  /// <para>REGRESSION TEST: Verify that CascadeContext.GetSecurityFromAmbient() returns SYSTEM context
+  /// during cascade when AsSystem() is used, even when InitiatingContext exists.</para>
   ///
-  /// This tests the root cause of the JDNext issue: the scope captured for envelope hops
-  /// must come from the explicit SYSTEM context, not the handler's InitiatingContext.
+  /// <para>This tests the root cause of the JDNext issue: the scope captured for envelope hops
+  /// must come from the explicit SYSTEM context, not the handler's InitiatingContext.</para>
   /// </summary>
   [Test]
   [NotInParallel]
@@ -898,13 +898,13 @@ public class DispatcherSecurityBuilderTests {
   // This is critical for background workers that read from the outbox.
 
   /// <summary>
-  /// REGRESSION TEST: Replicates JDNext seeder scenario for PublishAsync.
+  /// <para>REGRESSION TEST: Replicates JDNext seeder scenario for PublishAsync.
   /// When code inside a message handler calls dispatcher.AsSystem().ForAllTenants().PublishAsync(),
-  /// the event receptor MUST see SYSTEM context, not the handler's InitiatingContext.
+  /// the event receptor MUST see SYSTEM context, not the handler's InitiatingContext.</para>
   ///
-  /// This uses the same pattern as cascade event tests - capturing scope in a receptor.
+  /// <para>This uses the same pattern as cascade event tests - capturing scope in a receptor.
   /// Without the fix: The receptor sees "handler-user@example.com" (BUG!)
-  /// With the fix: The receptor sees "SYSTEM" (CORRECT!)
+  /// With the fix: The receptor sees "SYSTEM" (CORRECT!)</para>
   /// </summary>
   [Test]
   [NotInParallel]

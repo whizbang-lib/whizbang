@@ -1197,14 +1197,14 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Reproduces the JDX BFF's admin endpoint path:
+  /// <para>Reproduces the JDX BFF's admin endpoint path:
   /// <c>POST /api/admin/rebuild-perspective</c> → <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c>
   /// → same-process routing → <see cref="IReceptorInvoker.InvokeAsync"/> at
-  /// <see cref="LifecycleStage.LocalImmediateInline"/> → runtime-registered receptor.
+  /// <see cref="LifecycleStage.LocalImmediateInline"/> → runtime-registered receptor.</para>
   ///
-  /// This is the test that would have caught the original production bug: the receptor was
+  /// <para>This is the test that would have caught the original production bug: the receptor was
   /// registered only at <see cref="LifecycleStage.PostInboxInline"/>, so local dispatch never
-  /// hit it and cursors never updated. Registering at all three default stages fixes it.
+  /// hit it and cursors never updated. Registering at all three default stages fixes it.</para>
   /// </summary>
   [Test]
   public async Task RebuildPerspectiveCommand_DispatchedViaInvoker_UpdatesCursorAsync() {

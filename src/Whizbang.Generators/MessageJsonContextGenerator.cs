@@ -2948,14 +2948,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Handles nested types by trying progressively converting '.' to '+' from right to left.
   /// </summary>
   /// <remarks>
-  /// GetTypeByMetadataName expects metadata format with '+' for nested types:
+  /// <para>GetTypeByMetadataName expects metadata format with '+' for nested types:
   /// - Top-level: "Namespace.ClassName"
-  /// - Nested: "Namespace.ContainerClass+NestedClass"
+  /// - Nested: "Namespace.ContainerClass+NestedClass"</para>
   ///
-  /// But property types come from ToDisplayString which uses '.' for nested types:
-  /// - "global::Namespace.ContainerClass.NestedClass"
+  /// <para>But property types come from ToDisplayString which uses '.' for nested types:
+  /// - "global::Namespace.ContainerClass.NestedClass"</para>
   ///
-  /// This method tries both formats to handle nested types correctly.
+  /// <para>This method tries both formats to handle nested types correctly.</para>
   /// </remarks>
   private static INamedTypeSymbol? _tryGetPublicTypeSymbol(string elementTypeName, Compilation compilation) {
     var typeName = elementTypeName.Replace(PLACEHOLDER_GLOBAL, "");

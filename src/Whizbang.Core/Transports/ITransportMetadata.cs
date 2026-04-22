@@ -6,12 +6,12 @@ namespace Whizbang.Core.Transports;
 /// (e.g., Azure Service Bus application properties, RabbitMQ headers, Kafka headers).
 /// </summary>
 /// <remarks>
-/// This interface enables security context extractors to access transport-level information
+/// <para>This interface enables security context extractors to access transport-level information
 /// without knowing the specific transport implementation. Each transport provides its own
-/// implementation with transport-specific properties.
+/// implementation with transport-specific properties.</para>
 ///
-/// Security extractors can use transport metadata to extract tokens, tenant IDs, user IDs,
-/// and other security-relevant information that was set by the message producer.
+/// <para>Security extractors can use transport metadata to extract tokens, tenant IDs, user IDs,
+/// and other security-relevant information that was set by the message producer.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#transport-metadata</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs</tests>

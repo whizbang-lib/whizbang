@@ -9,10 +9,10 @@ using Whizbang.Transports.Tests.Generated;
 namespace Whizbang.Transports.Tests;
 
 /// <summary>
-/// Tests for TransportManager.
-/// Following TDD: These tests are written BEFORE implementing TransportManager.
+/// <para>Tests for TransportManager.
+/// Following TDD: These tests are written BEFORE implementing TransportManager.</para>
 ///
-/// Phase 4: Transport Manager - manages multiple transport instances
+/// <para>Phase 4: Transport Manager - manages multiple transport instances</para>
 /// </summary>
 public class TransportManagerTests {
   // ========================================

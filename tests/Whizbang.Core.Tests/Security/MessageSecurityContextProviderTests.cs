@@ -481,12 +481,12 @@ public class MessageSecurityContextProviderTests {
   // === Events Without Security Context Tests ===
 
   /// <summary>
-  /// CRITICAL: Verifies that events published without security context (e.g., from system seeding)
+  /// <para>CRITICAL: Verifies that events published without security context (e.g., from system seeding)
   /// throw SecurityContextRequiredException when AllowAnonymous is false.
   /// This reproduces the issue where system events like FilterSubscriptionTemplateCreatedEvent
-  /// fail during PerspectiveWorker or ReceptorInvoker processing.
+  /// fail during PerspectiveWorker or ReceptorInvoker processing.</para>
   ///
-  /// FIX: Use dispatcher.AsSystem().PublishAsync() for system-initiated events.
+  /// <para>FIX: Use dispatcher.AsSystem().PublishAsync() for system-initiated events.</para>
   /// </summary>
   /// <tests>DefaultMessageSecurityContextProvider.EstablishContextAsync</tests>
   [Test]

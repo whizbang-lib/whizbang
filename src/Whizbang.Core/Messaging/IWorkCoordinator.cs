@@ -211,20 +211,20 @@ public sealed record ProcessWorkBatchRequest {
 /// </remarks>
 public interface IWorkCoordinator {
   /// <summary>
-  /// Processes a batch of work in a single atomic operation:
+  /// <para>Processes a batch of work in a single atomic operation:
   /// - Registers/updates instance with heartbeat
   /// - Cleans up stale instances (expired heartbeats)
   /// - Stores new outbox messages (immediate processing)
   /// - Stores new inbox messages (deduplication + event store)
   /// - Reports completions with granular status tracking (outbox, inbox, receptors, perspectives)
   /// - Reports failures with partial completion tracking (outbox, inbox, receptors, perspectives)
-  /// - Claims work using hash-based virtual partition assignment and returns work for this instance
+  /// - Claims work using hash-based virtual partition assignment and returns work for this instance</para>
   ///
-  /// Event store integration:
+  /// <para>Event store integration:
   /// - Receptors: Process individual events (many receptors can process the same event)
-  /// - Perspectives: Checkpoint-based processing per stream (read model projections)
+  /// - Perspectives: Checkpoint-based processing per stream (read model projections)</para>
   ///
-  /// This minimizes database round-trips and ensures consistency.
+  /// <para>This minimizes database round-trips and ensures consistency.</para>
   /// </summary>
   /// <param name="request">Parameter object containing all work batch configuration and data</param>
   /// <param name="cancellationToken">Cancellation token</param>

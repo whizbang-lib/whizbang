@@ -617,13 +617,13 @@ public class ScopeDeltaIntegrationTests {
   #region RED TEST: InfrastructureJsonContext Round-Trip Tests
 
   /// <summary>
-  /// RED TEST: Verifies ScopeDelta round-trips correctly using InfrastructureJsonContext.
+  /// <para>RED TEST: Verifies ScopeDelta round-trips correctly using InfrastructureJsonContext.
   /// This test reproduces the issue where AsSystem() security context is lost after
-  /// outbox serialization/deserialization.
+  /// outbox serialization/deserialization.</para>
   ///
-  /// The outbox uses InfrastructureJsonContext for AOT-compatible serialization.
+  /// <para>The outbox uses InfrastructureJsonContext for AOT-compatible serialization.
   /// If Dictionary&lt;ScopeProp, JsonElement&gt; doesn't serialize correctly with the
-  /// source-generated context, MessageHopSecurityExtractor will fail to find ScopeProp.Scope.
+  /// source-generated context, MessageHopSecurityExtractor will fail to find ScopeProp.Scope.</para>
   /// </summary>
   [Test]
   [Category("RED")]

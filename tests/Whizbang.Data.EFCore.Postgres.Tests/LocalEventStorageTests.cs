@@ -19,12 +19,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// are properly stored in the event store while transport is bypassed.
 /// </summary>
 /// <remarks>
-/// <tests>src/Whizbang.Core/Dispatch/Route.cs:Local,EventStoreOnly,LocalNoPersist</tests>
-/// <tests>src/Whizbang.Core/Workers/TransportPublishStrategy.cs:PublishAsync null destination bypass</tests>
+/// <para><tests>src/Whizbang.Core/Dispatch/Route.cs:Local,EventStoreOnly,LocalNoPersist</tests>
+/// <tests>src/Whizbang.Core/Workers/TransportPublishStrategy.cs:PublishAsync null destination bypass</tests></para>
 ///
-/// Key insight: Cascade routing happens when events are RETURNED from receptors,
+/// <para>Key insight: Cascade routing happens when events are RETURNED from receptors,
 /// not when events are directly dispatched. These tests use command handlers
-/// that return events with different routing modes to verify the cascade flow.
+/// that return events with different routing modes to verify the cascade flow.</para>
 /// </remarks>
 public class LocalEventStorageTests : EFCoreTestBase {
   #region Test Messages

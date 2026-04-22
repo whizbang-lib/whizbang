@@ -79,10 +79,10 @@ public class EFCoreLeaseRenewalTests : EFCoreTestBase {
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
       VALUES (@instanceId, @serviceName, @hostName, @processId, NOW(), NOW())
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()", connection);
-    cmd.Parameters.AddWithValue("instanceId", instanceId);
-    cmd.Parameters.AddWithValue("serviceName", serviceName);
-    cmd.Parameters.AddWithValue("hostName", hostName);
-    cmd.Parameters.AddWithValue("processId", processId);
+    cmd.Parameters.AddWithValue(nameof(instanceId), instanceId);
+    cmd.Parameters.AddWithValue(nameof(serviceName), serviceName);
+    cmd.Parameters.AddWithValue(nameof(hostName), hostName);
+    cmd.Parameters.AddWithValue(nameof(processId), processId);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -97,10 +97,10 @@ public class EFCoreLeaseRenewalTests : EFCoreTestBase {
         lease_expiry = EXCLUDED.lease_expiry,
         partition_number = EXCLUDED.partition_number,
         last_activity_at = EXCLUDED.last_activity_at", connection);
-    cmd.Parameters.AddWithValue("streamId", streamId);
-    cmd.Parameters.AddWithValue("ownerInstanceId", ownerInstanceId);
-    cmd.Parameters.AddWithValue("leaseExpiry", leaseExpiry);
-    cmd.Parameters.AddWithValue("partitionCount", partitionCount);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
+    cmd.Parameters.AddWithValue(nameof(ownerInstanceId), ownerInstanceId);
+    cmd.Parameters.AddWithValue(nameof(leaseExpiry), leaseExpiry);
+    cmd.Parameters.AddWithValue(nameof(partitionCount), partitionCount);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -109,7 +109,7 @@ public class EFCoreLeaseRenewalTests : EFCoreTestBase {
     await connection.OpenAsync();
     await using var cmd = new NpgsqlCommand(
       "SELECT lease_expiry FROM wh_active_streams WHERE stream_id = @streamId", connection);
-    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
     var result = await cmd.ExecuteScalarAsync();
     // Raw NpgsqlCommand at this level returns DateTime (UTC kind) for TIMESTAMPTZ
     // even though EFCoreTestBase sets EnableLegacyTimestampBehavior=false — that

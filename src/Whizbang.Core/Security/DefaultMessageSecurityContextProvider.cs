@@ -9,15 +9,15 @@ namespace Whizbang.Core.Security;
 /// Orchestrates extractors and callbacks to establish security context from messages.
 /// </summary>
 /// <remarks>
-/// This implementation:
+/// <para>This implementation:
 /// 1. Checks if the message type is exempt from security requirements
 /// 2. Iterates through extractors in priority order (lower priority = earlier)
 /// 3. Stops at the first successful extraction
 /// 4. Wraps the result in ImmutableScopeContext
 /// 5. Calls all callbacks with the established context
-/// 6. Optionally emits audit events
+/// 6. Optionally emits audit events</para>
 ///
-/// All operations are AOT-compatible with no reflection.
+/// <para>All operations are AOT-compatible with no reflection.</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#default-provider</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>

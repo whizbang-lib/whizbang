@@ -90,11 +90,13 @@ public static class ConfigurationUtilities {
   ///     ConfigurationUtilities.SelectTableNameConfig
   /// );
   /// </example>
+#pragma warning disable RCS1163, IDE0060 // Required signature for IncrementalGeneratorInitializationContext.Select delegate
   public static TableNameConfig SelectTableNameConfig(
       AnalyzerConfigOptionsProvider provider,
       System.Threading.CancellationToken _cancellationToken) {
     return GetTableNameConfig(provider.GlobalOptions);
   }
+#pragma warning restore RCS1163, IDE0060
 
   /// <summary>
   /// Reads the optional max identifier length override from MSBuild properties.
@@ -126,9 +128,11 @@ public static class ConfigurationUtilities {
   ///     ConfigurationUtilities.SelectMaxIdentifierLengthOverride
   /// );
   /// </example>
+#pragma warning disable RCS1163, IDE0060 // Required signature for IncrementalGeneratorInitializationContext.Select delegate
   public static int? SelectMaxIdentifierLengthOverride(
       AnalyzerConfigOptionsProvider provider,
       System.Threading.CancellationToken _cancellationToken) {
     return GetMaxIdentifierLengthOverride(provider.GlobalOptions);
   }
+#pragma warning restore RCS1163, IDE0060
 }

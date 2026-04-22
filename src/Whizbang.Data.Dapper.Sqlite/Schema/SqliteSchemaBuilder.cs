@@ -5,15 +5,15 @@ using Whizbang.Data.Schema.Schemas;
 namespace Whizbang.Data.Dapper.Sqlite.Schema;
 
 /// <summary>
-/// Builds SQLite DDL (Data Definition Language) from database-agnostic schema definitions.
-/// Generates CREATE TABLE and CREATE INDEX statements with proper SQLite syntax.
+/// <para>Builds SQLite DDL (Data Definition Language) from database-agnostic schema definitions.
+/// Generates CREATE TABLE and CREATE INDEX statements with proper SQLite syntax.</para>
 ///
-/// SQLite DDL Notes:
+/// <para>SQLite DDL Notes:
 /// - Supports IF NOT EXISTS clause for idempotent schema creation
 /// - Type affinity system (TEXT, INTEGER, REAL, BLOB, NULL)
 /// - AUTOINCREMENT only for INTEGER PRIMARY KEY
 /// - No VARCHAR(n) enforcement (all become TEXT)
-/// - UNIQUE constraints supported at column and table level
+/// - UNIQUE constraints supported at column and table level</para>
 /// </summary>
 /// <docs>data/schema-generation-pattern</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>

@@ -7,18 +7,18 @@ namespace Whizbang.Core.Observability;
 /// Centralizes context extraction and enrichment logic.
 /// </summary>
 /// <remarks>
-/// This factory provides a consistent way to create cascade contexts:
+/// <para>This factory provides a consistent way to create cascade contexts:
 /// - NewRoot(): For entry points starting new message flows
 /// - FromEnvelope(): For extracting context from incoming messages
-/// - FromMessageContext(): For creating context from existing IMessageContext
+/// - FromMessageContext(): For creating context from existing IMessageContext</para>
 ///
-/// All methods apply registered enrichers in order, allowing extensibility.
+/// <para>All methods apply registered enrichers in order, allowing extensibility.</para>
 ///
-/// Register as a singleton in DI:
+/// <para>Register as a singleton in DI:
 /// <code>
 /// services.AddSingleton&lt;CascadeContextFactory&gt;();
 /// services.AddSingleton&lt;ICascadeContextEnricher, MyEnricher&gt;();
-/// </code>
+/// </code></para>
 /// </remarks>
 /// <docs>fundamentals/messages/cascade-context#factory</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs</tests>

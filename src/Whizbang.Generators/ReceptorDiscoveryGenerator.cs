@@ -1082,7 +1082,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       string syncRegistrationSnippet,
       string voidSyncRegistrationSnippet) {
     if (receptor.IsSync) {
-      var interfaceName = StandardInterfaceNames.I_SYNC_RECEPTOR;
+      const string interfaceName = StandardInterfaceNames.I_SYNC_RECEPTOR;
       var snippet = receptor.IsVoid ? voidSyncRegistrationSnippet : syncRegistrationSnippet;
       var result = snippet
           .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, interfaceName)
@@ -1090,7 +1090,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
       return receptor.IsVoid ? result : result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!);
     } else {
-      var interfaceName = StandardInterfaceNames.I_RECEPTOR;
+      const string interfaceName = StandardInterfaceNames.I_RECEPTOR;
       var snippet = receptor.IsVoid ? voidRegistrationSnippet : registrationSnippet;
       var result = snippet
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, interfaceName)

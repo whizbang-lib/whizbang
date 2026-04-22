@@ -16,15 +16,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// queries translate to physical column access for [PhysicalField] properties.
 /// </summary>
 /// <remarks>
-/// These tests follow TDD RED-GREEN-REFACTOR:
+/// <para>These tests follow TDD RED-GREEN-REFACTOR:
 /// - RED: Tests initially fail because r.Data.PropertyName goes through JSONB
 /// - GREEN: After implementing PhysicalFieldMemberTranslator, tests pass
-/// - REFACTOR: Clean up and optimize implementation
+/// - REFACTOR: Clean up and optimize implementation</para>
 ///
-/// The unified syntax means users write:
+/// <para>The unified syntax means users write:
 ///   .Where(r => r.Data.Price >= 20.00m)  // Looks like JSONB access
 /// But the translator redirects physical fields to column access:
-///   WHERE price >= 20.00  // Uses indexed physical column
+///   WHERE price >= 20.00  // Uses indexed physical column</para>
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("PostgreSQL")]

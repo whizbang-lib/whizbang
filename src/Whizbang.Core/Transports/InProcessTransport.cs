@@ -143,7 +143,7 @@ public class InProcessTransport : ITransport {
 
     // Subscribe to response destination before publishing request (batch of 1, immediate flush)
     var responseSubscription = await SubscribeBatchAsync(
-      batchHandler: (batch, ct) => {
+      batchHandler: (batch, _) => {
         if (batch.Count > 0) {
           tcs.TrySetResult(batch[0].Envelope);
         }
