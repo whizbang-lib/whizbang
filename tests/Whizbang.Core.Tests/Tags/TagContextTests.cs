@@ -199,25 +199,22 @@ public class TagContextTests {
   }
 
   [Test]
-  public async Task TagContext_PayloadWithEventKey_CanBeAccessedAsync() {
-    // Arrange - Simulate payload with __event key (IncludeEvent = true)
+  public async Task TagContext_PayloadWithExtractedProperties_CanBeAccessedAsync() {
+    // The payload is a flat dictionary of the fields declared in Properties on the
+    // attribute. Hooks read fields directly — no more "__event" escape hatch.
     var eventData = new TestMessage(Guid.NewGuid());
-    var payloadData = new Dictionary<string, object> {
-      ["OrderId"] = eventData.Id,
-      ["__event"] = eventData
-    };
-    var payload = JsonSerializer.SerializeToElement(payloadData);
+    var payload = JsonSerializer.SerializeToElement(new Dictionary<string, object> {
+      ["OrderId"] = eventData.Id
+    });
 
-    // Act
     var context = new TagContext<SignalTagAttribute> {
-      Attribute = new SignalTagAttribute { Tag = "test", IncludeEvent = true },
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = eventData,
       MessageType = typeof(TestMessage),
       Payload = payload
     };
 
-    // Assert
-    await Assert.That(context.Payload.TryGetProperty("__event", out _)).IsTrue();
+    await Assert.That(context.Payload.TryGetProperty("OrderId", out _)).IsTrue();
   }
 
   // Test helper type

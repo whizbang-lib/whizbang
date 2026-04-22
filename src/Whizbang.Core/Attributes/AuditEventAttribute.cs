@@ -37,10 +37,11 @@ public sealed class AuditEventAttribute : MessageTagAttribute {
   /// <summary>
   /// Creates a new audit event attribute with default tag "audit".
   /// </summary>
+  // Properties is left null so the generator falls back to extracting every public
+  // property on the event — audit needs the full event body.
   [SetsRequiredMembers]
   public AuditEventAttribute() {
     Tag = "audit";
-    IncludeEvent = true; // Always include full event body for audit
   }
 
   /// <summary>

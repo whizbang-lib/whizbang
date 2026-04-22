@@ -95,7 +95,7 @@ public class SignalRNotificationHook : IMessageTagHook<NotificationTagAttribute>
 
 | Attribute | Purpose | Key Properties |
 |-----------|---------|----------------|
-| `NotificationTagAttribute` | Real-time notifications | `Tag`, `Properties`, `IncludeEvent` |
+| `SignalTagAttribute` | Real-time notifications | `Tag`, `Properties`, `Group`, `Priority` |
 | `TelemetryTagAttribute` | Distributed tracing | `Tag`, `SpanName`, `Kind` |
 | `MetricTagAttribute` | Metrics/counters | `Tag`, `MetricName`, `Type` |
 | `AuditEventAttribute` | Audit logging | `Reason`, `Level` |
@@ -103,14 +103,19 @@ public class SignalRNotificationHook : IMessageTagHook<NotificationTagAttribute>
 ### Attribute Properties
 
 ```csharp
-[NotificationTag(
-    Tag = "order-created",           // Unique identifier for the tag
-    Properties = ["OrderId", "Total"], // Properties to extract into payload
-    IncludeEvent = true,             // Include full event in payload as "__event"
+[SignalTag(
+    Tag = "order-created",              // Unique identifier for the tag
+    Properties = ["OrderId", "Total"],  // Properties to extract into payload
     ExtraJson = """{"source": "api"}""" // Merge extra JSON into payload
 )]
 public record OrderCreatedEvent(Guid OrderId, decimal Total, string InternalNote);
 ```
+
+`Properties` controls payload contents:
+
+- **Omitted** (null): the generator extracts every public property on the event type — a backward-compat fallback, not recommended for new code.
+- **Explicit array** like `["OrderId"]`: only those fields are extracted.
+- **Explicit empty array** `[]`: no fields are extracted; the tag fires with an empty payload. Use this when the tag alone (not its data) is the signal.
 
 ### Creating Custom Tag Attributes
 
