@@ -732,9 +732,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
-        sessionProcessor.ProcessErrorAsync += async args => {
-          await _handleProcessorErrorAsync(args, destination);
-        };
+        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
 
         await sessionProcessor.StartProcessingAsync(cancellationToken);
       } else {
@@ -768,9 +766,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
-        processor.ProcessErrorAsync += async args => {
-          await _handleProcessorErrorAsync(args, destination);
-        };
+        processor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
 
         await processor.StartProcessingAsync(cancellationToken);
       }
