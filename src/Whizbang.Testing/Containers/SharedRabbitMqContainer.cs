@@ -36,6 +36,8 @@ public static class SharedRabbitMqContainer {
   private const string PASSWORD = "guest";
   private const int AMQP_PORT = 5672;
   private const int MANAGEMENT_PORT = 15672;
+  private const string BANNER_LINE = "================================================================================";
+  private const string DOCKER_FILE_NAME = "docker";
 
   private static readonly SemaphoreSlim _initLock = new(1, 1);
   private static string? _connectionString;
@@ -72,7 +74,7 @@ public static class SharedRabbitMqContainer {
   public static async Task<bool> IsDockerAvailableAsync(CancellationToken cancellationToken = default) {
     try {
       var psi = new ProcessStartInfo {
-        FileName = "docker",
+        FileName = DOCKER_FILE_NAME,
         Arguments = "info",
         RedirectStandardOutput = true,
         RedirectStandardError = true,
@@ -181,9 +183,9 @@ public static class SharedRabbitMqContainer {
         return;
       }
 
-      Console.WriteLine("================================================================================");
+      Console.WriteLine(BANNER_LINE);
       Console.WriteLine("[SharedRabbitMqContainer] Initializing shared RabbitMQ container...");
-      Console.WriteLine("================================================================================");
+      Console.WriteLine(BANNER_LINE);
 
       try {
         // Retry loop to handle race conditions with parallel test processes
@@ -200,11 +202,11 @@ public static class SharedRabbitMqContainer {
             // Verify connection works
             await _verifyConnectionAsync(ct);
 
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             Console.WriteLine("[SharedRabbitMqContainer] Reusing existing RabbitMQ container!");
             Console.WriteLine($"[SharedRabbitMqContainer] Connection: {_connectionString}");
             Console.WriteLine($"[SharedRabbitMqContainer] Management API: {_managementApiUri}");
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             break;
           }
 
@@ -219,11 +221,11 @@ public static class SharedRabbitMqContainer {
             // Verify connection works
             await _verifyConnectionAsync(ct);
 
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             Console.WriteLine("[SharedRabbitMqContainer] RabbitMQ container ready!");
             Console.WriteLine($"[SharedRabbitMqContainer] Connection: {_connectionString}");
             Console.WriteLine($"[SharedRabbitMqContainer] Management API: {_managementApiUri}");
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             break;
           } catch (Exception ex) when (attempt < MAX_RETRIES && ex.Message.Contains("Conflict")) {
             // Another process created the container - wait and retry detection
@@ -238,9 +240,9 @@ public static class SharedRabbitMqContainer {
         _initializationFailed = true;
         _lastInitializationError = ex;
 
-        Console.WriteLine("================================================================================");
+        Console.WriteLine(BANNER_LINE);
         Console.WriteLine($"[SharedRabbitMqContainer] Initialization FAILED: {ex.Message}");
-        Console.WriteLine("================================================================================");
+        Console.WriteLine(BANNER_LINE);
 
         throw new InvalidOperationException(
           "Failed to initialize shared RabbitMQ container. " +
@@ -261,7 +263,7 @@ public static class SharedRabbitMqContainer {
   private static async Task<(int AmqpPort, int MgmtPort)> _createContainerWithDockerAsync(CancellationToken ct) {
     // Use docker run with --detach and --publish to create a persistent container
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DOCKER_FILE_NAME,
       Arguments = $"run --detach --name {CONTAINER_NAME} " +
                   $"-e RABBITMQ_DEFAULT_USER={USERNAME} " +
                   $"-e RABBITMQ_DEFAULT_PASS={PASSWORD} " +
@@ -342,7 +344,7 @@ public static class SharedRabbitMqContainer {
 
   private static async Task<string?> _getContainerStateAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DOCKER_FILE_NAME,
       Arguments = $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -367,7 +369,7 @@ public static class SharedRabbitMqContainer {
 
   private static async Task _startContainerAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DOCKER_FILE_NAME,
       Arguments = $"start {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -383,7 +385,7 @@ public static class SharedRabbitMqContainer {
 
   private static async Task<int?> _getPortAsync(int containerPort, CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DOCKER_FILE_NAME,
       Arguments = $"port {CONTAINER_NAME} {containerPort}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,

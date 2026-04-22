@@ -16,6 +16,8 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>No tests found</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
+  private const string ENVELOPE_TYPE_PROPERTY = "EnvelopeType";
+
   private readonly ServiceBusClient _client;
   private readonly IServiceBusAdminClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
@@ -256,7 +258,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
 
       // Add envelope type information for deserialization
-      message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
+      message.ApplicationProperties[ENVELOPE_TYPE_PROPERTY] = envelopeTypeName;
 
       // Add correlation ID if present
       var correlationId = envelope.GetCorrelationId();
@@ -447,7 +449,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       message.SessionId = item.StreamId.Value.ToString();
     }
 
-    message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
+    message.ApplicationProperties[ENVELOPE_TYPE_PROPERTY] = envelopeTypeName;
 
     var correlationId = envelope.GetCorrelationId();
     if (correlationId != null) {
@@ -635,6 +637,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         var transportMessages = new List<TransportMessage>(batch.Count);
         var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
 
+        // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
         foreach (var pending in batch) {
           var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
           if (envelope is not null) {
@@ -642,6 +646,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
             successfulArgs.Add(pending.Args);
           }
         }
+#pragma warning restore S3267
 
         if (transportMessages.Count == 0) {
           return;
@@ -821,12 +826,43 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
   }
 
+  // S4136: Session overload kept adjacent to the non-session overload above.
+  // ProcessSessionMessageEventArgs does not inherit from ProcessMessageEventArgs,
+  // so we need separate overloads for session-aware message handling.
+  private async Task _processReceivedMessageAsync(
+    ProcessSessionMessageEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination
+  ) {
+    try {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+      if (envelope is null) {
+        return;
+      }
+
+      await handler(envelope, envelopeTypeName, args.CancellationToken);
+      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "Processed session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+    } catch (Exception ex) {
+      await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
+    }
+  }
+
   private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedMessageAsync(
     ProcessMessageEventArgs args,
     TransportDestination destination
   ) {
     // Get envelope type from message metadata
-    if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+    if (!args.Message.ApplicationProperties.TryGetValue(ENVELOPE_TYPE_PROPERTY, out var envelopeTypeObj) ||
         envelopeTypeObj is not string envelopeTypeName) {
       _logger.LogWarning(
         "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -903,41 +939,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   // SESSION MESSAGE PROCESSING OVERLOADS
   // ProcessSessionMessageEventArgs does not inherit from ProcessMessageEventArgs,
   // so we need separate overloads for session-aware message handling.
+  // (Process overload moved adjacent to non-session overload above to satisfy S4136.)
   // ========================================
-
-  private async Task _processReceivedMessageAsync(
-    ProcessSessionMessageEventArgs args,
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-    TransportDestination destination
-  ) {
-    try {
-      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
-      if (envelope is null) {
-        return;
-      }
-
-      await handler(envelope, envelopeTypeName, args.CancellationToken);
-      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug(
-          "Processed session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
-          args.Message.MessageId,
-          args.SessionId,
-          destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName
-        );
-      }
-    } catch (Exception ex) {
-      await _handleSessionMessageProcessingErrorAsync(args, ex, destination);
-    }
-  }
 
   private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedSessionMessageAsync(
     ProcessSessionMessageEventArgs args,
     TransportDestination destination
   ) {
-    if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+    if (!args.Message.ApplicationProperties.TryGetValue(ENVELOPE_TYPE_PROPERTY, out var envelopeTypeObj) ||
         envelopeTypeObj is not string envelopeTypeName) {
       await _deadLetterSessionMessageAsync(args, destination, "MissingEnvelopeType",
         "Message does not contain EnvelopeType metadata",

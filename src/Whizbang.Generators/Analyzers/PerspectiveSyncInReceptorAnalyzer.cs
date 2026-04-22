@@ -97,7 +97,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
     }
 
     // Get the [FireAt] stages (or defaults if none)
-    var (inlineStages, isDefault) = _getInlineStages(containingClass);
+    var (inlineStages, _) = _getInlineStages(containingClass);
     if (inlineStages.Length == 0) {
       return; // All stages are Detached — safe
     }

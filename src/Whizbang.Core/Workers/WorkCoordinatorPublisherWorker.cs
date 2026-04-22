@@ -1319,6 +1319,8 @@ public partial class WorkCoordinatorPublisherWorker(
       return;
     }
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var work in workToProcess) {
       try {
         var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
@@ -1361,6 +1363,7 @@ public partial class WorkCoordinatorPublisherWorker(
         LogInboxLifecycleError(_logger, work.MessageId, stageName, ex);
       }
     }
+#pragma warning restore S3267
   }
 
   /// <summary>

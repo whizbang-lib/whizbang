@@ -47,6 +47,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
   private const string INDENT_6 = "      ";
   private const string INDENT_6_CLOSE_BRACE = "      }";
+  private const string BOOL_TRUE_LITERAL = "true";
+  private const string BOOL_FALSE_LITERAL = "false";
   private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();";
 
   private const string PLACEHOLDER_INDEX = "__INDEX__";
@@ -1775,8 +1777,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
         .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode)
-        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? "true" : "false")
-        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? "true" : "false");
+        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
+        .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL);
 
     if (!receptor.IsVoid && receptor.ResponseType is not null) {
       result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
@@ -1819,8 +1821,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     sb.AppendLine("  },");
     sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
-    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? "true" : "false")},");
-    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? "true" : "false")}");
+    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)},");
+    sb.AppendLine($"  IsIdempotent: {(receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)}");
     sb.Append(')');
 
     return sb.ToString();

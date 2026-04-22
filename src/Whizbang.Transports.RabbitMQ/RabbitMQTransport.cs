@@ -21,6 +21,8 @@ namespace Whizbang.Transports.RabbitMQ;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private const string UNKNOWN_MESSAGE_ID = "unknown";
+  private const string TRANSPORT_NOT_INITIALIZED_MESSAGE = "RabbitMQ transport is not initialized. Call InitializeAsync() first.";
+  private const string ENVELOPE_TYPE_HEADER = "EnvelopeType";
 
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
@@ -150,7 +152,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(destination);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
@@ -206,7 +208,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       };
 
       // Add envelope type for deserialization
-      properties.Headers["EnvelopeType"] = envelopeTypeName;
+      properties.Headers[ENVELOPE_TYPE_HEADER] = envelopeTypeName;
 
       // Add correlation and causation IDs if present
       _setCorrelationAndCausationHeaders(envelope, properties);
@@ -274,7 +276,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(destination);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     if (items.Count == 0) {
@@ -349,7 +351,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       Headers = new Dictionary<string, object?>()
     };
 
-    properties.Headers["EnvelopeType"] = envelopeTypeName;
+    properties.Headers[ENVELOPE_TYPE_HEADER] = envelopeTypeName;
 
     _setCorrelationAndCausationHeaders(envelope, properties);
 
@@ -417,7 +419,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(batchOptions);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     return _subscribeBatchCoreAsync(batchHandler, destination, batchOptions, cancellationToken);
@@ -631,7 +633,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     ArgumentNullException.ThrowIfNull(destination);
 
     if (!_isInitialized) {
-      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+      throw new InvalidOperationException(TRANSPORT_NOT_INITIALIZED_MESSAGE);
     }
 
     return _subscribeCoreAsync(handler, destination, cancellationToken);
@@ -1051,7 +1053,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     }
 
     // Get envelope type from headers
-    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+    if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
         envelopeTypeObj is not byte[] envelopeTypeBytes) {
       _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
       return null;
@@ -1086,7 +1088,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     envelopeTypeName = null;
 
     // Get envelope type from headers
-    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+    if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
         envelopeTypeObj is not byte[] envelopeTypeBytes) {
       _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
       return null;
