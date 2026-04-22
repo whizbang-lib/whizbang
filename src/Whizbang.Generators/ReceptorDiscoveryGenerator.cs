@@ -406,44 +406,46 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     var sb = new StringBuilder();
     sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo[] { ");
-
     for (int i = 0; i < syncAttributes.Length; i++) {
-      var attr = syncAttributes[i];
-
-      sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
-      sb.Append($"PerspectiveType: typeof({attr.PerspectiveType}), ");
-
-      // EventTypes
-      if (attr.EventTypes is { Length: > 0 }) {
-        sb.Append("EventTypes: new global::System.Type[] { ");
-        for (int j = 0; j < attr.EventTypes.Length; j++) {
-          if (j > 0) {
-            sb.Append(", ");
-          }
-          sb.Append($"typeof({attr.EventTypes[j]})");
-        }
-        sb.Append(" }, ");
-      } else {
-        sb.Append("EventTypes: null, ");
-      }
-
-      sb.Append($"TimeoutMs: {attr.TimeoutMs}, ");
-      var fireBehaviorValue = attr.FireBehavior switch {
-        0 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess",
-        1 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways",
-        2 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent",
-        _ => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess"
-      };
-      sb.Append($"FireBehavior: {fireBehaviorValue})");
-
+      _appendSyncAttributeEntry(sb, syncAttributes[i]);
       if (i < syncAttributes.Length - 1) {
         sb.Append(", ");
       }
     }
-
     sb.Append(" }");
     return sb.ToString();
   }
+
+  /// <summary>Emits one <c>ReceptorSyncAttributeInfo(...)</c> constructor call — flattens
+  /// PerspectiveType, EventTypes (null or Type[] literal), TimeoutMs, and the FireBehavior
+  /// enum member mapping.</summary>
+  private static void _appendSyncAttributeEntry(StringBuilder sb, SyncAttributeInfo attr) {
+    sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
+    sb.Append($"PerspectiveType: typeof({attr.PerspectiveType}), ");
+    sb.Append("EventTypes: ");
+    sb.Append(_formatEventTypesLiteral(attr.EventTypes));
+    sb.Append(", ");
+    sb.Append($"TimeoutMs: {attr.TimeoutMs}, ");
+    sb.Append($"FireBehavior: {_mapSyncFireBehavior(attr.FireBehavior)})");
+  }
+
+  /// <summary>Renders the EventTypes array literal or the string <c>null</c>.</summary>
+  private static string _formatEventTypesLiteral(string[]? eventTypes) {
+    if (eventTypes is not { Length: > 0 }) {
+      return "null";
+    }
+    var elements = string.Join(", ", eventTypes.Select(t => $"typeof({t})"));
+    return $"new global::System.Type[] {{ {elements} }}";
+  }
+
+  /// <summary>Maps the integer FireBehavior enum value onto its fully-qualified member name.
+  /// Unknown values fall through to FireOnSuccess (the declared default).</summary>
+  private static string _mapSyncFireBehavior(int fireBehavior) => fireBehavior switch {
+    0 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess",
+    1 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways",
+    2 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent",
+    _ => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess"
+  };
 
   /// <summary>
   /// Generates C# code for sync await operations to be inserted into invoker delegates.
