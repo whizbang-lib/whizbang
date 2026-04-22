@@ -64,10 +64,11 @@ public sealed class MessageAwaiter<TResult>(
         return;
       }
 
-      // Try to extract result
+      // Try to extract result. TResult is constrained `notnull` so a null from the extractor
+      // always means "skip" regardless of whether TResult is a reference or value type.
       var result = _resultExtractor(envelope);
-      if (result != null) {
-        _tcs.TrySetResult(result);
+      if (!EqualityComparer<TResult?>.Default.Equals(result, default)) {
+        _tcs.TrySetResult(result!);
       }
 
       await Task.CompletedTask;
