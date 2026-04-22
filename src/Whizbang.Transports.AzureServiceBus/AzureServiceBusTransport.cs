@@ -1432,35 +1432,55 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // Ensure subscription exists (with session auto-migration when EnableSessions is true)
     try {
       var subscriptionExists = await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken);
-
-      if (subscriptionExists && _options.EnableSessions) {
-        // Check if existing subscription needs migration to sessions
-        var properties = await _adminClient.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
-        if (!properties.RequiresSession) {
-          if (_logger.IsEnabled(LogLevel.Information)) {
-            _logger.LogInformation(
-              "Auto-migrating subscription {TopicName}/{SubscriptionName} to require sessions (FIFO ordering). " +
-              "Deleting and recreating because ASB does not allow toggling RequiresSession.",
-              topicName, subscriptionName);
-          }
-          await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
-          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
-        }
-      } else if (!subscriptionExists) {
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
-        }
-        if (_options.EnableSessions) {
-          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
-        } else {
-          await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, cancellationToken);
-        }
+      if (subscriptionExists) {
+        await _migrateSubscriptionToSessionsIfNeededAsync(topicName, subscriptionName, cancellationToken);
+      } else {
+        await _createSubscriptionAsync(topicName, subscriptionName, cancellationToken);
       }
     } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
       // Race condition - subscription created by another instance, safe to ignore
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug(ex, "Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
       }
+    }
+  }
+
+  /// <summary>
+  /// When EnableSessions is true and the existing subscription doesn't require sessions,
+  /// delete and recreate it with RequiresSession=true. ASB does not allow toggling
+  /// RequiresSession on an existing subscription, hence the delete + recreate dance. No-op
+  /// otherwise (sessions disabled OR subscription already requires sessions).
+  /// </summary>
+  private async Task _migrateSubscriptionToSessionsIfNeededAsync(
+      string topicName, string subscriptionName, CancellationToken cancellationToken) {
+    if (!_options.EnableSessions) {
+      return;
+    }
+    var properties = await _adminClient!.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    if (properties.RequiresSession) {
+      return;
+    }
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      _logger.LogInformation(
+        "Auto-migrating subscription {TopicName}/{SubscriptionName} to require sessions (FIFO ordering). " +
+        "Deleting and recreating because ASB does not allow toggling RequiresSession.",
+        topicName, subscriptionName);
+    }
+    await _adminClient.DeleteSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+    await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+  }
+
+  /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag —
+  /// and logs at Information when enabled.</summary>
+  private async Task _createSubscriptionAsync(
+      string topicName, string subscriptionName, CancellationToken cancellationToken) {
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
+    }
+    if (_options.EnableSessions) {
+      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, cancellationToken);
+    } else {
+      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, cancellationToken);
     }
   }
 
