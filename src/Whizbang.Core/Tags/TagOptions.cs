@@ -39,6 +39,27 @@ public sealed class TagOptions {
   public IReadOnlyList<TagHookRegistration> HookRegistrations => _hookRegistrations;
 
   /// <summary>
+  /// Size in bytes at which the tag processor logs a warning for a built payload.
+  /// Default is 8192 (8 KiB). Set to <c>null</c> to disable the warning.
+  /// </summary>
+  /// <remarks>
+  /// Measured against the raw JSON text length. Notification payloads are pushed
+  /// over real-time transports like SignalR — oversized payloads indicate the
+  /// author likely forgot to narrow <see cref="Attributes.MessageTagAttribute.Properties"/>.
+  /// </remarks>
+  public int? PayloadSizeWarningThresholdBytes { get; set; } = 8192;
+
+  /// <summary>
+  /// Size in bytes above which the tag processor throws an
+  /// <see cref="InvalidOperationException"/> instead of dispatching the payload.
+  /// Default is <c>null</c> (disabled). Set this in production to catch runaway payloads.
+  /// </summary>
+  /// <remarks>
+  /// Evaluated before hooks run; when tripped, no hook fires for the offending tag.
+  /// </remarks>
+  public int? PayloadSizeErrorThresholdBytes { get; set; }
+
+  /// <summary>
   /// Registers a hook for processing messages tagged with the specified attribute type.
   /// </summary>
   /// <typeparam name="TAttribute">The tag attribute type to handle.</typeparam>
