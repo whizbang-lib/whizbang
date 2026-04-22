@@ -129,24 +129,13 @@ public class MessageTagAttributeTests {
   }
 
   [Test]
-  public async Task MessageTagAttribute_IncludeEvent_IsFalseByDefaultAsync() {
-    // Arrange & Act
-    var attribute = new TestTagAttribute { Tag = "test-tag" };
+  public async Task MessageTagAttribute_DoesNotHaveIncludeEventPropertyAsync() {
+    // IncludeEvent was a footgun: it forced the entire event to be serialized under
+    // "__event" in addition to extracted Properties, doubling the payload. Removed —
+    // callers must be explicit about what they need via Properties.
+    var prop = typeof(MessageTagAttribute).GetProperty("IncludeEvent");
 
-    // Assert
-    await Assert.That(attribute.IncludeEvent).IsFalse();
-  }
-
-  [Test]
-  public async Task MessageTagAttribute_IncludeEvent_CanBeSetToTrueAsync() {
-    // Arrange & Act
-    var attribute = new TestTagAttribute {
-      Tag = "test-tag",
-      IncludeEvent = true
-    };
-
-    // Assert
-    await Assert.That(attribute.IncludeEvent).IsTrue();
+    await Assert.That(prop).IsNull();
   }
 
   [Test]
@@ -176,7 +165,6 @@ public class MessageTagAttributeTests {
     var attribute = new TestTagAttribute {
       Tag = "order-updated",
       Properties = ["OrderId", "Status"],
-      IncludeEvent = true,
       ExtraJson = """{"source": "api"}"""
     };
 
@@ -184,7 +172,6 @@ public class MessageTagAttributeTests {
     await Assert.That(attribute.Tag).IsEqualTo("order-updated");
     await Assert.That(attribute.Properties).IsNotNull();
     await Assert.That(attribute.Properties!.Length).IsEqualTo(2);
-    await Assert.That(attribute.IncludeEvent).IsTrue();
     await Assert.That(attribute.ExtraJson).IsEqualTo("""{"source": "api"}""");
   }
 
