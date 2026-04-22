@@ -75,9 +75,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var fullTypeName = TypeNameHelper.GetFullyQualifiedName(typeSymbol);
     var clrTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted));
 
-    var kind = isPerspective ? "perspective"
-        : isCommand ? "command"
-        : "event";
+    var messageKind = isCommand ? "command" : "event";
+    var kind = isPerspective ? "perspective" : messageKind;
 
     var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
         attr.AttributeClass is not null &&

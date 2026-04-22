@@ -284,7 +284,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// </summary>
-  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 30;
     var delay = TimeSpan.FromSeconds(1);
 
@@ -1095,7 +1095,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       .Where(a => !eventTypes.Contains(a) && eventTypes.Any(e => e.Contains(a.Replace("global::", ""))))
       .ToList();
 
-    if (mismatches.Any()) {
+    if (mismatches.Count > 0) {
       Console.WriteLine("=== DETECTED TYPE NAME MISMATCHES ===");
       foreach (var mismatch in mismatches) {
         Console.WriteLine($"Association has 'global::' prefix: {mismatch}");

@@ -12,13 +12,13 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// and that generated patterns will match expected Subject values.
 /// </summary>
 /// <remarks>
-/// The Azure Service Bus SqlFilter uses SQL LIKE patterns:
+/// <para>The Azure Service Bus SqlFilter uses SQL LIKE patterns:
 /// - % matches zero or more characters
-/// - _ matches exactly one character
+/// - _ matches exactly one character</para>
 ///
-/// RabbitMQ-style patterns are translated:
+/// <para>RabbitMQ-style patterns are translated:
 /// - # → %
-/// - * → %
+/// - * → %</para>
 /// </remarks>
 public class SqlFilterPatternMatchingTests {
 

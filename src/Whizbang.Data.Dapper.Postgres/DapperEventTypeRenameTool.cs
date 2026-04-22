@@ -29,7 +29,7 @@ public sealed class DapperEventTypeRenameTool : IEventTypeRenameTool {
   private readonly IMessageTypeCatalog _catalog;
   private readonly IDbConnectionFactory _connectionFactory;
   private readonly ILogger<DapperEventTypeRenameTool>? _logger;
-  private readonly List<PendingRename> _manualRenames = new();
+  private readonly List<PendingRename> _manualRenames = [];
 
   /// <summary>
   /// Initializes a new rename tool.

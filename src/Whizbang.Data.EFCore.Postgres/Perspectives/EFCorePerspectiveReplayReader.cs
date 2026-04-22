@@ -42,15 +42,25 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext> : IPerspectiveRepl
   }
 
   /// <inheritdoc/>
-  public async IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(
+  public IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(
+      Guid streamId,
+      string perspectiveName,
+      int fromVersionExclusive,
+      IReadOnlyCollection<Type> eventTypes,
+      CancellationToken cancellationToken) {
+
+    ArgumentException.ThrowIfNullOrEmpty(perspectiveName);
+    ArgumentNullException.ThrowIfNull(eventTypes);
+
+    return _readReplayEventsImplAsync(streamId, perspectiveName, fromVersionExclusive, eventTypes, cancellationToken);
+  }
+
+  private async IAsyncEnumerable<ReplayEventEnvelope> _readReplayEventsImplAsync(
       Guid streamId,
       string perspectiveName,
       int fromVersionExclusive,
       IReadOnlyCollection<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken) {
-
-    ArgumentException.ThrowIfNullOrEmpty(perspectiveName);
-    ArgumentNullException.ThrowIfNull(eventTypes);
 
     // 1. Pull the set of pending event ids for this (stream, perspective) from
     //    wh_perspective_events. Rows here have never been completed for this perspective —
@@ -66,7 +76,7 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext> : IPerspectiveRepl
         streamId,
         afterEventId: null,
         upToEventId: Guid.Empty,
-        eventTypes.ToArray(),
+        [.. eventTypes],
         cancellationToken);
 
     foreach (var envelope in envelopes) {

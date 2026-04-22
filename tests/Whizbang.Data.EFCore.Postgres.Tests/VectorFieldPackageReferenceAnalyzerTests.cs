@@ -160,7 +160,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
 
     // Assert
     await Assert.That(diagnostics).Count().IsEqualTo(2);
-    var ids = diagnostics.Select(d => d.Id).OrderBy(id => id).ToList();
+    var ids = diagnostics.Select(d => d.Id).Order().ToList();
     await Assert.That(ids).Contains("WHIZ070");
     await Assert.That(ids).Contains("WHIZ071");
   }

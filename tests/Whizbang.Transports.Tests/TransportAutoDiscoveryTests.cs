@@ -5,10 +5,10 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Transports.Tests;
 
 /// <summary>
-/// Tests for TransportAutoDiscovery and NamespacePattern.
-/// Following TDD: These tests are written BEFORE implementing auto-discovery.
+/// <para>Tests for TransportAutoDiscovery and NamespacePattern.
+/// Following TDD: These tests are written BEFORE implementing auto-discovery.</para>
 ///
-/// Phase 3: Auto-discovery of receptors and namespace pattern matching
+/// <para>Phase 3: Auto-discovery of receptors and namespace pattern matching</para>
 /// </summary>
 public class TransportAutoDiscoveryTests {
   // ========================================

@@ -213,11 +213,10 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Helper class for overriding PostgreSQL limits via MSBuild property.
   /// </summary>
   private sealed class OverriddenPostgresLimits(int maxLength) : IDbProviderLimits {
-    private readonly int _maxLength = maxLength;
-    public int MaxTableNameBytes => _maxLength;
-    public int MaxColumnNameBytes => _maxLength;
-    public int MaxIndexNameBytes => _maxLength;
-    public string ProviderName => $"PostgreSQL (override: {_maxLength})";
+    public int MaxTableNameBytes { get; } = maxLength;
+    public int MaxColumnNameBytes { get; } = maxLength;
+    public int MaxIndexNameBytes { get; } = maxLength;
+    public string ProviderName { get; } = $"PostgreSQL (override: {maxLength})";
   }
 
   /// <summary>
@@ -286,14 +285,14 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var segments = namespaceName.Split('.');
 
     // Take the last segment (e.g., "InventoryWorker", "API")
-    var lastSegment = segments[segments.Length - 1];
+    var lastSegment = segments[^1];
 
     // If last segment is generic (API, Service, etc.), take second-to-last
     if ((lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
          lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
          lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) &&
         segments.Length > 1) {
-      lastSegment = segments[segments.Length - 2];
+      lastSegment = segments[^2];
     }
 
     // Remove common suffixes (case-insensitive)

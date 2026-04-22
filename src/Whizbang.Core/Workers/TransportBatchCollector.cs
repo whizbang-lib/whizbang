@@ -118,11 +118,10 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
   }
 
   private void _hardMaxTimerCallback(object? state) {
-    if (_disposed) {
-      return;
-    }
-
-    _ = Task.Run(() => _flushBatchAsync());
+    // Slide and hard-max timers currently share the same flush-on-fire behaviour.
+    // Delegate to the slide callback so the two stay identical by construction
+    // (fixes sonar S4144).
+    _slideTimerCallback(state);
   }
 
   private async Task _flushBatchAsync() {

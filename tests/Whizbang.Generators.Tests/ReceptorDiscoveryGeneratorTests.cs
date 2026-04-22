@@ -1107,7 +1107,7 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
     await Assert.That(publishStart).IsGreaterThan(-1);
     var publishEnd = content.IndexOf("return PublishToReceptors;", publishStart, StringComparison.Ordinal);
     await Assert.That(publishEnd).IsGreaterThan(publishStart);
-    var publishBody = content.Substring(publishStart, publishEnd - publishStart);
+    var publishBody = content[publishStart..publishEnd];
 
     await Assert.That(publishBody).Contains("DefaultStageReceptor")
       .Because("default-stage void receptors must still fire from PublishAsync");
@@ -1152,7 +1152,7 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
     await Assert.That(untypedStart).IsGreaterThan(-1);
     var untypedEnd = content.IndexOf("return PublishToReceptorsUntyped;", untypedStart, StringComparison.Ordinal);
     await Assert.That(untypedEnd).IsGreaterThan(untypedStart);
-    var untypedBody = content.Substring(untypedStart, untypedEnd - untypedStart);
+    var untypedBody = content[untypedStart..untypedEnd];
 
     await Assert.That(untypedBody).Contains("isDefaultDispatch")
       .Because("cascade path still declares isDefaultDispatch from sourceEnvelope");

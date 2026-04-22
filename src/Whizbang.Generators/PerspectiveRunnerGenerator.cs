@@ -366,89 +366,111 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _generateUpsertCode(PerspectiveInfo perspective) {
     var sb = new StringBuilder();
 
-    if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
-      // No physical fields - use simple UpsertAsync with scope
-      sb.AppendLine("    // Upsert model (insert or update)");
-      sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
-      sb.AppendLine("    if (scope != null) {");
-      sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
-      sb.AppendLine("          streamId,");
-      sb.AppendLine("          model,");
-      sb.AppendLine("          scope,");
-      sb.AppendLine("          forceUpdateScope,");
-      sb.AppendLine("          cancellationToken");
-      sb.AppendLine("      );");
-      sb.AppendLine("    } else {");
-      sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
-      sb.AppendLine("          streamId,");
-      sb.AppendLine("          model,");
-      sb.AppendLine("          cancellationToken");
-      sb.AppendLine("      );");
-      sb.AppendLine("    }");
+    if (perspective.PhysicalFields == null || perspective.PhysicalFields!.Length == 0) {
+      _appendSimpleUpsertCode(sb);
     } else {
-      // Has physical fields - extract values and use UpsertWithPhysicalFieldsAsync
-      sb.AppendLine("    // Extract physical field values from model (including vector fields)");
-      sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
-      sb.AppendLine("    var physicalFieldValues = new System.Collections.Generic.Dictionary<string, object?>");
-      sb.AppendLine("    {");
-
-      for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
-        var field = perspective.PhysicalFields[i];
-        var comma = i < perspective.PhysicalFields.Length - 1 ? "," : "";
-
-        // Vector fields need conversion from float[] to Pgvector.Vector
-        // This is done at compile time to maintain AOT compatibility (no reflection)
-        if (field.IsVectorField) {
-          sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
-        } else {
-          sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} }}{comma}");
-        }
-      }
-
-      sb.AppendLine("    };");
-      sb.AppendLine();
-
-      // Split mode (StorageMode == 2): strip physical fields from model before JSONB serialization.
-      // Physical field values are already captured in the dictionary for column storage.
-      // This prevents data duplication — JSONB contains only non-physical fields.
-      if (perspective.StorageMode == 2 && perspective.PhysicalFields.Length > 0) {
-        sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
-        if (perspective.IsModelRecord) {
-          // Records: use 'with {}' expression for immutable copy
-          // Use default! to suppress nullable warnings — values are intentionally stripped
-          // EXCEPTION: Vector fields use empty array (EF Core crashes on null float[] in JSONB)
-          var withProps = string.Join(", ", perspective.PhysicalFields.Select(f =>
-            f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
-          sb.AppendLine($"    model = model with {{ {withProps} }};");
-        } else {
-          // Classes: set each property to default
-          // Use default! to suppress nullable warnings — values are intentionally stripped
-          // EXCEPTION: Vector fields (float[]) use empty array instead of null
-          // because EF Core's JsonCollectionOfStructsReaderWriter crashes on null token
-          foreach (var field in perspective.PhysicalFields) {
-            if (field.IsVectorField) {
-              sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
-            } else {
-              sb.AppendLine($"    model.{field.PropertyName} = default!;");
-            }
-          }
-        }
-        sb.AppendLine();
-      }
-
-      sb.AppendLine("    // Upsert model with physical field values (insert or update)");
-      sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
-      sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
-      sb.AppendLine("        streamId,");
-      sb.AppendLine("        model,");
-      sb.AppendLine("        physicalFieldValues,");
-      sb.AppendLine("        scope,");
-      sb.AppendLine("        forceUpdateScope,");
-      sb.AppendLine("        cancellationToken");
-      sb.AppendLine("    );");
+      _appendPhysicalFieldsUpsertCode(sb, perspective);
     }
 
     return sb.ToString().TrimEnd('\r', '\n');
+  }
+
+  /// <summary>
+  /// Emits the no-physical-fields branch: a simple UpsertAsync call with a scope-aware if/else
+  /// so zero-scope perspectives can use the scope-less overload.
+  /// </summary>
+  private static void _appendSimpleUpsertCode(StringBuilder sb) {
+    sb.AppendLine("    // Upsert model (insert or update)");
+    sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+    sb.AppendLine("    if (scope != null) {");
+    sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+    sb.AppendLine("          streamId,");
+    sb.AppendLine("          model,");
+    sb.AppendLine("          scope,");
+    sb.AppendLine("          forceUpdateScope,");
+    sb.AppendLine("          cancellationToken");
+    sb.AppendLine("      );");
+    sb.AppendLine("    } else {");
+    sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+    sb.AppendLine("          streamId,");
+    sb.AppendLine("          model,");
+    sb.AppendLine("          cancellationToken");
+    sb.AppendLine("      );");
+    sb.AppendLine("    }");
+  }
+
+  /// <summary>
+  /// Emits the physical-fields branch: builds the column-value dictionary, optionally strips
+  /// physical fields from the model for split mode, and calls UpsertWithPhysicalFieldsAsync.
+  /// </summary>
+  private static void _appendPhysicalFieldsUpsertCode(StringBuilder sb, PerspectiveInfo perspective) {
+    _appendPhysicalFieldValuesDictionary(sb, perspective);
+
+    if (perspective.StorageMode == 2 && perspective.PhysicalFields!.Length > 0) {
+      _appendSplitModePhysicalFieldStripping(sb, perspective);
+    }
+
+    sb.AppendLine("    // Upsert model with physical field values (insert or update)");
+    sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+    sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
+    sb.AppendLine("        streamId,");
+    sb.AppendLine("        model,");
+    sb.AppendLine("        physicalFieldValues,");
+    sb.AppendLine("        scope,");
+    sb.AppendLine("        forceUpdateScope,");
+    sb.AppendLine("        cancellationToken");
+    sb.AppendLine("    );");
+  }
+
+  /// <summary>
+  /// Emits the <c>physicalFieldValues</c> dictionary initialiser. Vector fields are converted
+  /// from <c>float[]</c> to <c>Pgvector.Vector</c> at compile time so AOT compatibility is
+  /// preserved (no reflection).
+  /// </summary>
+  private static void _appendPhysicalFieldValuesDictionary(StringBuilder sb, PerspectiveInfo perspective) {
+    sb.AppendLine("    // Extract physical field values from model (including vector fields)");
+    sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
+    sb.AppendLine("    var physicalFieldValues = new System.Collections.Generic.Dictionary<string, object?>");
+    sb.AppendLine("    {");
+
+    for (int i = 0; i < perspective.PhysicalFields!.Length; i++) {
+      var field = perspective.PhysicalFields[i];
+      var comma = i < perspective.PhysicalFields!.Length - 1 ? "," : "";
+      if (field.IsVectorField) {
+        sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
+      } else {
+        sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} }}{comma}");
+      }
+    }
+
+    sb.AppendLine("    };");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Split mode (StorageMode == 2): strips physical fields from the model before JSONB
+  /// serialization so the JSONB payload only contains non-physical fields. Physical field
+  /// values are already captured in the <c>physicalFieldValues</c> dictionary for column
+  /// storage. Records use <c>with { ... }</c> for an immutable copy; classes mutate in place.
+  /// Vector fields get <c>System.Array.Empty&lt;float&gt;()</c> because EF Core's
+  /// JsonCollectionOfStructsReaderWriter crashes on a null JSON token.
+  /// </summary>
+  private static void _appendSplitModePhysicalFieldStripping(StringBuilder sb, PerspectiveInfo perspective) {
+    sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
+    if (perspective.IsModelRecord) {
+      var withProps = string.Join(", ", perspective.PhysicalFields!.Select(f =>
+        f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
+      sb.AppendLine($"    model = model with {{ {withProps} }};");
+    } else {
+      foreach (var field in perspective.PhysicalFields!) {
+        if (field.IsVectorField) {
+          sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
+        } else {
+          sb.AppendLine($"    model.{field.PropertyName} = default!;");
+        }
+      }
+    }
+    sb.AppendLine();
   }
 
   /// <summary>

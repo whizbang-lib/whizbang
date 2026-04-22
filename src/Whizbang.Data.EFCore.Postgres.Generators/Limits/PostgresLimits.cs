@@ -9,13 +9,13 @@ namespace Whizbang.Data.EFCore.Postgres.Generators.Limits;
 /// PostgreSQL uses 63 bytes as the maximum identifier length (NAMEDATALEN - 1).
 /// </summary>
 /// <remarks>
-/// PostgreSQL's NAMEDATALEN is 64 by default, with the last byte reserved for null terminator.
-/// This results in a maximum identifier length of 63 bytes.
+/// <para>PostgreSQL's NAMEDATALEN is 64 by default, with the last byte reserved for null terminator.
+/// This results in a maximum identifier length of 63 bytes.</para>
 ///
-/// Note: This is measured in bytes, not characters. Multi-byte UTF-8 characters
-/// will consume more than one byte toward the limit.
+/// <para>Note: This is measured in bytes, not characters. Multi-byte UTF-8 characters
+/// will consume more than one byte toward the limit.</para>
 ///
-/// Reference: https://www.postgresql.org/docs/current/limits.html
+/// <para>Reference: https://www.postgresql.org/docs/current/limits.html</para>
 /// </remarks>
 public sealed class PostgresLimits : IDbProviderLimits {
   /// <summary>

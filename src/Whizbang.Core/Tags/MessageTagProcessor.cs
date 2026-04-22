@@ -130,12 +130,57 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       // Build payload using the pre-compiled builder
       var payload = registration.PayloadBuilder(ctx.Message);
 
+      // Enforce payload size thresholds before any hook fires. Oversized payloads
+      // indicate a tag author forgot to narrow Properties — error threshold aborts
+      // dispatch; warning threshold just logs.
+      if (!_enforcePayloadSize(payload, registration, ctx.MessageType)) {
+        continue;
+      }
+
       // Get the attribute instance
       var attribute = registration.AttributeFactory();
 
       // Create context and invoke hooks for this attribute type (pass stage so hooks can filter)
       await _processTagRegistrationAsync(ctx, attribute, payload, hookResolver, ct);
     }
+  }
+
+  /// <summary>
+  /// Returns <c>true</c> when the payload is within configured size thresholds.
+  /// Logs a warning when over the warning threshold and throws when over the
+  /// error threshold.
+  /// </summary>
+  private bool _enforcePayloadSize(
+      JsonElement payload,
+      MessageTagRegistration registration,
+      Type messageType) {
+    var warningThreshold = _options.PayloadSizeWarningThresholdBytes;
+    var errorThreshold = _options.PayloadSizeErrorThresholdBytes;
+    if (warningThreshold is null && errorThreshold is null) {
+      return true;
+    }
+
+    var size = payload.GetRawText().Length;
+
+    if (errorThreshold is int err && size > err) {
+      throw new InvalidOperationException(
+        $"Tag payload for message {messageType.Name} (tag '{registration.Tag}') is {size} bytes, " +
+        $"exceeding the configured error threshold of {err} bytes. " +
+        $"Narrow the '{nameof(Attributes.MessageTagAttribute.Properties)}' list on the tag attribute.");
+    }
+
+    if (warningThreshold is int warn && size > warn) {
+#pragma warning disable CA1848 // Diagnostic logging — performance not critical
+      Logger.LogWarning(
+        "[TAG PROCESSOR] Payload for {MessageType} (tag '{Tag}') is {Size} bytes, exceeding warning threshold of {Threshold} bytes.",
+        messageType.Name,
+        registration.Tag,
+        size,
+        warn);
+#pragma warning restore CA1848
+    }
+
+    return true;
   }
 
   /// <summary>
@@ -357,9 +402,9 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       Type attributeType,
       CancellationToken ct) {
     // Try known built-in attribute types first
-    var builtInResult = await _tryInvokeBuiltInHookAsync(hookInstance, context, attributeType, ct);
-    if (builtInResult.Matched) {
-      return builtInResult.Result;
+    var (matched, result) = await _tryInvokeBuiltInHookAsync(hookInstance, context, attributeType, ct);
+    if (matched) {
+      return result;
     }
 
     // Try dispatcher registry for custom attribute types

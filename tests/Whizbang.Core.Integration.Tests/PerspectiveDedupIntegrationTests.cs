@@ -349,13 +349,13 @@ public class PerspectiveDedupIntegrationTests {
     eventStore.EventsPerStream[streamId] = [_createFakeEnvelope(eventId)];
 
     // Build work items: one per perspective, all for the same stream
-    var workItems = perspectiveNames.Select(name => new PerspectiveWork {
+    var workItems = perspectiveNames.ConvertAll(name => new PerspectiveWork {
       WorkId = Guid.CreateVersion7(),
       StreamId = streamId,
       PerspectiveName = name,
       LastProcessedEventId = null,
       PartitionNumber = 1
-    }).ToList();
+    });
 
     // Runner returns a LastEventId matching the event in the store
     var runner = new FixedEventIdRunner(eventId);
@@ -403,13 +403,13 @@ public class PerspectiveDedupIntegrationTests {
     eventStore.EventsPerStream[streamId] = [_createFakeEnvelope(eventId)];
 
     // Batch 1: all 20 perspectives succeed. Batches 2-4: re-deliver all 20 (should be deduped).
-    var allWorkItems = perspectiveNames.Select(name => new PerspectiveWork {
+    var allWorkItems = perspectiveNames.ConvertAll(name => new PerspectiveWork {
       WorkId = Guid.CreateVersion7(),
       StreamId = streamId,
       PerspectiveName = name,
       LastProcessedEventId = null,
       PartitionNumber = 1
-    }).ToList();
+    });
 
     var workCoordinator = new SequentialThenRedeliveryCoordinator {
       InitialWork = allWorkItems,
@@ -916,16 +916,12 @@ public class PerspectiveDedupIntegrationTests {
   /// Runner that returns a fixed LastEventId for all perspectives.
   /// Tracks calls per perspective name and supports WaitForCallCount.
   /// </summary>
-  private sealed class FixedEventIdRunner : IPerspectiveRunner {
+  private sealed class FixedEventIdRunner(Guid lastEventId) : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
-    private readonly Guid _lastEventId;
+    private readonly Guid _lastEventId = lastEventId;
     private int _callCount;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _callCountWaiters = new();
     private readonly ConcurrentBag<string> _calledPerspectives = [];
-
-    public FixedEventIdRunner(Guid lastEventId) {
-      _lastEventId = lastEventId;
-    }
 
     public int CallCount => _callCount;
     public IReadOnlyCollection<string> CalledPerspectives => [.. _calledPerspectives];
@@ -965,15 +961,10 @@ public class PerspectiveDedupIntegrationTests {
   /// Registry that maps multiple perspective names to a shared runner.
   /// Used by lifecycle tests where many perspectives share the same behavior.
   /// </summary>
-  private sealed class MultiPerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+  private sealed class MultiPerspectiveRunnerRegistry(IEnumerable<string> perspectiveNames, IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
     public Type PerspectiveType => typeof(object);
-    private readonly HashSet<string> _knownNames;
-    private readonly IPerspectiveRunner _runner;
-
-    public MultiPerspectiveRunnerRegistry(IEnumerable<string> perspectiveNames, IPerspectiveRunner runner) {
-      _knownNames = [.. perspectiveNames];
-      _runner = runner;
-    }
+    private readonly HashSet<string> _knownNames = [.. perspectiveNames];
+    private readonly IPerspectiveRunner _runner = runner;
 
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
       _knownNames.Contains(perspectiveName) ? _runner : null;

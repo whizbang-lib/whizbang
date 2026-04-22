@@ -121,6 +121,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <param name="callerFilePath">Caller file path (auto-captured).</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured).</param>
   /// <returns>Delivery receipt with correlation information.</returns>
+#pragma warning disable RCS1163, IDE0060 // Caller info is part of public API surface and reserved for future correlation propagation
   public async Task<IDeliveryReceipt> SendAsync<TMessage>(
     TMessage message,
     [CallerMemberName] string callerMemberName = "",
@@ -139,6 +140,7 @@ public sealed partial class DispatcherSecurityBuilder {
       ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
+#pragma warning restore RCS1163, IDE0060
 
   /// <summary>
   /// Sends a typed message with explicit security context and message context.

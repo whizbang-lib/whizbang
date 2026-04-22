@@ -116,7 +116,7 @@ public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? json
 
     // Deserialize the JsonElement to the target type
     try {
-      var message = JsonSerializer.Deserialize(jsonElement, jsonTypeInfo)
+      var message = jsonElement.Deserialize(jsonTypeInfo)
         ?? throw new InvalidOperationException(
           $"Deserialization of type '{messageTypeName}' returned null. " +
           "This may indicate invalid JSON or a serialization configuration issue."

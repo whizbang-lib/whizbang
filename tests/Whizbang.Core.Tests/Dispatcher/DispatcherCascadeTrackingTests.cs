@@ -82,8 +82,8 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
     Func<object, (object message, DispatchModes mode)>? cascadeResult = null) : Core.Dispatcher(
         serviceProvider,
         new ServiceInstanceProvider(configuration: null),
-        scopedEventTracker: tracker,
-        streamIdExtractor: streamIdExtractor) {
+        streamIdExtractor: streamIdExtractor,
+        scopedEventTracker: tracker) {
     private readonly Func<object, (object message, DispatchModes mode)>? _cascadeResult = cascadeResult;
     private readonly List<object> _localInvocations = [];
     private readonly Lock _lock = new();

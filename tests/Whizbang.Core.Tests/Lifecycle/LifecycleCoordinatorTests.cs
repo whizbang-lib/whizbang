@@ -877,17 +877,17 @@ public class LifecycleCoordinatorTests {
   }
 
   /// <summary>
-  /// RED TEST: Reproduces the JDNext notification bug.
+  /// <para>RED TEST: Reproduces the JDNext notification bug.</para>
   ///
-  /// In the PerspectiveWorker, signal replay sends ALL perspective completions from the current
+  /// <para>In the PerspectiveWorker, signal replay sends ALL perspective completions from the current
   /// batch to ALL events in the batch. So an event expecting only [ActiveTenantProjection] also
-  /// receives a signal for [AuditProjection] (from a different event in the same batch).
+  /// receives a signal for [AuditProjection] (from a different event in the same batch).</para>
   ///
-  /// The bug: PerspectiveWhenAllState.TrySignalAndCheck uses SetEquals(_expected, _completed).
+  /// <para>The bug: PerspectiveWhenAllState.TrySignalAndCheck uses SetEquals(_expected, _completed).
   /// SetEquals requires EXACT set equality. Since _completed has an extra element (the unrelated
-  /// perspective), SetEquals returns false even though all expected perspectives ARE complete.
+  /// perspective), SetEquals returns false even though all expected perspectives ARE complete.</para>
   ///
-  /// The fix: Use _expected.IsSubsetOf(_completed) instead of _expected.SetEquals(_completed).
+  /// <para>The fix: Use _expected.IsSubsetOf(_completed) instead of _expected.SetEquals(_completed).</para>
   /// </summary>
   [Test]
   public async Task SignalPerspectiveComplete_ExtraUnrelatedSignal_DoesNotPreventCompletionAsync() {
@@ -1338,12 +1338,8 @@ public class LifecycleCoordinatorTests {
   /// <summary>
   /// Registry that captures the lifecycle context passed to InvokeAsync.
   /// </summary>
-  private sealed class ContextCapturingRegistry : IReceptorRegistry {
-    private readonly Action<ILifecycleContext?> _onInvoke;
-
-    public ContextCapturingRegistry(Action<ILifecycleContext?> onInvoke) {
-      _onInvoke = onInvoke;
-    }
+  private sealed class ContextCapturingRegistry(Action<ILifecycleContext?> onInvoke) : IReceptorRegistry {
+    private readonly Action<ILifecycleContext?> _onInvoke = onInvoke;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       // Return a receptor at every stage so it always fires

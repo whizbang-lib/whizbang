@@ -322,16 +322,11 @@ public class CapturedSystemEvents {
 /// <summary>
 /// Testable implementation of ISystemEventEmitter that captures events.
 /// </summary>
-public class TestableSystemEventEmitter : ISystemEventEmitter {
-  private readonly CapturedSystemEvents _captured;
-  private readonly SystemEventOptions _options;
-
-  public TestableSystemEventEmitter(
-      CapturedSystemEvents captured,
-      IOptions<SystemEventOptions> options) {
-    _captured = captured;
-    _options = options.Value;
-  }
+public class TestableSystemEventEmitter(
+    CapturedSystemEvents captured,
+    IOptions<SystemEventOptions> options) : ISystemEventEmitter {
+  private readonly CapturedSystemEvents _captured = captured;
+  private readonly SystemEventOptions _options = options.Value;
 
   public Task EmitEventAuditedAsync<TEvent>(
       Guid streamId,

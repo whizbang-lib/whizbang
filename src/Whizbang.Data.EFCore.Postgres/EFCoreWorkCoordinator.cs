@@ -41,6 +41,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Schema name comes from EF Core model configuration (Model.FindEntityType().GetSchema()), not user input. Schema-qualified function names are required for multi-tenant PostgreSQL databases.")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3265:Non-flags enums should not be used in bitwise operations", Justification = "NpgsqlDbType intentionally supports `Array | Uuid`, `Array | Integer`, etc. per the Npgsql API design — the Array bit is combined with the element type. The enum is not marked [Flags] upstream but the API expects bitwise composition.")]
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
@@ -49,6 +50,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
+  private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
 
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -89,6 +91,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <param name="schema">The schema name (should come from GetSchemaWithFallback).</param>
   /// <param name="identifier">The function or table name.</param>
   /// <returns>Schema-qualified identifier like "\"myschema\".function_name" or just "function_name" for public.</returns>
+#pragma warning disable RCS1158 // Static helper intentionally shared across all generic instantiations — does not depend on TDbContext.
   internal static string BuildSchemaQualifiedName(string schema, string identifier) {
     // CRITICAL: Never produce a leading dot
     if (string.IsNullOrWhiteSpace(schema) || schema == DEFAULT_SCHEMA) {
@@ -97,6 +100,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Quote schema name to handle PostgreSQL reserved words
     return $"\"{schema}\".{identifier}";
   }
+#pragma warning restore RCS1158
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
@@ -367,13 +371,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // Drain mode: stream IDs from dedicated rows (skip PerspectiveWork construction entirely)
     // Legacy: deduplicate stream IDs from per-event rows
-    var perspectiveStreamIds = perspectiveStreamRows.Count > 0
-      ? perspectiveStreamRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).ToList()
-      : perspectiveRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).Distinct().ToList();
+    List<Guid> perspectiveStreamIds = perspectiveStreamRows.Count > 0
+      ? [.. perspectiveStreamRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value)]
+      : [.. perspectiveRows.Where(r => r.StreamId.HasValue).Select(r => r.StreamId!.Value).Distinct()];
 
-    var perspectiveWork = perspectiveStreamRows.Count > 0
-      ? new List<PerspectiveWork>()
-      : perspectiveRows.Select(_mapPerspectiveWork).ToList();
+    List<PerspectiveWork> perspectiveWork = perspectiveStreamRows.Count > 0
+      ? []
+      : [.. perspectiveRows.Select(_mapPerspectiveWork)];
 
     var syncInquiryResults = validResults
       .Where(r => r.Source == "sync_result")
@@ -766,11 +770,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
 
-    var sql = $@"SELECT
-      (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as ""PendingPerspectiveEvents"",
-      (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as ""PendingOutbox"",
-      (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as ""PendingInbox"",
-      (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as ""ActiveStreams""";
+    var sql = $"""
+      SELECT
+        (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as "PendingPerspectiveEvents",
+        (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as "PendingOutbox",
+        (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as "PendingInbox",
+        (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as "ActiveStreams"
+      """;
 
     var result = await _dbContext.Database
       .SqlQueryRaw<WorkCoordinatorStatistics>(sql)
@@ -970,7 +976,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, "wh_perspective_cursors");
+    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, PERSPECTIVE_CURSORS_TABLE);
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 #pragma warning restore S2077
@@ -1040,7 +1046,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     var sql = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 #pragma warning restore S2077
@@ -1076,7 +1082,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     var dbConnection = _dbContext.Database.GetDbConnection();
     if (dbConnection.State != System.Data.ConnectionState.Open) {
@@ -1087,9 +1093,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     cmd.CommandText = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = ANY(@p_stream_ids)";
 #pragma warning restore S2077
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streamIds
     });
+#pragma warning restore RCS1130
 
     var results = new List<PerspectiveCursorInfo>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -1097,9 +1105,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new PerspectiveCursorInfo {
         StreamId = reader.GetGuid(0),
         PerspectiveName = reader.GetString(1),
-        LastEventId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        LastEventId = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
         Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
-        RewindTriggerEventId = reader.IsDBNull(4) ? null : reader.GetGuid(4)
+        RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4)
       });
     }
 
@@ -1181,7 +1189,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
-    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
     var completionsTable = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
 
     var cutoff = DateTimeOffset.UtcNow - lookbackWindow;
@@ -1358,7 +1366,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var cursorsTable = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var cursorsTable = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
 
     var sql = $@"
       SELECT stream_id, perspective_name, last_event_id, rewind_trigger_event_id
@@ -1380,8 +1388,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new RewindCursorInfo(
         reader.GetGuid(0),
         reader.GetString(1),
-        reader.IsDBNull(2) ? null : reader.GetGuid(2),
-        reader.IsDBNull(3) ? null : reader.GetGuid(3)));
+        await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
+        await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(3)));
     }
 
     return results;
@@ -1414,9 +1422,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT {functionName}(@p_event_work_ids)";
 #pragma warning restore S2077
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_event_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = workItemIds
     });
+#pragma warning restore RCS1130
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return result is int count ? count : 0;
@@ -1451,9 +1461,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids)";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streamIds
     });
+#pragma warning restore RCS1130
 
     var results = new List<StreamEventData>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -1466,8 +1478,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventId = reader.GetGuid(reader.GetOrdinal("out_event_id")),
         EventType = reader.GetString(reader.GetOrdinal("out_event_type")),
         EventData = reader.GetString(reader.GetOrdinal("out_event_data")),
-        Metadata = reader.IsDBNull(metadataOrdinal) ? null : reader.GetString(metadataOrdinal),
-        Scope = reader.IsDBNull(scopeOrdinal) ? null : reader.GetString(scopeOrdinal),
+        Metadata = await reader.IsDBNullAsync(metadataOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(metadataOrdinal),
+        Scope = await reader.IsDBNullAsync(scopeOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(scopeOrdinal),
         EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id"))
       });
     }

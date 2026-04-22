@@ -256,57 +256,24 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
-      // Snapshot current queues under lock
-      OutboxMessage[] outboxMessages;
-      InboxMessage[] inboxMessages;
-      MessageCompletion[] outboxCompletions;
-      MessageCompletion[] inboxCompletions;
-      MessageFailure[] outboxFailures;
-      MessageFailure[] inboxFailures;
-
-      lock (_lock) {
-        if (_queuedOutboxMessages.Count == 0 &&
-            _queuedInboxMessages.Count == 0 &&
-            _queuedOutboxCompletions.Count == 0 &&
-            _queuedOutboxFailures.Count == 0 &&
-            _queuedInboxCompletions.Count == 0 &&
-            _queuedInboxFailures.Count == 0) {
-          _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
-          if (_logger != null) {
-            LogNoQueuedOperations(_logger);
-          }
-          return new WorkBatch {
-            OutboxWork = [],
-            InboxWork = [],
-            PerspectiveWork = []
-          };
-        }
-
-        // Snapshot and clear queues
-        outboxMessages = [.. _queuedOutboxMessages];
-        inboxMessages = [.. _queuedInboxMessages];
-        outboxCompletions = [.. _queuedOutboxCompletions];
-        inboxCompletions = [.. _queuedInboxCompletions];
-        outboxFailures = [.. _queuedOutboxFailures];
-        inboxFailures = [.. _queuedInboxFailures];
-
-        _queuedOutboxMessages.Clear();
-        _queuedInboxMessages.Clear();
-        _queuedOutboxCompletions.Clear();
-        _queuedOutboxFailures.Clear();
-        _queuedInboxCompletions.Clear();
-        _queuedInboxFailures.Clear();
+      if (!_trySnapshotAndClearQueues(out var snapshot)) {
+        return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
       }
 
       if (_logger != null) {
-        LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
+        LogIntervalFlush(_logger,
+          snapshot.OutboxMessages.Length, snapshot.InboxMessages.Length,
+          snapshot.OutboxCompletions.Length, snapshot.OutboxFailures.Length,
+          snapshot.InboxCompletions.Length, snapshot.InboxFailures.Length);
       }
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
           _coordinator, _scopeFactory, _instanceProvider, _options, "interval",
-          outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-          outboxFailures, inboxFailures, flags, _lifecycleMessageDeserializer,
+          snapshot.OutboxMessages, snapshot.InboxMessages,
+          snapshot.OutboxCompletions, snapshot.InboxCompletions,
+          snapshot.OutboxFailures, snapshot.InboxFailures,
+          flags, _lifecycleMessageDeserializer,
           _logger, _tracingOptions, _metrics, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle),
@@ -317,15 +284,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
       }
 
-      // Route claimed inbox work to publisher worker via channel (dedup by IsInFlight)
-      if (_inboxChannelWriter is not null && workBatch.InboxWork.Count > 0) {
-        foreach (var inboxWork in workBatch.InboxWork) {
-          if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
-            _inboxChannelWriter.TryWrite(inboxWork);
-          }
-        }
-      }
-
+      _routeClaimedInboxWorkToChannel(workBatch);
       return workBatch;
     } finally {
       lock (_lock) {
@@ -333,6 +292,73 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       }
     }
   }
+
+  /// <summary>
+  /// Takes one lock-protected snapshot of the six queues and clears them in-place. Returns
+  /// false (with default snapshot) when every queue is empty so the caller can skip the flush
+  /// pipeline and log the "no queued operations" branch. Keeps the `return new WorkBatch{...}`
+  /// shortcut inside a single lock acquisition.
+  /// </summary>
+  private bool _trySnapshotAndClearQueues(out QueueSnapshot snapshot) {
+    lock (_lock) {
+      if (_queuedOutboxMessages.Count == 0 &&
+          _queuedInboxMessages.Count == 0 &&
+          _queuedOutboxCompletions.Count == 0 &&
+          _queuedOutboxFailures.Count == 0 &&
+          _queuedInboxCompletions.Count == 0 &&
+          _queuedInboxFailures.Count == 0) {
+        _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
+        if (_logger != null) {
+          LogNoQueuedOperations(_logger);
+        }
+        snapshot = default;
+        return false;
+      }
+
+      snapshot = new QueueSnapshot(
+        [.. _queuedOutboxMessages],
+        [.. _queuedInboxMessages],
+        [.. _queuedOutboxCompletions],
+        [.. _queuedInboxCompletions],
+        [.. _queuedOutboxFailures],
+        [.. _queuedInboxFailures]);
+
+      _queuedOutboxMessages.Clear();
+      _queuedInboxMessages.Clear();
+      _queuedOutboxCompletions.Clear();
+      _queuedOutboxFailures.Clear();
+      _queuedInboxCompletions.Clear();
+      _queuedInboxFailures.Clear();
+      return true;
+    }
+  }
+
+  /// <summary>Routes claimed inbox work to the publisher worker via the in-memory channel,
+  /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
+  /// no inbox rows.</summary>
+  private void _routeClaimedInboxWorkToChannel(WorkBatch workBatch) {
+    if (_inboxChannelWriter is null || workBatch.InboxWork.Count == 0) {
+      return;
+    }
+    // S3267: Loop body has side effects (channel writer mutation) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var inboxWork in workBatch.InboxWork) {
+      if (!_inboxChannelWriter.IsInFlight(inboxWork.MessageId)) {
+        _inboxChannelWriter.TryWrite(inboxWork);
+      }
+    }
+#pragma warning restore S3267
+  }
+
+  /// <summary>Lock-free snapshot of every queue taken at flush time so
+  /// <see cref="WorkCoordinatorFlushHelper.ExecuteFlushAsync"/> can run outside the lock.</summary>
+  private readonly record struct QueueSnapshot(
+    OutboxMessage[] OutboxMessages,
+    InboxMessage[] InboxMessages,
+    MessageCompletion[] OutboxCompletions,
+    MessageCompletion[] InboxCompletions,
+    MessageFailure[] OutboxFailures,
+    MessageFailure[] InboxFailures);
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>

@@ -291,8 +291,7 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
   private static ServiceInstanceInfo _readServiceInstance(JsonElement root, JsonSerializerOptions options) {
     var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
 
-    JsonElement siElem;
-    if (!root.TryGetProperty("si", out siElem) && !root.TryGetProperty("ServiceInstance", out siElem)) {
+    if (!root.TryGetProperty("si", out var siElem) && !root.TryGetProperty("ServiceInstance", out siElem)) {
       throw new JsonException("Missing required property: ServiceInstance (or si)");
     }
     return siElem.Deserialize(serviceInstanceTypeInfo)

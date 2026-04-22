@@ -583,7 +583,7 @@ public partial class ServiceBusConsumerWorker(
         return null;
       }
 
-      var @event = JsonSerializer.Deserialize(jsonElement, jsonTypeInfo);
+      var @event = jsonElement.Deserialize(jsonTypeInfo);
       return @event;
     } catch (Exception ex) {
       LogFailedToDeserializeEvent(_logger, work.MessageId, ex);
@@ -654,7 +654,7 @@ public partial class ServiceBusConsumerWorker(
   static partial void LogSubscriptionsReady(ILogger logger, int count);
 
   [LoggerMessage(
-    EventId = 19,
+    EventId = 25,
     Level = LogLevel.Debug,
     Message = "Serializing to InboxMessage: MessageId={MessageId}, PayloadType={PayloadType}, IsEvent={IsEvent}, StreamId={StreamId}"
   )]

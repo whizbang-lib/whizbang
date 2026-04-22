@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for UpdateProductCommand
 /// </summary>
 public class UpdateProductCommandTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task UpdateProductCommand_WithAllPropertiesUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act

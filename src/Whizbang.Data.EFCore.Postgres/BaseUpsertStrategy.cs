@@ -14,6 +14,18 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// </summary>
   protected virtual bool ClearChangeTrackerAfterSave => false;
 
+  /// <summary>
+  /// Groups the row identity and payload data that flow through every upsert overload
+  /// into the shared core implementation.
+  /// </summary>
+  private readonly record struct UpsertRowArgs<TModel>(
+    Guid Id,
+    TModel Model,
+    PerspectiveMetadata Metadata,
+    PerspectiveScope Scope,
+    IDictionary<string, object?>? PhysicalFieldValues,
+    bool ForceUpdateScope) where TModel : class;
+
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
@@ -24,7 +36,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, id, model, metadata, scope, null, false, cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, null, false), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -37,7 +49,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, id, model, metadata, scope, null, forceUpdateScope, cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, null, forceUpdateScope), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -50,7 +62,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, id, model, metadata, scope, physicalFieldValues, false, cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, false), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -64,18 +76,19 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
 
   private async Task _upsertCoreAsync<TModel>(
       DbContext context,
-      Guid id,
-      TModel model,
-      PerspectiveMetadata metadata,
-      PerspectiveScope scope,
-      IDictionary<string, object?>? physicalFieldValues,
-      bool forceUpdateScope,
+      UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
       where TModel : class {
+    var id = args.Id;
+    var model = args.Model;
+    var metadata = args.Metadata;
+    var scope = args.Scope;
+    var physicalFieldValues = args.PhysicalFieldValues;
+    var forceUpdateScope = args.ForceUpdateScope;
     // Check if entity exists in local tracker and detach it to avoid tracking conflicts.
     // EF Core 10's ComplexProperty().ToJson() maintains internal indexes for collections
     // inside complex types. Any modification to tracked complex type collections corrupts
@@ -211,9 +224,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
     // Clear and re-add collection items - DO NOT replace the List instances
     target.AllowedPrincipals.Clear();
-    foreach (var principal in source.AllowedPrincipals) {
-      target.AllowedPrincipals.Add(principal);
-    }
+    target.AllowedPrincipals.AddRange(source.AllowedPrincipals);
 
     target.Extensions.Clear();
     foreach (var extension in source.Extensions) {

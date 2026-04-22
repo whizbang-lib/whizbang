@@ -9,7 +9,7 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductUpdatedEvent
 /// </summary>
 public class ProductUpdatedEventTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly Uuid7IdProvider _idProvider = new();
   [Test]
   public async Task ProductUpdatedEvent_WithAllPropertiesUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act

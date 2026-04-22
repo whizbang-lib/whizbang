@@ -549,9 +549,9 @@ public partial class DapperWorkCoordinator(
     await connection.ExecuteAsync(
       "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
       new {
-        StreamId = completion.StreamId,
-        PerspectiveName = completion.PerspectiveName,
-        LastEventId = completion.LastEventId,
+        completion.StreamId,
+        completion.PerspectiveName,
+        completion.LastEventId,
         ProcessedEventIds = processedEventIdsJson,
         Status = (short)completion.Status,
         Error = (string?)null
@@ -575,12 +575,12 @@ public partial class DapperWorkCoordinator(
     await connection.ExecuteAsync(
       "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @ProcessedEventIds::jsonb, @Status, @Error)",
       new {
-        StreamId = failure.StreamId,
-        PerspectiveName = failure.PerspectiveName,
-        LastEventId = failure.LastEventId,
+        failure.StreamId,
+        failure.PerspectiveName,
+        failure.LastEventId,
         ProcessedEventIds = processedEventIdsJson,
         Status = (short)failure.Status,
-        Error = failure.Error
+        failure.Error
       });
   }
 

@@ -235,7 +235,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int CallCount { get; private set; }
     private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly object _callCountLock = new();
+    private readonly Lock _callCountLock = new();
     private readonly List<(int TargetCount, TaskCompletionSource Signal)> _callCountWaiters = [];
 
     public Task WaitForFirstCallAsync(TimeSpan timeout) => _firstCallSignal.Task.WaitAsync(timeout);
@@ -309,7 +309,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
   private sealed class TestPublishStrategy : IMessagePublishStrategy, IDisposable {
     public bool IsReadyResult { get; set; } = true;
     public List<OutboxWork> PublishedWork { get; } = [];
-    private readonly object _isReadyLock = new();
+    private readonly Lock _isReadyLock = new();
     private int _isReadyCheckCount;
     private readonly List<(int TargetCount, TaskCompletionSource Signal)> _isReadyWaiters = [];
     private readonly SemaphoreSlim _publishSignal = new(0);

@@ -43,17 +43,7 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
 
-#pragma warning disable CA1873 // string.Join guarded by IsEnabled check.
-    if (logger.IsEnabled(LogLevel.Information)) {
-      LogCommandReceived(
-          logger,
-          message.Mode,
-          message.PerspectiveNames is null ? "<all-registered>" : string.Join(",", message.PerspectiveNames),
-          message.IncludeStreamIds?.Length ?? 0,
-          message.ExcludeStreamIds?.Length ?? 0,
-          message.FromEventId);
-    }
-#pragma warning restore CA1873
+    _logCommandReceivedIfEnabled(message);
 
     if (message.FromEventId.HasValue) {
       LogFromEventIdUnsupported(logger, message.FromEventId.Value);
@@ -70,6 +60,46 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     var registeredNames = runnerRegistry.GetRegisteredPerspectives().Select(p => p.ClrTypeName).ToArray();
     var perspectiveNames = _resolvePerspectiveNames(message.PerspectiveNames, registeredNames);
 
+    _logPerspectiveSelectionDiagnostics(message, perspectiveNames, registeredNames);
+
+    if (perspectiveNames.Length == 0) {
+      return;
+    }
+
+    var streamFilter = await _resolveStreamFilterAsync(message, sp, cancellationToken);
+    if (streamFilter is not null) {
+      LogStreamFilterApplied(logger, streamFilter.Count,
+          message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
+    }
+
+    foreach (var perspectiveName in perspectiveNames) {
+      cancellationToken.ThrowIfCancellationRequested();
+      LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
+      var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, message.Mode, streamFilter, cancellationToken);
+      _logRebuildResult(perspectiveName, result);
+    }
+  }
+
+  /// <summary>IsEnabled-guarded "command received" log. Separated so the receptor's HandleAsync
+  /// stays linear; the CA1873 pragma stays scoped to where string.Join actually runs.</summary>
+  private void _logCommandReceivedIfEnabled(RebuildPerspectiveCommand message) {
+#pragma warning disable CA1873 // string.Join is guarded by IsEnabled check.
+    if (logger.IsEnabled(LogLevel.Information)) {
+      LogCommandReceived(
+          logger,
+          message.Mode,
+          message.PerspectiveNames is null ? "<all-registered>" : string.Join(",", message.PerspectiveNames),
+          message.IncludeStreamIds?.Length ?? 0,
+          message.ExcludeStreamIds?.Length ?? 0,
+          message.FromEventId);
+    }
+#pragma warning restore CA1873
+  }
+
+  /// <summary>Emits the "skipped not owned", "selected", and "nothing to rebuild" logs. Keeps
+  /// the CA1873 pragma local and lets HandleAsync return cleanly when the selection is empty.</summary>
+  private void _logPerspectiveSelectionDiagnostics(
+      RebuildPerspectiveCommand message, string[] perspectiveNames, string[] registeredNames) {
 #pragma warning disable CA1873 // string.Join calls are guarded by explicit IsEnabled checks above each LogXxx call.
     if (message.PerspectiveNames is { Length: > 0 } && logger.IsEnabled(LogLevel.Information)) {
       var skipped = message.PerspectiveNames.Except(perspectiveNames).ToArray();
@@ -91,35 +121,34 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
       LogPerspectivesSelected(logger, perspectiveNames.Length, string.Join(",", perspectiveNames));
     }
 #pragma warning restore CA1873
+  }
 
-    var streamFilter = await _resolveStreamFilterAsync(message, sp, cancellationToken);
+  /// <summary>Selects the rebuild method based on filter presence and mode. When
+  /// <paramref name="streamFilter"/> is non-null the stream-filtered overload runs; otherwise
+  /// the mode picks InPlace vs BlueGreen. SelectedStreams-without-filter falls through to
+  /// BlueGreen — the rebuilder's _rebuildCoreAsync treats the mode as logging only until a
+  /// real blue-green implementation lands.</summary>
+  private static Task<RebuildResult> _dispatchRebuildAsync(
+      IPerspectiveRebuilder rebuilder,
+      string perspectiveName,
+      RebuildMode mode,
+      IReadOnlyList<Guid>? streamFilter,
+      CancellationToken cancellationToken) {
     if (streamFilter is not null) {
-      LogStreamFilterApplied(logger, streamFilter.Count,
-          message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
+      return rebuilder.RebuildStreamsAsync(perspectiveName, streamFilter, cancellationToken);
     }
+    if (mode == RebuildMode.InPlace) {
+      return rebuilder.RebuildInPlaceAsync(perspectiveName, cancellationToken);
+    }
+    return rebuilder.RebuildBlueGreenAsync(perspectiveName, cancellationToken);
+  }
 
-    foreach (var perspectiveName in perspectiveNames) {
-      cancellationToken.ThrowIfCancellationRequested();
-
-      LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
-
-      RebuildResult result;
-      if (streamFilter is not null) {
-        result = await rebuilder.RebuildStreamsAsync(perspectiveName, streamFilter, cancellationToken);
-      } else if (message.Mode == RebuildMode.InPlace) {
-        result = await rebuilder.RebuildInPlaceAsync(perspectiveName, cancellationToken);
-      } else {
-        // Default (BlueGreen) and SelectedStreams-without-filter both fall through here.
-        // The rebuilder's _rebuildCoreAsync accepts the mode value only for logging; behavior
-        // is identical to InPlace until a real blue-green implementation lands.
-        result = await rebuilder.RebuildBlueGreenAsync(perspectiveName, cancellationToken);
-      }
-
-      if (!result.Success) {
-        LogRebuildFailed(logger, perspectiveName, result.Error ?? "(no error message)");
-      } else {
-        LogRebuildSucceeded(logger, perspectiveName, result.StreamsProcessed, result.Duration.TotalMilliseconds);
-      }
+  /// <summary>Paired success/failure log from the rebuild loop body.</summary>
+  private void _logRebuildResult(string perspectiveName, RebuildResult result) {
+    if (!result.Success) {
+      LogRebuildFailed(logger, perspectiveName, result.Error ?? "(no error message)");
+    } else {
+      LogRebuildSucceeded(logger, perspectiveName, result.StreamsProcessed, result.Duration.TotalMilliseconds);
     }
   }
 

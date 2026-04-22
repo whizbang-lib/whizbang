@@ -104,10 +104,8 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
       var perspectiveKey = context?.PerspectiveType?.FullName ?? $"unknown-{Guid.NewGuid()}";
 
       // Track unique perspectives (deduplicate by perspective type)
-      if (_completedPerspectives.TryAdd(perspectiveKey, 0)) {
-        if (_completedPerspectives.Count >= Expected) {
-          _tcs.TrySetResult(true);
-        }
+      if (_completedPerspectives.TryAdd(perspectiveKey, 0) && _completedPerspectives.Count >= Expected) {
+        _tcs.TrySetResult(true);
       }
 
       return ValueTask.CompletedTask;

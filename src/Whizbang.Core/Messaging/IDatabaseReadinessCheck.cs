@@ -5,15 +5,15 @@ namespace Whizbang.Core.Messaging;
 /// Implementations can check connectivity, schema availability, or other readiness criteria.
 /// </summary>
 /// <remarks>
-/// This interface is used by the WorkCoordinatorPublisherWorker to determine if
+/// <para>This interface is used by the WorkCoordinatorPublisherWorker to determine if
 /// ProcessWorkBatchAsync should be called. When the database is not ready, work processing
-/// is skipped and messages remain buffered in memory until the database becomes available.
+/// is skipped and messages remain buffered in memory until the database becomes available.</para>
 ///
-/// Examples of readiness checks:
+/// <para>Examples of readiness checks:
 /// - PostgreSQL: Check if connection is available and required tables exist
 /// - SQL Server: Check if database is accessible and schema is initialized
 /// - Cassandra: Check if keyspace exists and is reachable
-/// - MongoDB: Check if connection is established and collections exist
+/// - MongoDB: Check if connection is established and collections exist</para>
 /// </remarks>
 /// <docs>operations/workers/database-readiness</docs>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithRunningDatabaseAndSchema_ReturnsTrueAsync</tests>
@@ -55,5 +55,10 @@ public interface IDatabaseReadinessCheck {
   /// should fire this when transitioning between ready and not-ready states.
   /// </remarks>
   /// <docs>operations/workers/database-readiness#change-notification</docs>
-  event Action? OnReadinessChanged { add { } remove { } }
+  event Action? OnReadinessChanged {
+    // Default-interface no-op: implementations that want change notification override both
+    // accessors. The `_ = value` discards keep S3237 satisfied without altering behaviour.
+    add => _ = value;
+    remove => _ = value;
+  }
 }

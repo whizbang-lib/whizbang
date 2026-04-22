@@ -1065,10 +1065,10 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   }
 
   private sealed class Cov2LifecycleDeserializer : ILifecycleMessageDeserializer {
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new object();
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new object();
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new object();
-    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new object();
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new();
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new();
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new();
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new();
   }
 
   private sealed class Cov2PerspectiveRegistry(

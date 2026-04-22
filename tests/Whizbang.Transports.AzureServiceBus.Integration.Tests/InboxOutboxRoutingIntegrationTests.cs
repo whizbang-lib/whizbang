@@ -17,13 +17,13 @@ using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// Integration tests for IInboxRoutingStrategy and IOutboxRoutingStrategy implementations
+/// <para>Integration tests for IInboxRoutingStrategy and IOutboxRoutingStrategy implementations
 /// with real Azure Service Bus transport. Verifies that inbox/outbox strategies correctly route
-/// messages through Service Bus topics and subscriptions.
+/// messages through Service Bus topics and subscriptions.</para>
 ///
-/// Note: Azure Service Bus requires topics to be pre-provisioned. The emulator only has
+/// <para>Note: Azure Service Bus requires topics to be pre-provisioned. The emulator only has
 /// topic-00 and topic-01 available, so some routing strategy tests are adapted to use
-/// these predefined topics rather than dynamic topic names.
+/// these predefined topics rather than dynamic topic names.</para>
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]

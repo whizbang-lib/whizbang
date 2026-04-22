@@ -383,7 +383,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Item1");
     await Assert.That(names).Contains("Item4");
     await Assert.That(names).DoesNotContain("Item2");
@@ -409,7 +409,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Item1");
     await Assert.That(names).Contains("Item4");
   }
@@ -544,7 +544,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Match");
     await Assert.That(names).Contains("Close");
     await Assert.That(names).DoesNotContain("Far");
@@ -578,7 +578,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Match");
     await Assert.That(names).Contains("Close");
     await Assert.That(names).DoesNotContain("Far");
@@ -698,7 +698,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(results).Count().IsEqualTo(2);
-    var names = results.Select(r => r.Data.Name).ToList();
+    var names = results.ConvertAll(r => r.Data.Name);
     await Assert.That(names).Contains("Item1");
     await Assert.That(names).Contains("Item4");
   }

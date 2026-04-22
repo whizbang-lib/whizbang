@@ -42,7 +42,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     var results = await Task.WhenAll(tasks);
 
     // Assert - All values should be unique and in range [0, taskCount-1]
-    var sortedResults = results.OrderBy(x => x).ToArray();
+    var sortedResults = results.Order().ToArray();
     await Assert.That(sortedResults).Count().IsEqualTo(taskCount);
     await Assert.That(sortedResults.Distinct()).Count().IsEqualTo(taskCount);
 
@@ -113,7 +113,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
       var streamResults = results
           .Where(r => r.stream == streamKey)
           .Select(r => r.value)
-          .OrderBy(v => v)
+          .Order()
           .ToArray();
 
       await Assert.That(streamResults).Count().IsEqualTo(callsPerStream);

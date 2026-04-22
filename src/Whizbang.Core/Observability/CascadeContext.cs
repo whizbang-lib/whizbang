@@ -8,13 +8,13 @@ namespace Whizbang.Core.Observability;
 /// Lightweight record containing only what needs to cascade - NOT the full hop history.
 /// </summary>
 /// <remarks>
-/// CascadeContext is the single source of truth for context propagation. It encapsulates:
+/// <para>CascadeContext is the single source of truth for context propagation. It encapsulates:
 /// - CorrelationId: Links all messages in a workflow
 /// - CausationId: Parent message's MessageId (for causation chain)
 /// - SecurityContext: UserId and TenantId for multi-tenant security
-/// - Metadata: Extensible key-value store for enrichers
+/// - Metadata: Extensible key-value store for enrichers</para>
 ///
-/// Use this instead of manually extracting and passing individual properties.
+/// <para>Use this instead of manually extracting and passing individual properties.</para>
 /// </remarks>
 /// <docs>fundamentals/messages/cascade-context</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs</tests>

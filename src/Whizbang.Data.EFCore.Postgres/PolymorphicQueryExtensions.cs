@@ -193,8 +193,11 @@ public static class PolymorphicQueryExtensions {
       _getContainsMethod();
 
   private static System.Reflection.MethodInfo _getContainsMethod() {
-    // Use Enumerable.Contains explicitly to avoid MemoryExtensions.Contains(ReadOnlySpan<T>)
+    // Use Enumerable.Contains explicitly to avoid MemoryExtensions.Contains(ReadOnlySpan<T>).
+    // Instance-call form (arr.Contains(val)) would bind to the span overload in some contexts.
+#pragma warning disable RCS1196 // Call extension method as instance method
     Expression<Func<IEnumerable<string>, string, bool>> expr = (arr, val) => Enumerable.Contains(arr, val);
+#pragma warning restore RCS1196
     var callExpr = (MethodCallExpression)expr.Body;
     return callExpr.Method;
   }

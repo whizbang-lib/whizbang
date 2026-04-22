@@ -20,48 +20,28 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#tracking-state</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
-internal sealed class LifecycleTrackingState : ILifecycleTracking {
-  private readonly IMessageEnvelope _envelope;
-  private readonly MessageSource _source;
-  private readonly Guid? _streamId;
-  private readonly Type? _perspectiveType;
-  private readonly DebugAwareStopwatch _totalStopwatch;
+internal sealed class LifecycleTrackingState(
+  Guid eventId,
+  IMessageEnvelope envelope,
+  LifecycleStage entryStage,
+  MessageSource source,
+  Guid? streamId,
+  Type? perspectiveType) : ILifecycleTracking {
+  private readonly IMessageEnvelope _envelope = envelope;
+  private readonly MessageSource _source = source;
+  private readonly Guid? _streamId = streamId;
+  private readonly Type? _perspectiveType = perspectiveType;
+  private readonly DebugAwareStopwatch _totalStopwatch = DebugAwareStopwatch.StartNew();
   private readonly List<StageRecord> _stageHistory = [];
   private readonly HashSet<LifecycleStage> _firedStages = [];
   private readonly List<Task> _detachedTasks = [];
   private readonly Lock _lock = new();
-  private LifecycleStage _currentStage;
+  private LifecycleStage _currentStage = entryStage;
   private bool _isComplete;
-  private DateTimeOffset _lastActivityUtc;
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="LifecycleTrackingState"/> class.
-  /// </summary>
-  /// <param name="eventId">The event ID being tracked.</param>
-  /// <param name="envelope">The message envelope for receptor invocation.</param>
-  /// <param name="entryStage">The lifecycle stage at which tracking begins.</param>
-  /// <param name="source">Whether the message arrived via inbox, local dispatch, etc.</param>
-  /// <param name="streamId">The optional stream ID for stream-scoped lifecycle.</param>
-  /// <param name="perspectiveType">The optional perspective type for perspective-scoped lifecycle.</param>
-  public LifecycleTrackingState(
-    Guid eventId,
-    IMessageEnvelope envelope,
-    LifecycleStage entryStage,
-    MessageSource source,
-    Guid? streamId,
-    Type? perspectiveType) {
-    EventId = eventId;
-    _envelope = envelope;
-    _currentStage = entryStage;
-    _source = source;
-    _streamId = streamId;
-    _perspectiveType = perspectiveType;
-    _totalStopwatch = DebugAwareStopwatch.StartNew();
-    _lastActivityUtc = DateTimeOffset.UtcNow;
-  }
+  private DateTimeOffset _lastActivityUtc = DateTimeOffset.UtcNow;
 
   /// <inheritdoc/>
-  public Guid EventId { get; }
+  public Guid EventId { get; } = eventId;
 
   /// <inheritdoc/>
   public LifecycleStage CurrentStage {

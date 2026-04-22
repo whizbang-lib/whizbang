@@ -15,31 +15,21 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>operations/workers/perspective-worker#event-deduplication</docs>
 /// <tests>Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
-internal sealed class ProcessedEventCache {
+/// <param name="retentionPeriod">How long retained entries survive after DB acknowledgement (aligned to lease duration).</param>
+/// <param name="timeProvider">Time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
+/// <param name="observer">Observer for lifecycle callbacks. Defaults to <see cref="NullProcessedEventCacheObserver"/>.</param>
+internal sealed class ProcessedEventCache(
+  TimeSpan retentionPeriod,
+  TimeProvider? timeProvider = null,
+  IProcessedEventCacheObserver? observer = null) {
   private readonly ConcurrentDictionary<Guid, EventCacheEntry> _entries = new();
-  private readonly TimeSpan _retentionPeriod;
-  private readonly TimeProvider _timeProvider;
-  private readonly IProcessedEventCacheObserver _observer;
-
-  /// <summary>
-  /// Creates a new ProcessedEventCache with the specified retention period.
-  /// </summary>
-  /// <param name="retentionPeriod">How long retained entries survive after DB acknowledgement (aligned to lease duration).</param>
-  /// <param name="timeProvider">Time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
-  /// <param name="observer">Observer for lifecycle callbacks. Defaults to <see cref="NullProcessedEventCacheObserver"/>.</param>
-  public ProcessedEventCache(
-    TimeSpan retentionPeriod,
-    TimeProvider? timeProvider = null,
-    IProcessedEventCacheObserver? observer = null) {
-    _retentionPeriod = retentionPeriod;
-    _timeProvider = timeProvider ?? TimeProvider.System;
-    _observer = observer ?? NullProcessedEventCacheObserver.Instance;
-  }
+  private readonly TimeSpan _retentionPeriod = retentionPeriod;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <summary>
   /// The observer for lifecycle callbacks.
   /// </summary>
-  internal IProcessedEventCacheObserver Observer => _observer;
+  internal IProcessedEventCacheObserver Observer { get; } = observer ?? NullProcessedEventCacheObserver.Instance;
 
   /// <summary>
   /// Number of active entries in the cache (InFlight + non-expired Retained).
@@ -84,7 +74,7 @@ internal sealed class ProcessedEventCache {
 #pragma warning restore S3267
 
     if (added.Count > 0) {
-      _observer.OnEventsMarkedInFlight(added);
+      Observer.OnEventsMarkedInFlight(added);
     }
   }
 
@@ -107,7 +97,7 @@ internal sealed class ProcessedEventCache {
 #pragma warning restore S3267
 
     if (activatedCount > 0) {
-      _observer.OnRetentionActivated(activatedCount);
+      Observer.OnRetentionActivated(activatedCount);
     }
   }
 
@@ -128,7 +118,7 @@ internal sealed class ProcessedEventCache {
     }
 
     if (evictedCount > 0) {
-      _observer.OnEvicted(evictedCount);
+      Observer.OnEvicted(evictedCount);
     }
   }
 
@@ -138,7 +128,7 @@ internal sealed class ProcessedEventCache {
   /// </summary>
   public void Remove(Guid eventId) {
     if (_entries.TryRemove(eventId, out _)) {
-      _observer.OnEventsRemoved([eventId]);
+      Observer.OnEventsRemoved([eventId]);
     }
   }
 
@@ -155,7 +145,7 @@ internal sealed class ProcessedEventCache {
     }
 
     if (removed.Count > 0) {
-      _observer.OnEventsRemoved(removed);
+      Observer.OnEventsRemoved(removed);
     }
   }
 

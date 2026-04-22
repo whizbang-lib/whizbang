@@ -273,8 +273,8 @@ public class DispatcherComprehensiveCoverageTests {
     var sp = _buildProvider(workStrategy, deferredChannel);
     return new TestDispatcher(sp,
       traceStore: traceStore,
-      envelopeRegistry: envelopeRegistry,
       envelopeSerializer: envelopeSerializer,
+      envelopeRegistry: envelopeRegistry,
       scopedEventTracker: scopedEventTracker,
       invoker: invoker,
       voidInvoker: voidInvoker,
@@ -364,7 +364,7 @@ public class DispatcherComprehensiveCoverageTests {
     // Arrange
     var registry = new StubEnvelopeRegistry();
     var traceStore = new StubTraceStore();
-    var dispatcher = _createDispatcher(envelopeRegistry: registry, traceStore: traceStore, invoker: _defaultInvoker());
+    var dispatcher = _createDispatcher(traceStore: traceStore, envelopeRegistry: registry, invoker: _defaultInvoker());
     var command = new TestCommand("local-registry");
 
     // Act
@@ -1080,7 +1080,7 @@ public class DispatcherComprehensiveCoverageTests {
     // Arrange - no invoker, but strategy is registered
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
-    var dispatcher = _createDispatcher(workStrategy: strategy, envelopeSerializer: serializer);
+    var dispatcher = _createDispatcher(envelopeSerializer: serializer, workStrategy: strategy);
     var command = new TestCommand("outbox-route");
 
     // Act
@@ -1097,7 +1097,7 @@ public class DispatcherComprehensiveCoverageTests {
     // Arrange - covers _sendToOutboxViaScopeAsync<TMessage> generic path
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
-    var dispatcher = _createDispatcher(workStrategy: strategy, envelopeSerializer: serializer);
+    var dispatcher = _createDispatcher(envelopeSerializer: serializer, workStrategy: strategy);
     var command = new TestCommand("outbox-generic");
 
     // Act
@@ -1364,7 +1364,7 @@ public class DispatcherComprehensiveCoverageTests {
     // Arrange - messages go to outbox since no local receptor
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
-    var dispatcher = _createDispatcher(workStrategy: strategy, envelopeSerializer: serializer);
+    var dispatcher = _createDispatcher(envelopeSerializer: serializer, workStrategy: strategy);
     var commands = new[] { new TestCommand("one"), new TestCommand("two") };
 
     // Act
@@ -1383,7 +1383,7 @@ public class DispatcherComprehensiveCoverageTests {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
     var serializer = new StubEnvelopeSerializer();
-    var dispatcher = _createDispatcher(workStrategy: strategy, envelopeSerializer: serializer);
+    var dispatcher = _createDispatcher(envelopeSerializer: serializer, workStrategy: strategy);
     var commands = new object[] { new TestCommand("one"), new TestCommand("two") };
 
     // Act

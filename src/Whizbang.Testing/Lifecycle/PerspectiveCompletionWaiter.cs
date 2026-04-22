@@ -10,21 +10,21 @@ namespace Whizbang.Testing.Lifecycle;
 /// </summary>
 /// <typeparam name="TEvent">The event type to wait for.</typeparam>
 /// <remarks>
-/// This class is designed for integration tests that need to wait for perspectives to complete
-/// across multiple hosts before making assertions.
+/// <para>This class is designed for integration tests that need to wait for perspectives to complete
+/// across multiple hosts before making assertions.</para>
 ///
-/// Usage:
+/// <para>Usage:
 /// <code>
 /// using var waiter = new PerspectiveCompletionWaiter&lt;ProductCreatedEvent&gt;(
 ///   inventoryRegistry, bffRegistry,
-///   inventoryPerspectives: 2, bffPerspectives: 1);
+///   inventoryPerspectives: 2, bffPerspectives: 1);</para>
 ///
-/// // Send command that triggers event
-/// await dispatcher.SendAsync(new CreateProductCommand());
+/// <para>// Send command that triggers event
+/// await dispatcher.SendAsync(new CreateProductCommand());</para>
 ///
-/// // Wait for perspectives to process
+/// <para>// Wait for perspectives to process
 /// await waiter.WaitAsync();
-/// </code>
+/// </code></para>
 /// </remarks>
 public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   where TEvent : IEvent {

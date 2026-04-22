@@ -71,8 +71,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
-#pragma warning disable CS9113 // Primary constructor parameter is unread - retained for backward compatibility with generated code
-#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
+#pragma warning disable CS9113, S107 // CS9113: primary ctor param unread (generated-code backcompat); S107: DI-injection ctor is idiomatic with many params
 public abstract partial class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
@@ -92,8 +91,7 @@ public abstract partial class Dispatcher(
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   CascadeContextFactory? cascadeContextFactory = null
   ) : IDispatcher {
-#pragma warning restore S107
-#pragma warning restore CS9113
+#pragma warning restore S107, CS9113
 
   /// <summary>
   /// Groups caller location parameters that are always passed together from [CallerMemberName/FilePath/LineNumber].
@@ -1513,7 +1511,7 @@ public abstract partial class Dispatcher(
     // Get strongly-typed delegate from generated code
     var invoker = GetReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
 
-    return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+    return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
   }
 
   /// <summary>
@@ -1557,7 +1555,7 @@ public abstract partial class Dispatcher(
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
     if (asyncInvoker != null) {
-      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
     }
 
     // Check if there are ImmediateDetached or PostLifecycle receptors — if so, must go through async path
@@ -1600,16 +1598,14 @@ public abstract partial class Dispatcher(
     Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
 
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -1776,16 +1772,14 @@ public abstract partial class Dispatcher(
     Type messageType,
     IMessageContext context,
     VoidReceptorInvoker invoker,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
 
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
 
       // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
       _envelopeRegistry?.Register(envelope);
@@ -3171,7 +3165,7 @@ public abstract partial class Dispatcher(
     if (message is IEvent) {
       eventId = ValueObjects.TrackedGuid.NewMedo();
       var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
-      _trackEventForSync(message, messageType, eventId.Value, streamId);
+      _trackEventForSync(messageType, eventId.Value, streamId);
     }
 
     // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
@@ -3256,7 +3250,7 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Tracks a cascaded event in both scoped and singleton trackers for perspective sync.
   /// </summary>
-  private void _trackEventForSync(IMessage message, Type messageType, Guid eventId, Guid streamId) {
+  private void _trackEventForSync(Type messageType, Guid eventId, Guid streamId) {
     // Track in scoped tracker (same request scope)
     _scopedEventTracker?.TrackEmittedEvent(streamId, messageType, eventId);
 

@@ -41,7 +41,7 @@ public class DispatcherStageFireTests {
   // happened. "publish" denotes a fire that came through PublishAsync's typed publisher
   // (i.e. not a lifecycle stage). Anything else is the LifecycleStage the invoker passed in.
   private static readonly List<(string Receptor, string Stage)> _fireLog = [];
-  private static readonly object _fireLogLock = new();
+  private static readonly Lock _fireLogLock = new();
   private static void _recordFire(string receptor, string stage) {
     lock (_fireLogLock) {
       _fireLog.Add((receptor, stage));

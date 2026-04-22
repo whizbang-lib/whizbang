@@ -355,11 +355,11 @@ public class ScopedWorkCoordinatorStrategyTests {
   // ========================================
 
   /// <summary>
-  /// Regression test: BestEffort mode previously deferred flush to DisposeAsync,
+  /// <para>Regression test: BestEffort mode previously deferred flush to DisposeAsync,
   /// but by that time the DbContext (IWorkCoordinator) may already be disposed
-  /// by the DI container — causing ObjectDisposedException on first HTTP request.
+  /// by the DI container — causing ObjectDisposedException on first HTTP request.</para>
   ///
-  /// Fix: Scoped strategy treats BestEffort the same as Required (flush immediately).
+  /// <para>Fix: Scoped strategy treats BestEffort the same as Required (flush immediately).</para>
   /// </summary>
   [Test]
   public async Task BestEffort_WithDisposedCoordinator_DoesNotThrow_BecauseFlushHappensImmediatelyAsync() {

@@ -18,19 +18,19 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// <param name="configure">Optional configuration action for MessageSecurityOptions.</param>
   /// <returns>The service collection for chaining.</returns>
   /// <remarks>
-  /// This method registers:
+  /// <para>This method registers:
   /// - IMessageSecurityContextProvider (DefaultMessageSecurityContextProvider)
   /// - IScopeContextAccessor (scoped)
   /// - IScopeContext (scoped factory) - directly injectable, reads from accessor
   /// - IMessageContextAccessor (scoped) - provides access to current message context
   /// - IMessageContext (scoped) - injectable message context with UserId from security context
-  /// - MessageHopSecurityExtractor (default extractor, priority 100)
+  /// - MessageHopSecurityExtractor (default extractor, priority 100)</para>
   ///
-  /// Additional extractors can be registered using AddSecurityExtractor&lt;T&gt;().
-  /// Callbacks can be registered using AddSecurityContextCallback&lt;T&gt;().
+  /// <para>Additional extractors can be registered using AddSecurityExtractor&lt;T&gt;().
+  /// Callbacks can be registered using AddSecurityContextCallback&lt;T&gt;().</para>
   ///
-  /// By default, AllowAnonymous is FALSE (least privilege). Messages without
-  /// security context will be rejected unless explicitly configured otherwise.
+  /// <para>By default, AllowAnonymous is FALSE (least privilege). Messages without
+  /// security context will be rejected unless explicitly configured otherwise.</para>
   /// </remarks>
   /// <example>
   /// services.AddWhizbangMessageSecurity(options => {

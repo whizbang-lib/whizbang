@@ -19,7 +19,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <docs>fundamentals/perspectives/perspective-sync#auto-registration</docs>
 public static class SyncEventTypeRegistrations {
   private static readonly ConcurrentDictionary<Type, HashSet<string>> _mappings = new();
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Registers an event type to perspective mapping.

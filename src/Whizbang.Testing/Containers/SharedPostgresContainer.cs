@@ -36,6 +36,7 @@ public static class SharedPostgresContainer {
   private const string PASSWORD = "whizbang_pass";
   private const string DATABASE = "whizbang_test";
   private const int CONTAINER_PORT = 5432;
+  private const string BANNER_LINE = "================================================================================";
 
   private static readonly SemaphoreSlim _initLock = new(1, 1);
   private static string? _connectionString;
@@ -145,9 +146,9 @@ public static class SharedPostgresContainer {
         return;
       }
 
-      Console.WriteLine("================================================================================");
+      Console.WriteLine(BANNER_LINE);
       Console.WriteLine("[SharedPostgresContainer] Initializing shared PostgreSQL container...");
-      Console.WriteLine("================================================================================");
+      Console.WriteLine(BANNER_LINE);
 
       try {
         // Retry loop to handle race conditions with parallel test processes
@@ -162,10 +163,10 @@ public static class SharedPostgresContainer {
             // Verify connection works
             await _verifyConnectionAsync(ct);
 
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             Console.WriteLine("[SharedPostgresContainer] Reusing existing PostgreSQL container!");
             Console.WriteLine($"[SharedPostgresContainer] Connection: {_connectionString}");
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             break;
           }
 
@@ -179,10 +180,10 @@ public static class SharedPostgresContainer {
             // Verify connection works
             await _verifyConnectionAsync(ct);
 
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             Console.WriteLine("[SharedPostgresContainer] PostgreSQL container ready!");
             Console.WriteLine($"[SharedPostgresContainer] Connection: {_connectionString}");
-            Console.WriteLine("================================================================================");
+            Console.WriteLine(BANNER_LINE);
             break;
           } catch (Exception ex) when (attempt < MAX_RETRIES && ex.Message.Contains("Conflict")) {
             // Another process created the container - wait and retry detection
@@ -197,9 +198,9 @@ public static class SharedPostgresContainer {
         _initializationFailed = true;
         _lastInitializationError = ex;
 
-        Console.WriteLine("================================================================================");
+        Console.WriteLine(BANNER_LINE);
         Console.WriteLine($"[SharedPostgresContainer] Initialization FAILED: {ex.Message}");
-        Console.WriteLine("================================================================================");
+        Console.WriteLine(BANNER_LINE);
 
         throw new InvalidOperationException(
           "Failed to initialize shared PostgreSQL container. " +
@@ -220,7 +221,7 @@ public static class SharedPostgresContainer {
   private static async Task<int> _createContainerWithDockerAsync(CancellationToken ct) {
     // Use docker run with --detach and --publish to create a persistent container
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"run --detach --name {CONTAINER_NAME} " +
                   $"-e POSTGRES_USER={USERNAME} " +
                   $"-e POSTGRES_PASSWORD={PASSWORD} " +
@@ -316,7 +317,7 @@ public static class SharedPostgresContainer {
 
   private static async Task<string?> _getContainerStateAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -341,7 +342,7 @@ public static class SharedPostgresContainer {
 
   private static async Task _startContainerAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"start {CONTAINER_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -357,7 +358,7 @@ public static class SharedPostgresContainer {
 
   private static async Task<int?> _getPortAsync(CancellationToken ct) {
     var psi = new ProcessStartInfo {
-      FileName = "docker",
+      FileName = DockerExecutable.PathOrThrow,
       Arguments = $"port {CONTAINER_NAME} {CONTAINER_PORT}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,

@@ -405,14 +405,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
   /// <summary>
   /// Work coordinator strategy that tracks calls for batch handler assertions.
   /// </summary>
-  private sealed class TrackingBatchWorkStrategy : IWorkCoordinatorStrategy {
-    private readonly Guid _expectedMessageId;
-    private readonly bool _returnEmptyInboxWork;
-
-    public TrackingBatchWorkStrategy(Guid? expectedMessageId = null, bool returnEmptyInboxWork = false) {
-      _expectedMessageId = expectedMessageId ?? Guid.Empty;
-      _returnEmptyInboxWork = returnEmptyInboxWork;
-    }
+  private sealed class TrackingBatchWorkStrategy(Guid? expectedMessageId = null, bool returnEmptyInboxWork = false) : IWorkCoordinatorStrategy {
+    private readonly Guid _expectedMessageId = expectedMessageId ?? Guid.Empty;
+    private readonly bool _returnEmptyInboxWork = returnEmptyInboxWork;
 
     public int QueuedInboxCount { get; private set; }
     public int FlushCount { get; private set; }

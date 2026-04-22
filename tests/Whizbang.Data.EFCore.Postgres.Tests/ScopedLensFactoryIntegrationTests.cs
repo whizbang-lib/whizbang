@@ -19,14 +19,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests the complete flow: scope context → factory → filtered lens.
 /// </summary>
 /// <remarks>
-/// These tests verify:
+/// <para>These tests verify:
 /// 1. ScopedLensFactory correctly resolves lenses from DI
 /// 2. Scope filters are applied via IFilterableLens.ApplyFilter
-/// 3. Permission checks work with emitted events
+/// 3. Permission checks work with emitted events</para>
 ///
-/// For full database-level filtering (WHERE clauses based on scope),
+/// <para>For full database-level filtering (WHERE clauses based on scope),
 /// EF Core lens implementations would need to implement IFilterableLens
-/// and translate ScopeFilterInfo to EF Core query filters.
+/// and translate ScopeFilterInfo to EF Core query filters.</para>
 /// </remarks>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
 [Category("Integration")]

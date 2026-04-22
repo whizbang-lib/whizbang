@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
@@ -44,6 +45,7 @@ public interface IDbUpsertStrategy {
   /// Performs an atomic upsert with optional forced scope update.
   /// When <paramref name="forceUpdateScope"/> is true and a row exists, the scope column is included in the UPDATE.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface — this is an overload on IDbUpsertStrategy implemented by every database provider; changing the signature breaks NuGet consumers and custom provider implementations. Each parameter is a distinct upsert concern (context, table, key, model, metadata, scope, forceUpdateScope flag, cancellation).")]
   Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
       string tableName,
@@ -73,6 +75,7 @@ public interface IDbUpsertStrategy {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordDoesNotExist_CreatesShadowPropertiesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordExists_UpdatesShadowPropertiesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_PostgresStrategy_SetsShadowPropertiesAsync</tests>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface — this is an overload on IDbUpsertStrategy implemented by every database provider; changing the signature breaks NuGet consumers and custom provider implementations. Each parameter is a distinct upsert concern (context, table, key, model, metadata, scope, physical-field values, cancellation).")]
   Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
       DbContext context,
       string tableName,
@@ -87,6 +90,7 @@ public interface IDbUpsertStrategy {
   /// <summary>
   /// Performs an atomic upsert with physical fields and optional forced scope update.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface — this is an overload on IDbUpsertStrategy implemented by every database provider; changing the signature breaks NuGet consumers and custom provider implementations. Each parameter is a distinct upsert concern (context, table, key, model, metadata, scope, physical-field values, forceUpdateScope flag, cancellation).")]
   Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
       DbContext context,
       string tableName,

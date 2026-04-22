@@ -843,7 +843,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", (Guid)actualStreamId);
+      command.Parameters.AddWithValue(nameof(streamId), (Guid)actualStreamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -933,7 +933,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", (Guid)actualStreamId);
+      command.Parameters.AddWithValue(nameof(streamId), (Guid)actualStreamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -1217,7 +1217,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Verify modulo distribution: each instance claims messages where partition % 3 matches its sorted index
     // Determine sorted instance buckets (0, 1, 2) based on UUID ordering
-    var instances = new[] { instance1Id, instance2Id, instance3Id }.OrderBy(id => id).ToArray();
+    var instances = new[] { instance1Id, instance2Id, instance3Id }.Order().ToArray();
     var instance1Bucket = Array.IndexOf(instances, instance1Id);
     var instance2Bucket = Array.IndexOf(instances, instance2Id);
     var instance3Bucket = Array.IndexOf(instances, instance3Id);
@@ -2265,12 +2265,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   // ===== ORDERING UNDER FAILURE TESTS =====
 
   /// <summary>
-  /// **Given**: Message M1 fails (scheduled for retry), M2 and M3 are released (Status = 0)
+  /// <para>**Given**: Message M1 fails (scheduled for retry), M2 and M3 are released (Status = 0)
   /// **When**: Another batch processes work
-  /// **Then**: M2, M3 leases cleared BUT still blocked by M1's scheduled retry
+  /// **Then**: M2, M3 leases cleared BUT still blocked by M1's scheduled retry</para>
   ///
-  /// This test demonstrates that Status=0 completions clear leases (instance_id/lease_expiry = NULL),
-  /// but the NOT EXISTS clause still blocks later messages if an earlier message has scheduled_for > now.
+  /// <para>This test demonstrates that Status=0 completions clear leases (instance_id/lease_expiry = NULL),
+  /// but the NOT EXISTS clause still blocks later messages if an earlier message has scheduled_for > now.</para>
   /// </summary>
   /// <docs>messaging/failure-handling#failure-cascade</docs>
   [Test]
@@ -2526,7 +2526,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", (Guid)streamId);
+      command.Parameters.AddWithValue(nameof(streamId), (Guid)streamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -2592,7 +2592,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", (Guid)streamId);
+      command.Parameters.AddWithValue(nameof(streamId), (Guid)streamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -2764,13 +2764,13 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   // ===== SCOPEDELTA ROUND-TRIP TESTS =====
 
   /// <summary>
-  /// **Given**: Outbox message with ScopeDelta in MessageHop (AsSystem() scenario)
+  /// <para>**Given**: Outbox message with ScopeDelta in MessageHop (AsSystem() scenario)
   /// **When**: Message stored in PostgreSQL JSONB and retrieved via ProcessWorkBatchAsync
-  /// **Then**: ScopeDelta.Values[ScopeProp.Scope] is preserved with correct enum dictionary keys
+  /// **Then**: ScopeDelta.Values[ScopeProp.Scope] is preserved with correct enum dictionary keys</para>
   ///
-  /// **VERIFIED**: This test confirms that Dictionary&lt;ScopeProp, JsonElement&gt; correctly
+  /// <para>**VERIFIED**: This test confirms that Dictionary&lt;ScopeProp, JsonElement&gt; correctly
   /// round-trips through PostgreSQL JSONB. The enum keys are preserved and
-  /// MessageHopSecurityExtractor.ExtractFromHopScope() can successfully extract the scope.
+  /// MessageHopSecurityExtractor.ExtractFromHopScope() can successfully extract the scope.</para>
   /// </summary>
   /// <docs>messaging/scope-propagation#scopedelta-serialization</docs>
   [Test]
@@ -2884,7 +2884,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await using var command = new Npgsql.NpgsqlCommand(
       "SELECT compute_partition(@streamId::uuid, 10000)",
       connection);
-    command.Parameters.AddWithValue("streamId", streamId);
+    command.Parameters.AddWithValue(nameof(streamId), streamId);
     return (int)(await command.ExecuteScalarAsync() ?? 0);
   }
 
@@ -3028,12 +3028,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       VALUES (@eventId, @streamId, @streamId, 'TestAggregate', @eventType, @eventData::jsonb, @metadata::jsonb, @scope::jsonb, 1, NOW())
       """, connection);
 
-    command.Parameters.AddWithValue("eventId", eventId);
-    command.Parameters.AddWithValue("streamId", streamId);
-    command.Parameters.AddWithValue("eventType", eventType);
-    command.Parameters.AddWithValue("eventData", eventData);
-    command.Parameters.AddWithValue("metadata", metadata);
-    command.Parameters.AddWithValue("scope", (object?)scope ?? DBNull.Value);
+    command.Parameters.AddWithValue(nameof(eventId), eventId);
+    command.Parameters.AddWithValue(nameof(streamId), streamId);
+    command.Parameters.AddWithValue(nameof(eventType), eventType);
+    command.Parameters.AddWithValue(nameof(eventData), eventData);
+    command.Parameters.AddWithValue(nameof(metadata), metadata);
+    command.Parameters.AddWithValue(nameof(scope), (object?)scope ?? DBNull.Value);
 
     await command.ExecuteNonQueryAsync();
   }
@@ -3048,9 +3048,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       VALUES (@streamId, @perspectiveName, @lastEventId, 0, NOW())
       """, connection);
 
-    command.Parameters.AddWithValue("streamId", streamId);
-    command.Parameters.AddWithValue("perspectiveName", perspectiveName);
-    command.Parameters.AddWithValue("lastEventId", lastEventId);
+    command.Parameters.AddWithValue(nameof(streamId), streamId);
+    command.Parameters.AddWithValue(nameof(perspectiveName), perspectiveName);
+    command.Parameters.AddWithValue(nameof(lastEventId), lastEventId);
 
     await command.ExecuteNonQueryAsync();
   }

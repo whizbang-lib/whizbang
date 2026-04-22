@@ -26,6 +26,9 @@ public record TestEvent : IEvent {
 /// </summary>
 [Category("Messaging")]
 public abstract class EventStoreContractTests {
+  private const string EVENT_1_PAYLOAD = "event-1";
+  private const string EVENT_2_PAYLOAD = "event-2";
+  private const string EVENT_3_PAYLOAD = "event-3";
 
   /// <summary>
   /// Derived test classes must provide a factory method to create an IEventStore instance.
@@ -37,7 +40,7 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope = _createTestEnvelope(streamId, "event-1");
+    var envelope = _createTestEnvelope(streamId, EVENT_1_PAYLOAD);
 
     // Act
     await eventStore.AppendAsync(streamId, envelope);
@@ -83,9 +86,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope1 = _createTestEnvelope(streamId, "event-1");
-    var envelope2 = _createTestEnvelope(streamId, "event-2");
-    var envelope3 = _createTestEnvelope(streamId, "event-3");
+    var envelope1 = _createTestEnvelope(streamId, EVENT_1_PAYLOAD);
+    var envelope2 = _createTestEnvelope(streamId, EVENT_2_PAYLOAD);
+    var envelope3 = _createTestEnvelope(streamId, EVENT_3_PAYLOAD);
 
     await eventStore.AppendAsync(streamId, envelope1);
     await eventStore.AppendAsync(streamId, envelope2);
@@ -109,9 +112,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
-    var envelope3 = _createTestEnvelope(streamId, "event-3");
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_1_PAYLOAD));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_2_PAYLOAD));
+    var envelope3 = _createTestEnvelope(streamId, EVENT_3_PAYLOAD);
     await eventStore.AppendAsync(streamId, envelope3);
 
     // Act - Read from sequence 2 (third event, 0-indexed)
@@ -143,9 +146,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-3"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_1_PAYLOAD));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_2_PAYLOAD));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_3_PAYLOAD));
 
     // Act
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
@@ -213,9 +216,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-3"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_1_PAYLOAD));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_2_PAYLOAD));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_3_PAYLOAD));
 
     // Act - Read with null fromEventId
     var events = new List<IMessageEnvelope>();
@@ -232,9 +235,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope1 = _createTestEnvelope(streamId, "event-1");
-    var envelope2 = _createTestEnvelope(streamId, "event-2");
-    var envelope3 = _createTestEnvelope(streamId, "event-3");
+    var envelope1 = _createTestEnvelope(streamId, EVENT_1_PAYLOAD);
+    var envelope2 = _createTestEnvelope(streamId, EVENT_2_PAYLOAD);
+    var envelope3 = _createTestEnvelope(streamId, EVENT_3_PAYLOAD);
 
     await eventStore.AppendAsync(streamId, envelope1);
     await eventStore.AppendAsync(streamId, envelope2);
@@ -276,8 +279,8 @@ public abstract class EventStoreContractTests {
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
 
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
-    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_1_PAYLOAD));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, EVENT_2_PAYLOAD));
 
     // Act
     var eventTypes = new List<Type> { typeof(TestEvent) };
@@ -316,9 +319,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope1 = _createTestEnvelope(streamId, "event-1");
-    var envelope2 = _createTestEnvelope(streamId, "event-2");
-    var envelope3 = _createTestEnvelope(streamId, "event-3");
+    var envelope1 = _createTestEnvelope(streamId, EVENT_1_PAYLOAD);
+    var envelope2 = _createTestEnvelope(streamId, EVENT_2_PAYLOAD);
+    var envelope3 = _createTestEnvelope(streamId, EVENT_3_PAYLOAD);
 
     await eventStore.AppendAsync(streamId, envelope1);
     await eventStore.AppendAsync(streamId, envelope2);
@@ -355,8 +358,8 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope1 = _createTestEnvelope(streamId, "event-1");
-    var envelope2 = _createTestEnvelope(streamId, "event-2");
+    var envelope1 = _createTestEnvelope(streamId, EVENT_1_PAYLOAD);
+    var envelope2 = _createTestEnvelope(streamId, EVENT_2_PAYLOAD);
 
     await eventStore.AppendAsync(streamId, envelope1);
     await eventStore.AppendAsync(streamId, envelope2);

@@ -9,19 +9,19 @@ using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// Manual Azure Service Bus tests to validate SqlFilter behavior with special characters.
-/// These tests use raw Azure SDK - no Whizbang framework code.
+/// <para>Manual Azure Service Bus tests to validate SqlFilter behavior with special characters.
+/// These tests use raw Azure SDK - no Whizbang framework code.</para>
 ///
-/// Uses pre-provisioned topic-filter-test from Config.json with:
+/// <para>Uses pre-provisioned topic-filter-test from Config.json with:
 /// - sub-namespace-filter: SqlFilter sys.Label LIKE 'jdx.contracts.chat.%'
-/// - sub-all-messages: TrueFilter (receives all messages)
+/// - sub-all-messages: TrueFilter (receives all messages)</para>
 ///
-/// Key finding: Azure Service Bus SqlFilter uses 'sys.Label' NOT '[Subject]' for the
+/// <para>Key finding: Azure Service Bus SqlFilter uses 'sys.Label' NOT '[Subject]' for the
 /// Subject/Label property. The [Subject] syntax does not work in SqlRuleFilter expressions.
-/// See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-messaging-sql-filter
+/// See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-messaging-sql-filter</para>
 ///
-/// The '+' character in nested class type names (e.g., ContainerClass+NestedClass) DOES match
-/// SqlFilter LIKE patterns correctly - no normalization needed.
+/// <para>The '+' character in nested class type names (e.g., ContainerClass+NestedClass) DOES match
+/// SqlFilter LIKE patterns correctly - no normalization needed.</para>
 /// </summary>
 /// <docs>components/transports/azure-service-bus#sqlfilter-syntax</docs>
 [Category("Integration")]
@@ -37,14 +37,14 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   private const string ALL_MESSAGES_SUBSCRIPTION = "sub-all-messages";   // TrueFilter - receives all
 
   /// <summary>
-  /// RED TEST: Validates that SqlFilter LIKE pattern matches Subject containing '+' character.
+  /// <para>RED TEST: Validates that SqlFilter LIKE pattern matches Subject containing '+' character.</para>
   ///
-  /// Context: In JDNext, nested class commands like `ChatConversationsContracts+CreateCommand`
+  /// <para>Context: In JDNext, nested class commands like `ChatConversationsContracts+CreateCommand`
   /// produce routing keys like `jdx.contracts.chat.chatconversationscontracts+createcommand`.
-  /// The subscription filter is `[Subject] LIKE 'jdx.contracts.chat.%'`.
+  /// The subscription filter is `[Subject] LIKE 'jdx.contracts.chat.%'`.</para>
   ///
-  /// This test validates whether the `+` character causes matching issues.
-  /// If this test FAILS, it proves `+` is the problem and we need to normalize it.
+  /// <para>This test validates whether the `+` character causes matching issues.
+  /// If this test FAILS, it proves `+` is the problem and we need to normalize it.</para>
   /// </summary>
   [Test]
   public async Task SqlFilter_WithPlusInSubject_ShouldMatchLikePatternAsync() {

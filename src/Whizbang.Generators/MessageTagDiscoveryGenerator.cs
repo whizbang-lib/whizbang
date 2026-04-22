@@ -91,7 +91,6 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       // Extract attribute properties using shared utilities
       var tag = AttributeUtilities.GetStringValue(tagAttribute, "Tag") ?? "";
       var properties = AttributeUtilities.GetStringArrayValue(tagAttribute, "Properties");
-      var includeEvent = AttributeUtilities.GetBoolValue(tagAttribute, "IncludeEvent", false);
       var extraJson = AttributeUtilities.GetStringValue(tagAttribute, "ExtraJson");
 
       // Skip attributes with Exclude = true (e.g., system events that shouldn't trigger tag hooks)
@@ -110,7 +109,6 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
           AttributeName: tagAttribute.AttributeClass!.Name,
           Tag: tag,
           Properties: properties,
-          IncludeEvent: includeEvent,
           ExtraJson: extraJson,
           TypeProperties: typeProperties
       );
@@ -357,11 +355,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"      AttributeType = typeof({tag.AttributeFullName}),");
     sb.AppendLine($"      Tag = \"{_escapeString(tag.Tag)}\",");
 
-    if (tag.Properties?.Length > 0) {
+    if (tag.Properties is { Length: > 0 }) {
       sb.AppendLine($"      Properties = new[] {{ {string.Join(", ", tag.Properties.Select(p => $"\"{p}\""))} }},");
     }
-
-    sb.AppendLine($"      IncludeEvent = {(tag.IncludeEvent ? "true" : "false")},");
 
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
       sb.AppendLine($"      ExtraJson = \"\"\"{_escapeString(tag.ExtraJson)}\"\"\",");
@@ -372,10 +368,10 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"        var e = ({tag.TypeFullName})msg;");
     sb.AppendLine("        var dict = new Dictionary<string, object?>();");
 
-    // Extract specified properties, or all properties if none specified
-    var propsToExtract = tag.Properties?.Length > 0
-        ? tag.Properties
-        : tag.TypeProperties;
+    // Extract exactly the Properties declared on the attribute. When Properties is null
+    // (not specified), fall back to all public properties on the type; when it's an
+    // explicit empty array the caller opted out of field extraction entirely.
+    var propsToExtract = tag.Properties ?? tag.TypeProperties;
 
     // S3267: Loop has side effects (appending to StringBuilder) — LINQ not appropriate
 #pragma warning disable S3267
@@ -385,11 +381,6 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 #pragma warning restore S3267
-
-    // Include full event if requested
-    if (tag.IncludeEvent) {
-      sb.AppendLine("        dict[\"__event\"] = e;");
-    }
 
     // Merge extra JSON if present
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
@@ -441,7 +432,6 @@ internal sealed record MessageTagInfo(
     string AttributeName,
     string Tag,
     string[]? Properties,
-    bool IncludeEvent,
     string? ExtraJson,
     string[] TypeProperties
 );

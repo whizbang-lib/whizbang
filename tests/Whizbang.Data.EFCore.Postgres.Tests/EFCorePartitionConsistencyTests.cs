@@ -95,10 +95,10 @@ public class EFCorePartitionConsistencyTests : EFCoreTestBase {
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at)
       VALUES (@instanceId, @serviceName, @hostName, @processId, NOW(), NOW())
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()", connection);
-    cmd.Parameters.AddWithValue("instanceId", instanceId);
-    cmd.Parameters.AddWithValue("serviceName", serviceName);
-    cmd.Parameters.AddWithValue("hostName", hostName);
-    cmd.Parameters.AddWithValue("processId", processId);
+    cmd.Parameters.AddWithValue(nameof(instanceId), instanceId);
+    cmd.Parameters.AddWithValue(nameof(serviceName), serviceName);
+    cmd.Parameters.AddWithValue(nameof(hostName), hostName);
+    cmd.Parameters.AddWithValue(nameof(processId), processId);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -107,7 +107,7 @@ public class EFCorePartitionConsistencyTests : EFCoreTestBase {
     await connection.OpenAsync();
     await using var cmd = new NpgsqlCommand(
       "SELECT partition_number FROM wh_inbox WHERE message_id = @messageId", connection);
-    cmd.Parameters.AddWithValue("messageId", messageId);
+    cmd.Parameters.AddWithValue(nameof(messageId), messageId);
     var result = await cmd.ExecuteScalarAsync();
     return result is int i ? i : null;
   }
@@ -117,7 +117,7 @@ public class EFCorePartitionConsistencyTests : EFCoreTestBase {
     await connection.OpenAsync();
     await using var cmd = new NpgsqlCommand(
       "SELECT partition_number FROM wh_active_streams WHERE stream_id = @streamId", connection);
-    cmd.Parameters.AddWithValue("streamId", streamId);
+    cmd.Parameters.AddWithValue(nameof(streamId), streamId);
     var result = await cmd.ExecuteScalarAsync();
     return result is int i ? i : null;
   }

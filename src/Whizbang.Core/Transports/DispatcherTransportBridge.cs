@@ -13,7 +13,7 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
-/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync</tests>
+/// <para><tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_AutomaticallySerializesMessageAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithRequestResponse_ReturnsTypedResponseAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_RoutesIncomingMessagesToDispatcherAsync</tests>
@@ -22,14 +22,14 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_CreatesEnvelopeWithHopAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync</tests>
 /// Bridges IDispatcher with ITransport, handling serialization and routing between local and remote messaging.
-/// This keeps IDispatcher pure (no transport concerns) while enabling distributed messaging scenarios.
+/// This keeps IDispatcher pure (no transport concerns) while enabling distributed messaging scenarios.</para>
 ///
-/// Responsibilities:
+/// <para>Responsibilities:
 /// - Publishes local messages to remote transport destinations
 /// - Subscribes to transport and routes incoming messages to local dispatcher
 /// - Handles automatic serialization/deserialization
 /// - Creates message envelopes with hops for observability
-/// - Supports request/response pattern across transports
+/// - Supports request/response pattern across transports</para>
 /// </summary>
 /// <remarks>
 /// Creates a new bridge connecting a dispatcher with a transport.
@@ -157,7 +157,7 @@ public class DispatcherTransportBridge(
   ) where TMessage : notnull {
     // Subscribe to transport and route to dispatcher
     return await _transport.SubscribeBatchAsync(
-      batchHandler: async (batch, ct) => {
+      batchHandler: async (batch, _) => {
         foreach (var msg in batch) {
           // Extract message from envelope
           var typedEnvelope = (MessageEnvelope<TMessage>)msg.Envelope;
