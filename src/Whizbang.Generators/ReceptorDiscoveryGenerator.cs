@@ -1517,6 +1517,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       string receptorInterface,
       bool useCancellationToken,
       bool useStageFiltering) {
+    if (!receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
+      return string.Empty;
+    }
+
     var sb = new StringBuilder();
     var handleArgs = useCancellationToken ? "typedEvt, cancellationToken" : "typedEvt";
     // Publish path (no cancellation token) has no outer isDefaultDispatch declaration;
@@ -1525,60 +1529,75 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // only when there are explicit receptors to gate (otherwise CS0219 fires).
     var publishPathDeclaresIsDefaultDispatch = !useCancellationToken && useStageFiltering;
 
-    if (receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
-      // Separate typed (with response) and void receptors
-      var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
-      var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
+    var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
+    var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
 
-      // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results)
-      foreach (var receptor in typedReceptors) {
-        sb.AppendLine($"          {{");
-        sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}, object>>(\"{receptor.ClassName}\");");
-        sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
-        sb.AppendLine($"          }}");
-      }
+    // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results).
+    foreach (var receptor in typedReceptors) {
+      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: true, indent: "          ");
+    }
 
-      if (useStageFiltering) {
-        // Void receptors (IReceptor<T>) — stage-aware: skip explicit [FireAt] during default dispatch
-        var defaultVoidReceptors = voidReceptors.Where(r => r.HasDefaultStage).ToList();
-        var explicitVoidReceptors = voidReceptors.Where(r => !r.HasDefaultStage).ToList();
-
-        // Default-stage void receptors — always fire
-        foreach (var receptor in defaultVoidReceptors) {
-          sb.AppendLine($"          {{");
-          sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
-          sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
-          sb.AppendLine($"          }}");
-        }
-
-        // Explicit [FireAt] void receptors. Behavior depends on path:
-        //  - Cascade path: emit `if (!isDefaultDispatch)` gate; receptors fire only when
-        //    sourceEnvelope.DispatchContext.IsDefaultDispatch is false (explicit invoke).
-        //  - Publish path: do not emit at all; [FireAt] receptors fire later via
-        //    ReceptorInvoker at their declared lifecycle stage. Emitting them here
-        //    would cause double-fire (the engineer's reported bug).
-        if (explicitVoidReceptors.Count > 0 && !publishPathDeclaresIsDefaultDispatch) {
-          sb.AppendLine($"          if (!isDefaultDispatch) {{");
-          foreach (var receptor in explicitVoidReceptors) {
-            sb.AppendLine($"            {{");
-            sb.AppendLine($"              var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
-            sb.AppendLine($"              if (r is not null) await r.HandleAsync({handleArgs});");
-            sb.AppendLine($"            }}");
-          }
-          sb.AppendLine($"          }}");
-        }
-      } else {
-        // No stage filtering — all void receptors fire (used by PublishAsync)
-        foreach (var receptor in voidReceptors) {
-          sb.AppendLine($"          {{");
-          sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{messageType}>>(\"{receptor.ClassName}\");");
-          sb.AppendLine($"            if (r is not null) await r.HandleAsync({handleArgs});");
-          sb.AppendLine($"          }}");
-        }
+    if (useStageFiltering) {
+      _appendStageFilteredVoidReceptors(sb, messageType, receptorInterface, voidReceptors, handleArgs, publishPathDeclaresIsDefaultDispatch);
+    } else {
+      // No stage filtering — all void receptors fire (used by PublishAsync)
+      foreach (var receptor in voidReceptors) {
+        _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");
       }
     }
 
     return sb.ToString().TrimEnd();
+  }
+
+  /// <summary>
+  /// Emits the stage-aware void receptor section. Default-stage void receptors fire
+  /// unconditionally; explicit [FireAt] void receptors fire gated by <c>if (!isDefaultDispatch)</c>
+  /// on the cascade path and are skipped entirely on the publish path (they fire later via
+  /// ReceptorInvoker at their declared lifecycle stage — emitting them here would double-fire).
+  /// </summary>
+  private static void _appendStageFilteredVoidReceptors(
+      StringBuilder sb,
+      string messageType,
+      string receptorInterface,
+      List<ReceptorInfo> voidReceptors,
+      string handleArgs,
+      bool publishPathDeclaresIsDefaultDispatch) {
+    var defaultVoidReceptors = voidReceptors.Where(r => r.HasDefaultStage).ToList();
+    var explicitVoidReceptors = voidReceptors.Where(r => !r.HasDefaultStage).ToList();
+
+    foreach (var receptor in defaultVoidReceptors) {
+      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");
+    }
+
+    if (explicitVoidReceptors.Count == 0 || publishPathDeclaresIsDefaultDispatch) {
+      return;
+    }
+
+    sb.AppendLine($"          if (!isDefaultDispatch) {{");
+    foreach (var receptor in explicitVoidReceptors) {
+      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "            ");
+    }
+    sb.AppendLine($"          }}");
+  }
+
+  /// <summary>
+  /// Emits a single receptor invocation block — resolves the keyed service, null-guards it,
+  /// awaits HandleAsync. <paramref name="typedResponse"/> picks the 2-arg IReceptor generic form
+  /// (with <c>object</c> response type) versus the void 1-arg form.
+  /// </summary>
+  private static void _appendReceptorInvocationBlock(
+      StringBuilder sb,
+      string messageType,
+      string receptorInterface,
+      string receptorClassName,
+      string handleArgs,
+      bool typedResponse,
+      string indent) {
+    var typeArgs = typedResponse ? $"{messageType}, object" : messageType;
+    sb.AppendLine($"{indent}{{");
+    sb.AppendLine($"{indent}  var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptorClassName}\");");
+    sb.AppendLine($"{indent}  if (r is not null) await r.HandleAsync({handleArgs});");
+    sb.AppendLine($"{indent}}}");
   }
 
   /// <summary>
