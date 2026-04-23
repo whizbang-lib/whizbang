@@ -174,13 +174,23 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
-  public async Task MaxConcurrentSessions_DefaultsTo16Async() {
+  public async Task MaxConcurrentSessions_DefaultsTo200Async() {
     // Arrange & Act
     var options = new AzureServiceBusOptions();
 
     // Assert
-    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(16)
-      .Because("Default should balance throughput with connection pool pressure (16 sessions × N subscriptions)");
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(200)
+      .Because("Parity with MaxConcurrentCalls. Consumer is now a pure delivery pipe (flushing architecture) so per-session DB pressure that motivated the earlier 16 cap no longer applies. Fan-out workloads (one event per stream × many streams) need high session parallelism because each session carries only one message and session-open overhead dominates.");
+  }
+
+  [Test]
+  public async Task PrefetchCount_DefaultsTo50Async() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.PrefetchCount).IsEqualTo(50)
+      .Because("Fan-out tuning: MaxConcurrentSessions=200 × PrefetchCount=50 bounds buffered messages to 10,000 per consumer. Most fan-out sessions have only 1 message so prefetch beyond ~10 adds no throughput but multiplies memory/lock risk on crash recovery.");
   }
 
   [Test]
