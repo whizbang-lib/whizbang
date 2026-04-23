@@ -175,6 +175,49 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
       .Because("Event from generic LocalInvokeAsync should also cascade to outbox");
   }
 
+  /// <summary>
+  /// Regression guard for the cascade-to-outbox bug (8b393c1e, fixed by splitting FlushAsync).
+  /// With IntervalWorkCoordinatorStrategy, cascaded events must batch per IntervalMilliseconds
+  /// instead of writing to the DB one-per-event. Pre-fix: 20 events → 20 process_work_batch calls;
+  /// post-fix: 20 events → 0 DB writes until the timer fires or FlushAndGetBatchAsync is called.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task IntervalStrategy_CascadedEvents_BatchUntilForceFlush_SingleDbWriteAsync() {
+    var services = await _createServicesWithEFCoreAndIntervalStrategyAsync(intervalMs: 60_000);
+    var sp = services.BuildServiceProvider();
+
+    var dispatcher = sp.GetRequiredService<IDispatcher>();
+    var strategy = sp.GetRequiredService<IWorkCoordinatorStrategy>();
+
+    // Act 1 — dispatch 20 cascading commands rapidly
+    for (var i = 0; i < 20; i++) {
+      await dispatcher.LocalInvokeAsync(new CascadeTestCommand(Guid.CreateVersion7()));
+    }
+
+    // Assert 1 — before any force flush, wh_outbox is empty (Interval is batching)
+    await using (var dbContext = CreateDbContext()) {
+      var beforeFlush = await dbContext.Outbox.CountAsync();
+      await Assert.That(beforeFlush).IsEqualTo(0)
+        .Because("Interval strategy must defer cascaded writes until its timer or a force flush — the cascade regression bug was that each event was flushed synchronously");
+    }
+
+    // Act 2 — force flush to drain the queue
+    _ = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming);
+
+    // Assert 2 — all 20 cascaded events land in a single batch write
+    await using (var dbContext = CreateDbContext()) {
+      var afterFlush = await dbContext.Outbox.CountAsync();
+      await Assert.That(afterFlush).IsEqualTo(20)
+        .Because("FlushAndGetBatchAsync should drain all queued cascades in one batched write");
+    }
+
+    // Cleanup — dispose the singleton strategy (stops the timer)
+    if (strategy is IAsyncDisposable ad) {
+      await ad.DisposeAsync();
+    }
+  }
+
   #endregion
 
   #region Diagnostic Tests
@@ -1152,6 +1195,59 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
     });
 
     // Register receptors and dispatcher (will pick up test receptors from this assembly)
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+
+    return services;
+  }
+
+  /// <summary>
+  /// Like _createServicesWithEFCoreAsync but registers IntervalWorkCoordinatorStrategy as a
+  /// singleton (the way a background-worker service like a consumer application JobService does). Used to
+  /// verify the cascade-to-outbox bug fix — Interval must batch cascaded events, not flush
+  /// one-per-event.
+  /// </summary>
+  private async Task<ServiceCollection> _createServicesWithEFCoreAndIntervalStrategyAsync(int intervalMs) {
+    await base.SetupAsync();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddScoped(_ => CreateDbContext());
+
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    services.AddSingleton(jsonOptions);
+    services.AddSingleton<IEnvelopeSerializer, EnvelopeSerializer>();
+    services.AddLogging(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Debug));
+
+    services.AddScoped<IWorkCoordinator>(sp => {
+      var dbContext = sp.GetRequiredService<WorkCoordinationDbContext>();
+      return new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, jsonOptions);
+    });
+
+    services.AddSingleton(new WorkCoordinatorOptions {
+      IntervalMilliseconds = intervalMs,
+      LeaseSeconds = 30,
+      AbandonStaleInstanceThresholdSeconds = 300,
+      PartitionCount = 4
+    });
+
+    // Interval strategy is a singleton so it owns its timer across scopes.
+    // It resolves IWorkCoordinator per flush via the scope factory.
+    services.AddSingleton<IntervalWorkCoordinatorStrategy>(sp => {
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
+      var options = sp.GetRequiredService<WorkCoordinatorOptions>();
+      return new IntervalWorkCoordinatorStrategy(
+        coordinator: null,
+        instanceProvider,
+        options,
+        logger: sp.GetService<ILogger<IntervalWorkCoordinatorStrategy>>(),
+        scopeFactory: scopeFactory
+      );
+    });
+    services.AddScoped<IWorkCoordinatorStrategy>(sp =>
+      new NonDisposingStrategyAdapter(sp.GetRequiredService<IntervalWorkCoordinatorStrategy>()));
+
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
