@@ -52,10 +52,10 @@ public class AzureServiceBusOptions {
   /// <para>
   /// <b>Tuning guidance:</b>
   /// <list type="bullet">
-  ///   <item><b>Fan-out workloads</b> (many unique StreamIds, one or few messages each): 200–500. Each stream is a separate batch round-trip, so parallelism directly multiplies throughput.</item>
+  ///   <item><b>Fan-out workloads</b> (many unique StreamIds, one or few messages each): 200–500. Each stream is a separate batch round-trip, so parallelism directly multiplies throughput <em>up to the broker's ingest rate</em>.</item>
   ///   <item><b>Bulk imports</b> (few streams, many messages each): 50–100 is sufficient. Batches fill up within a stream, so the batch size + <see cref="MaxDeliveryAttempts"/> do most of the work.</item>
-  ///   <item><b>ASB Standard tier:</b> namespace caps concurrent connections at 1,000 across ALL consumers and producers. Keep the sum under budget.</item>
-  ///   <item><b>ASB Premium tier:</b> higher connection caps; 500+ is viable.</item>
+  ///   <item><b>ASB Standard tier:</b> the broker itself is typically the bottleneck before client parallelism saturates. Measured ceiling on fan-out under Standard is ~50–60 events/s sustained regardless of client MaxDOP; extra concurrency above ~16–32 produces <c>ServiceCommunicationProblem</c> / <c>SessionLockLost</c> retries rather than more throughput. A value of 200 is still safe (namespace caps connections at 1,000 across producers+consumers) but won't buy additional throughput beyond the TU limit. Consider 32–64 if retry churn is visible in your logs.</item>
+  ///   <item><b>ASB Premium tier:</b> much higher throughput units and connection caps; 200–500 is where the value of this option materializes.</item>
   /// </list>
   /// </para>
   /// <para>
