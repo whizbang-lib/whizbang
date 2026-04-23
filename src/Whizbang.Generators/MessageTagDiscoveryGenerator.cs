@@ -101,6 +101,13 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
       var attributeFullName = tagAttribute.AttributeClass!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
+      // Capture additional named arguments declared on the attribute (e.g., `Scope`) so
+      // the emitted AttributeFactory can faithfully reconstruct the attribute instance.
+      // Without this, init-only properties like NotificationTagAttribute.Scope silently
+      // fall back to their CLR default, which has bitten us before (bulk-job notifications
+      // routing as User-scope when declared Tenant).
+      var extraInitializers = _extractExtraNamedInitializers(tagAttribute);
+
       yield return new MessageTagInfo(
           TypeFullName: typeFullName,
           TypeName: typeSymbol.Name,
@@ -110,8 +117,78 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
           Tag: tag,
           Properties: properties,
           ExtraJson: extraJson,
-          TypeProperties: typeProperties
+          TypeProperties: typeProperties,
+          ExtraInitializers: extraInitializers
       );
+    }
+  }
+
+  /// <summary>
+  /// Collects named arguments from an attribute declaration other than those already
+  /// handled via dedicated MessageTagInfo fields (Tag / Properties / ExtraJson / Exclude).
+  /// Each entry becomes an object-initializer assignment in the emitted AttributeFactory
+  /// so init-only and regular properties on the attribute are preserved at runtime.
+  /// </summary>
+  private static string[] _extractExtraNamedInitializers(AttributeData attributeData) {
+    if (attributeData.NamedArguments.IsDefaultOrEmpty) {
+      return [];
+    }
+
+    var result = new List<string>(attributeData.NamedArguments.Length);
+    foreach (var kvp in attributeData.NamedArguments) {
+      // Skip fields already handled via dedicated MessageTagInfo slots.
+      if (kvp.Key is "Tag" or "Properties" or "ExtraJson" or "Exclude") {
+        continue;
+      }
+
+      var literal = _typedConstantToCSharpLiteral(kvp.Value);
+      if (literal is null) {
+        continue; // Unsupported value kind — skip rather than emit invalid C#.
+      }
+
+      result.Add($"{kvp.Key} = {literal}");
+    }
+
+    return result.ToArray();
+  }
+
+  /// <summary>
+  /// Converts a Roslyn <see cref="TypedConstant"/> into a valid C# literal expression so
+  /// it can be inlined into generated code. Handles the kinds that appear in attribute
+  /// named arguments (primitive, string, enum, type, array). Returns null for unsupported
+  /// kinds to let callers drop them safely.
+  /// </summary>
+  private static string? _typedConstantToCSharpLiteral(TypedConstant value) {
+    if (value.IsNull) {
+      return "null";
+    }
+
+    switch (value.Kind) {
+      case TypedConstantKind.Primitive:
+        return value.Value switch {
+          string s => $"\"{_escapeString(s)}\"",
+          bool b => b ? "true" : "false",
+          char c => $"'{c}'",
+          null => "null",
+          _ => value.Value.ToString()
+        };
+      case TypedConstantKind.Enum:
+        // Emit as ((EnumType)underlyingValue) — always compiles even for [Flags] combinations.
+        var enumTypeName = value.Type?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? "int";
+        return $"({enumTypeName})({value.Value})";
+      case TypedConstantKind.Type:
+        var t = value.Value as ITypeSymbol;
+        return t is null ? null : $"typeof({t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})";
+      case TypedConstantKind.Array:
+        var elementType = (value.Type as IArrayTypeSymbol)?.ElementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (elementType is null) { return null; }
+        var elements = value.Values
+            .Select(_typedConstantToCSharpLiteral)
+            .Where(e => e is not null)
+            .ToArray();
+        return $"new {elementType}[] {{ {string.Join(", ", elements)} }}";
+      default:
+        return null;
     }
   }
 
@@ -394,8 +471,16 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("        return JsonSerializer.SerializeToElement(dict);");
     sb.AppendLine("      },");
 
-    // Generate AttributeFactory
-    sb.AppendLine($"      AttributeFactory = () => new {tag.AttributeFullName}() {{ Tag = \"{_escapeString(tag.Tag)}\" }}");
+    // Generate AttributeFactory — include any extra named arguments declared on the
+    // attribute (e.g., Scope = NotificationScope.Tenant, custom flags) so the reconstructed
+    // attribute matches what was declared on the event. Without this, init-only properties
+    // silently default and downstream consumers misroute.
+    var initializerEntries = new List<string>(1 + tag.ExtraInitializers.Length) {
+      $"Tag = \"{_escapeString(tag.Tag)}\""
+    };
+    initializerEntries.AddRange(tag.ExtraInitializers);
+    var initializers = string.Join(", ", initializerEntries);
+    sb.AppendLine($"      AttributeFactory = () => new {tag.AttributeFullName}() {{ {initializers} }}");
     sb.AppendLine("    },");
   }
 
@@ -433,5 +518,6 @@ internal sealed record MessageTagInfo(
     string Tag,
     string[]? Properties,
     string? ExtraJson,
-    string[] TypeProperties
+    string[] TypeProperties,
+    string[] ExtraInitializers
 );
