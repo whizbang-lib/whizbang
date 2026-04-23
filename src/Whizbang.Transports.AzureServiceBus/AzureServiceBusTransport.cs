@@ -540,7 +540,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       MaxConcurrentSessions = _options.MaxConcurrentSessions,
       MaxConcurrentCallsPerSession = 1,
       AutoCompleteMessages = false,
-      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
+      PrefetchCount = _options.PrefetchCount
     };
 
     var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
@@ -600,7 +601,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var processorOptions = new ServiceBusProcessorOptions {
       MaxConcurrentCalls = _options.MaxConcurrentCalls,
       AutoCompleteMessages = false,
-      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
+      PrefetchCount = _options.PrefetchCount
     };
 
     var processor = _client.CreateProcessor(topicName, subscriptionName, processorOptions);
@@ -706,7 +708,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           MaxConcurrentSessions = _options.MaxConcurrentSessions,
           MaxConcurrentCallsPerSession = 1, // Strict FIFO within each session
           AutoCompleteMessages = false,
-          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
+          PrefetchCount = _options.PrefetchCount
         };
 
         var sessionProcessor = _client.CreateSessionProcessor(
@@ -740,7 +743,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         var processorOptions = new ServiceBusProcessorOptions {
           MaxConcurrentCalls = _options.MaxConcurrentCalls,
           AutoCompleteMessages = false,
-          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
+          PrefetchCount = _options.PrefetchCount
         };
 
         var processor = _client.CreateProcessor(

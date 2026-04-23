@@ -95,15 +95,26 @@ public class AzureServiceBusOptions {
   public bool EnableSessions { get; set; } = true;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo16Async</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
   /// How many sessions (streams) can be processed at the same time by a single consumer instance.
   /// Each session maintains strict FIFO ordering internally — messages within one session are
   /// always processed one at a time, in order. This setting controls how many <em>different</em>
   /// sessions are handled in parallel. Only applies when <see cref="EnableSessions"/> is true.
   /// <para>
-  /// <b>Example:</b> With <c>MaxConcurrentSessions = 16</c> and 200 active streams, 16 sessions
+  /// <b>Example:</b> With <c>MaxConcurrentSessions = 200</c> and 2,000 active streams, 200 sessions
   /// are processed in parallel. Each session processes its messages one at a time in order.
-  /// The remaining 136 sessions wait until a slot opens.
+  /// The remaining 1,800 sessions wait until a slot opens.
+  /// </para>
+  /// <para>
+  /// <b>Fan-out workloads (one event per stream × many streams):</b> session processors open a
+  /// connection and lock per session. When each session has only one or two messages, session-open
+  /// overhead dominates. A high session cap lets many streams be served in parallel so the overhead
+  /// amortizes across more throughput. 200 matches <see cref="MaxConcurrentCalls"/> for parity.
+  /// </para>
+  /// <para>
+  /// <b>Memory:</b> each session holds up to <see cref="PrefetchCount"/> buffered messages. Default
+  /// pairing is tuned for fan-out — high concurrency (200), modest prefetch (50) — bounds in-flight
+  /// buffer to ~10,000 messages per consumer while keeping per-session-open overhead low.
   /// </para>
   /// <para>
   /// <b>Not to be confused with:</b>
@@ -112,10 +123,34 @@ public class AzureServiceBusOptions {
   ///   <item><see cref="MaxDeliveryAttempts"/> — how many times a <em>single failing message</em> is retried (per-message, not per-session)</item>
   /// </list>
   /// </para>
-  /// Default: 16
+  /// Default: 200
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
-  public int MaxConcurrentSessions { get; set; } = 16;
+  public int MaxConcurrentSessions { get; set; } = 200;
+
+  /// <summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
+  /// Number of messages the client buffers locally ahead of processing, <b>per session receiver</b>
+  /// (session mode) or per processor (non-session mode). Without prefetch (count = 0), every message
+  /// requires a synchronous AMQP round-trip — typically the dominant bottleneck at scale.
+  /// <para>
+  /// <b>Tuning for fan-out (one event per stream × many streams):</b> most sessions carry only one
+  /// or two messages. Prefetch beyond 10 adds no throughput but multiplies in-flight memory:
+  /// <c>MaxConcurrentSessions × PrefetchCount</c> is the max buffered message count. Prefer high
+  /// session concurrency + modest prefetch. Default pairing: 200 × 50 = 10,000 buffered msgs max.
+  /// </para>
+  /// <para>
+  /// <b>Tuning for bulk import (many events per stream):</b> raise to match typical per-stream burst
+  /// size (100–200). With few concurrent streams the total buffer stays bounded.
+  /// </para>
+  /// <para>
+  /// <b>Crash-recovery trade-off:</b> prefetched-but-unprocessed messages wait for session-lock
+  /// expiry before redelivery if the consumer dies. Keep bounded.
+  /// </para>
+  /// Default: 50
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#prefetch</docs>
+  public int PrefetchCount { get; set; } = 50;
 
   #endregion
 
