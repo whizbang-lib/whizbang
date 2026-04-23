@@ -541,7 +541,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       MaxConcurrentCallsPerSession = 1,
       AutoCompleteMessages = false,
       MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
-      PrefetchCount = _options.PrefetchCount
+      PrefetchCount = _options.PrefetchCount,
+      SessionIdleTimeout = _options.SessionIdleTimeout
     };
 
     var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
@@ -709,7 +710,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           MaxConcurrentCallsPerSession = 1, // Strict FIFO within each session
           AutoCompleteMessages = false,
           MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
-          PrefetchCount = _options.PrefetchCount
+          PrefetchCount = _options.PrefetchCount,
+          SessionIdleTimeout = _options.SessionIdleTimeout
         };
 
         var sessionProcessor = _client.CreateSessionProcessor(

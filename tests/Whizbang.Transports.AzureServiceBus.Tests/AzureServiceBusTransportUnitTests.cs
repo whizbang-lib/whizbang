@@ -194,6 +194,16 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
+  public async Task SessionIdleTimeout_DefaultsToOneSecondAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(1))
+      .Because("Azure SDK default is 60s, which produces 60s plateaus on fan-out workloads (each session holds its concurrency slot idle for the full timeout waiting for a second message that never arrives). 1s releases sessions almost immediately while still keeping multi-message bursts within a stream alive.");
+  }
+
+  [Test]
   public async Task Capabilities_WithoutEnableSessions_ExcludesOrderedAsync() {
     // Arrange
     var options = new AzureServiceBusOptions { EnableSessions = false };
