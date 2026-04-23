@@ -63,29 +63,27 @@ public interface IWorkCoordinatorStrategy {
   void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage);
 
   /// <summary>
-  /// Flushes all queued operations by calling process_work_batch.
-  /// Returns work items that need processing.
-  /// When flush occurs depends on the strategy implementation.
+  /// Signals the end of a queueing batch. The strategy decides when to actually flush:
+  /// Immediate and Scoped flush now, Interval defers to its timer, Batch defers to debounce/size trigger.
+  /// Use for fire-and-forget callers (cascade-to-outbox, routed publish/send) that do not consume the WorkBatch.
   /// </summary>
-  /// <param name="flags">Work batch flags (e.g., DebugMode)</param>
+  /// <param name="flags">Work batch flags (e.g., SkipInboxClaiming)</param>
+  /// <param name="ct">Cancellation token</param>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default);
+
+  /// <summary>
+  /// Forces an immediate flush and returns the resulting WorkBatch. Bypasses any batching window
+  /// (Interval timer, Batch debounce). Use for dedup callers that must consume the WorkBatch
+  /// (inbox consumers filtering work by MessageId) or end-of-scope flushes that must block until persisted.
+  /// </summary>
+  /// <param name="flags">Work batch flags (e.g., SkipInboxClaiming)</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>Work batch containing messages to process</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-  Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default);
-}
-
-/// <summary>
-/// Controls whether a flush must execute immediately or can be deferred to the strategy's natural cycle.
-/// </summary>
-/// <docs>data/work-coordinator-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushModeTests.cs</tests>
-public enum FlushMode {
-  /// <summary>Must flush now and return results (for dedup checks, cascade work).</summary>
-  Required = 0,
-  /// <summary>Strategy decides when to flush. Immediate=now, Scoped=on disposal, Interval=on timer.</summary>
-  BestEffort = 1
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default);
 }
 
 /// <summary>

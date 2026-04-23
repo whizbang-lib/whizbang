@@ -143,7 +143,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(result.OutboxWork).IsEmpty();
@@ -180,7 +180,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -259,7 +259,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(scopedCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -289,10 +289,9 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
-      await Assert.That(result.OutboxWork).IsEmpty();
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
     } finally {
       await sut.DisposeAsync();
@@ -316,7 +315,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -343,7 +342,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -369,7 +368,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -394,7 +393,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -419,7 +418,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -444,7 +443,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);

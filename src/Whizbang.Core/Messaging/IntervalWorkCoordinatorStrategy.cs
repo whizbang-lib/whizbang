@@ -212,30 +212,43 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   }
 
   /// <summary>
-  /// Flushes all queued operations to the work coordinator immediately.
+  /// Fire-and-forget flush for Interval strategy: items stay queued and are flushed on the next
+  /// timer tick. Use for cascade-to-outbox and routed publish/send paths that do not consume
+  /// the WorkBatch.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    // IntervalWorkCoordinatorStrategy handles outbox work only — skip inbox claiming
-    // to prevent stealing inbox messages from WorkCoordinatorPublisherWorker
-    return _flushCoreAsync(flags | WorkBatchOptions.SkipInboxClaiming, mode, skipLifecycle: false, ct);
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_FlushAsync_WithQueuedMessages_DefersToTimer_NoDbCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeFlushTests.cs</tests>
+  public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    _metrics?.FlushCalls.Add(1,
+      new KeyValuePair<string, object?>("strategy", "interval"),
+      new KeyValuePair<string, object?>("trigger", "signal"));
+    // Interval batches until the timer fires. Nothing to do here beyond the metric.
+    return Task.CompletedTask;
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
+  /// <summary>
+  /// Forces an immediate flush and returns the resulting WorkBatch. Bypasses the interval timer.
+  /// Use for dedup callers that must consume the WorkBatch, or for end-of-scope drains.
+  /// </summary>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_FlushAndGetBatchAsync_WithQueuedMessages_FlushesImmediately_BypassesTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
+  public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    // IntervalWorkCoordinatorStrategy handles outbox work only — skip inbox claiming
+    // to prevent stealing inbox messages from WorkCoordinatorPublisherWorker
+    return _flushCoreAsync(flags | WorkBatchOptions.SkipInboxClaiming, trigger: "api", skipLifecycle: false, ct);
+  }
+
+  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, string trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+    _metrics?.FlushCalls.Add(1,
+      new KeyValuePair<string, object?>("strategy", "interval"),
+      new KeyValuePair<string, object?>("trigger", trigger));
 
-    // BestEffort: defer flush to timer cycle - items already in queues will be picked up
-    if (mode == FlushMode.BestEffort) {
-      return new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      };
-    }
-
-    // Required flush with optional coalescing window
+    // Forced-flush with optional coalescing window
     if (_options.CoalesceWindowMilliseconds > 0) {
       await Task.Delay(_options.CoalesceWindowMilliseconds, ct);
     }
@@ -362,7 +375,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
+    FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, ct);
 
   /// <summary>
   /// Timer callback that triggers periodic flushing of queued operations.
@@ -377,7 +390,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // Fire and forget flush on timer — skip lifecycle (background thread, no ambient context)
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "timer", skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringIntervalFlush(_logger, ex);
@@ -422,7 +435,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
-      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "disposal", skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);

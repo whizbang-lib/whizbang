@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// Tests for IWorkFlusher explicit interface implementation on all strategies.
-/// Verifies that IWorkFlusher.FlushAsync delegates to FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct).
+/// Verifies that IWorkFlusher.FlushAsync delegates to FlushAndGetBatchAsync(WorkBatchOptions.None, ct).
 /// </summary>
 public class WorkFlusherTests {
   private readonly Uuid7IdProvider _idProvider = new();

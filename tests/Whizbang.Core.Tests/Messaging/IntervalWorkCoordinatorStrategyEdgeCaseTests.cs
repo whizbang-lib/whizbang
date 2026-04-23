@@ -71,7 +71,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   }
 
   // ============================================================
-  // FlushMode.BestEffort - returns empty batch without flushing
+  // FlushAsync (fire-and-forget) - returns empty batch without flushing
   // ============================================================
 
   [Test]
@@ -87,12 +87,9 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert - BestEffort returns empty batch; items remain queued for timer
-      await Assert.That(result.OutboxWork).IsEmpty();
-      await Assert.That(result.InboxWork).IsEmpty();
-      await Assert.That(result.PerspectiveWork).IsEmpty();
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
         .Because("BestEffort mode should not call ProcessWorkBatchAsync");
     } finally {
@@ -113,10 +110,10 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act - BestEffort defers
-      await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Then Required flush picks them up
-      await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required);
+      await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -144,7 +141,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     try {
       // Act
       var sw = System.Diagnostics.Stopwatch.StartNew();
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       sw.Stop();
 
       // Assert - should have waited at least 50ms for coalesce window
@@ -173,7 +170,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       // Act & Assert
       var threw = false;
       try {
-        await sut.FlushAsync(WorkBatchOptions.None, FlushMode.Required, cts.Token);
+        await sut.FlushAndGetBatchAsync(WorkBatchOptions.None, cts.Token);
       } catch (OperationCanceledException) {
         threw = true;
       }
@@ -534,7 +531,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -568,7 +565,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - metrics FlushCalls counter was incremented (no exception means success)
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -591,7 +588,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act - flush with nothing queued
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - should return empty and record empty flush metric
       await Assert.That(result.OutboxWork).IsEmpty();
@@ -614,10 +611,9 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
-      await Assert.That(result.OutboxWork).IsEmpty();
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
     } finally {
       await sut.DisposeAsync();
@@ -730,8 +726,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
-      var secondResult = await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -761,14 +757,14 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       var firstFlushStarted = new SemaphoreSlim(0, 1);
       var firstFlushTask = Task.Run(async () => {
         firstFlushStarted.Release();
-        return await sut.FlushAsync(WorkBatchOptions.None);
+        return await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       });
 
       await firstFlushStarted.WaitAsync(TimeSpan.FromSeconds(5));
       // Give time for first flush to acquire the _flushing lock
       await Task.Delay(50);
 
-      var secondResult = await sut.FlushAsync(WorkBatchOptions.None);
+      var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(secondResult.OutboxWork).IsEmpty()
@@ -930,7 +926,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(scopedCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -954,7 +950,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await sut.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort))
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
       .ThrowsExactly<ObjectDisposedException>();
   }
 

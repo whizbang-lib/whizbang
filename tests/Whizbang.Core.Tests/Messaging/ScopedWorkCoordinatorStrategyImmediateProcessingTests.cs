@@ -73,7 +73,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
 
     // Act
-    var result = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
+    var result = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None, ct: cancellationToken);
 
     // Assert — ExecuteFlushAsync signals publisher but does not write to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)

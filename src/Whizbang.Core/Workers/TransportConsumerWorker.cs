@@ -586,7 +586,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     strategy.QueueInboxMessage(newInboxMessage);
 
     var dedupSw = Stopwatch.StartNew();
-    var workBatch = await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, ct: cancellationToken);
+    var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
     dedupSw.Stop();
     _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 

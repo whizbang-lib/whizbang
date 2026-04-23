@@ -58,7 +58,10 @@ public static class TestConstants {
   /// <para>- 2 receptors from DispatcherConcurrentOutboxTests.cs
   ///     (BlockingTestEventReceptor, ThrowingTestEventReceptor)</para>
   ///
-  /// <para>Total: 114 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from DispatcherCascadeFlushTests.cs
+  ///     (CascadeFlushCommandHandler — pins that cascade uses fire-and-forget FlushAsync)</para>
+  ///
+  /// <para>Total: 115 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 114;
+  public const int EXPECTED_RECEPTOR_COUNT = 115;
 }
