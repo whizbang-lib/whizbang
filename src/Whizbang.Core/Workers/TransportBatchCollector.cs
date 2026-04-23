@@ -84,7 +84,9 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     }
 
     if (shouldFlushNow) {
-      _ = Task.Run(() => _flushBatchAsync());
+#pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
+      _ = Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } });
+#pragma warning restore RCS1075
     }
   }
 
@@ -114,7 +116,9 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       return;
     }
 
-    _ = Task.Run(() => _flushBatchAsync());
+#pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
+    _ = Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } });
+#pragma warning restore RCS1075
   }
 
   private void _hardMaxTimerCallback(object? state) {
