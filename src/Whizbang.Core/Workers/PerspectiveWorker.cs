@@ -552,6 +552,13 @@ public partial class PerspectiveWorker(
     // Diagnostic logging for batch composition
     _logBatchComposition(workBatch, groupedWork);
 
+    // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks.
+    // Must fire BEFORE parallel processing so callers observing completion signals (e.g.
+    // InstantCompletion from a specific perspective) see the correct HasWork state — the
+    // original trailing call raced with per-perspective completion signals under
+    // Parallel.ForEachAsync. (See fix/inbox-consumer-ack-after-insert#269ec14c.)
+    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
+
     // Collect all processed events across groups for PostLifecycle firing
     var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
 
@@ -776,10 +783,10 @@ public partial class PerspectiveWorker(
     _metrics?.BatchesProcessed.Add(1);
     _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
 
-    // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
-    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
-
-    // Signal batch cycle complete — all phases (drain/legacy + lifecycle + metrics) finished
+    // Signal batch cycle complete — all phases (drain/legacy + lifecycle + metrics) finished.
+    // _updateWorkStateTracking already fired BEFORE parallel processing (line ~560); calling
+    // it again here would double-increment _consecutiveEmptyPolls on empty polls, tripping
+    // the idle threshold in half the expected polls.
     OnBatchCycleComplete?.Invoke();
   }
 
