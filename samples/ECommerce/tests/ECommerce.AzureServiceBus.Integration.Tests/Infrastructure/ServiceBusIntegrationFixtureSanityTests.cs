@@ -141,8 +141,11 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
-    // Wait for workers to be idle before querying data
+    // Wait for workers to be idle, then refresh the lens scope so the assertion reads
+    // through a fresh DbContext that can see the perspective's committed writes
+    // (EF Core's long-lived DbContext caches entity state across queries).
     await fixture.WaitForWorkersIdleAsync();
+    fixture.RefreshLensScopes();
 
     // Assert - Verify product materialized in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
@@ -186,8 +189,10 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
-    // Wait for workers to be idle before querying data
+    // Wait for workers to be idle, then refresh the lens scope so the assertion reads
+    // through a fresh DbContext (EF Core's long-lived DbContext caches entity state).
     await fixture.WaitForWorkersIdleAsync();
+    fixture.RefreshLensScopes();
 
     // Dump diagnostics to understand what's happening
     await fixture.DumpEventTypesAndAssociationsAsync();
