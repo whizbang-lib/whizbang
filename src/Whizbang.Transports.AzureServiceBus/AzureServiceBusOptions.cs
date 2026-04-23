@@ -37,6 +37,48 @@ public class AzureServiceBusOptions {
   public int MaxConcurrentCalls { get; set; } = 200;
 
   /// <summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
+  /// How many stream groups are sent to Azure Service Bus in parallel during a batch publish.
+  /// Azure Service Bus requires all messages in a single <c>ServiceBusMessageBatch</c> to share
+  /// the same <c>SessionId</c>, so <see cref="ITransport.BulkPublishAsync"/> groups outgoing
+  /// messages by <c>StreamId</c> and sends one batch per group. This option controls how many
+  /// of those per-stream batches are flight-sent concurrently.
+  /// <para>
+  /// <b>Example:</b> With <c>PublishMaxConcurrency = 200</c> and a fan-out burst of 7,894 messages
+  /// across 7,894 unique StreamIds, 200 batches are sent in parallel. At ~250 ms per batch
+  /// round-trip, the burst drains in ~10 seconds (40 sequential cycles × 250 ms). A value of 8
+  /// would drain the same burst in ~4 minutes (987 cycles × 250 ms).
+  /// </para>
+  /// <para>
+  /// <b>Tuning guidance:</b>
+  /// <list type="bullet">
+  ///   <item><b>Fan-out workloads</b> (many unique StreamIds, one or few messages each): 200–500. Each stream is a separate batch round-trip, so parallelism directly multiplies throughput.</item>
+  ///   <item><b>Bulk imports</b> (few streams, many messages each): 50–100 is sufficient. Batches fill up within a stream, so the batch size + <see cref="MaxDeliveryAttempts"/> do most of the work.</item>
+  ///   <item><b>ASB Standard tier:</b> namespace caps concurrent connections at 1,000 across ALL consumers and producers. Keep the sum under budget.</item>
+  ///   <item><b>ASB Premium tier:</b> higher connection caps; 500+ is viable.</item>
+  /// </list>
+  /// </para>
+  /// <para>
+  /// <b>Not to be confused with:</b>
+  /// <list type="bullet">
+  ///   <item><see cref="MaxConcurrentCalls"/> — consumer parallelism in non-session mode (receive-side)</item>
+  ///   <item><see cref="MaxConcurrentSessions"/> — consumer parallelism in session mode (receive-side)</item>
+  /// </list>
+  /// </para>
+  /// <para>
+  /// <b>Future work:</b> auto-tuning (adaptive sizing based on observed latency / broker
+  /// backpressure, Little's Law sizing) is not yet supported. .NET has no built-in
+  /// "auto-tune parallelism for I/O" API — <see cref="System.Threading.Tasks.ParallelOptions.MaxDegreeOfParallelism"/>
+  /// = -1 defaults to <see cref="System.Environment.ProcessorCount"/> which is a CPU-bound
+  /// heuristic unsuitable for AMQP sends. See the Whizbang plans/ directory for the design
+  /// sketch of an adaptive implementation.
+  /// </para>
+  /// Default: 200 (matches <see cref="MaxConcurrentSessions"/> for producer/consumer parity)
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#publish-concurrency</docs>
+  public int PublishMaxConcurrency { get; set; } = 200;
+
+  /// <summary>
   /// How long the client automatically renews the lock on a message while it is being processed.
   /// If processing takes longer than this duration, the lock expires and the broker may redeliver
   /// the message to another consumer (causing a duplicate).
