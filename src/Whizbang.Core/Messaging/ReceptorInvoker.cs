@@ -874,16 +874,54 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
   /// <summary>
   /// Processes message tags after all receptors complete at the current lifecycle stage.
+  /// Tags (signaltags, UI notification pushes, metric emitters, etc.) fire-and-forget so
+  /// slow tag handlers cannot throttle pipeline throughput — a slow SignalR push or HTTP
+  /// notification must not gate perspective progress. Exceptions thrown by tag handlers are
+  /// observed asynchronously and logged via <see cref="Log.TagProcessingError"/>; they do not
+  /// propagate to the caller. The tag processor itself is a singleton (see
+  /// <c>ServiceCollectionExtensions</c>) and creates its own DI scope internally, so scope
+  /// lifetime is safe across the fire-and-forget boundary.
   /// </summary>
-  private async ValueTask _processTagsAsync(
+  /// <remarks>
+  /// <b>Semantic change (2026-04-23):</b> tags were previously awaited, which coupled
+  /// pipeline throughput to external notification latency. Tags must therefore be used only
+  /// for <em>side-effects</em> (notifications, metrics, audit emits) — never for validation
+  /// or gating. Receptors remain the correct place for side effects that must complete
+  /// before the next stage fires.
+  /// </remarks>
+  private ValueTask _processTagsAsync(
       object message,
       Type messageType,
       LifecycleStage stage,
       IScopeContext? scope,
       CancellationToken cancellationToken) {
     var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
-    if (tagProcessor is not null) {
-      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, cancellationToken).ConfigureAwait(false);
+    if (tagProcessor is null) {
+      return ValueTask.CompletedTask;
+    }
+
+    var task = tagProcessor.ProcessTagsAsync(message, messageType, stage, scope, cancellationToken);
+
+    // Fast-path: if ProcessTagsAsync completed synchronously (common case: no tags
+    // registered for this message type), no background observation is needed.
+    if (task.IsCompletedSuccessfully) {
+      return ValueTask.CompletedTask;
+    }
+
+    _ = _observeTagProcessingAsync(task.AsTask(), messageType, stage);
+    return ValueTask.CompletedTask;
+  }
+
+  private async Task _observeTagProcessingAsync(Task task, Type messageType, LifecycleStage stage) {
+    try {
+      await task.ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      // Expected on shutdown — tag processor received the cancellation token and bailed.
+    } catch (Exception ex) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.TagProcessingError(_logger, ex, messageType.Name, stage);
+      }
     }
   }
 
@@ -1003,6 +1041,16 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Guid streamId,
       string sourceService,
       DateTimeOffset priorCompletedAt);
+
+    [LoggerMessage(
+      EventId = 19,
+      Level = LogLevel.Error,
+      Message = "[ReceptorInvoker] Fire-and-forget tag processing faulted for {MessageType} at {Stage}. Tags are side-effects and do not gate pipeline throughput; check the tag handler for a bug but pipeline continues.")]
+    public static partial void TagProcessingError(
+      ILogger logger,
+      Exception exception,
+      string messageType,
+      LifecycleStage stage);
   }
 }
 
