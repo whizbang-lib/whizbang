@@ -613,7 +613,11 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, Whizbang.Core.Messaging.FlushMode mode = Whizbang.Core.Messaging.FlushMode.Required, CancellationToken ct = default) {
+  public Task FlushAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, CancellationToken ct = default) {
+    return FlushAndGetBatchAsync(flags, ct);
+  }
+
+  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAndGetBatchAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, CancellationToken ct = default) {
     // Return an empty WorkBatch - unit tests don't need actual work processing
     var workBatch = new Whizbang.Core.Messaging.WorkBatch {
       InboxWork = [],

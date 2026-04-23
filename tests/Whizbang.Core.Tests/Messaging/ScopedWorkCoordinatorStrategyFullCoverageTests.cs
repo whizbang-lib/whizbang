@@ -195,7 +195,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     );
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(result.OutboxWork).IsEmpty();
@@ -255,7 +255,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     sut.QueueInboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "err2");
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);

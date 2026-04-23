@@ -131,14 +131,19 @@ public partial class ScopedWorkCoordinatorStrategy(
   }
 
   /// <inheritdoc />
-  public async Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    ObjectDisposedException.ThrowIf(_disposed, this);
-    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+  public async Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    // Scoped flushes immediately regardless of consume-vs-fire-and-forget intent.
+    // The scope IS the batching boundary, and deferring to DisposeAsync is unreliable
+    // (DbContext may be disposed by the DI container before our DisposeAsync runs).
+    await FlushAndGetBatchAsync(flags, ct).ConfigureAwait(false);
+  }
 
-    // BestEffort on Scoped strategy: flush immediately anyway.
-    // The scope IS the batching boundary — deferring to DisposeAsync is unreliable
-    // because the DbContext may already be disposed by the DI container before
-    // our DisposeAsync runs (DI disposal order is not guaranteed).
+  /// <inheritdoc />
+  public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    _metrics?.FlushCalls.Add(1,
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
+      new KeyValuePair<string, object?>("trigger", "api"));
 
     if (_queues.IsEmpty) {
       _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
@@ -222,7 +227,7 @@ public partial class ScopedWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchOptions.SkipInboxClaiming, FlushMode.Required, ct);
+    FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, ct);
 
   /// <inheritdoc />
   public async ValueTask DisposeAsync() {

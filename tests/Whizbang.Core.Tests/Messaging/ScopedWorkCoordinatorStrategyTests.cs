@@ -192,7 +192,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush before disposal
-    _ = await sut.FlushAsync(WorkBatchOptions.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Manual flush should work immediately
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -378,7 +378,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act — BestEffort should flush immediately (the fix)
-    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert — message was flushed during the BestEffort call, not deferred
     await Assert.That(disposableCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -411,13 +411,13 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Simulate a typical request: multiple publishes via BestEffort
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert — each BestEffort call flushed immediately
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(3)
@@ -1248,7 +1248,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     );
 
     // Act - flush with empty queues
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -1279,7 +1279,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - OutboxWork was returned and logged
     await Assert.That(result.OutboxWork).Count().IsGreaterThan(0);
@@ -1493,7 +1493,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestInboxMessage(sut);
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1522,7 +1522,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1545,7 +1545,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "test error");
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -1599,7 +1599,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchOptions.None);
+    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - should have logged returned work items (up to 3)
     await Assert.That(result.OutboxWork).Count().IsEqualTo(4);

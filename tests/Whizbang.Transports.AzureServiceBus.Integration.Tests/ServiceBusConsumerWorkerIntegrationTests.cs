@@ -528,7 +528,11 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       _onFlush?.Invoke(null);
 
       if (_pendingMessage != null) {
@@ -577,7 +581,11 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       _onFlush();
 
       if (_pendingMessage != null) {
@@ -629,7 +637,11 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+      return FlushAndGetBatchAsync(flags, ct);
+    }
+
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return Task.FromResult(new WorkBatch {
         InboxWork = [],
         OutboxWork = [],

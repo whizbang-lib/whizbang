@@ -274,13 +274,13 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
     try {
       // Start first flush (which will take 300ms due to slow coordinator)
-      var firstFlushTask = sut.FlushAsync(WorkBatchOptions.None);
+      var firstFlushTask = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Give the first flush a moment to set _flushing = true
       await Task.Delay(50);
 
       // Second flush should detect concurrent flush in progress
-      var secondResult = await sut.FlushAsync(WorkBatchOptions.None);
+      var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - second result is empty (concurrent flush returns empty)
       await Assert.That(secondResult.OutboxWork.Count).IsEqualTo(0)
@@ -310,7 +310,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
     try {
       // Act - flush with nothing queued
-      var result = await sut.FlushAsync(WorkBatchOptions.None);
+      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(result.OutboxWork.Count).IsEqualTo(0);
@@ -340,7 +340,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - LogIntervalFlush and LogIntervalFlushCompleted
       await Assert.That(logger.Messages.Any(m => m.Contains("outbox") || m.Contains("flush"))).IsTrue()
@@ -506,7 +506,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "inbox error");
 
       // Flush to exercise LogIntervalFlush and LogIntervalFlushCompleted
-      await sut.FlushAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - at minimum we should have log messages
       await Assert.That(logger.Messages.Count).IsGreaterThan(0)
