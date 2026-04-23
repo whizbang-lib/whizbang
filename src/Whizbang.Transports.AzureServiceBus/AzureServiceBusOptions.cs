@@ -129,6 +129,30 @@ public class AzureServiceBusOptions {
   public int MaxConcurrentSessions { get; set; } = 200;
 
   /// <summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
+  /// Maximum time a session processor will wait for a new message in the currently-held session
+  /// before releasing the session and accepting a different one. Only applies when
+  /// <see cref="EnableSessions"/> is true.
+  /// <para>
+  /// The Azure SDK default is 60 seconds. For fan-out workloads (one event per stream × many
+  /// streams) this produces a 60-second plateau after every batch of concurrent sessions: each
+  /// session receives its single message, processes it, then <em>holds the concurrency slot idle
+  /// for the full 60 s</em> waiting for a second message that will never arrive. No new sessions
+  /// can be accepted until the wait expires.
+  /// </para>
+  /// <para>
+  /// Defaulted to 1 second: fan-out sessions release almost immediately; bulk-import sessions
+  /// (where a single stream may receive many messages in a short burst) still hold the session
+  /// long enough that the next message keeps the session alive. Tune higher (5–30 s) only if
+  /// your workload has sustained multi-message bursts within a single stream separated by gaps
+  /// of a few seconds.
+  /// </para>
+  /// Default: 1 second
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
+  public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(1);
+
+  /// <summary>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
   /// Number of messages the client buffers locally ahead of processing, <b>per session receiver</b>
   /// (session mode) or per processor (non-session mode). Without prefetch (count = 0), every message
