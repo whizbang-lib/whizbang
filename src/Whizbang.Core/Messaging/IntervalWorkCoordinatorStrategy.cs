@@ -216,6 +216,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// timer tick. Use for cascade-to-outbox and routed publish/send paths that do not consume
   /// the WorkBatch.
   /// </summary>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_FlushAsync_WithQueuedMessages_DefersToTimer_NoDbCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeFlushTests.cs</tests>
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
@@ -229,6 +232,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// Forces an immediate flush and returns the resulting WorkBatch. Bypasses the interval timer.
   /// Use for dedup callers that must consume the WorkBatch, or for end-of-scope drains.
   /// </summary>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_FlushAndGetBatchAsync_WithQueuedMessages_FlushesImmediately_BypassesTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {

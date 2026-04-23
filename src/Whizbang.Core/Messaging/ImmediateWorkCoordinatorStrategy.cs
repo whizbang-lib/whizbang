@@ -126,6 +126,8 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// <summary>
   /// Immediately flushes all queued operations to the work coordinator and returns the work batch.
   /// </summary>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
   public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {

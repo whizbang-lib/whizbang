@@ -231,6 +231,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// debounce timer or batch-size trigger (whichever fires first). Use for cascade-to-outbox
   /// and routed publish/send paths that do not consume the WorkBatch.
   /// </summary>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
@@ -244,6 +246,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// Forces an immediate flush and returns the resulting WorkBatch. Bypasses the debounce window
   /// and batch-size trigger. Use for dedup callers that must consume the WorkBatch, or end-of-scope drains.
   /// </summary>
+  /// <docs>data/work-coordinator-strategies</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
