@@ -344,13 +344,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // Parallelize across stream groups. ServiceBusSender is thread-safe, and each group's
     // ServiceBusMessageBatch is built/sent independently. Per-group logic stays serial so
-    // Session semantics (fill-batch-then-send) are preserved. MaxDegreeOfParallelism=8
-    // matches the bounded concurrency used elsewhere in the coordination layer.
+    // Session semantics (fill-batch-then-send) are preserved. Concurrency is bounded by
+    // AzureServiceBusOptions.PublishMaxConcurrency (default 200) — see XML doc for tuning.
     var concurrentResults = new System.Collections.Concurrent.ConcurrentBag<BulkPublishItemResult>();
 
     await Parallel.ForEachAsync(
       streamGroups,
-      new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
+      new ParallelOptions { MaxDegreeOfParallelism = _options.PublishMaxConcurrency, CancellationToken = cancellationToken },
       async (streamGroup, ct) => {
         var groupItems = streamGroup.ToList();
         var localResults = new List<BulkPublishItemResult>(groupItems.Count);
