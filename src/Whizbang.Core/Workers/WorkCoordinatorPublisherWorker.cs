@@ -1333,10 +1333,13 @@ public partial class WorkCoordinatorPublisherWorker(
         };
 
         // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern).
-        // Scheduled via BackgroundStageDispatch so detached-stage dispatch runs on a dedicated
-        // thread and cannot be starved when ThreadPool is saturated by other pipeline work
-        // (perspective PostLifecycle, EF continuations, RabbitMQ callbacks, etc.).
-        _ = BackgroundStageDispatch.StartLongRunning(async () => {
+        // Using Task.Run here rather than BackgroundStageDispatch.StartLongRunning: starting
+        // the detached body on a dedicated thread was observed to delay the inline InvokeAsync
+        // on the current thread under CI load (the inversion surfaced in the
+        // InboxStages_FireInCorrectOrder_AllStagesInvokedAsync regression). PerspectiveWorker's
+        // PostLifecycle helper still uses LongRunning because that path is long-running work
+        // — this one is a short, shallow invocation that's fine on the ThreadPool.
+        _ = Task.Run(async () => {
           try {
             await using var detachedScope = _scopeFactory.CreateAsyncScope();
             await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
