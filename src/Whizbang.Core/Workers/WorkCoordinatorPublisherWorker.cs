@@ -1332,25 +1332,35 @@ public partial class WorkCoordinatorPublisherWorker(
           AttemptNumber = work.Attempts
         };
 
-        // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern)
-        _ = Task.Run(async () => {
-          try {
-            await using var detachedScope = _scopeFactory.CreateAsyncScope();
-            await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
-            var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
-            if (detachedInvoker is null) {
-              return;
+        // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern).
+        // LongRunning uses a dedicated thread rather than a pooled worker so detached-stage
+        // dispatch can't be starved when the ThreadPool is saturated by other pipeline work
+        // (perspective PostLifecycle, EF continuations, RabbitMQ callbacks). The body is
+        // short-lived — scope + security-context + receptor invocation — but it must make
+        // progress or the downstream receptor never fires, which is how we observed
+        // Inbox*Detached stages sitting un-serviced past a 120s test deadline.
+        _ = Task.Factory.StartNew(
+          async () => {
+            try {
+              await using var detachedScope = _scopeFactory.CreateAsyncScope();
+              await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
+              var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+              if (detachedInvoker is null) {
+                return;
+              }
+              var ctx = lifecycleContext with { CurrentStage = detachedStage };
+              await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, cancellationToken);
+              await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+                ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+              // Graceful shutdown
+            } catch (Exception ex) {
+              LogInboxLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
             }
-            var ctx = lifecycleContext with { CurrentStage = detachedStage };
-            await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, cancellationToken);
-            await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-              ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
-          } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-            // Graceful shutdown
-          } catch (Exception ex) {
-            LogInboxLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
-          }
-        }, cancellationToken);
+          },
+          cancellationToken,
+          TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+          TaskScheduler.Default).Unwrap();
 
         // Inline: blocks until complete
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
