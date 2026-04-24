@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -121,14 +122,34 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       return;
     }
 
-    // Deduplicate perspectives by (PerspectiveClassName, MessageTypeName)
-    // This prevents "ON CONFLICT DO UPDATE command cannot affect row a second time" errors
+    // Deduplicate perspectives by (PerspectiveClassName, MessageTypeName), then sort deterministically.
+    // Sort order must be stable across rebuilds so the hash below is reproducible.
     var uniquePerspectives = perspectives
         .Distinct()
+        .OrderBy(p => p.PerspectiveClrTypeName, StringComparer.Ordinal)
+        .ThenBy(p => p.MessageTypeName, StringComparer.Ordinal)
         .ToImmutableArray();
 
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
+
+    // Compute SHA256 over the canonical (sorted) tuple form for drift detection at startup.
+    // Includes ServiceName (assembly name) so a rename would also trip re-registration.
+    var canonical = new StringBuilder();
+    foreach (var p in uniquePerspectives) {
+      canonical.Append(p.MessageTypeName).Append('|')
+               .Append("perspective").Append('|')
+               .Append(p.PerspectiveClrTypeName).Append('|')
+               .Append(assemblyName).Append('\n');
+    }
+    byte[] hashBytes;
+    using (var sha = SHA256.Create()) {
+      hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString()));
+    }
+    var associationsHash = new StringBuilder(hashBytes.Length * 2);
+    foreach (var b in hashBytes) {
+      associationsHash.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+    }
 
     // Load template
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -175,6 +196,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     // Replace placeholders
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
     template = template.Replace("__ASSOCIATION_COUNT__", associationCount.ToString(CultureInfo.InvariantCulture));
+    template = template.Replace("__ASSOCIATIONS_HASH__", associationsHash.ToString());
 
     context.AddSource("EFCorePerspectiveAssociations.g.cs", template);
 
