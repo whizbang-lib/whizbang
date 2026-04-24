@@ -1288,8 +1288,13 @@ public partial class WorkCoordinatorPublisherWorker(
       cancellationToken
     );
 
+    // POST-inbox lands AFTER event storage, which is also when PerspectiveWorker starts its drain
+    // cycle and saturates the ThreadPool via awaited continuations. Dispatch detached work on a
+    // dedicated thread (LongRunning) so it can't be starved; PRE-inbox fires earlier and is fine
+    // on the pool.
     await _invokeInboxLifecycleStagesAsync(workToProcess, receptorInvoker,
-      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline, "PostInbox", cancellationToken);
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline, "PostInbox", cancellationToken,
+      useLongRunningForDetached: true);
 
     // Fire PostAllPerspectives and PostLifecycle for commands and events with no perspectives.
     // For events WITH perspectives, PerspectiveWorker fires these stages after perspective processing completes.
@@ -1312,7 +1317,8 @@ public partial class WorkCoordinatorPublisherWorker(
   private async Task _invokeInboxLifecycleStagesAsync(
     List<InboxWork> workToProcess, IReceptorInvoker? receptorInvoker,
     LifecycleStage detachedStage, LifecycleStage inlineStage,
-    string stageName, CancellationToken cancellationToken) {
+    string stageName, CancellationToken cancellationToken,
+    bool useLongRunningForDetached = false) {
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
       return;
     }
@@ -1332,8 +1338,18 @@ public partial class WorkCoordinatorPublisherWorker(
           AttemptNumber = work.Attempts
         };
 
-        // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern)
-        _ = Task.Run(async () => {
+        // Detached: fire-and-forget with own DI scope (consistent with TransportConsumerWorker pattern).
+        // PRE-inbox detached is fine on the ThreadPool (Task.Run) — it fires before event storage
+        // wakes PerspectiveWorker, so pool has spare capacity. POST-inbox detached lands AFTER
+        // events are stored, which is also when PerspectiveWorker starts its drain cycle and
+        // begins consuming pool threads via awaited continuations. Under that pressure the
+        // ThreadPool-queued Task.Run never got serviced within the test deadline. For POST we
+        // use BackgroundStageDispatch.StartLongRunning so the dispatch runs on a dedicated
+        // thread regardless of pool pressure.
+        Func<Func<Task>, CancellationToken, Task> scheduler = useLongRunningForDetached
+          ? (body, ct) => BackgroundStageDispatch.StartLongRunning(body, ct)
+          : (body, ct) => Task.Run(body, ct);
+        _ = scheduler(async () => {
           try {
             await using var detachedScope = _scopeFactory.CreateAsyncScope();
             await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);

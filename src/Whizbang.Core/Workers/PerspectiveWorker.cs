@@ -831,7 +831,10 @@ public partial class PerspectiveWorker(
       var bgIsNew = batchIsNewByEventId;
       var bgCoordinator = lifecycleCoordinator;
       var bgCt = cancellationToken;
-      _pendingPostLifecycle = Task.Run(async () => {
+      // Scheduled via BackgroundStageDispatch so PostLifecycle receptors run on a dedicated
+      // thread rather than a ThreadPool worker (see helper XML docs for the starvation scenario
+      // this prevents under CI / low-core load).
+      _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
         await using var bgScope = _scopeFactory.CreateAsyncScope();
         var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
         await _firePostLifecycleDetached(

@@ -26,6 +26,13 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 /// </summary>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
+  // SHA256 digest of the canonical set of (MessageType, AssociationType, TargetName, ServiceName)
+  // tuples emitted by the perspective association generator. Used to detect when the set of
+  // perspective → event-type associations changes between builds — adding/removing an Apply
+  // method doesn't change perspective table DDL, so without this the fast-path hash check
+  // would skip the associations phase and wh_message_associations would go stale.
+  private static readonly string _associationsHash = __ASSOCIATIONS_HASH_EXPR__;
+  private const string _associationsHashKey = "associations:__DBCONTEXT_CLASS__";
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
   /// Creates core infrastructure tables, perspective tables, executes migrations, and adds constraints.
@@ -86,12 +93,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // ═══════════════════════════════════════════════════════════════════════════
         bool infraChanged;
         bool perspChanged;
+        bool associationsChanged;
 
         try {
           var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
-          (infraChanged, perspChanged) = _compareHashes(existingHashes);
+          (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
 
-          if (!infraChanged && !perspChanged) {
+          if (!infraChanged && !perspChanged && !associationsChanged) {
             if (logger is not null) {
               Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
             }
@@ -106,6 +114,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           // Fall through to slow path — the DDL will create the tracking tables.
           infraChanged = true;
           perspChanged = true;
+          associationsChanged = true;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -186,9 +195,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               spCmd.CommandText = "RELEASE SAVEPOINT hash_recheck";
               await spCmd.ExecuteNonQueryAsync(cancellationToken);
             }
-            (infraChanged, perspChanged) = _compareHashes(existingHashes);
+            (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
 
-            if (!infraChanged && !perspChanged) {
+            if (!infraChanged && !perspChanged && !associationsChanged) {
               await dbTransaction!.CommitAsync(cancellationToken);
               await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
               if (logger is not null) {
@@ -207,6 +216,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             } catch { /* best effort */ }
             infraChanged = true;
             perspChanged = true;
+            associationsChanged = true;
           }
 
           // Set command timeout to 10 minutes for DDL operations.
@@ -255,12 +265,28 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             phases.Add(("Constraints", 0, "skipped (hash match)"));
           }
 
-          if (infraChanged || perspChanged) {
-            // Step 5: Register perspective associations (populates wh_message_associations for event routing)
+          if (infraChanged || perspChanged || associationsChanged) {
+            // Step 5: Register perspective associations (populates wh_message_associations for event routing).
+            // Gated additionally on associationsChanged so adding/removing an Apply(TEvent) method on a
+            // perspective triggers re-registration even when perspective table DDL is unchanged.
             logger?.LogDebug("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
             phaseSw.Restart();
             #region REGISTER_ASSOCIATIONS
             #endregion
+            // Record the current associations-set hash so subsequent startups can short-circuit
+            // when nothing has changed. Resolves the version id lazily in case the infra phase
+            // was skipped (hash match on migrations, so _upsertVersionAsync wasn't called above).
+            if (_associationsHash.Length > 0) {
+              try {
+                var assocVersionId = await _upsertVersionAsync(connection, cancellationToken);
+                await _upsertMigrationAsync(
+                    connection, _associationsHashKey, _associationsHash, assocVersionId,
+                    status: 1, desc: "Associations registered",
+                    executionOrder: 9000, owner: "association", cancellationToken);
+              } catch (Exception ex) {
+                logger?.LogDebug(ex, "Could not record associations hash row — tracking tables may be unavailable");
+              }
+            }
             phases.Add(("Associations", phaseSw.ElapsedMilliseconds, "completed"));
 
             // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
@@ -395,15 +421,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
   /// <summary>
   /// Compares existing per-object hashes against build-time hashes.
-  /// Partitions by owner column to determine infrastructure vs perspective changes independently.
+  /// Partitions by owner column to determine infrastructure vs perspective vs association changes independently.
   /// </summary>
-  private static (bool InfraChanged, bool PerspChanged) _compareHashes(
+  private static (bool InfraChanged, bool PerspChanged, bool AssociationsChanged) _compareHashes(
       System.Collections.Generic.List<(string FileName, string Hash, string Owner)> existingRows) {
     var infraHashes = new System.Collections.Generic.Dictionary<string, string>();
     var perspHashes = new System.Collections.Generic.Dictionary<string, string>();
+    var associationHashes = new System.Collections.Generic.Dictionary<string, string>();
     foreach (var (fileName, hash, owner) in existingRows) {
       if (owner == "perspective") {
         perspHashes[fileName] = hash;
+      } else if (owner == "association") {
+        associationHashes[fileName] = hash;
       } else {
         infraHashes[fileName] = hash;
       }
@@ -435,7 +464,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
-    return (infraChanged, perspChanged);
+    // Compare the perspective-association set hash. Missing row (first run or pre-hash DBs)
+    // or mismatched hash both count as changed. Skip entirely when this DbContext has no
+    // associations (empty hash) to avoid tripping on no-op.
+    var associationsChanged = false;
+    if (_associationsHash.Length > 0) {
+      if (!associationHashes.TryGetValue(_associationsHashKey, out var existingAssocHash)
+          || existingAssocHash != _associationsHash) {
+        associationsChanged = true;
+      }
+    }
+
+    return (infraChanged, perspChanged, associationsChanged);
   }
 
   /// <summary>

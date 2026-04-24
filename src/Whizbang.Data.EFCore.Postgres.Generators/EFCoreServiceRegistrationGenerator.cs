@@ -1833,16 +1833,23 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Replace REGISTER_ASSOCIATIONS region with call to RegisterPerspectiveAssociationsAsync
       // Only generate the call if this DbContext has matching perspectives (otherwise the extension method won't exist)
       string registerAssociationsCode;
+      string associationsHashExpr;
       if (matchingPerspectives.Count > 0) {
         registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken);";
+        // Reference the AssociationsHash constant emitted by EFCorePerspectiveAssociationGenerator
+        // in this same assembly. Using the generated const avoids recomputing the hash here.
+        associationsHashExpr = $"global::{assemblyName}.Generated.EFCorePerspectiveAssociationExtensions.AssociationsHash";
       } else {
         registerAssociationsCode = "// No perspectives found for this DbContext - skipping association registration";
+        // Empty hash disables the associations-drift flag for DbContexts that own no perspectives.
+        associationsHashExpr = "\"\"";
       }
       template = TemplateUtilities.ReplaceRegion(
           template,
           "REGISTER_ASSOCIATIONS",
           registerAssociationsCode
       );
+      template = template.Replace("__ASSOCIATIONS_HASH_EXPR__", associationsHashExpr);
 
       // Generate perspective registry JSON for CLR type → table name tracking
       string perspectiveRegistryJson = _generatePerspectiveRegistryJson(matchingPerspectives, assemblyName);
