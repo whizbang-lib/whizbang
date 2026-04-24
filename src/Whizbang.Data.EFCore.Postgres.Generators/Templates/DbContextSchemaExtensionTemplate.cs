@@ -30,7 +30,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // tuples emitted by the perspective association generator. Used to detect when the set of
   // perspective → event-type associations changes between builds — adding/removing an Apply
   // method doesn't change perspective table DDL, so without this the fast-path hash check
-  // would skip Step 5 and wh_message_associations would go stale.
+  // would skip the associations phase and wh_message_associations would go stale.
   private static readonly string _associationsHash = __ASSOCIATIONS_HASH_EXPR__;
   private const string _associationsHashKey = "associations:__DBCONTEXT_CLASS__";
   /// <summary>
