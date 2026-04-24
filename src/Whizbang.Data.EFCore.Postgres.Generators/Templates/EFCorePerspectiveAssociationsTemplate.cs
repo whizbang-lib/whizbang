@@ -19,6 +19,13 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 public static class EFCorePerspectiveAssociationExtensions {
   /// <summary>
+  /// SHA256 hex digest of the canonical (sorted) set of (MessageType, AssociationType, TargetName, ServiceName) tuples.
+  /// Used by schema initialization to detect when the set of perspective → event type associations has changed
+  /// between builds, so wh_message_associations can be re-synced even when no perspective table DDL changed.
+  /// </summary>
+  public const string AssociationsHash = "__ASSOCIATIONS_HASH__";
+
+  /// <summary>
   /// Registers perspective → event type associations in the database.
   /// This enables the work coordinator to automatically create perspective checkpoints when events arrive.
   /// MUST be called during database initialization (after EnsureWhizbangDatabaseInitializedAsync).
