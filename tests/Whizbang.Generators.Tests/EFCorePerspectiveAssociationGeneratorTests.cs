@@ -484,4 +484,145 @@ namespace TestNamespace {
     await Assert.That(generatedSource).Contains("EventC")
       .Because("Custom IPerspectiveBase events must be in DB associations");
   }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // AssociationsHash emission — used by schema extension to detect drift in
+  // the set of (perspective, event) pairs between builds. Without this, the
+  // fast-path hash check at startup misses event-type additions/removals and
+  // wh_message_associations goes stale.
+  // ════════════════════════════════════════════════════════════════════════
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_EmitsAssociationsHashConstantAsync() {
+    const string source = """
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestNamespace {
+        public record EventA : IEvent;
+        public record EventB : IEvent;
+        public record Model;
+
+        public class Persp : IPerspectiveFor<Model, EventA, EventB> {
+          public Model Apply(Model c, EventA e) => c;
+          public Model Apply(Model c, EventB e) => c;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("AssociationsHash")
+      .Because("Generated class must expose an AssociationsHash constant for drift detection");
+
+    // Hash is 64 hex chars (SHA256) — locate the literal and validate shape
+    var match = System.Text.RegularExpressions.Regex.Match(
+      generatedSource!, @"AssociationsHash\s*=\s*""([0-9a-f]{64})""");
+    await Assert.That(match.Success).IsTrue()
+      .Because("AssociationsHash must be a 64-char lowercase hex SHA256 literal");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AssociationsHash_IsDeterministicAcrossDeclarationOrderAsync() {
+    // Two sources with the same perspectives but events declared in different orders
+    // should produce the same AssociationsHash — generator must sort canonically.
+    const string sourceOrderA = """
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestNamespace {
+        public record EventZ : IEvent;
+        public record EventA : IEvent;
+        public record Model;
+
+        public class Persp : IPerspectiveFor<Model, EventZ, EventA> {
+          public Model Apply(Model c, EventZ e) => c;
+          public Model Apply(Model c, EventA e) => c;
+        }
+      }
+      """;
+
+    const string sourceOrderB = """
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestNamespace {
+        public record EventA : IEvent;
+        public record EventZ : IEvent;
+        public record Model;
+
+        public class Persp : IPerspectiveFor<Model, EventA, EventZ> {
+          public Model Apply(Model c, EventA e) => c;
+          public Model Apply(Model c, EventZ e) => c;
+        }
+      }
+      """;
+
+    var resultA = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(sourceOrderA);
+    var resultB = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(sourceOrderB);
+
+    var sourceA = GeneratorTestHelper.GetGeneratedSource(resultA, "EFCorePerspectiveAssociations.g.cs");
+    var sourceB = GeneratorTestHelper.GetGeneratedSource(resultB, "EFCorePerspectiveAssociations.g.cs");
+
+    var pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
+    var hashA = System.Text.RegularExpressions.Regex.Match(sourceA!, pattern).Groups[1].Value;
+    var hashB = System.Text.RegularExpressions.Regex.Match(sourceB!, pattern).Groups[1].Value;
+
+    await Assert.That(hashA).IsNotEmpty();
+    await Assert.That(hashA).IsEqualTo(hashB)
+      .Because("Hash must be stable regardless of perspective declaration order");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AssociationsHash_ChangesWhenEventTypeAddedAsync() {
+    const string sourceOneEvent = """
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestNamespace {
+        public record EventA : IEvent;
+        public record Model;
+
+        public class Persp : IPerspectiveFor<Model, EventA> {
+          public Model Apply(Model c, EventA e) => c;
+        }
+      }
+      """;
+
+    const string sourceTwoEvents = """
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestNamespace {
+        public record EventA : IEvent;
+        public record EventB : IEvent;
+        public record Model;
+
+        public class Persp : IPerspectiveFor<Model, EventA, EventB> {
+          public Model Apply(Model c, EventA e) => c;
+          public Model Apply(Model c, EventB e) => c;
+        }
+      }
+      """;
+
+    var resultOne = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(sourceOneEvent);
+    var resultTwo = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(sourceTwoEvents);
+
+    var sourceOne = GeneratorTestHelper.GetGeneratedSource(resultOne, "EFCorePerspectiveAssociations.g.cs");
+    var sourceTwo = GeneratorTestHelper.GetGeneratedSource(resultTwo, "EFCorePerspectiveAssociations.g.cs");
+
+    var pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
+    var hashOne = System.Text.RegularExpressions.Regex.Match(sourceOne!, pattern).Groups[1].Value;
+    var hashTwo = System.Text.RegularExpressions.Regex.Match(sourceTwo!, pattern).Groups[1].Value;
+
+    await Assert.That(hashOne).IsNotEmpty();
+    await Assert.That(hashTwo).IsNotEmpty();
+    await Assert.That(hashOne).IsNotEqualTo(hashTwo)
+      .Because("Adding an event type to a perspective must change AssociationsHash so startup re-registers");
+  }
 }
