@@ -549,6 +549,10 @@ function Publish-NuGetPackages {
 
 # --- End helper functions ---
 
+# Capture the shell cwd at invocation time — needed for .sonarqube cleanup
+# before we Push-Location into the repo root for the build phase.
+$scriptInvocationDir = (Get-Location).Path
+
 # Find repo root
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) {
@@ -805,6 +809,15 @@ $publishTime = [TimeSpan]::Zero
 $publishFailed = $false
 $publishResult = $null
 
+# Run dotnet from the repo root so $(MSBuildStartupDirectory) is deterministic.
+# The global SonarQube.Integration.ImportBefore.targets (installed under
+# ~/.local/share/Microsoft/MSBuild/*/ImportBefore/) probes
+# $(MSBuildStartupDirectory)/.sonarqube/conf/SonarQubeAnalysisConfig.xml. If the
+# script is invoked from a parent dir that has stale .sonarqube/ (e.g. ~/src/),
+# every csc call gets poisoned with <Analyzer> references to temp DLLs.
+Push-Location $repoRoot
+try {
+
 # Clean before building to prevent stale DLLs from being packed (opt-in)
 if ($CleanBuild) {
     Write-Host "Cleaning build output to prevent stale artifacts..." -ForegroundColor Cyan
@@ -812,6 +825,20 @@ if ($CleanBuild) {
     if ($slnFile) {
         dotnet clean $slnFile.FullName -c $Configuration --verbosity quiet 2>&1 | Out-Null
     }
+
+    # Remove stale SonarScanner state from both the repo root and the shell cwd
+    # at the time the script was invoked. Sonar's ImportBefore target keys off
+    # $(MSBuildStartupDirectory), so leftovers in an ancestor dir still poison
+    # the build even after we Push-Location into the repo root.
+    $sonarCleanupDirs = @($repoRoot, $scriptInvocationDir) | Select-Object -Unique
+    foreach ($d in $sonarCleanupDirs) {
+        $sonarDir = Join-Path $d ".sonarqube"
+        if (Test-Path $sonarDir) {
+            Remove-Item $sonarDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Removed stale .sonarqube/ at $d" -ForegroundColor DarkGray
+        }
+    }
+
     $cleanTime = (Get-Date) - $cleanStart
     Write-Host "Clean completed in $([math]::Round($cleanTime.TotalSeconds, 1))s" -ForegroundColor DarkGray
 }
@@ -1047,4 +1074,8 @@ if (-not $NoCopy -and -not $hasFailed -and -not $Output) {
 
 if ($hasFailed) {
     exit 1
+}
+
+} finally {
+    Pop-Location
 }

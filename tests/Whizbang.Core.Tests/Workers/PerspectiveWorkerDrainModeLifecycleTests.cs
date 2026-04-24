@@ -239,7 +239,8 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       List<StreamEventData> rawEvents,
       List<MessageEnvelope<IEvent>> typedEvents,
       List<Guid> streamIds,
-      IReadOnlySet<LifecycleStage>? lifecycleStages = null) {
+      IReadOnlySet<LifecycleStage>? lifecycleStages = null,
+      IReceptorInvoker? customInvoker = null) {
 
     var coordinator = new DrainWorkCoordinator { StreamIdsToReturn = streamIds, StreamEventsToReturn = rawEvents };
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -251,6 +252,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var eventStore = new FakeEventStore { DeserializedEventsToReturn = typedEvents };
     var eventTypeProvider = new FakeEventTypeProvider([typeof(AlphaEvent), typeof(BetaEvent)]);
     var invoker = new CapturingReceptorInvoker();
+    var resolvedInvoker = customInvoker ?? (IReceptorInvoker)invoker;
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -259,7 +261,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     services.AddSingleton<IEventStore>(eventStore);
     services.AddSingleton<IEventTypeProvider>(eventTypeProvider);
     services.AddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
-    services.AddScoped<IReceptorInvoker>(_ => invoker);
+    services.AddScoped(_ => resolvedInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -280,7 +282,9 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
   private static async Task _runWorkerOneBatchAsync(PerspectiveWorker worker, DrainWorkCoordinator coordinator) {
     // Wait for the FULL batch cycle to complete (including Phase 5 PostLifecycle).
-    // OnBatchCycleComplete fires at the end of _processWorkBatchAsync, after all lifecycle stages.
+    // OnBatchCycleComplete fires at the end of _processWorkBatchAsync — since PostLifecycle
+    // is fire-and-forget, the pending PostLifecycle task is awaited AFTER that signal so
+    // tests can assert stages fired without relying on timing.
     var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var batchCount = 0;
     worker.OnBatchCycleComplete += () => {
@@ -293,6 +297,13 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     var workerTask = worker.StartAsync(cts.Token);
     await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Drain the fire-and-forget PostLifecycle task so HasStage assertions observe
+    // PostAllPerspectives / PostLifecycle stages after this helper returns.
+    if (worker.PendingPostLifecycle is { } pending) {
+      await pending.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
   }
@@ -654,6 +665,144 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     // Assert — processed successfully
     await Assert.That(invoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue();
+  }
+
+  // ========================================
+  // POST-LIFECYCLE FIRE-AND-FORGET CONTRACT
+  // ========================================
+
+  /// <summary>
+  /// Gated invoker: blocks on <paramref name="gate"/> for a specific stage, records invocations.
+  /// Used to prove PostLifecycle doesn't block the drain cycle.
+  /// </summary>
+  private sealed class GatedReceptorInvoker(LifecycleStage gatedStage, TaskCompletionSource gate, TaskCompletionSource started) : IReceptorInvoker {
+    private readonly ConcurrentBag<(Guid EventId, LifecycleStage Stage)> _invocations = [];
+    public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
+      _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage).ToList();
+    public bool HasStage(LifecycleStage stage) => _invocations.Any(i => i.Stage == stage);
+
+    public async ValueTask InvokeAsync(
+        IMessageEnvelope envelope,
+        LifecycleStage stage,
+        ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      if (stage == gatedStage) {
+        started.TrySetResult();
+        await gate.Task.WaitAsync(cancellationToken);
+      }
+      _invocations.Add((envelope.MessageId.Value, stage));
+    }
+  }
+
+  [Test]
+  public async Task DrainMode_PostLifecycle_IsFireAndForgetAfterBatchCompletesAsync() {
+    // Arrange — GatedReceptorInvoker blocks on PostLifecycleInline until test releases the gate.
+    // If PostLifecycle is fire-and-forget, the batch will complete while the invoker is still blocked.
+    // If PostLifecycle blocks the drain cycle, the batch would hang.
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("TestPerspective", "global::Test.TestPerspective", "global::Test.TestModel",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))])
+    };
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(streamId, eventId, typeof(AlphaEvent), """{"Data":"test"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(eventId, new AlphaEvent("test"))
+    };
+
+    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var invokerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var gatedInvoker = new GatedReceptorInvoker(LifecycleStage.PostLifecycleInline, gate, invokerStarted);
+
+    var (worker, coordinator, _, _, _, _) = _createWorkerWithLifecycle(
+      registrations, rawEvents, typedEvents, [streamId], customInvoker: gatedInvoker);
+
+    // Act — start the worker; DO NOT use _runWorkerOneBatchAsync (it would await pending PostLifecycle)
+    var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var batchCount = 0;
+    worker.OnBatchCycleComplete += () => {
+      if (Interlocked.Increment(ref batchCount) == 1) { batchComplete.TrySetResult(); }
+    };
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    var workerTask = worker.StartAsync(cts.Token);
+
+    // Wait for batch to finish its synchronous work (apply phase complete, PostLifecycle scheduled)
+    await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Wait for the gated invoker to actually begin — proves PostLifecycle was scheduled,
+    // not skipped. Without this, the test could pass vacuously (no background work scheduled).
+    await invokerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Assert — PostLifecycle is backgrounded: pending task exists and is NOT completed
+    // because the gated invoker is still blocked.
+    var pending = worker.PendingPostLifecycle;
+    await Assert.That(pending is not null).IsTrue()
+      .Because("Fire-and-forget should capture the background Task in _pendingPostLifecycle");
+    await Assert.That(pending!.IsCompleted).IsFalse()
+      .Because("Background task is still running because gated invoker is blocked; if the batch had awaited PostLifecycle this code could not execute");
+
+    // Release the gate and drain, then verify stages fired
+    gate.TrySetResult();
+    await pending.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(gatedInvoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue()
+      .Because("After releasing the gate, the stage should have been recorded");
+
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+  }
+
+  [Test]
+  public async Task GracefulShutdown_AwaitsPendingPostLifecycleAsync() {
+    // Arrange — receptor that records synchronously (no blocking). The test asserts the
+    // pending PostLifecycle task completed (whether by natural completion or via cancellation-
+    // triggered unwind) before ExecuteAsync returns — i.e. the shutdown path awaits it.
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("TestPerspective", "global::Test.TestPerspective", "global::Test.TestModel",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))])
+    };
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(streamId, eventId, typeof(AlphaEvent), """{"Data":"test"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(eventId, new AlphaEvent("test"))
+    };
+
+    var (worker, _, _, _, invoker, _) = _createWorkerWithLifecycle(
+      registrations, rawEvents, typedEvents, [streamId]);
+
+    var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var batchCount = 0;
+    worker.OnBatchCycleComplete += () => {
+      if (Interlocked.Increment(ref batchCount) == 1) { batchComplete.TrySetResult(); }
+    };
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    await worker.StartAsync(cts.Token);
+    await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Capture the pending PostLifecycle task reference BEFORE shutdown so we can assert on it later
+    var pendingAtShutdown = worker.PendingPostLifecycle;
+    await Assert.That(pendingAtShutdown is not null).IsTrue()
+      .Because("Post-batch, _pendingPostLifecycle must hold the fire-and-forget task");
+
+    // Act — trigger shutdown. StopAsync signals cancellation AND awaits ExecuteAsync's
+    // completion (BackgroundService.StartAsync returns Task.CompletedTask on async paths,
+    // so StopAsync is the only way to actually wait for the worker to drain).
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — the pending task completed (the drain path awaited it). "Completed" here includes
+    // cancellation-triggered completion; the contract is that ExecuteAsync doesn't leave an
+    // in-flight PostLifecycle task dangling for the host to dispose out from under.
+    await Assert.That(pendingAtShutdown!.IsCompleted).IsTrue()
+      .Because("Graceful shutdown must await _pendingPostLifecycle so it can't outlive scoped-service disposal");
+    await Assert.That(worker.PendingPostLifecycle is null).IsTrue()
+      .Because("Shutdown drain clears _pendingPostLifecycle via Interlocked.Exchange");
   }
 }
 

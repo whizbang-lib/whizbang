@@ -194,6 +194,26 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
+  public async Task SessionIdleTimeout_DefaultsToOneSecondAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(1))
+      .Because("Azure SDK default is 60s, which produces 60s plateaus on fan-out workloads (each session holds its concurrency slot idle for the full timeout waiting for a second message that never arrives). 1s releases sessions almost immediately while still keeping multi-message bursts within a stream alive.");
+  }
+
+  [Test]
+  public async Task PublishMaxConcurrency_DefaultsTo200Async() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.PublishMaxConcurrency).IsEqualTo(200)
+      .Because("Matches MaxConcurrentSessions for producer/consumer parity. Fan-out of 7,894 unique StreamIds / 200 parallel batches = 40 sequential publish cycles (~10s at 250ms/cycle). The previous hardcoded 8 produced 987 cycles (~4 minutes) which was the dominant ASB cloud bottleneck.");
+  }
+
+  [Test]
   public async Task Capabilities_WithoutEnableSessions_ExcludesOrderedAsync() {
     // Arrange
     var options = new AzureServiceBusOptions { EnableSessions = false };

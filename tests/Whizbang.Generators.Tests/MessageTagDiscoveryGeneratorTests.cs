@@ -436,6 +436,48 @@ public class MessageTagDiscoveryGeneratorTests {
   }
 
   /// <summary>
+  /// Pins the fix for the AttributeFactory silently dropping init-only / named-argument
+  /// properties. Before the fix, the emitted factory looked like
+  /// <c>() => new MyAttribute() { Tag = "foo" }</c> even when the source declaration was
+  /// <c>[MyAttribute("foo", Scope = SomeEnum.Tenant)]</c>, so <c>Scope</c> came back as the
+  /// CLR default at runtime. This test verifies named arguments are now propagated into
+  /// the object initializer as typed literals (enums emitted as <c>((EnumType)value)</c>).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_AttributeFactory_PreservesInitOnlyNamedArgumentsAsync() {
+    // Arrange — custom tag attribute with an init-only enum property. Mirrors the shape
+    // of JDNext's NotificationTagAttribute that surfaced this bug.
+    const string source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public enum DeliveryScope { User = 0, Tenant = 1 }
+
+            [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
+            public class DeliveryTagAttribute : MessageTagAttribute {
+              public DeliveryScope Scope { get; init; } = DeliveryScope.User;
+            }
+
+            [DeliveryTag(Tag = "bulk-updates", Scope = DeliveryScope.Tenant)]
+            public record BulkUpdateEvent(Guid Id);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert — the emitted AttributeFactory must set Scope alongside Tag.
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("Tag = \"bulk-updates\"");
+    // Scope set via enum literal: ((global::TestApp.DeliveryScope)1). The exact form comes
+    // from _typedConstantToCSharpLiteral's enum branch in MessageTagDiscoveryGenerator.
+    await Assert.That(code!).Contains("Scope = (global::TestApp.DeliveryScope)(1)");
+  }
+
+  /// <summary>
   /// Test that custom attribute types are discovered and handled.
   /// </summary>
   [Test]
