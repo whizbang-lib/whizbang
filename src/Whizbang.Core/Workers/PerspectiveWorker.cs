@@ -125,6 +125,19 @@ public partial class PerspectiveWorker(
   private readonly SemaphoreSlim _pollWakeSignal = new(0, 1);
   private int _wakeSignaled;  // Guard to prevent SemaphoreFullException on redundant wake calls
 
+  // PostLifecycle runs fire-and-forget in a dedicated scope so the next drain cycle's
+  // claim/apply phases can overlap with the prior cycle's PostLifecycle handlers. The
+  // next cycle awaits this task before firing its own PostLifecycle so invocations
+  // remain ordered. On shutdown, ExecuteAsync awaits this task to drain.
+  private Task? _pendingPostLifecycle;
+
+  /// <summary>
+  /// Test-only accessor for the in-flight PostLifecycle task. Tests that assert
+  /// PostLifecycle stages fired for a batch should await this (when non-null) after
+  /// <see cref="OnBatchCycleComplete"/> signals to observe the background stages.
+  /// </summary>
+  internal Task? PendingPostLifecycle => _pendingPostLifecycle;
+
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
   /// Resets to 0 when database becomes ready.
@@ -224,36 +237,51 @@ public partial class PerspectiveWorker(
       workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
     }
 
-    while (!stoppingToken.IsCancellationRequested) {
-      try {
-        if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
-          Interlocked.Exchange(ref _wakeSignaled, 0);
-          continue;
+    try {
+      while (!stoppingToken.IsCancellationRequested) {
+        try {
+          if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
+            await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+            Interlocked.Exchange(ref _wakeSignaled, 0);
+            continue;
+          }
+
+          await _processWorkBatchAsync(stoppingToken);
+          _periodicStaleTrackingCleanup();
+          await _periodicGatherStatisticsAsync(stoppingToken);
+        } catch (ObjectDisposedException) {
+          break;
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          LogErrorProcessingCheckpoints(_logger, ex);
+          throw; // Never swallow exceptions
         }
 
-        await _processWorkBatchAsync(stoppingToken);
-        _periodicStaleTrackingCleanup();
-        await _periodicGatherStatisticsAsync(stoppingToken);
-      } catch (ObjectDisposedException) {
-        break;
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingCheckpoints(_logger, ex);
-        throw; // Never swallow exceptions
+        try {
+          // Fast polling: when actively processing work (not idle), use shorter delay
+          // to keep drain mode responsive without starving threads (unlike Task.Yield).
+          // Normal polling: wait for the full polling interval or an external wake signal.
+          var pollingDelay = _isIdle
+            ? _options.PollingIntervalMilliseconds
+            : 50; // 20 ticks/sec during active processing
+
+          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(pollingDelay), stoppingToken);
+          Interlocked.Exchange(ref _wakeSignaled, 0);
+        } catch (OperationCanceledException) {
+          break;
+        }
       }
-
-      try {
-        // Fast polling: when actively processing work (not idle), use shorter delay
-        // to keep drain mode responsive without starving threads (unlike Task.Yield).
-        // Normal polling: wait for the full polling interval or an external wake signal.
-        var pollingDelay = _isIdle
-          ? _options.PollingIntervalMilliseconds
-          : 50; // 20 ticks/sec during active processing
-
-        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(pollingDelay), stoppingToken);
-        Interlocked.Exchange(ref _wakeSignaled, 0);
-      } catch (OperationCanceledException) {
-        break;
+    } finally {
+      // Graceful shutdown: drain any in-flight PostLifecycle task so background work
+      // completes before the host disposes scoped services (DbContext, etc.) out from
+      // under it. Stage guards ensure idempotence if the task already finished.
+      // `finally` so OCE propagating out of the loop still runs the drain.
+      var finalPending = Interlocked.Exchange(ref _pendingPostLifecycle, null);
+      if (finalPending is not null) {
+        try {
+          await finalPending;
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          LogPriorPostLifecycleFaulted(_logger, ex);
+        }
       }
     }
 
@@ -773,15 +801,56 @@ public partial class PerspectiveWorker(
         }
       });
 
-    // Phase 5: Fire PostLifecycle once per unique event — ONLY after ALL perspectives complete (WhenAll)
-    await _firePostLifecycleDetached(
-      batchProcessedEvents, lifecycleCoordinator, receptorInvoker, groupedWork,
-      scope.ServiceProvider, cancellationToken, batchIsNewByEventId);
+    // Phase 5: Fire PostLifecycle once per unique event — ONLY after ALL perspectives complete (WhenAll).
+    // Fire-and-forget in a dedicated scope so the NEXT cycle's claim+apply can overlap with
+    // THIS cycle's PostLifecycle handlers (outbox fan-out, user receptors, etc.). Prior cycle's
+    // PostLifecycle is awaited first to keep invocations ordered.
+    //
+    // Empty-cycle optimization: when no events were processed this cycle, leave the prior
+    // cycle's pending task intact so subsequent empty polls don't thrash the field (and so
+    // tests observing the prior task after the batch-complete signal see a stable value).
+    if (!batchProcessedEvents.IsEmpty) {
+      var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
+      if (priorPostLifecycle is not null) {
+        try {
+          await priorPostLifecycle;
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          // Prior-cycle PostLifecycle failure must not break this cycle. The stage-guard
+          // HashSet in LifecycleTrackingState ensures exactly-once; retry semantics for any
+          // genuinely failed handlers live in the coordinator, not here.
+          LogPriorPostLifecycleFaulted(_logger, ex);
+        }
+      }
+
+      // Capture everything the background task needs so the outer scope can dispose.
+      // LifecycleCoordinator is a singleton (ServiceCollectionExtensions.cs:201) so passing
+      // the reference across scopes is safe. IReceptorInvoker is scoped, so the background
+      // task resolves a fresh one from its own scope.
+      var bgProcessedEvents = batchProcessedEvents;
+      var bgGroupedWork = groupedWork;
+      var bgIsNew = batchIsNewByEventId;
+      var bgCoordinator = lifecycleCoordinator;
+      var bgCt = cancellationToken;
+      _pendingPostLifecycle = Task.Run(async () => {
+        await using var bgScope = _scopeFactory.CreateAsyncScope();
+        var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
+        await _firePostLifecycleDetached(
+          bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
+          bgScope.ServiceProvider, bgCt, bgIsNew);
+      }, cancellationToken);
+    }
 
     // Log summary and record batch-level metrics
     _logBatchSummary(completionsToSend, failuresToSend, workBatch);
     _metrics?.BatchesProcessed.Add(1);
     _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
+
+    // Debug-level cycle telemetry: drain-mode state + events processed + duration.
+    // Useful for diagnosing drain-mode ping-pong (cycle alternating between drain/legacy)
+    // and for correlating cycle cost with live perspective backlog in field debugging.
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
+    }
 
     // Signal batch cycle complete — all phases (drain/legacy + lifecycle + metrics) finished.
     // _updateWorkStateTracking already fired BEFORE parallel processing (line ~560); calling
@@ -2837,6 +2906,20 @@ public partial class PerspectiveWorker(
     Message = "Perspective rewind failed for {PerspectiveName} stream {StreamId} — trigger event {TriggerEventId}. Stream will retry on next cycle."
   )]
   static partial void LogRewindFailed(ILogger logger, Exception exception, string perspectiveName, Guid streamId, Guid triggerEventId);
+
+  [LoggerMessage(
+    EventId = 59,
+    Level = LogLevel.Warning,
+    Message = "Prior-cycle PostLifecycle faulted; current cycle continues. Stage guards ensure exactly-once semantics for any events that completed stages before the fault."
+  )]
+  static partial void LogPriorPostLifecycleFaulted(ILogger logger, Exception exception);
+
+  [LoggerMessage(
+    EventId = 60,
+    Level = LogLevel.Debug,
+    Message = "Drain cycle complete: drainMode={DrainModeActive} eventsProcessed={EventsProcessed} cycleDurationMs={CycleDurationMs}"
+  )]
+  static partial void LogDrainCycleComplete(ILogger logger, bool drainModeActive, int eventsProcessed, long cycleDurationMs);
 }
 
 /// <summary>

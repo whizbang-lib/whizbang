@@ -37,6 +37,48 @@ public class AzureServiceBusOptions {
   public int MaxConcurrentCalls { get; set; } = 200;
 
   /// <summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
+  /// How many stream groups are sent to Azure Service Bus in parallel during a batch publish.
+  /// Azure Service Bus requires all messages in a single <c>ServiceBusMessageBatch</c> to share
+  /// the same <c>SessionId</c>, so <see cref="ITransport.BulkPublishAsync"/> groups outgoing
+  /// messages by <c>StreamId</c> and sends one batch per group. This option controls how many
+  /// of those per-stream batches are flight-sent concurrently.
+  /// <para>
+  /// <b>Example:</b> With <c>PublishMaxConcurrency = 200</c> and a fan-out burst of 7,894 messages
+  /// across 7,894 unique StreamIds, 200 batches are sent in parallel. At ~250 ms per batch
+  /// round-trip, the burst drains in ~10 seconds (40 sequential cycles × 250 ms). A value of 8
+  /// would drain the same burst in ~4 minutes (987 cycles × 250 ms).
+  /// </para>
+  /// <para>
+  /// <b>Tuning guidance:</b>
+  /// <list type="bullet">
+  ///   <item><b>Fan-out workloads</b> (many unique StreamIds, one or few messages each): 200–500. Each stream is a separate batch round-trip, so parallelism directly multiplies throughput <em>up to the broker's ingest rate</em>.</item>
+  ///   <item><b>Bulk imports</b> (few streams, many messages each): 50–100 is sufficient. Batches fill up within a stream, so the batch size + <see cref="MaxDeliveryAttempts"/> do most of the work.</item>
+  ///   <item><b>ASB Standard tier:</b> the broker itself is typically the bottleneck before client parallelism saturates. Measured ceiling on fan-out under Standard is ~50–60 events/s sustained regardless of client MaxDOP; extra concurrency above ~16–32 produces <c>ServiceCommunicationProblem</c> / <c>SessionLockLost</c> retries rather than more throughput. A value of 200 is still safe (namespace caps connections at 1,000 across producers+consumers) but won't buy additional throughput beyond the TU limit. Consider 32–64 if retry churn is visible in your logs.</item>
+  ///   <item><b>ASB Premium tier:</b> much higher throughput units and connection caps; 200–500 is where the value of this option materializes.</item>
+  /// </list>
+  /// </para>
+  /// <para>
+  /// <b>Not to be confused with:</b>
+  /// <list type="bullet">
+  ///   <item><see cref="MaxConcurrentCalls"/> — consumer parallelism in non-session mode (receive-side)</item>
+  ///   <item><see cref="MaxConcurrentSessions"/> — consumer parallelism in session mode (receive-side)</item>
+  /// </list>
+  /// </para>
+  /// <para>
+  /// <b>Future work:</b> auto-tuning (adaptive sizing based on observed latency / broker
+  /// backpressure, Little's Law sizing) is not yet supported. .NET has no built-in
+  /// "auto-tune parallelism for I/O" API — <see cref="System.Threading.Tasks.ParallelOptions.MaxDegreeOfParallelism"/>
+  /// = -1 defaults to <see cref="System.Environment.ProcessorCount"/> which is a CPU-bound
+  /// heuristic unsuitable for AMQP sends. See the Whizbang plans/ directory for the design
+  /// sketch of an adaptive implementation.
+  /// </para>
+  /// Default: 200 (matches <see cref="MaxConcurrentSessions"/> for producer/consumer parity)
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#publish-concurrency</docs>
+  public int PublishMaxConcurrency { get; set; } = 200;
+
+  /// <summary>
   /// How long the client automatically renews the lock on a message while it is being processed.
   /// If processing takes longer than this duration, the lock expires and the broker may redeliver
   /// the message to another consumer (causing a duplicate).
@@ -127,6 +169,30 @@ public class AzureServiceBusOptions {
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
   public int MaxConcurrentSessions { get; set; } = 200;
+
+  /// <summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
+  /// Maximum time a session processor will wait for a new message in the currently-held session
+  /// before releasing the session and accepting a different one. Only applies when
+  /// <see cref="EnableSessions"/> is true.
+  /// <para>
+  /// The Azure SDK default is 60 seconds. For fan-out workloads (one event per stream × many
+  /// streams) this produces a 60-second plateau after every batch of concurrent sessions: each
+  /// session receives its single message, processes it, then <em>holds the concurrency slot idle
+  /// for the full 60 s</em> waiting for a second message that will never arrive. No new sessions
+  /// can be accepted until the wait expires.
+  /// </para>
+  /// <para>
+  /// Defaulted to 1 second: fan-out sessions release almost immediately; bulk-import sessions
+  /// (where a single stream may receive many messages in a short burst) still hold the session
+  /// long enough that the next message keeps the session alive. Tune higher (5–30 s) only if
+  /// your workload has sustained multi-message bursts within a single stream separated by gaps
+  /// of a few seconds.
+  /// </para>
+  /// Default: 1 second
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
+  public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
