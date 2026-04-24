@@ -831,13 +831,26 @@ public partial class PerspectiveWorker(
       var bgIsNew = batchIsNewByEventId;
       var bgCoordinator = lifecycleCoordinator;
       var bgCt = cancellationToken;
-      _pendingPostLifecycle = Task.Run(async () => {
-        await using var bgScope = _scopeFactory.CreateAsyncScope();
-        var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
-        await _firePostLifecycleDetached(
-          bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
-          bgScope.ServiceProvider, bgCt, bgIsNew);
-      }, cancellationToken);
+      // LongRunning spins a dedicated thread instead of a ThreadPool worker. PostLifecycle
+      // executes user-land receptors (outbox fan-out, notification hooks, audit emits —
+      // any of which may hit the DB or external services), and on constrained hosts
+      // (CI runners, low-core dev machines) using a pooled worker was observed to starve
+      // other ThreadPool-bound continuations — including WorkCoordinatorPublisherWorker's
+      // own fire-and-forget detached-stage dispatch, causing Inbox*Detached stages to sit
+      // queued past the test deadline. A dedicated thread here costs one OS thread per
+      // drain cycle (typically short-lived — the task completes as soon as receptors
+      // drain) in exchange for never blocking the pool.
+      _pendingPostLifecycle = Task.Factory.StartNew(
+        async () => {
+          await using var bgScope = _scopeFactory.CreateAsyncScope();
+          var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
+          await _firePostLifecycleDetached(
+            bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
+            bgScope.ServiceProvider, bgCt, bgIsNew);
+        },
+        cancellationToken,
+        TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+        TaskScheduler.Default).Unwrap();
     }
 
     // Log summary and record batch-level metrics
