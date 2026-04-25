@@ -90,7 +90,10 @@ public class InheritScopeAttributeTests {
     await Assert.That(attr.Always).IsEqualTo(ScopeFields.User);
   }
 
+  // Intentional non-perspective sample for reflection discovery — analyzer suppression.
+#pragma warning disable WHIZ400
   [InheritScope(OnCreate = ScopeFields.Tenant | ScopeFields.User, Always = ScopeFields.User)]
   private sealed class SampleAnnotated {
   }
+#pragma warning restore WHIZ400
 }
