@@ -47,6 +47,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <inheritdoc/>
   public Type PerspectiveType => typeof(__PERSPECTIVE_CLASS_NAME__);
 
+  #region INHERIT_SCOPE_ON_CREATE
+  // Generated: per-perspective [InheritScope].OnCreate flags.
+  // Default 63 = ScopeFields.All preserves legacy "copy every scope field" behavior.
+  private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;
+  #endregion
+
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;
@@ -313,7 +319,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               updatedModel,
               lastSuccessfulEventId!.Value,
               cancellationToken,
-              lastScope,
+              lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
           );
         }
@@ -418,7 +424,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 updatedModel,
                 lastSuccessfulEventId.Value,
                 cancellationToken,
-                lastScope,
+                lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
             );
           }
@@ -700,7 +706,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, cancellationToken, lastScope);
+            streamId, updatedModel, lastSuccessfulEventId!.Value, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);
