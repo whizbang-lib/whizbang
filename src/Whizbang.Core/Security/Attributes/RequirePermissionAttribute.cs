@@ -33,4 +33,12 @@ public sealed class RequirePermissionAttribute(string permission) : Attribute {
   /// HotChocolate's resolver middleware.
   /// </summary>
   public ScopeOperation Operation { get; init; } = ScopeOperation.Any;
+
+  /// <summary>
+  /// Action to take when the attribute is enforced at the receptor invocation layer
+  /// and the required permission is missing. Default is <see cref="DeniedAction.DeadLetter"/>
+  /// — loud and auditable. Has no effect at the lens or HotChocolate layers, where failure
+  /// modes are fixed (lens throws; HotChocolate returns AUTH_NOT_AUTHORIZED).
+  /// </summary>
+  public DeniedAction OnDenied { get; init; } = DeniedAction.DeadLetter;
 }
