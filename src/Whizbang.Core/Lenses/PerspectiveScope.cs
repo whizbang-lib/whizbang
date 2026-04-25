@@ -211,4 +211,44 @@ public class PerspectiveScope {
         : [],
     };
   }
+
+  /// <summary>
+  /// Returns a NEW <see cref="PerspectiveScope"/> that merges <paramref name="other"/>
+  /// into this scope field-by-field: non-null/non-empty fields on <paramref name="other"/>
+  /// overwrite this instance's corresponding field; null/empty fields on
+  /// <paramref name="other"/> preserve this instance's value.
+  /// <see cref="AllowedPrincipals"/> and <see cref="Extensions"/> are concatenated and
+  /// deduplicated (extensions by <see cref="ScopeExtension.Key"/>).
+  /// </summary>
+  /// <remarks>
+  /// Used by <see cref="UpdateStreamScopeCommand"/> with <c>ScopeMutationMode.Merge</c>.
+  /// Neither input is mutated.
+  /// </remarks>
+  public PerspectiveScope MergeWith(PerspectiveScope other) {
+    var mergedExtensions = new List<ScopeExtension>(Extensions);
+    foreach (var ext in other.Extensions) {
+      var existing = mergedExtensions.FirstOrDefault(e => e.Key == ext.Key);
+      if (existing is not null) {
+        existing.Value = ext.Value;
+      } else {
+        mergedExtensions.Add(new ScopeExtension(ext.Key, ext.Value));
+      }
+    }
+
+    var mergedPrincipals = new List<string>(AllowedPrincipals);
+    foreach (var p in other.AllowedPrincipals) {
+      if (!mergedPrincipals.Contains(p)) {
+        mergedPrincipals.Add(p);
+      }
+    }
+
+    return new PerspectiveScope {
+      TenantId = !string.IsNullOrEmpty(other.TenantId) ? other.TenantId : TenantId,
+      UserId = !string.IsNullOrEmpty(other.UserId) ? other.UserId : UserId,
+      CustomerId = !string.IsNullOrEmpty(other.CustomerId) ? other.CustomerId : CustomerId,
+      OrganizationId = !string.IsNullOrEmpty(other.OrganizationId) ? other.OrganizationId : OrganizationId,
+      AllowedPrincipals = mergedPrincipals,
+      Extensions = mergedExtensions,
+    };
+  }
 }
