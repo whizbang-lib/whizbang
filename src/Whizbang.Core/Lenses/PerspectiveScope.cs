@@ -181,4 +181,34 @@ public class PerspectiveScope {
     var existing = Extensions.FirstOrDefault(e => e.Key == key);
     return existing is not null && Extensions.Remove(existing);
   }
+
+  /// <summary>
+  /// Returns a NEW <see cref="PerspectiveScope"/> containing only the fields named by
+  /// <paramref name="fields"/>. Fields not in the set are left at their type defaults
+  /// (null for the four ID strings, empty list for AllowedPrincipals and Extensions).
+  /// Used by the perspective projection runner to honor <see cref="InheritScopeAttribute"/>
+  /// — the runner takes the envelope's full scope and filters it through the perspective
+  /// model's declared inheritance flags before persisting.
+  /// </summary>
+  /// <param name="fields">Bitwise combination of fields to retain.</param>
+  /// <returns>A new scope containing only the requested fields.</returns>
+  /// <remarks>
+  /// Returns an empty scope (all defaults) when <paramref name="fields"/> is
+  /// <see cref="ScopeFields.None"/>. Lists are shallow-copied — mutating the returned
+  /// scope's lists does not affect the source.
+  /// </remarks>
+  public PerspectiveScope FilterByFields(ScopeFields fields) {
+    return new PerspectiveScope {
+      TenantId = (fields & ScopeFields.Tenant) != 0 ? TenantId : null,
+      CustomerId = (fields & ScopeFields.Customer) != 0 ? CustomerId : null,
+      UserId = (fields & ScopeFields.User) != 0 ? UserId : null,
+      OrganizationId = (fields & ScopeFields.Organization) != 0 ? OrganizationId : null,
+      AllowedPrincipals = (fields & ScopeFields.AllowedPrincipals) != 0
+        ? [.. AllowedPrincipals]
+        : [],
+      Extensions = (fields & ScopeFields.Extensions) != 0
+        ? [.. Extensions]
+        : [],
+    };
+  }
 }
