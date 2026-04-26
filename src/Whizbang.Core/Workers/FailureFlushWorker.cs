@@ -12,28 +12,30 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-public sealed partial class FailureFlushWorker(
-  IServiceScopeFactory scopeFactory,
-  IOptions<FailureFlushWorkerOptions> options,
-  ILogger<FailureFlushWorker> logger
-) : BackgroundService, IFailureChannel {
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly FailureFlushWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<FailureFlushWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private BatchFlusher<CategorizedFailure>? _flusher;
+public sealed partial class FailureFlushWorker : BackgroundService, IFailureChannel {
+  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly FailureFlushWorkerOptions _options;
+  private readonly ILogger<FailureFlushWorker> _logger;
+  private readonly BatchFlusher<CategorizedFailure> _flusher;
+
+  /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+  public FailureFlushWorker(
+    IServiceScopeFactory scopeFactory,
+    IOptions<FailureFlushWorkerOptions> options,
+    ILogger<FailureFlushWorker> logger) {
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger);
+  }
 
   /// <inheritdoc />
-  public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
-    if (_flusher is null) {
-      throw new InvalidOperationException("FailureFlushWorker not started");
-    }
-    return _flusher.Writer.WriteAsync(new CategorizedFailure(category, failure), cancellationToken);
-  }
+  public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
+    => _flusher.Writer.WriteAsync(new CategorizedFailure(category, failure), cancellationToken);
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger);
-    _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger);
     return _flusher.StoppedSignal;
   }
 
@@ -48,9 +50,7 @@ public sealed partial class FailureFlushWorker(
 
   /// <inheritdoc />
   public override async Task StopAsync(CancellationToken cancellationToken) {
-    if (_flusher is not null) {
-      await _flusher.DisposeAsync();
-    }
+    await _flusher.DisposeAsync();
     await base.StopAsync(cancellationToken);
     LogStopped(_logger);
   }
