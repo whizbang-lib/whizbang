@@ -44,6 +44,9 @@ public static class WorkerPipelineExtensions {
     // Singleton so producer + consumer share the same Channel<T>.
     services.TryAddSingleton<Whizbang.Core.Messaging.IPerspectiveChannelWriter, Whizbang.Core.Messaging.PerspectiveChannelWriter>();
 
+    // Drain-mode channel: stream IDs that claim_work flagged for batched (RunWithEventsAsync) processing.
+    services.TryAddSingleton<Whizbang.Core.Messaging.IPerspectiveDrainChannel, Whizbang.Core.Messaging.PerspectiveDrainChannel>();
+
     // NoOp notification listener by default — driver-specific extensions
     // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();

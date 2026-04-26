@@ -49,7 +49,8 @@ public partial class PerspectiveWorker(
   IPerspectiveChannelWriter? perspectiveChannelWriter = null,
   IPerspectiveCompletionChannel? perspectiveCompletionChannel = null,
   IFailureChannel? failureChannel = null,
-  ILeaseRenewalChannel? leaseRenewalChannel = null
+  ILeaseRenewalChannel? leaseRenewalChannel = null,
+  IPerspectiveDrainChannel? perspectiveDrainChannel = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -92,6 +93,7 @@ public partial class PerspectiveWorker(
   private readonly IPerspectiveCompletionChannel? _perspectiveCompletionChannel = perspectiveCompletionChannel;
   private readonly IFailureChannel? _failureChannel = failureChannel;
   private readonly ILeaseRenewalChannel? _leaseRenewalChannel = leaseRenewalChannel;
+  private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel = perspectiveDrainChannel;
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _bootstrappedThisSession = new();
@@ -319,26 +321,48 @@ public partial class PerspectiveWorker(
   /// when channels are wired.
   /// </summary>
   private async Task _runChannelConsumerLoopAsync(CancellationToken stoppingToken) {
-    var reader = _perspectiveChannelWriter!.Reader;
+    var workReader = _perspectiveChannelWriter!.Reader;
+    var drainReader = _perspectiveDrainChannel?.Reader;
+
     while (!stoppingToken.IsCancellationRequested) {
-      PerspectiveWork first;
+      // Block until either channel has work. WaitToReadAsync returns true when an item is
+      // available (or false when the channel is closed). We race both readers to avoid
+      // starving drain mode behind a quiet perspective channel (or vice versa).
+      var workWait = workReader.WaitToReadAsync(stoppingToken).AsTask();
+      var drainWait = drainReader is null
+        ? new TaskCompletionSource<bool>().Task // never completes — only workReader is consulted
+        : drainReader.WaitToReadAsync(stoppingToken).AsTask();
+
       try {
-        first = await reader.ReadAsync(stoppingToken).ConfigureAwait(false);
+        await Task.WhenAny(workWait, drainWait).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         break;
-      } catch (System.Threading.Channels.ChannelClosedException) {
+      }
+
+      if (stoppingToken.IsCancellationRequested) {
         break;
       }
 
-      var batch = new List<PerspectiveWork>(_options.MaxStreamsPerBatch) { first };
-      // Coalesce additional items already queued without paying a wait. Cap by MaxStreamsPerBatch
-      // so a single batch can't grow unbounded under sustained burst.
-      while (batch.Count < _options.MaxStreamsPerBatch && reader.TryRead(out var next)) {
-        batch.Add(next);
+      // Drain whatever is currently queued on both channels (non-blocking after the wait).
+      var workBatch = new List<PerspectiveWork>(_options.MaxStreamsPerBatch);
+      var drainStreamIds = new List<Guid>();
+
+      while (workBatch.Count < _options.MaxStreamsPerBatch && workReader.TryRead(out var item)) {
+        workBatch.Add(item);
+      }
+      if (drainReader is not null) {
+        while (drainStreamIds.Count < _options.MaxStreamsPerBatch && drainReader.TryRead(out var streamId)) {
+          drainStreamIds.Add(streamId);
+        }
+      }
+
+      if (workBatch.Count == 0 && drainStreamIds.Count == 0) {
+        // Channel(s) closed — both WaitToReadAsync calls returned without yielding an item.
+        continue;
       }
 
       try {
-        await ProcessChannelBatchAsync(batch, stoppingToken).ConfigureAwait(false);
+        await ProcessChannelBatchAsync(workBatch, drainStreamIds, stoppingToken).ConfigureAwait(false);
         _periodicStaleTrackingCleanup();
         await _periodicGatherStatisticsAsync(stoppingToken).ConfigureAwait(false);
       } catch (ObjectDisposedException) {
@@ -950,8 +974,18 @@ public partial class PerspectiveWorker(
   /// </list>
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  internal Task ProcessChannelBatchAsync(
+    List<PerspectiveWork> workItems, CancellationToken cancellationToken)
+    => ProcessChannelBatchAsync(workItems, [], cancellationToken);
+
+  /// <summary>
+  /// Channel-consumer entry point that handles both normal per-event work AND drain-mode
+  /// stream IDs. Drain stream IDs route through <see cref="_processDrainModeStreamsAsync"/>
+  /// (batched fetch + RunWithEventsAsync) before per-event work is processed — same ordering
+  /// as the legacy poll path.
+  /// </summary>
   internal async Task ProcessChannelBatchAsync(
-    List<PerspectiveWork> workItems, CancellationToken cancellationToken) {
+    List<PerspectiveWork> workItems, List<Guid> drainStreamIds, CancellationToken cancellationToken) {
     if (_perspectiveCompletionChannel is null || _failureChannel is null) {
       throw new InvalidOperationException(
         "PerspectiveWorker channel mode requires IPerspectiveCompletionChannel and IFailureChannel " +
@@ -986,13 +1020,12 @@ public partial class PerspectiveWorker(
       cancellationToken).ConfigureAwait(false);
 
     // Synthesize a WorkBatch shaped to feed the existing reconciliation + processing helpers.
-    // Outbox/inbox lists stay empty — those categories have their own workers. Drain mode
-    // (PerspectiveStreamIds) is not supported on the channel path; documented limitation.
+    // Outbox/inbox lists stay empty — those categories have their own workers.
     var workBatch = new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = workItems,
-      PerspectiveStreamIds = [],
+      PerspectiveStreamIds = drainStreamIds,
     };
 
     var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
@@ -1000,10 +1033,23 @@ public partial class PerspectiveWorker(
 
     _recordBatchMetrics(batchActivity, workBatch, groupedWork, [], []);
     _logBatchComposition(workBatch, groupedWork);
-    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
+    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0 || workBatch.PerspectiveStreamIds.Count > 0);
 
     var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
     var batchIsNewByEventId = new ConcurrentDictionary<Guid, bool>();
+
+    // Drain mode (mirrors legacy _processWorkBatchAsync behavior): when ClaimWorker
+    // forwarded SQL-detected drain stream IDs, batch-fetch + RunWithEventsAsync them.
+    // If drain processed nothing, fall through to the per-event path so events don't
+    // stay claimed forever.
+    if (workBatch.PerspectiveStreamIds.Count > 0) {
+      await _processDrainModeStreamsAsync(
+        scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId,
+        lifecycleCoordinator, cancellationToken).ConfigureAwait(false);
+      if (!batchProcessedEvents.IsEmpty) {
+        groupedWork = [];
+      }
+    }
 
     await Parallel.ForEachAsync(
       groupedWork,
