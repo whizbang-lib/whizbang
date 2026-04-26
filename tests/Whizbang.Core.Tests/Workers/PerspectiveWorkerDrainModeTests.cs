@@ -28,12 +28,12 @@ public class PerspectiveWorkerDrainModeTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new DrainModePerspectiveRunnerRegistry();
+    var harness = new PerspectiveWorkerTestHarness();
 
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
 
-    // Configure drain mode: return stream IDs, not perspective work
-    coordinator.StreamIdsToReturn = [streamId];
+    // Channel-mode (post commit C): drain stream IDs come via harness.DrainChannel after StartAsync.
     coordinator.StreamEventsToReturn = [
       new StreamEventData {
         StreamId = streamId,
@@ -88,12 +88,17 @@ public class PerspectiveWorkerDrainModeTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      eventTypeProvider: null // null — lazy-resolved from DI
+      eventTypeProvider: null, // null — lazy-resolved from DI
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
