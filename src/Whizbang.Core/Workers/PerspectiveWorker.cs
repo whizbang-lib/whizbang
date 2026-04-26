@@ -252,20 +252,21 @@ public partial class PerspectiveWorker(
       workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
     }
 
-    // Phase C channel mode: when the channel surfaces are wired (AddWhizbangWorkers + perspective
-    // channel writer registered), perspective work flows through ClaimWorker → channel reader and
-    // completions flow through the channel-flush workers. Legacy poll path is the fallback when
-    // channels aren't wired (still in use during phased rollout). Commit C will delete the fallback.
-    var channelMode = _perspectiveChannelWriter is not null
-      && _perspectiveCompletionChannel is not null
-      && _failureChannel is not null;
+    // The work-pump decomposition migrated perspective traffic to the channel architecture
+    // (ClaimWorker → IPerspectiveChannelWriter / IPerspectiveDrainChannel → here). Channel deps
+    // are optional in the constructor only so existing test fixtures compile unchanged; runtime
+    // requires them. Wire them by calling AddWhizbang() (which auto-invokes AddWhizbangWorkers).
+    if (_perspectiveChannelWriter is null
+        || _perspectiveCompletionChannel is null
+        || _failureChannel is null) {
+      throw new InvalidOperationException(
+        "PerspectiveWorker requires IPerspectiveChannelWriter, IPerspectiveCompletionChannel, " +
+        "and IFailureChannel to be wired via AddWhizbangWorkers (called automatically by " +
+        "AddWhizbang). The legacy ProcessWorkBatchAsync poll path was removed.");
+    }
 
     try {
-      if (channelMode) {
-        await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
-      } else {
-        await _runLegacyPollLoopAsync(stoppingToken).ConfigureAwait(false);
-      }
+      await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
     } finally {
       // Graceful shutdown: drain any in-flight PostLifecycle task so background work
       // completes before the host disposes scoped services (DbContext, etc.) out from
@@ -284,35 +285,6 @@ public partial class PerspectiveWorker(
     LogWorkerStopping(_logger);
   }
 
-  /// <summary>Legacy poll loop — extracted from inline ExecuteAsync. Used when channels aren't wired.</summary>
-  private async Task _runLegacyPollLoopAsync(CancellationToken stoppingToken) {
-    while (!stoppingToken.IsCancellationRequested) {
-      try {
-        if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
-          Interlocked.Exchange(ref _wakeSignaled, 0);
-          continue;
-        }
-
-        await _processWorkBatchAsync(stoppingToken);
-        _periodicStaleTrackingCleanup();
-        await _periodicGatherStatisticsAsync(stoppingToken);
-      } catch (ObjectDisposedException) {
-        break;
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingCheckpoints(_logger, ex);
-        throw;
-      }
-
-      try {
-        var pollingDelay = _isIdle ? _options.PollingIntervalMilliseconds : 50;
-        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(pollingDelay), stoppingToken);
-        Interlocked.Exchange(ref _wakeSignaled, 0);
-      } catch (OperationCanceledException) {
-        break;
-      }
-    }
-  }
 
   /// <summary>
   /// Phase C channel-consumer loop: blocks on the perspective channel reader, coalesces incoming
@@ -421,7 +393,9 @@ public partial class PerspectiveWorker(
       LogCheckingPendingCheckpoints(_logger);
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
       if (isDatabaseReady) {
-        await _processWorkBatchAsync(stoppingToken);
+        // Channel architecture: ClaimWorker runs in the background and feeds work to our
+        // channel reader. The main loop will pick up any leftover work as soon as it starts.
+        // No need to actively pump here — the legacy _processWorkBatchAsync call was removed.
         LogInitialCheckpointProcessingComplete(_logger);
       } else {
         LogDatabaseNotReadyOnStartup(_logger);
@@ -567,12 +541,12 @@ public partial class PerspectiveWorker(
 
       if (_rewindOptions.StartupRewindMode == RewindStartupMode.Blocking) {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        // Keep processing work batches until all rewinds are done
-        const int maxIterations = 100;  // Safety limit
+        // Channel architecture: ClaimWorker drives claims in the background; our main loop
+        // reads from the channel. Wait for ClaimWorker + the channel consumer to drain rewinds
+        // by re-querying. The legacy _processWorkBatchAsync pump was removed.
+        const int maxIterations = 100;
         for (var i = 0; i < maxIterations; i++) {
-          await _processWorkBatchAsync(ct);
-
-          // Re-check
+          await Task.Delay(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), ct);
           rewindCursors = await workCoordinator.GetCursorsRequiringRewindAsync(ct);
           if (rewindCursors.Count == 0) {
             break;
@@ -580,7 +554,7 @@ public partial class PerspectiveWorker(
         }
         PerspectiveStartupScanLog.LogStartupRewindScanCompleted(_startupScanLog, streamCount, perspectiveCount, (long)sw.Elapsed.TotalMilliseconds);
       }
-      // Background mode: normal polling loop will pick them up — individual rewinds log via PerspectiveWorker
+      // Background mode: normal channel-consumer loop will pick them up.
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       PerspectiveStartupScanLog.LogStartupRewindScanError(_startupScanLog, ex);
     }
@@ -599,379 +573,15 @@ public partial class PerspectiveWorker(
     }
   }
 
-  // S3776: Core perspective processing pipeline — inherent complexity from 5-phase lifecycle (claim/apply/buffer/postPerspective/postLifecycle)
-#pragma warning disable S3776
-  private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
-#pragma warning restore S3776
-    var batchSw = System.Diagnostics.Stopwatch.StartNew();
-
-    // Capture parent context BEFORE making span decisions
-    // This ensures child spans can find a parent even when intermediate spans are skipped
-    // On background threads, Activity.Current is typically null unless explicitly set
-    var parentContext = Activity.Current?.Context ?? default;
-
-    // Optionally create parent activity for all perspective processing in this batch
-    // When enabled, all child activities (Perspective {name}, Lifecycle stages) will be parented to this
-    // Controlled by TracingOptions.EnableWorkerBatchSpans (default: false to reduce noise)
-    var enableBatchSpan = _tracingOptions?.CurrentValue.EnableWorkerBatchSpans ?? false;
-    using var batchActivity = enableBatchSpan
-      ? WhizbangActivitySource.Tracing.StartActivity("PerspectiveWorker ProcessBatch", ActivityKind.Internal)
-      : null;
-    if (batchActivity is not null) {
-      batchActivity.SetTag("whizbang.worker", "PerspectiveWorker");
-      batchActivity.SetTag("whizbang.service.name", _instanceProvider.ServiceName);
-      batchActivity.SetTag("whizbang.instance.id", _instanceProvider.InstanceId.ToString());
-    }
-
-    // Compute effective parent: use batch span if created, otherwise use captured parent
-    // This cascades parent context even when batch span is disabled
-    var effectiveParent = batchActivity?.Context ?? parentContext;
-
-    // Create a scope to resolve scoped IWorkCoordinator and IReceptorInvoker
-    await using var scope = _scopeFactory.CreateAsyncScope();
-    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-    var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
-
-    // Lazy-resolve IEventTypeProvider from DI scope when constructor injection was null.
-    // This happens due to DI registration order: PerspectiveWorker (HostedService) is constructed
-    // before PerspectiveRunnerRegistry registers IEventTypeProvider. The provider is a singleton,
-    // so resolving once and caching the reference is safe.
-    if (_eventTypeProvider is null) {
-      _eventTypeProvider = scope.ServiceProvider.GetService<IEventTypeProvider>();
-    }
-
-    // Evict expired entries from the dedup cache (cheap scan each cycle)
-    _processedEventCache.EvictExpired();
-
-    // DIAGNOSTIC: Log which service/instance is processing checkpoints
-    LogProcessingWorkBatchForService(_logger, _instanceProvider.ServiceName, _instanceProvider.InstanceId);
-
-    // 1-4. Gather pending completions, submit to database, get work batch
-    var (workBatch, completionsToSend, failuresToSend) = await _submitCompletionsAndClaimWorkAsync(
-      workCoordinator, cancellationToken);
-
-    // 5-8. Reconcile acknowledgements and prepare work groups. Acknowledge the
-    // local sent-count rather than relying on SQL-returned metadata (which is
-    // silently dropped when the response has no work rows — same bug class
-    // fixed in WorkCoordinatorPublisherWorker).
-    var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
-      workBatch,
-      sentCompletionCount: completionsToSend.Length,
-      sentFailureCount: failuresToSend.Length);
-
-    // Record batch composition metrics and tracing tags
-    _recordBatchMetrics(batchActivity, workBatch, groupedWork, completionsToSend, failuresToSend);
-
-    // Diagnostic logging for batch composition
-    _logBatchComposition(workBatch, groupedWork);
-
-    // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks.
-    // Must fire BEFORE parallel processing so callers observing completion signals (e.g.
-    // InstantCompletion from a specific perspective) see the correct HasWork state — the
-    // original trailing call raced with per-perspective completion signals under
-    // Parallel.ForEachAsync. (See fix/inbox-consumer-ack-after-insert#269ec14c.)
-    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
-
-    // Collect all processed events across groups for PostLifecycle firing
-    var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
-
-    // Per-event IsNew flag for PostAllPerspectives / PostLifecycle filtering. Event is
-    // considered "new" at batch level if ANY contributing perspective sees it as new
-    // (i.e., OR-aggregation). Missing entries default to true.
-    var batchIsNewByEventId = new ConcurrentDictionary<Guid, bool>();
-
-    // === Drain mode: batch-fetch + RunWithEventsAsync for leased streams ===
-    // When PerspectiveStreamIds is populated, process those streams via drain mode
-    // (single SQL round-trip for events, pre-deserialized, RunWithEventsAsync skips ReadPolymorphicAsync).
-    // Events are filtered per-perspective to avoid "does not handle event type" errors.
-    // Full lifecycle chain fires: PrePerspective → PostPerspective → PostAllPerspectives → PostLifecycle.
-    if (workBatch.PerspectiveStreamIds.Count > 0) {
-      if (_logger.IsEnabled(LogLevel.Information)) {
-#pragma warning disable CA1848
-        _logger.LogInformation("Drain mode: processing {StreamCount} streams ({LegacyCount} legacy items skipped)",
-          workBatch.PerspectiveStreamIds.Count, workBatch.PerspectiveWork.Count);
-#pragma warning restore CA1848
-      }
-
-      await _processDrainModeStreamsAsync(
-        scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, cancellationToken);
-
-      // Drain mode handles all perspective work — skip the legacy per-event path.
-      // BUT: if drain mode processed nothing (batchProcessedEvents empty), fall through
-      // to the legacy path so perspective events don't stay claimed forever.
-      if (!batchProcessedEvents.IsEmpty) {
-        groupedWork = [];
-      }
-    }
-
-    // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
-    // Parallelized: different (streamId, perspectiveName) pairs are independent — different cursors,
-    // different perspective tables, no ordering constraints between them.
-    await Parallel.ForEachAsync(
-      groupedWork,
-      new ParallelOptions {
-        MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
-        CancellationToken = cancellationToken
-      },
-      async (group, ct) => {
-        var streamId = group.Key.StreamId;
-        var perspectiveName = group.Key.PerspectiveName;
-
-        // Each parallel group gets its own DI scope for scoped services (IEventStore, IPerspectiveRunnerRegistry)
-        await using var groupScope = _scopeFactory.CreateAsyncScope();
-        var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-        var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
-        var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
-
-        // === Phase 1: Resolve dependencies and load events to extract trace context ===
-        var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
-          await _resolveDependenciesAndLoadEventsAsync(
-            groupScope, groupWorkCoordinator, groupReceptorInvoker, streamId, perspectiveName,
-            batchActivity, effectiveParent, ct);
-
-        // Skip if runner could not be resolved
-        if (runner is null) {
-          return;
-        }
-
-        var lastProcessedEventId = checkpoint?.LastEventId;
-
-        // === Phase 2: Create perspective activity with proper parent context ===
-        var enablePerspectiveSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Perspectives) ?? false;
-        using var perspectiveActivity = enablePerspectiveSpans
-          ? WhizbangActivitySource.Tracing.StartActivity(
-              $"Perspective {perspectiveName}",
-              ActivityKind.Internal,
-              parentContext: perspectiveParentContext)
-          : null;
-        _tagPerspectiveActivity(perspectiveActivity, perspectiveName, streamId, upcomingEvents, perspectiveParentContext);
-
-        // Check if Lifecycle tracing is enabled via TraceComponents
-        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-        var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
-
-        try {
-          // Phase 3.1: Invoke PrePerspective lifecycle stages
-          await _invokePrePerspectiveLifecycleAsync(
-            upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
-            streamCtx, runner, ct);
-
-          // Phase 3.2: Execute perspective runner (rewind or normal path)
-          var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
-            group, runner, checkpoint, streamCtx,
-            enablePerspectiveSpans, ct);
-
-          // Skip this group ONLY if rewind lock could not be acquired.
-          // Do NOT skip when Status=None from normal path (no new events) — that's legitimate
-          // and downstream lifecycle stages may still need to fire.
-          if (rewindLockSkipped) {
-            return;
-          }
-
-          // Phase 3a: Load events that were just processed
-          var processedEvents = await _loadAndLogProcessedEventsAsync(
-            groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
-            lastProcessedEventId, ct);
-
-          // Rewind path: the range-based load above covers events above the pre-rewind
-          // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
-          // that accumulated during the rewind window) live in the perspective work queue
-          // — IPerspectiveReplayReader is the authoritative source for that "is_new" set.
-          // When registered, we stream every replayed event annotated with IsNew:
-          //   - IsNew = true  → event has never had its lifecycle fire: all receptors invoke.
-          //   - IsNew = false → already processed in a prior run: only receptors declared
-          //     [ReceptorIdempotent(AlwaysFire = true)] fire (filter in ReceptorInvoker).
-          // When no reader is registered, we fall back to the narrow trigger-only lookup.
-          // See plans/we-need-to-double-quiet-fern.md § design.
-          Dictionary<Guid, bool>? isNewByEventId = null;
-          if (processingMode == ProcessingMode.Replay) {
-            var replayReader = groupScope.ServiceProvider.GetService<IPerspectiveReplayReader>();
-            if (replayReader is not null && _eventTypeProvider is not null) {
-              var eventTypes = _eventTypeProvider.GetEventTypes();
-              isNewByEventId = new Dictionary<Guid, bool>(processedEvents.Count);
-              foreach (var e in processedEvents) {
-                isNewByEventId[e.MessageId.Value] = true;
-              }
-              var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
-              await foreach (var annotated in replayReader.ReadReplayEventsAsync(
-                  streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct)) {
-                var id = annotated.Envelope.MessageId.Value;
-                isNewByEventId[id] = annotated.IsNew;
-                if (seen.Add(id)) {
-                  processedEvents.Insert(0, annotated.Envelope);
-                }
-              }
-            } else if (checkpoint?.RewindTriggerEventId is { } triggerId
-                       && eventStore is not null
-                       && _eventTypeProvider is not null
-                       && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
-              var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
-                streamId,
-                afterEventId: null,
-                upToEventId: triggerId,
-                _eventTypeProvider.GetEventTypes(),
-                ct);
-              var triggerEnvelope = envelopesUpToTrigger
-                .FirstOrDefault(e => e.MessageId.Value == triggerId);
-              if (triggerEnvelope is not null) {
-                processedEvents.Insert(0, triggerEnvelope);
-              }
-            }
-          }
-
-          // Collect processed events for PostLifecycle firing at batch end (deduplicate by event ID).
-          // Track per-event IsNew for PostAllPerspectives / PostLifecycle filtering — OR-aggregate:
-          // if any perspective sees this event as new, the batch treats it as new.
-          foreach (var envelope in processedEvents) {
-            var id = envelope.MessageId.Value;
-            batchProcessedEvents.TryAdd(id, (envelope, streamId));
-            var isNew = isNewByEventId is null
-              || !isNewByEventId.TryGetValue(id, out var flag)
-              || flag;
-            batchIsNewByEventId.AddOrUpdate(id, isNew, (_, existing) => existing || isNew);
-          }
-
-          // Phase 3c: Report completion and sync signals
-          await _reportCompletionAndSignalSyncAsync(
-            result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
-
-          // Phase 3d: PostPerspective lifecycle (per-perspective)
-          await _invokePostPerspectiveLifecycleAsync(
-            processedEvents, groupReceptorInvoker, streamCtx, result,
-            new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode, isNewByEventId),
-            ct);
-
-          LogPerspectiveCursorCompleted(_logger, perspectiveName, streamId, result.LastEventId);
-
-          // Buffer event completions and update dedup cache
-          _bufferCompletionsAndUpdateCache(group, processedEvents, groupLifecycleCoordinator, perspectiveName);
-
-          // Fire processing hook after confirmed successful perspective processing
-          if (processedEvents.Count > 0) {
-            OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
-              PerspectiveName = perspectiveName,
-              StreamId = streamId,
-              EventCount = processedEvents.Count
-            });
-          }
-
-          // Record per-stream metrics
-          _metrics?.StreamsUpdated.Add(1);
-          if (processedEvents.Count > 0) {
-            _metrics?.EventsProcessed.Add(processedEvents.Count);
-          }
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
-          _metrics?.Errors.Add(1);
-
-          // Signal sync tracker so awaiters don't hang indefinitely waiting for
-          // events that will never be processed by this perspective.
-          if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
-            var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
-            _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
-          }
-
-          var failure = new PerspectiveCursorFailure {
-            StreamId = streamId,
-            PerspectiveName = perspectiveName,
-            LastEventId = Guid.Empty, // We don't know which event failed
-            Status = PerspectiveProcessingStatus.Failed,
-            Error = ex.Message
-          };
-
-          // Report failure via strategy
-          await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
-          throw; // Never swallow exceptions
-        }
-      });
-
-    // Phase 5: Fire PostLifecycle once per unique event — ONLY after ALL perspectives complete (WhenAll).
-    // Fire-and-forget in a dedicated scope so the NEXT cycle's claim+apply can overlap with
-    // THIS cycle's PostLifecycle handlers (outbox fan-out, user receptors, etc.). Prior cycle's
-    // PostLifecycle is awaited first to keep invocations ordered.
-    //
-    // Empty-cycle optimization: when no events were processed this cycle, leave the prior
-    // cycle's pending task intact so subsequent empty polls don't thrash the field (and so
-    // tests observing the prior task after the batch-complete signal see a stable value).
-    if (!batchProcessedEvents.IsEmpty) {
-      var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
-      if (priorPostLifecycle is not null) {
-        try {
-          await priorPostLifecycle;
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          // Prior-cycle PostLifecycle failure must not break this cycle. The stage-guard
-          // HashSet in LifecycleTrackingState ensures exactly-once; retry semantics for any
-          // genuinely failed handlers live in the coordinator, not here.
-          LogPriorPostLifecycleFaulted(_logger, ex);
-        }
-      }
-
-      // Capture everything the background task needs so the outer scope can dispose.
-      // LifecycleCoordinator is a singleton (ServiceCollectionExtensions.cs:201) so passing
-      // the reference across scopes is safe. IReceptorInvoker is scoped, so the background
-      // task resolves a fresh one from its own scope.
-      var bgProcessedEvents = batchProcessedEvents;
-      var bgGroupedWork = groupedWork;
-      var bgIsNew = batchIsNewByEventId;
-      var bgCoordinator = lifecycleCoordinator;
-      var bgCt = cancellationToken;
-      // Scheduled via BackgroundStageDispatch so PostLifecycle receptors run on a dedicated
-      // thread rather than a ThreadPool worker (see helper XML docs for the starvation scenario
-      // this prevents under CI / low-core load).
-      _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
-        await using var bgScope = _scopeFactory.CreateAsyncScope();
-        var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
-        await _firePostLifecycleDetached(
-          bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
-          bgScope.ServiceProvider, bgCt, bgIsNew);
-      }, cancellationToken);
-    }
-
-    // Log summary and record batch-level metrics
-    _logBatchSummary(completionsToSend, failuresToSend, workBatch);
-    _metrics?.BatchesProcessed.Add(1);
-    _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
-
-    // Debug-level cycle telemetry: drain-mode state + events processed + duration.
-    // Useful for diagnosing drain-mode ping-pong (cycle alternating between drain/legacy)
-    // and for correlating cycle cost with live perspective backlog in field debugging.
-    if (_logger.IsEnabled(LogLevel.Debug)) {
-      LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
-    }
-
-    // Signal batch cycle complete — all phases (drain/legacy + lifecycle + metrics) finished.
-    // _updateWorkStateTracking already fired BEFORE parallel processing (line ~560); calling
-    // it again here would double-increment _consecutiveEmptyPolls on empty polls, tripping
-    // the idle threshold in half the expected polls.
-    OnBatchCycleComplete?.Invoke();
-  }
 
   /// <summary>
-  /// Phase C channel-consumer entry point: processes a batch of perspective work items
-  /// pulled from <see cref="IPerspectiveChannelWriter"/> (fed by <c>ClaimWorker</c>) instead
-  /// of polling <see cref="IWorkCoordinator.ProcessWorkBatchAsync"/>. Sends completions and
-  /// failures through the new channel surfaces (fire-and-forget) instead of next-cycle SQL.
+  /// Channel-consumer entry point: processes a batch of perspective work items pulled from
+  /// <see cref="IPerspectiveChannelWriter"/> (fed by <c>ClaimWorker</c>). Routes completions
+  /// and failures through the channel surfaces (fire-and-forget); acks are local.
   /// </summary>
   /// <remarks>
-  /// Currently dormant — <see cref="ExecuteAsync"/> still uses the legacy poll path
-  /// (<see cref="_processWorkBatchAsync"/>). Activated by a follow-up commit that switches
-  /// the main loop to channel consumption. See plans/we-need-to-study-iridescent-gem.md for
-  /// the multi-commit migration sequence.
-  ///
-  /// Differences vs the legacy path:
-  /// <list type="bullet">
-  ///   <item>Work items arrive from the channel; no <c>ClaimWorkAsync</c> call here.</item>
-  ///   <item>Completions/failures route via <see cref="IPerspectiveCompletionChannel"/> and
-  ///     <see cref="IFailureChannel"/> (fire-and-forget). Acks are local — no SQL response.</item>
-  ///   <item>Drain mode (<c>WorkBatch.PerspectiveStreamIds</c>) is not supported — drain
-  ///     signal is not currently part of the channel item shape. Documented as an open item
-  ///     in the refactor design doc.</item>
-  ///   <item>All other behavior (per-stream parallel processing, 7-stage lifecycle chain,
-  ///     dedup cache, sync signaling, PostLifecycle batched fire-and-forget) is preserved
-  ///     bit-for-bit by reusing the existing helper methods.</item>
-  /// </list>
+  /// Drain mode is supported via the overload that takes drain stream IDs (sourced from
+  /// <see cref="IPerspectiveDrainChannel"/>).
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/claim-loop</docs>
   internal Task ProcessChannelBatchAsync(
@@ -1557,72 +1167,6 @@ public partial class PerspectiveWorker(
     }
   }
 
-  /// <summary>
-  /// Gathers pending completions/failures, drains buffered event completions,
-  /// builds the ProcessWorkBatchRequest, and submits it to the work coordinator.
-  /// Returns the work batch along with the completions/failures that were sent.
-  /// </summary>
-  private async Task<(WorkBatch WorkBatch, PerspectiveCursorCompletion[] CompletionsSent, PerspectiveCursorFailure[] FailuresSent)>
-    _submitCompletionsAndClaimWorkAsync(IWorkCoordinator workCoordinator, CancellationToken cancellationToken) {
-
-    // 1. Get pending items (status = Pending, not yet sent)
-    var pendingCompletions = _completionStrategy.GetPendingCompletions();
-    var pendingFailures = _completionStrategy.GetPendingFailures();
-
-    // 2. Extract actual completion data for ProcessWorkBatchAsync
-    var completionsToSend = pendingCompletions.Select(tc => tc.Completion).ToArray();
-    var failuresToSend = pendingFailures.Select(tc => tc.Completion).ToArray();
-
-    // 2b. Drain buffered perspective event completions (WorkIds for wh_perspective_events deletion)
-    var eventCompletionsList = new List<PerspectiveEventCompletion>();
-    while (_pendingEventCompletions.TryDequeue(out var ec)) {
-      eventCompletionsList.Add(ec);
-    }
-    var eventCompletionsToSend = eventCompletionsList.ToArray();
-
-    // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
-    var sentAt = DateTimeOffset.UtcNow;
-    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, sentAt);
-
-    // 4. Call ProcessWorkBatchAsync (may throw or return partial acknowledgement)
-    try {
-      var request = new ProcessWorkBatchRequest {
-        InstanceId = _instanceProvider.InstanceId,
-        ServiceName = _instanceProvider.ServiceName,
-        HostName = _instanceProvider.HostName,
-        ProcessId = _instanceProvider.ProcessId,
-        Metadata = _options.InstanceMetadata,
-        OutboxCompletions = [],
-        OutboxFailures = [],
-        InboxCompletions = [],
-        InboxFailures = [],
-        ReceptorCompletions = [],
-        ReceptorFailures = [],
-        PerspectiveCompletions = completionsToSend,
-        PerspectiveEventCompletions = eventCompletionsToSend,
-        PerspectiveFailures = failuresToSend,
-        NewOutboxMessages = [],
-        NewInboxMessages = [],
-        RenewOutboxLeaseIds = [],
-        RenewInboxLeaseIds = [],
-        Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
-        PartitionCount = _options.PartitionCount,
-        LeaseSeconds = _options.LeaseSeconds,
-        AbandonStaleInstanceThresholdSeconds = _options.AbandonStaleInstanceThresholdSeconds,
-        MaxStreamsPerBatch = _options.MaxStreamsPerBatch
-      };
-      var claimSw = System.Diagnostics.Stopwatch.StartNew();
-      var workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
-      _metrics?.ClaimDuration.Record(claimSw.Elapsed.TotalMilliseconds);
-      return (workBatch, completionsToSend, failuresToSend);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Database failure: Completions remain in 'Sent' status
-      // ResetStale() will move them back to 'Pending' after timeout
-      LogErrorProcessingWorkBatch(_logger, ex);
-      _metrics?.Errors.Add(1);
-      throw; // Never swallow exceptions
-    }
-  }
 
   /// <summary>
   /// <para>Reconciles completion state and groups work items for processing.</para>
