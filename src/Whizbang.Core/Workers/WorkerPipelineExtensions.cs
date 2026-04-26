@@ -40,6 +40,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<ILeaseRenewalChannel>(sp => _resolveHostedSingleton<LeaseRenewalWorker>(sp));
     services.TryAddSingleton<IInboxHandlerCommitChannel>(sp => _resolveHostedSingleton<InboxHandlerWorker>(sp));
 
+    // Perspective work-distribution channel: ClaimWorker writes here, PerspectiveWorker reads.
+    // Singleton so producer + consumer share the same Channel<T>.
+    services.TryAddSingleton<Whizbang.Core.Messaging.IPerspectiveChannelWriter, Whizbang.Core.Messaging.PerspectiveChannelWriter>();
+
     // NoOp notification listener by default — driver-specific extensions
     // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
