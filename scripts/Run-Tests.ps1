@@ -51,6 +51,11 @@
     Stop test execution on first failure. Useful for quickly identifying and fixing issues.
     When enabled, adds --fail-fast flag to dotnet test command.
 
+.PARAMETER NoFailFast
+    Force-disable fail-fast (overrides the AI-mode auto-default). Use this when you want
+    to see ALL failures across the suite, not just the first one. Shell-friendly: avoids
+    the -FailFast:$false trap (zsh expands $false to empty, leaving the switch enabled).
+
 .PARAMETER HangTimeout
     Timeout in seconds to detect hung tests (default: 180). If no output is received for this
     duration, a warning is displayed. After 2x this timeout, the test run is terminated.
@@ -245,6 +250,9 @@ param(
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
     [switch]$FailFast,  # Stop on first test failure
+    [switch]$NoFailFast,  # Force-disable fail-fast (overrides AI mode auto-default).
+                          # Shell-friendly alternative to -FailFast:$false (which breaks
+                          # in zsh because $false expands to empty).
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
 
@@ -351,8 +359,12 @@ if ($useAiOutput) {
     $ProgressPreference = 'SilentlyContinue'
 }
 
-# FailFast defaults to true in AI modes (stop on first failure to save time)
-if ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
+# FailFast defaults to true in AI modes (stop on first failure to save time).
+# -NoFailFast force-disables it (shell-friendly alternative to -FailFast:$false,
+# which breaks in zsh where $false expands to empty).
+if ($NoFailFast) {
+    $FailFast = $false
+} elseif ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
     $FailFast = $true
 }
 
