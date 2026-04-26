@@ -6,19 +6,17 @@ using Whizbang.Core.Notifications;
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// DI registration helpers for the Phase C worker pipeline. Registers all 8 new workers
-/// + their channel interfaces. Call from a host's <c>ConfigureServices</c> alongside the
-/// driver-specific <c>AddWhizbangEFCorePostgres</c> / <c>AddWhizbangDapperPostgres</c>
-/// registration so <c>IWorkCoordinator</c> is resolvable.
-/// Phase C of work-pump decomposition.
+/// DI registration helpers for the Phase C worker pipeline. Invoked automatically by
+/// <see cref="ServiceCollectionExtensions.AddWhizbang(IServiceCollection)"/>; consumers
+/// don't need to call this directly. Exposed publicly so advanced scenarios can register
+/// just the worker pipeline (e.g., to host workers in a separate process).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public static class WorkerPipelineExtensions {
   /// <summary>
   /// Registers the new work-pump worker pipeline (HeartbeatWorker, ClaimWorker, InboxHandlerWorker,
-  /// and the four batched-flush workers + their channel interfaces).
-  /// Existing legacy <see cref="WorkCoordinatorPublisherWorker"/> is NOT registered here — caller
-  /// chooses whether to keep the legacy poller alongside (mixed mode for migration) or drop it.
+  /// and the four batched-flush workers + their channel interfaces). Idempotent — calling
+  /// multiple times has no additional effect.
   /// </summary>
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
@@ -35,19 +33,18 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService<InboxHandlerWorker>();
 
     // Channel interfaces — singletons resolved to the same hosted-service instance.
-    // Producers (publisher worker, perspective process worker, inbox dispatch) get the
-    // channel surface for enqueuing work items.
-    services.AddSingleton<IOutboxCompletionChannel>(sp => _resolveHostedSingleton<OutboxCompletionFlushWorker>(sp));
-    services.AddSingleton<IPerspectiveCompletionChannel>(sp => _resolveHostedSingleton<PerspectiveCompletionFlushWorker>(sp));
-    services.AddSingleton<IFailureChannel>(sp => _resolveHostedSingleton<FailureFlushWorker>(sp));
-    services.AddSingleton<ILeaseRenewalChannel>(sp => _resolveHostedSingleton<LeaseRenewalWorker>(sp));
-    services.AddSingleton<IInboxHandlerCommitChannel>(sp => _resolveHostedSingleton<InboxHandlerWorker>(sp));
+    // TryAdd so AddWhizbang() (which calls this) is safe to invoke multiple times.
+    services.TryAddSingleton<IOutboxCompletionChannel>(sp => _resolveHostedSingleton<OutboxCompletionFlushWorker>(sp));
+    services.TryAddSingleton<IPerspectiveCompletionChannel>(sp => _resolveHostedSingleton<PerspectiveCompletionFlushWorker>(sp));
+    services.TryAddSingleton<IFailureChannel>(sp => _resolveHostedSingleton<FailureFlushWorker>(sp));
+    services.TryAddSingleton<ILeaseRenewalChannel>(sp => _resolveHostedSingleton<LeaseRenewalWorker>(sp));
+    services.TryAddSingleton<IInboxHandlerCommitChannel>(sp => _resolveHostedSingleton<InboxHandlerWorker>(sp));
 
     // NoOp notification listener by default — driver-specific extensions
-    // (e.g., AddWhizbangPostgresNotifications) can replace with the real listener.
+    // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
 
-    // Default options — callers override via .Configure<...> after this call.
+    // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
     services.AddOptions<ClaimWorkerOptions>();
     services.AddOptions<OutboxCompletionFlushWorkerOptions>();
