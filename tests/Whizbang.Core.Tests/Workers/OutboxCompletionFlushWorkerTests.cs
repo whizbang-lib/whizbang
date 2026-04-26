@@ -10,7 +10,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
-[NotInParallel("WhizbangBackgroundServiceTests")]
+[NotInParallel(Order = 100)]
 public class OutboxCompletionFlushWorkerTests {
 
   private sealed class CapturingCoordinator : IWorkCoordinator {
@@ -58,7 +58,10 @@ public class OutboxCompletionFlushWorkerTests {
     var id = TrackedGuid.NewMedo();
     await worker.EnqueueAsync(id);
 
-    var batch = await coord.FirstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // 30s tolerates heavy parallel load on a contended test machine running 12k+ tests
+    // across 10 modules — the BatchFlusher's Task.Run startup can be queued for several
+    // seconds when the scheduler is saturated.
+    var batch = await coord.FirstBatch.Task.WaitAsync(TimeSpan.FromSeconds(30));
     await Assert.That(batch.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(batch).Contains((Guid)id);
 
