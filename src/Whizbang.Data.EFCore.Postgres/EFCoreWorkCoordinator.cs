@@ -764,6 +764,441 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "record_heartbeat");
+
+#pragma warning disable S2077
+    var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::jsonb)";
+#pragma warning restore S2077
+
+    var metadataJson = request.Metadata is { } meta
+      ? meta.GetRawText()
+      : "{}";
+
+    await _dbContext.Database.ExecuteSqlRawAsync(sql,
+      [request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, metadataJson],
+      cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ids);
+    if (ids.Count == 0) {
+      return 0;
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "complete_outbox_published");
+
+#pragma warning disable S2077
+    var sql = $"SELECT {functionName}({{0}})";
+#pragma warning restore S2077
+
+    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_ids)";
+    var p = new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray };
+    cmd.Parameters.Add(p);
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <inheritdoc />
+  public async Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(cursors);
+    ArgumentNullException.ThrowIfNull(eventWorkIds);
+    if (cursors.Count == 0 && eventWorkIds.Count == 0) {
+      return;
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective");
+
+    var cursorsJson = _serializePerspectiveCompletions([.. cursors]);
+    var idArray = eventWorkIds is Guid[] arr ? arr : [.. eventWorkIds];
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_cursors::jsonb, @p_ids)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_cursors", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = cursorsJson });
+    cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
+    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task FlushCompletionsAsync(
+    FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "flush_completions");
+
+    var outboxIds = request.OutboxIds is null || request.OutboxIds.Count == 0
+      ? Array.Empty<Guid>()
+      : (request.OutboxIds is Guid[] arr ? arr : [.. request.OutboxIds]);
+    var perspIds = request.PerspectiveEventWorkIds is null || request.PerspectiveEventWorkIds.Count == 0
+      ? Array.Empty<Guid>()
+      : (request.PerspectiveEventWorkIds is Guid[] parr ? parr : [.. request.PerspectiveEventWorkIds]);
+
+    var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
+      ? "[]"
+      : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
+
+    var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_outbox, @p_cursors::jsonb, @p_persp, @p_fail::jsonb)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_outbox", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = outboxIds });
+    cmd.Parameters.Add(new NpgsqlParameter("p_cursors", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = cursorsJson });
+    cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = perspIds });
+    cmd.Parameters.Add(new NpgsqlParameter("p_fail", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = failuresJson });
+    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+  }
+
+  private string _buildFailuresByCategoryJson(IReadOnlyList<CategoryFailures>? failures) {
+    if (failures is null || failures.Count == 0) {
+      return "[]";
+    }
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < failures.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"Category\":\"").Append(failures[i].Category.ToSqlCategory()).Append("\",")
+        .Append("\"Items\":").Append(_serializeFailures([.. failures[i].Items])).Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inquiries);
+    if (inquiries.Count == 0) {
+      return Array.Empty<SyncInquiryResult>();
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "resolve_sync_inquiries");
+
+    var inquiriesJson = _buildInquiriesJson(inquiries);
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT inquiry_id, stream_id, pending_count, processed_count FROM {functionName}(@p_inq::jsonb)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_inq", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = inquiriesJson });
+
+    var results = new List<SyncInquiryResult>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new SyncInquiryResult {
+        InquiryId = reader.GetGuid(0),
+        StreamId = reader.GetGuid(1),
+        PendingCount = reader.GetInt32(2),
+        ProcessedCount = reader.GetInt32(3)
+      });
+    }
+    return results;
+  }
+
+  private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < inquiries.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      var inq = inquiries[i];
+      sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
+        .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
+        .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
+        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? "true" : "false").Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? "true" : "false").Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? "true" : "false");
+      if (inq.EventIds is { Length: > 0 } eids) {
+        sb.Append(",\"EventIds\":[");
+        for (var j = 0; j < eids.Length; j++) {
+          if (j > 0) {
+            sb.Append(',');
+          }
+          sb.Append('"').Append(eids[j]).Append('"');
+        }
+        sb.Append(']');
+      }
+      if (inq.EventTypeFilter is { Length: > 0 } types) {
+        sb.Append(",\"EventTypeFilter\":[");
+        for (var j = 0; j < types.Length; j++) {
+          if (j > 0) {
+            sb.Append(',');
+          }
+          sb.Append('"').Append(_jsonEscape(types[j])).Append('"');
+        }
+        sb.Append(']');
+      }
+      sb.Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkBatch> ClaimWorkAsync(
+    ClaimWorkRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "claim_work");
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText =
+      $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
+      $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
+      $"perspective_name FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = request.InstanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_svc", NpgsqlTypes.NpgsqlDbType.Text) { Value = request.ServiceName });
+    cmd.Parameters.Add(new NpgsqlParameter("p_host", NpgsqlTypes.NpgsqlDbType.Text) { Value = request.HostName });
+    cmd.Parameters.Add(new NpgsqlParameter("p_pid", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.ProcessId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.MaxStreams });
+    cmd.Parameters.Add(new NpgsqlParameter("p_part", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.PartitionCount });
+    cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.LeaseSeconds });
+
+    var rows = new List<WorkBatchRow>();
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
+      while (await reader.ReadAsync(cancellationToken)) {
+        rows.Add(new WorkBatchRow {
+          Source = reader.GetString(0),
+          WorkId = reader.IsDBNull(1) ? null : reader.GetGuid(1),
+          StreamId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+          PartitionNumber = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+          Destination = reader.IsDBNull(4) ? null : reader.GetString(4),
+          MessageType = reader.IsDBNull(5) ? null : reader.GetString(5),
+          EnvelopeType = reader.IsDBNull(6) ? null : reader.GetString(6),
+          MessageData = reader.IsDBNull(7) ? null : reader.GetString(7),
+          Metadata = reader.IsDBNull(8) ? null : reader.GetValue(8)?.ToString(),
+          Status = reader.IsDBNull(9) ? null : reader.GetInt32(9),
+          Attempts = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+          IsNewlyStored = reader.IsDBNull(11) ? null : reader.GetBoolean(11),
+          IsOrphaned = reader.IsDBNull(12) ? null : reader.GetBoolean(12),
+          PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13)
+        });
+      }
+    }
+
+    var outboxWork = rows.Where(r => r.Source == "outbox").Select(_mapOutboxWork).ToList();
+    var inboxWork = rows.Where(r => r.Source == "inbox").Select(_mapInboxWork).ToList();
+    var perspectiveStreamIds = rows
+      .Where(r => r.Source == "perspective_stream" && r.StreamId.HasValue)
+      .Select(r => r.StreamId!.Value)
+      .ToList();
+
+    return new WorkBatch {
+      OutboxWork = outboxWork,
+      InboxWork = inboxWork,
+      PerspectiveWork = [],
+      PerspectiveStreamIds = perspectiveStreamIds
+    };
+  }
+
+  /// <inheritdoc />
+  public async Task CommitHandlerResultAsync(
+    HandlerCommitRequest request,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "commit_handler_result");
+
+    var payload = _buildHandlerCommitPayload(request);
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_request::jsonb)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_request", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = payload });
+    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
+    IReadOnlyList<HandlerCommitRequest> requests,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(requests);
+    if (requests.Count == 0) {
+      return Array.Empty<HandlerBatchResult>();
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "commit_handler_batch");
+
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < requests.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append(_buildHandlerCommitPayload(requests[i]));
+    }
+    sb.Append(']');
+    var batchJson = sb.ToString();
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT handler_id, success, error_message FROM {functionName}(@p_results::jsonb)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_results", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = batchJson });
+
+    var results = new List<HandlerBatchResult>(requests.Count);
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new HandlerBatchResult(
+        HandlerId: reader.GetGuid(0),
+        Success: reader.GetBoolean(1),
+        ErrorMessage: reader.IsDBNull(2) ? null : reader.GetString(2)));
+    }
+    return results;
+  }
+
+  private string _buildHandlerCommitPayload(HandlerCommitRequest request) {
+    // Build JSONB that commit_handler_result expects:
+    //   { instance_id, service_name, host_name, process_id, partition_count,
+    //     handler_id, inbox_completion: {MessageId, Status},
+    //     new_outbox_messages: [...], new_inbox_messages: [...] }
+    var sb = new System.Text.StringBuilder("{");
+    sb.Append("\"handler_id\":\"").Append(request.HandlerId).Append('"');
+    sb.Append(",\"instance_id\":\"").Append(request.InstanceId).Append('"');
+    sb.Append(",\"service_name\":\"").Append(_jsonEscape(request.ServiceName)).Append('"');
+    sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
+    sb.Append(",\"process_id\":").Append(request.ProcessId);
+    sb.Append(",\"partition_count\":").Append(request.PartitionCount);
+    sb.Append(",\"inbox_completion\":{")
+      .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
+      .Append("\"Status\":").Append(request.InboxCompletion.Status)
+      .Append('}');
+    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? Array.Empty<OutboxMessage>();
+    sb.Append(",\"new_outbox_messages\":").Append(_serializeNewOutboxMessages(newOutboxArr));
+    var newInboxArr = request.NewInboxMessages?.ToArray() ?? Array.Empty<InboxMessage>();
+    sb.Append(",\"new_inbox_messages\":").Append(_serializeNewInboxMessages(newInboxArr));
+    sb.Append('}');
+    return sb.ToString();
+  }
+
+  private static string _jsonEscape(string s) =>
+    s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+  /// <inheritdoc />
+  public async Task ReportFailuresAsync(
+    WorkCategory category,
+    IReadOnlyList<MessageFailure> failures,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(failures);
+    if (failures.Count == 0) {
+      return;
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "report_failures");
+
+    var failuresJson = _serializeFailures([.. failures]);
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_category, @p_failures::jsonb)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_category", NpgsqlTypes.NpgsqlDbType.Text) { Value = category.ToSqlCategory() });
+    cmd.Parameters.Add(new NpgsqlParameter("p_failures", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = failuresJson });
+    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<int> RenewLeasesAsync(
+    WorkCategory category,
+    IReadOnlyList<Guid> ids,
+    int leaseSeconds = 300,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ids);
+    if (ids.Count == 0) {
+      return 0;
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "renew_leases");
+
+    var idArray = ids is Guid[] arr ? arr : [.. ids];
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_category, @p_ids, @p_lease)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_category", NpgsqlTypes.NpgsqlDbType.Text) { Value = category.ToSqlCategory() });
+    cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
+    cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = leaseSeconds });
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
