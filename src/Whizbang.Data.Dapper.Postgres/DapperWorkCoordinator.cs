@@ -843,6 +843,265 @@ public partial class DapperWorkCoordinator(
   static partial void LogWorkBatchFailed(ILogger logger, Guid instanceId, string serviceName, Exception ex);
 
   #endregion
+
+  #region Phase B: focused IWorkCoordinator methods
+
+  /// <inheritdoc />
+  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    var metadataJson = request.Metadata is { } meta ? meta.GetRawText() : "{}";
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb)",
+      new { request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, Metadata = metadataJson });
+  }
+
+  /// <inheritdoc />
+  public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ids);
+    if (ids.Count == 0) {
+      return 0;
+    }
+    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT complete_outbox_published(@Ids)", new { Ids = idArray });
+  }
+
+  /// <inheritdoc />
+  public async Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(cursors);
+    ArgumentNullException.ThrowIfNull(eventWorkIds);
+    if (cursors.Count == 0 && eventWorkIds.Count == 0) {
+      return;
+    }
+    var cursorsJson = cursors.Count == 0 ? "[]" : _serializePerspectiveCompletions([.. cursors]);
+    var idArray = eventWorkIds is Guid[] earr ? earr : [.. eventWorkIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT complete_perspective(@Cursors::jsonb, @Ids)",
+      new { Cursors = cursorsJson, Ids = idArray });
+  }
+
+  /// <inheritdoc />
+  public async Task ReportFailuresAsync(
+    WorkCategory category,
+    IReadOnlyList<MessageFailure> failures,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(failures);
+    if (failures.Count == 0) {
+      return;
+    }
+    var failuresJson = _serializeFailures([.. failures]);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT report_failures(@Category, @Failures::jsonb)",
+      new { Category = category.ToSqlCategory(), Failures = failuresJson });
+  }
+
+  /// <inheritdoc />
+  public async Task<int> RenewLeasesAsync(
+    WorkCategory category,
+    IReadOnlyList<Guid> ids,
+    int leaseSeconds = 300,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ids);
+    if (ids.Count == 0) {
+      return 0;
+    }
+    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT renew_leases(@Category, @Ids, @LeaseSeconds)",
+      new { Category = category.ToSqlCategory(), Ids = idArray, LeaseSeconds = leaseSeconds });
+  }
+
+  /// <inheritdoc />
+  public async Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    var payload = _buildHandlerCommitPayload(request);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT commit_handler_result(@Payload::jsonb)", new { Payload = payload });
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
+    IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(requests);
+    if (requests.Count == 0) {
+      return Array.Empty<HandlerBatchResult>();
+    }
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < requests.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append(_buildHandlerCommitPayload(requests[i]));
+    }
+    sb.Append(']');
+    var batchJson = sb.ToString();
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var rows = await connection.QueryAsync<HandlerBatchRow>(
+      "SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM commit_handler_batch(@Results::jsonb)",
+      new { Results = batchJson });
+    return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
+  }
+
+  /// <inheritdoc />
+  public async Task FlushCompletionsAsync(FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    var outboxIds = request.OutboxIds is null ? Array.Empty<Guid>()
+      : (request.OutboxIds is Guid[] a ? a : [.. request.OutboxIds]);
+    var perspIds = request.PerspectiveEventWorkIds is null ? Array.Empty<Guid>()
+      : (request.PerspectiveEventWorkIds is Guid[] p ? p : [.. request.PerspectiveEventWorkIds]);
+    var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
+      ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
+    var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
+      new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson });
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inquiries);
+    if (inquiries.Count == 0) {
+      return Array.Empty<SyncInquiryResult>();
+    }
+    var json = _buildInquiriesJson(inquiries);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var rows = await connection.QueryAsync<SyncInquiryRow>(
+      "SELECT inquiry_id AS InquiryId, stream_id AS StreamId, pending_count AS PendingCount, processed_count AS ProcessedCount FROM resolve_sync_inquiries(@Inq::jsonb)",
+      new { Inq = json });
+    return [.. rows.Select(r => new SyncInquiryResult {
+      InquiryId = r.InquiryId,
+      StreamId = r.StreamId,
+      PendingCount = r.PendingCount,
+      ProcessedCount = r.ProcessedCount
+    })];
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    // Phase C lands the full envelope-deserializing path. For now Dapper backend
+    // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
+    var rows = await connection.QueryAsync<ClaimWorkRow>(
+      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease)",
+      new {
+        Id = request.InstanceId,
+        Svc = request.ServiceName,
+        Host = request.HostName,
+        Pid = request.ProcessId,
+        Max = request.MaxStreams,
+        Part = request.PartitionCount,
+        Lease = request.LeaseSeconds
+      });
+    var perspectiveStreamIds = new List<Guid>();
+    var sawOutboxOrInbox = false;
+    foreach (var r in rows) {
+      if (r.Source == "perspective_stream" && r.StreamId.HasValue) {
+        perspectiveStreamIds.Add(r.StreamId.Value);
+      } else if (r.Source is "outbox" or "inbox") {
+        sawOutboxOrInbox = true;
+      }
+    }
+    if (sawOutboxOrInbox) {
+      throw new NotImplementedException(
+        "DapperWorkCoordinator.ClaimWorkAsync: full envelope deserialization for outbox/inbox lands in Phase C polish. " +
+        "Use ProcessWorkBatchAsync until then.");
+    }
+    return new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      PerspectiveStreamIds = perspectiveStreamIds
+    };
+  }
+
+  // --- helpers shared by the new methods ---
+
+  private string _buildHandlerCommitPayload(HandlerCommitRequest request) {
+    var sb = new System.Text.StringBuilder("{");
+    sb.Append("\"handler_id\":\"").Append(request.HandlerId).Append('"');
+    sb.Append(",\"instance_id\":\"").Append(request.InstanceId).Append('"');
+    sb.Append(",\"service_name\":\"").Append(_jsonEscape(request.ServiceName)).Append('"');
+    sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
+    sb.Append(",\"process_id\":").Append(request.ProcessId);
+    sb.Append(",\"partition_count\":").Append(request.PartitionCount);
+    sb.Append(",\"inbox_completion\":{")
+      .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
+      .Append("\"Status\":").Append(request.InboxCompletion.Status)
+      .Append('}');
+    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? Array.Empty<OutboxMessage>();
+    sb.Append(",\"new_outbox_messages\":").Append(_serializeNewOutboxMessages(newOutboxArr));
+    var newInboxArr = request.NewInboxMessages?.ToArray() ?? Array.Empty<InboxMessage>();
+    sb.Append(",\"new_inbox_messages\":").Append(_serializeNewInboxMessages(newInboxArr));
+    sb.Append('}');
+    return sb.ToString();
+  }
+
+  private string _buildFailuresByCategoryJson(IReadOnlyList<CategoryFailures>? failures) {
+    if (failures is null || failures.Count == 0) {
+      return "[]";
+    }
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < failures.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"Category\":\"").Append(failures[i].Category.ToSqlCategory()).Append("\",")
+        .Append("\"Items\":").Append(_serializeFailures([.. failures[i].Items])).Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < inquiries.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      var inq = inquiries[i];
+      sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
+        .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
+        .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
+        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? "true" : "false").Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? "true" : "false").Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? "true" : "false");
+      sb.Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  private static string _jsonEscape(string s) =>
+    s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+  private sealed record HandlerBatchRow(Guid HandlerId, bool Success, string? ErrorMessage);
+  private sealed record SyncInquiryRow(Guid InquiryId, Guid StreamId, int PendingCount, int ProcessedCount);
+  private sealed record ClaimWorkRow(string Source, Guid? WorkId, Guid? StreamId);
+
+  #endregion
 }
 
 /// <summary>
