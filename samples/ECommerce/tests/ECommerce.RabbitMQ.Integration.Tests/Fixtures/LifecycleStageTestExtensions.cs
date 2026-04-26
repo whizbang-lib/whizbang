@@ -275,6 +275,23 @@ public static class LifecycleStageTestExtensions {
   }
 
   /// <summary>
+  /// Waits for PostPerspectiveInline lifecycle stage to complete.
+  /// Fires after perspective completes, blocking checkpoint report (blocking).
+  /// </summary>
+  public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPostPerspectiveInlineAsync<TEvent>(
+    this IHost host,
+    string? perspectiveName = null,
+    int timeoutMilliseconds = 45000)
+    where TEvent : IEvent {
+
+    return await _waitForLifecycleStageAsync<TEvent>(
+      host,
+      LifecycleStage.PostPerspectiveInline,
+      timeoutMilliseconds,
+      perspectiveName);
+  }
+
+  /// <summary>
   /// Core helper method that registers a receptor, waits for completion, and returns the receptor.
   /// Returns the receptor so tests can inspect invocation count, last message, etc.
   /// </summary>
