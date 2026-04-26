@@ -44,7 +44,7 @@ public class PerspectiveWorkerDedupTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, registry, observer: observer);
+    var (worker, harness) = _createWorker(coordinator, registry, observer: observer);
 
     // Act — run 2+ cycles. Wait for runner first (cycle 1 processing complete + cache updated)
     // then wait for cycle 3 to ensure cycle 2 had a chance to dedup
@@ -88,7 +88,7 @@ public class PerspectiveWorkerDedupTests {
       }]
     ];
 
-    var worker = _createWorker(coordinator, registry);
+    var (worker, harness) = _createWorker(coordinator, registry);
 
     // Act — wait for runner to be called twice (once per cycle)
     using var cts = new CancellationTokenSource();
@@ -124,7 +124,7 @@ public class PerspectiveWorkerDedupTests {
     coordinator.ReturnWorkOnEveryCycle = false;
     coordinator.WorkItemsPerCycle = [[work], [], [work], [work], [work]];
 
-    var worker = _createWorker(coordinator, registry, timeProvider: fakeTime);
+    var (worker, harness) = _createWorker(coordinator, registry, timeProvider: fakeTime);
 
     // Act — run cycle 1 (processes work) and cycle 2 (activates retention)
     using var cts = new CancellationTokenSource();
@@ -173,7 +173,7 @@ public class PerspectiveWorkerDedupTests {
       ]
     ];
 
-    var worker = _createWorker(coordinator, registry);
+    var (worker, harness) = _createWorker(coordinator, registry);
 
     // Act — wait for runner to be called twice (once per stream)
     using var cts = new CancellationTokenSource();
@@ -208,7 +208,7 @@ public class PerspectiveWorkerDedupTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, registry, observer: observer);
+    var (worker, harness) = _createWorker(coordinator, registry, observer: observer);
 
     // Act — wait for runner to process first cycle, then wait for second cycle to dedup
     using var cts = new CancellationTokenSource();
@@ -243,7 +243,7 @@ public class PerspectiveWorkerDedupTests {
       PartitionNumber = 1
     }];
 
-    var worker = _createWorker(coordinator, registry, observer: observer);
+    var (worker, harness) = _createWorker(coordinator, registry, observer: observer);
 
     // Act — wait for runner to actually process the work
     using var cts = new CancellationTokenSource();
@@ -279,7 +279,7 @@ public class PerspectiveWorkerDedupTests {
     };
     coordinator.WorkItemsPerCycle = [[work], [work], []];
 
-    var worker = _createWorker(coordinator, registry, useBatchedStrategy: true);
+    var (worker, harness) = _createWorker(coordinator, registry, useBatchedStrategy: true);
 
     // Act — run through all 3 cycles
     using var cts = new CancellationTokenSource();
@@ -310,7 +310,7 @@ public class PerspectiveWorkerDedupTests {
     };
     coordinator.WorkItemsPerCycle = [[work], [work], []];
 
-    var worker = _createWorker(coordinator, registry, useBatchedStrategy: false);
+    var (worker, harness) = _createWorker(coordinator, registry, useBatchedStrategy: false);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -409,7 +409,7 @@ public class PerspectiveWorkerDedupTests {
       PartitionNumber = 1
     }];
 
-    var worker = _createWorkerWithFullDI(
+    var (worker, harness) = _createWorkerWithFullDI(
       coordinator, registry, lifecycleCoordinator, postLifecycleSpy, fakeEventStore, fakeEventTypeProvider);
 
     // Act
@@ -428,7 +428,7 @@ public class PerspectiveWorkerDedupTests {
 
   // ==================== Helpers ====================
 
-  private static PerspectiveWorker _createWorkerWithFullDI(
+  private static (PerspectiveWorker Worker, PerspectiveWorkerTestHarness Harness) _createWorkerWithFullDI(
     DedupFakeWorkCoordinator coordinator,
     IPerspectiveRunnerRegistry registry,
     ILifecycleCoordinator lifecycleCoordinator,
@@ -438,6 +438,7 @@ public class PerspectiveWorkerDedupTests {
     var databaseReadiness = new DedupFakeDatabaseReadinessCheck { IsReady = true };
     var instanceProvider = new DedupFakeServiceInstanceProvider();
     IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
+    var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -452,18 +453,23 @@ public class PerspectiveWorkerDedupTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    return new PerspectiveWorker(
+    var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
       databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
+    return (worker, harness);
   }
 
-  private static PerspectiveWorker _createWorker(
+  private static (PerspectiveWorker Worker, PerspectiveWorkerTestHarness Harness) _createWorker(
     DedupFakeWorkCoordinator coordinator,
     IPerspectiveRunnerRegistry registry,
     IProcessedEventCacheObserver? observer = null,
@@ -474,6 +480,7 @@ public class PerspectiveWorkerDedupTests {
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
       : new InstantCompletionStrategy();
+    var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -487,7 +494,7 @@ public class PerspectiveWorkerDedupTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    return new PerspectiveWorker(
+    var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
@@ -495,8 +502,13 @@ public class PerspectiveWorkerDedupTests {
       strategy,
       databaseReadiness,
       processedEventCacheObserver: observer,
-      timeProvider: timeProvider
+      timeProvider: timeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
+    return (worker, harness);
   }
 
   // ==================== Test Fakes ====================

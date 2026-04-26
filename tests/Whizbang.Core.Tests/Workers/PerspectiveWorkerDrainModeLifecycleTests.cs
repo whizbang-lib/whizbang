@@ -737,6 +737,9 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     };
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var sid in coordinator.StreamIdsToReturn) {
+      await harness.EnqueueDrainStreamAsync(sid, cts.Token);
+    }
 
     // Wait for batch to finish its synchronous work (apply phase complete, PostLifecycle scheduled)
     await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -782,7 +785,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, _, _, _, invoker, _, _) = _createWorkerWithLifecycle(
+    var (worker, _, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -793,6 +796,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Capture the pending PostLifecycle task reference BEFORE shutdown so we can assert on it later
