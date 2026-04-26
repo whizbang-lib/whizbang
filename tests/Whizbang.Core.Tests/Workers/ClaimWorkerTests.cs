@@ -12,6 +12,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
+[NotInParallel("WhizbangBackgroundServiceTests")]
 public class ClaimWorkerTests {
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {

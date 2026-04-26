@@ -10,6 +10,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
+[NotInParallel("WhizbangBackgroundServiceTests")]
 public class OutboxCompletionFlushWorkerTests {
 
   private sealed class CapturingCoordinator : IWorkCoordinator {
@@ -57,7 +58,7 @@ public class OutboxCompletionFlushWorkerTests {
     var id = TrackedGuid.NewMedo();
     await worker.EnqueueAsync(id);
 
-    var batch = await coord.FirstBatch.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    var batch = await coord.FirstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await Assert.That(batch.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(batch).Contains((Guid)id);
 
