@@ -50,6 +50,7 @@ public class PerspectiveWorkerDedupTests {
     // then wait for cycle 3 to ensure cycle 2 had a chance to dedup
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5));
     cts.Cancel();
@@ -93,6 +94,7 @@ public class PerspectiveWorkerDedupTests {
     // Act — wait for runner to be called twice (once per cycle)
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(2, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -129,6 +131,7 @@ public class PerspectiveWorkerDedupTests {
     // Act — run cycle 1 (processes work) and cycle 2 (activates retention)
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
 
@@ -178,6 +181,7 @@ public class PerspectiveWorkerDedupTests {
     // Act — wait for runner to be called twice (once per stream)
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(2, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -213,6 +217,7 @@ public class PerspectiveWorkerDedupTests {
     // Act — wait for runner to process first cycle, then wait for second cycle to dedup
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5)); // 3rd cycle ensures dedup observed
     cts.Cancel();
@@ -248,6 +253,7 @@ public class PerspectiveWorkerDedupTests {
     // Act — wait for runner to actually process the work
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     // Wait for next cycle to ensure in-flight marking is complete
     await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
@@ -284,6 +290,7 @@ public class PerspectiveWorkerDedupTests {
     // Act — run through all 3 cycles
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -315,6 +322,7 @@ public class PerspectiveWorkerDedupTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForProcessWorkBatchCallsAsync(3, TimeSpan.FromSeconds(5));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -364,18 +372,24 @@ public class PerspectiveWorkerDedupTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act — run one cycle + wait for processing to complete
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
     await Task.Delay(200);
@@ -415,6 +429,7 @@ public class PerspectiveWorkerDedupTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
     await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
     await Task.Delay(200);
@@ -595,6 +610,51 @@ public class PerspectiveWorkerDedupTests {
     public bool ReturnWorkOnEveryCycle { get; set; }
     public PerspectiveWork? PerspectiveWorkTemplate { get; set; }
     public List<List<PerspectiveWork>>? WorkItemsPerCycle { get; set; }
+
+    /// <summary>
+    /// Background loop that pumps cycles through the harness while the worker is alive.
+    /// Each cycle simulates one legacy ProcessWorkBatchAsync round-trip. Stops on cancellation.
+    /// </summary>
+    public async Task RunPumpLoopAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct) {
+      try {
+        while (!ct.IsCancellationRequested) {
+          await PumpCycleAsync(harness, ct);
+          await Task.Delay(20, ct);
+        }
+      } catch (OperationCanceledException) {
+        // expected on shutdown
+      }
+    }
+
+    /// <summary>
+    /// Pump one batch of work through the harness, simulating a single ProcessWorkBatchAsync cycle.
+    /// Increments _callCount so WaitForProcessWorkBatchCallsAsync still resolves. Tests call this
+    /// repeatedly to drive multi-cycle scenarios.
+    /// </summary>
+    public async Task PumpCycleAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct = default) {
+      var currentCall = Interlocked.Increment(ref _callCount);
+
+      List<PerspectiveWork> work;
+      if (WorkItemsPerCycle is not null) {
+        var idx = currentCall - 1;
+        work = idx < WorkItemsPerCycle.Count ? [.. WorkItemsPerCycle[idx]] : [];
+      } else if (ReturnWorkOnEveryCycle && PerspectiveWorkTemplate is not null) {
+        work = [PerspectiveWorkTemplate];
+      } else if (PerspectiveWorkToReturn is not null) {
+        work = [.. PerspectiveWorkToReturn];
+        PerspectiveWorkToReturn = null;
+      } else {
+        work = [];
+      }
+
+      foreach (var w in work) {
+        await harness.EnqueueWorkAsync(w, ct);
+      }
+
+      for (var i = 0; i < _waiters.Length && i < currentCall; i++) {
+        _waiters[i].TrySetResult(currentCall);
+      }
+    }
 
     public async Task WaitForProcessWorkBatchCallsAsync(int count, TimeSpan timeout) {
       ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _waiters.Length);
