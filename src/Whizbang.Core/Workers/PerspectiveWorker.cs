@@ -250,38 +250,19 @@ public partial class PerspectiveWorker(
       workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
     }
 
+    // Phase C channel mode: when the channel surfaces are wired (AddWhizbangWorkers + perspective
+    // channel writer registered), perspective work flows through ClaimWorker → channel reader and
+    // completions flow through the channel-flush workers. Legacy poll path is the fallback when
+    // channels aren't wired (still in use during phased rollout). Commit C will delete the fallback.
+    var channelMode = _perspectiveChannelWriter is not null
+      && _perspectiveCompletionChannel is not null
+      && _failureChannel is not null;
+
     try {
-      while (!stoppingToken.IsCancellationRequested) {
-        try {
-          if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
-            await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
-            Interlocked.Exchange(ref _wakeSignaled, 0);
-            continue;
-          }
-
-          await _processWorkBatchAsync(stoppingToken);
-          _periodicStaleTrackingCleanup();
-          await _periodicGatherStatisticsAsync(stoppingToken);
-        } catch (ObjectDisposedException) {
-          break;
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogErrorProcessingCheckpoints(_logger, ex);
-          throw; // Never swallow exceptions
-        }
-
-        try {
-          // Fast polling: when actively processing work (not idle), use shorter delay
-          // to keep drain mode responsive without starving threads (unlike Task.Yield).
-          // Normal polling: wait for the full polling interval or an external wake signal.
-          var pollingDelay = _isIdle
-            ? _options.PollingIntervalMilliseconds
-            : 50; // 20 ticks/sec during active processing
-
-          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(pollingDelay), stoppingToken);
-          Interlocked.Exchange(ref _wakeSignaled, 0);
-        } catch (OperationCanceledException) {
-          break;
-        }
+      if (channelMode) {
+        await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
+      } else {
+        await _runLegacyPollLoopAsync(stoppingToken).ConfigureAwait(false);
       }
     } finally {
       // Graceful shutdown: drain any in-flight PostLifecycle task so background work
@@ -299,6 +280,74 @@ public partial class PerspectiveWorker(
     }
 
     LogWorkerStopping(_logger);
+  }
+
+  /// <summary>Legacy poll loop — extracted from inline ExecuteAsync. Used when channels aren't wired.</summary>
+  private async Task _runLegacyPollLoopAsync(CancellationToken stoppingToken) {
+    while (!stoppingToken.IsCancellationRequested) {
+      try {
+        if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
+          await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingIntervalMilliseconds), stoppingToken);
+          Interlocked.Exchange(ref _wakeSignaled, 0);
+          continue;
+        }
+
+        await _processWorkBatchAsync(stoppingToken);
+        _periodicStaleTrackingCleanup();
+        await _periodicGatherStatisticsAsync(stoppingToken);
+      } catch (ObjectDisposedException) {
+        break;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogErrorProcessingCheckpoints(_logger, ex);
+        throw;
+      }
+
+      try {
+        var pollingDelay = _isIdle ? _options.PollingIntervalMilliseconds : 50;
+        await _pollWakeSignal.WaitAsync(TimeSpan.FromMilliseconds(pollingDelay), stoppingToken);
+        Interlocked.Exchange(ref _wakeSignaled, 0);
+      } catch (OperationCanceledException) {
+        break;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Phase C channel-consumer loop: blocks on the perspective channel reader, coalesces incoming
+  /// items into batches (preserving the "PostLifecycle once per batch" semantics), and processes
+  /// each batch via <see cref="ProcessChannelBatchAsync"/>. Replaces the legacy SQL polling loop
+  /// when channels are wired.
+  /// </summary>
+  private async Task _runChannelConsumerLoopAsync(CancellationToken stoppingToken) {
+    var reader = _perspectiveChannelWriter!.Reader;
+    while (!stoppingToken.IsCancellationRequested) {
+      PerspectiveWork first;
+      try {
+        first = await reader.ReadAsync(stoppingToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        break;
+      } catch (System.Threading.Channels.ChannelClosedException) {
+        break;
+      }
+
+      var batch = new List<PerspectiveWork>(_options.MaxStreamsPerBatch) { first };
+      // Coalesce additional items already queued without paying a wait. Cap by MaxStreamsPerBatch
+      // so a single batch can't grow unbounded under sustained burst.
+      while (batch.Count < _options.MaxStreamsPerBatch && reader.TryRead(out var next)) {
+        batch.Add(next);
+      }
+
+      try {
+        await ProcessChannelBatchAsync(batch, stoppingToken).ConfigureAwait(false);
+        _periodicStaleTrackingCleanup();
+        await _periodicGatherStatisticsAsync(stoppingToken).ConfigureAwait(false);
+      } catch (ObjectDisposedException) {
+        break;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogErrorProcessingCheckpoints(_logger, ex);
+        throw;
+      }
+    }
   }
 
   private async Task _initializePerspectiveRegistryAsync() {
