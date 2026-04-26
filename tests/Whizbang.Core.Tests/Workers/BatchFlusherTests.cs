@@ -6,7 +6,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
-[NotInParallel("WhizbangBackgroundServiceTests")]
+[NotInParallel(Order = 100)]
 public class BatchFlusherTests {
 
   [Test]
