@@ -110,6 +110,9 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
 
     // Wait for OnWorkProcessingStarted (fires after batch completes, AFTER completion is reported)
     using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
