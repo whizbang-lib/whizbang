@@ -45,7 +45,11 @@ public partial class PerspectiveWorker(
   TimeProvider? timeProvider = null,
   LifecycleCoordinatorMetrics? coordinatorMetrics = null,
   IWorkChannelWriter? workChannelWriter = null,
-  IOptions<PerspectiveRewindOptions>? rewindOptions = null
+  IOptions<PerspectiveRewindOptions>? rewindOptions = null,
+  IPerspectiveChannelWriter? perspectiveChannelWriter = null,
+  IPerspectiveCompletionChannel? perspectiveCompletionChannel = null,
+  IFailureChannel? failureChannel = null,
+  ILeaseRenewalChannel? leaseRenewalChannel = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -79,6 +83,15 @@ public partial class PerspectiveWorker(
 
   // Perspective event completions (WorkIds to delete from wh_perspective_events)
   private readonly System.Collections.Concurrent.ConcurrentQueue<PerspectiveEventCompletion> _pendingEventCompletions = new();
+
+  // Phase C channel dependencies — when wired, perspective work flows through ClaimWorker → these channels
+  // instead of being polled directly via ProcessWorkBatchAsync. Currently dormant; ExecuteAsync still uses
+  // the legacy poll path until commit B switches the main loop. See plans/we-need-to-study-iridescent-gem.md
+  // for the multi-commit migration sequence.
+  private readonly IPerspectiveChannelWriter? _perspectiveChannelWriter = perspectiveChannelWriter;
+  private readonly IPerspectiveCompletionChannel? _perspectiveCompletionChannel = perspectiveCompletionChannel;
+  private readonly IFailureChannel? _failureChannel = failureChannel;
+  private readonly ILeaseRenewalChannel? _leaseRenewalChannel = leaseRenewalChannel;
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _bootstrappedThisSession = new();
@@ -860,6 +873,244 @@ public partial class PerspectiveWorker(
     // it again here would double-increment _consecutiveEmptyPolls on empty polls, tripping
     // the idle threshold in half the expected polls.
     OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Phase C channel-consumer entry point: processes a batch of perspective work items
+  /// pulled from <see cref="IPerspectiveChannelWriter"/> (fed by <c>ClaimWorker</c>) instead
+  /// of polling <see cref="IWorkCoordinator.ProcessWorkBatchAsync"/>. Sends completions and
+  /// failures through the new channel surfaces (fire-and-forget) instead of next-cycle SQL.
+  /// </summary>
+  /// <remarks>
+  /// Currently dormant — <see cref="ExecuteAsync"/> still uses the legacy poll path
+  /// (<see cref="_processWorkBatchAsync"/>). Activated by a follow-up commit that switches
+  /// the main loop to channel consumption. See plans/we-need-to-study-iridescent-gem.md for
+  /// the multi-commit migration sequence.
+  ///
+  /// Differences vs the legacy path:
+  /// <list type="bullet">
+  ///   <item>Work items arrive from the channel; no <c>ClaimWorkAsync</c> call here.</item>
+  ///   <item>Completions/failures route via <see cref="IPerspectiveCompletionChannel"/> and
+  ///     <see cref="IFailureChannel"/> (fire-and-forget). Acks are local — no SQL response.</item>
+  ///   <item>Drain mode (<c>WorkBatch.PerspectiveStreamIds</c>) is not supported — drain
+  ///     signal is not currently part of the channel item shape. Documented as an open item
+  ///     in the refactor design doc.</item>
+  ///   <item>All other behavior (per-stream parallel processing, 7-stage lifecycle chain,
+  ///     dedup cache, sync signaling, PostLifecycle batched fire-and-forget) is preserved
+  ///     bit-for-bit by reusing the existing helper methods.</item>
+  /// </list>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  internal async Task ProcessChannelBatchAsync(
+    List<PerspectiveWork> workItems, CancellationToken cancellationToken) {
+    if (_perspectiveCompletionChannel is null || _failureChannel is null) {
+      throw new InvalidOperationException(
+        "PerspectiveWorker channel mode requires IPerspectiveCompletionChannel and IFailureChannel " +
+        "to be wired. Did you call AddWhizbangWorkers()?");
+    }
+
+    var batchSw = System.Diagnostics.Stopwatch.StartNew();
+    var parentContext = Activity.Current?.Context ?? default;
+    var enableBatchSpan = _tracingOptions?.CurrentValue.EnableWorkerBatchSpans ?? false;
+    using var batchActivity = enableBatchSpan
+      ? WhizbangActivitySource.Tracing.StartActivity("PerspectiveProcessWorker ProcessChannelBatch", ActivityKind.Internal)
+      : null;
+    if (batchActivity is not null) {
+      batchActivity.SetTag("whizbang.worker", "PerspectiveProcessWorker");
+      batchActivity.SetTag("whizbang.service.name", _instanceProvider.ServiceName);
+      batchActivity.SetTag("whizbang.instance.id", _instanceProvider.InstanceId.ToString());
+      batchActivity.SetTag("whizbang.batch.size", workItems.Count);
+    }
+    var effectiveParent = batchActivity?.Context ?? parentContext;
+
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+    _eventTypeProvider ??= scope.ServiceProvider.GetService<IEventTypeProvider>();
+    _processedEventCache.EvictExpired();
+
+    // Flush pending completions/failures through the new channels (fire-and-forget).
+    // Returns the count we sent so we can ack the strategy locally — no SQL response to wait on.
+    var (sentCompletionCount, sentFailureCount) = await _flushPendingCompletionsToChannelsAsync(
+      cancellationToken).ConfigureAwait(false);
+
+    // Synthesize a WorkBatch shaped to feed the existing reconciliation + processing helpers.
+    // Outbox/inbox lists stay empty — those categories have their own workers. Drain mode
+    // (PerspectiveStreamIds) is not supported on the channel path; documented limitation.
+    var workBatch = new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = workItems,
+      PerspectiveStreamIds = [],
+    };
+
+    var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
+      workBatch, sentCompletionCount: sentCompletionCount, sentFailureCount: sentFailureCount);
+
+    _recordBatchMetrics(batchActivity, workBatch, groupedWork, [], []);
+    _logBatchComposition(workBatch, groupedWork);
+    _updateWorkStateTracking(workBatch.PerspectiveWork.Count > 0);
+
+    var batchProcessedEvents = new ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
+    var batchIsNewByEventId = new ConcurrentDictionary<Guid, bool>();
+
+    await Parallel.ForEachAsync(
+      groupedWork,
+      new ParallelOptions {
+        MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
+        CancellationToken = cancellationToken
+      },
+      async (group, ct) => {
+        var streamId = group.Key.StreamId;
+        var perspectiveName = group.Key.PerspectiveName;
+        await using var groupScope = _scopeFactory.CreateAsyncScope();
+        var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+        var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
+        var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+        var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
+          await _resolveDependenciesAndLoadEventsAsync(
+            groupScope, groupWorkCoordinator, groupReceptorInvoker, streamId, perspectiveName,
+            batchActivity, effectiveParent, ct);
+
+        if (runner is null) {
+          return;
+        }
+
+        var lastProcessedEventId = checkpoint?.LastEventId;
+        var enablePerspectiveSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Perspectives) ?? false;
+        using var perspectiveActivity = enablePerspectiveSpans
+          ? WhizbangActivitySource.Tracing.StartActivity(
+              $"Perspective {perspectiveName}",
+              ActivityKind.Internal,
+              parentContext: perspectiveParentContext)
+          : null;
+        _tagPerspectiveActivity(perspectiveActivity, perspectiveName, streamId, upcomingEvents, perspectiveParentContext);
+
+        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+        var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+
+        try {
+          await _invokePrePerspectiveLifecycleAsync(
+            upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
+            streamCtx, runner, ct);
+
+          var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
+            group, runner, checkpoint, streamCtx, enablePerspectiveSpans, ct);
+
+          if (rewindLockSkipped) {
+            return;
+          }
+
+          var processedEvents = await _loadAndLogProcessedEventsAsync(
+            groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
+            lastProcessedEventId, ct);
+
+          foreach (var envelope in processedEvents) {
+            var id = envelope.MessageId.Value;
+            batchProcessedEvents.TryAdd(id, (envelope, streamId));
+            batchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
+          }
+
+          await _reportCompletionAndSignalSyncAsync(
+            result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
+          await _invokePostPerspectiveLifecycleAsync(
+            processedEvents, groupReceptorInvoker, streamCtx, result,
+            new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode, IsNewByEventId: null), ct);
+          _bufferCompletionsAndUpdateCache(group, processedEvents, groupLifecycleCoordinator, perspectiveName);
+
+          if (processedEvents.Count > 0) {
+            OnPerspectiveEventProcessed?.Invoke(new PerspectiveEventProcessedEvent {
+              PerspectiveName = perspectiveName,
+              StreamId = streamId,
+              EventCount = processedEvents.Count
+            });
+          }
+          _metrics?.StreamsUpdated.Add(1);
+          if (processedEvents.Count > 0) {
+            _metrics?.EventsProcessed.Add(processedEvents.Count);
+          }
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
+          _metrics?.Errors.Add(1);
+          if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
+            var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
+            _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
+          }
+          var failure = new PerspectiveCursorFailure {
+            StreamId = streamId,
+            PerspectiveName = perspectiveName,
+            LastEventId = Guid.Empty,
+            Status = PerspectiveProcessingStatus.Failed,
+            Error = ex.Message
+          };
+          await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
+          throw;
+        }
+      });
+
+    if (!batchProcessedEvents.IsEmpty) {
+      var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
+      if (priorPostLifecycle is not null) {
+        try {
+          await priorPostLifecycle;
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          LogPriorPostLifecycleFaulted(_logger, ex);
+        }
+      }
+      var bgProcessedEvents = batchProcessedEvents;
+      var bgGroupedWork = groupedWork;
+      var bgIsNew = batchIsNewByEventId;
+      var bgCoordinator = lifecycleCoordinator;
+      var bgCt = cancellationToken;
+      _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
+        await using var bgScope = _scopeFactory.CreateAsyncScope();
+        var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
+        await _firePostLifecycleDetached(
+          bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
+          bgScope.ServiceProvider, bgCt, bgIsNew);
+      }, cancellationToken);
+    }
+
+    _logBatchSummary([], [], workBatch);
+    _metrics?.BatchesProcessed.Add(1);
+    _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      LogDrainCycleComplete(_logger, !_isIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
+    }
+    OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Drains <see cref="_completionStrategy"/>'s pending queues + the perspective event completion
+  /// queue, writes each item to the appropriate Phase C channel (fire-and-forget), and marks
+  /// the strategy entries as "Sent". Returns counts for local acknowledgement.
+  /// </summary>
+  private async Task<(int CompletionCount, int FailureCount)> _flushPendingCompletionsToChannelsAsync(
+    CancellationToken ct) {
+    var pendingCompletions = _completionStrategy.GetPendingCompletions();
+    var pendingFailures = _completionStrategy.GetPendingFailures();
+
+    foreach (var tc in pendingCompletions) {
+      await _perspectiveCompletionChannel!.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
+    }
+    foreach (var tc in pendingFailures) {
+      var f = tc.Completion;
+      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+        MessageId = f.LastEventId,
+        CompletedStatus = MessageProcessingStatus.None,
+        Error = f.Error ?? "perspective failed",
+        Reason = MessageFailureReason.Unknown,
+      }, ct).ConfigureAwait(false);
+    }
+    while (_pendingEventCompletions.TryDequeue(out var ec)) {
+      await _perspectiveCompletionChannel!.EnqueueEventWorkIdAsync(ec.EventWorkId, ct).ConfigureAwait(false);
+    }
+
+    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
+    return (pendingCompletions.Length, pendingFailures.Length);
   }
 
   /// <summary>
