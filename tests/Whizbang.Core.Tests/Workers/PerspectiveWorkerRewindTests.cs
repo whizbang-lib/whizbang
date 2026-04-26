@@ -60,18 +60,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -108,18 +116,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -168,6 +184,7 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -176,12 +193,19 @@ public class PerspectiveWorkerRewindTests {
       new InstantCompletionStrategy(),
       databaseReadiness,
       streamLocker: locker,
-      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions())
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -231,6 +255,7 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -239,12 +264,19 @@ public class PerspectiveWorkerRewindTests {
       new InstantCompletionStrategy(),
       databaseReadiness,
       streamLocker: locker,
-      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions())
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -299,6 +331,7 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -306,12 +339,19 @@ public class PerspectiveWorkerRewindTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      snapshotStore: snapshotStore
+      snapshotStore: snapshotStore,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -359,6 +399,7 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -366,12 +407,19 @@ public class PerspectiveWorkerRewindTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      snapshotStore: snapshotStore
+      snapshotStore: snapshotStore,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -408,6 +456,7 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -415,12 +464,19 @@ public class PerspectiveWorkerRewindTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      snapshotStore: snapshotStore
+      snapshotStore: snapshotStore,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -470,18 +526,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(600);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -536,18 +600,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act — worker should NOT crash despite the rewind throwing
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
 
