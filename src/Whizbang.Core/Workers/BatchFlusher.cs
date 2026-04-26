@@ -52,7 +52,12 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       SingleWriter = false,
     });
 
-    _loop = Task.Run(() => _runAsync(_stop.Token));
+    // Start the loop synchronously up to its first `await` (channel.ReadAsync) so the
+    // flusher is "running" by the time the ctor returns — important when callers race
+    // ahead and Writer.WriteAsync immediately. Avoids Task.Run's threadpool-queueing
+    // delay under heavy contention (full-suite test runs at parallelism=10 saturated
+    // the threadpool and starved Task.Run-launched loops for >30s).
+    _loop = _runAsync(_stop.Token);
   }
 
   private async Task _runAsync(CancellationToken ct) {
