@@ -128,9 +128,8 @@ public class InboxLifecycleTests {
   /// Tests the "receptor may complete before this stage finishes" guarantee.
   /// </summary>
   [Test]
-  [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
+  [Timeout(120_000)]
   public async Task PreInboxDetached_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync(CancellationToken cancellationToken) {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var command = new CreateProductCommand {
@@ -141,25 +140,16 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+    // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the event arrives.
+    // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), matching
+    // the pattern of the other tests in this file.
+    var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>();
 
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxDetached);
+    await fixture.Dispatcher.SendAsync(command);
 
-    try {
-      // Act - Dispatch command
-      await fixture.Dispatcher.SendAsync(command);
+    var receptor = await receptorTask;
 
-      // Wait for PreInboxDetached stage (non-blocking, may complete late)
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
-
-      // Assert - PreInboxDetached should have completed eventually
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxDetached);
-    }
+    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -205,9 +195,8 @@ public class InboxLifecycleTests {
   /// Tests the "receptor has completed successfully" guarantee.
   /// </summary>
   [Test]
-  [Timeout(120_000)]  // Fixture init (~60s) + test body (~20s) + margin
+  [Timeout(120_000)]
   public async Task PostInboxDetached_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync(CancellationToken cancellationToken) {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var command = new CreateProductCommand {
@@ -218,26 +207,13 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+    var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>();
 
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxDetached);
+    await fixture.Dispatcher.SendAsync(command);
 
-    try {
-      // Act - Dispatch command
-      await fixture.Dispatcher.SendAsync(command);
+    var receptor = await receptorTask;
 
-      // Wait for PostInboxDetached stage
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
-
-      // Assert - At this point, PostInboxDetached has fired
-      // Receptor should have completed successfully
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxDetached);
-    }
+    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
   }
 
   // ========================================
@@ -287,8 +263,8 @@ public class InboxLifecycleTests {
   /// PreInboxInline → PreInboxDetached (parallel with receptor) → PostInboxDetached → PostInboxInline
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var command = new CreateProductCommand {
@@ -299,85 +275,31 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
+    // Register all four lifecycle waits BEFORE dispatching. Each helper internally registers
+    // its receptor synchronously up to its first await, so by the time we dispatch all four
+    // are armed. The helper's timeout scales with WHIZBANG_TEST_TIMEOUT_MULTIPLIER.
+    var preInlineTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>();
+    var preAsyncTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>();
+    var postAsyncTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>();
+    var postInlineTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>();
 
-    // Create receptors for all 4 stages
-    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    await fixture.Dispatcher.SendAsync(command);
 
-    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
-    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion);
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion);
+    // Wait for all four. If any helper times out, its TimeoutException identifies the missing stage.
+    await Task.WhenAll(preInlineTask, preAsyncTask, postAsyncTask, postInlineTask);
 
-    // Register all receptors
-    registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
-    registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
-
-    try {
-      // Act - Dispatch command (will publish event to RabbitMQ, BFF will receive it)
-      await fixture.Dispatcher.SendAsync(command);
-
-      // Wait for all stages to complete (with timeout).
-      // CI runners (especially under parallel test-suite load) see cold RabbitMQ
-      // container startup + fixture init + message publish+receive eat into the
-      // deadline. 120s is well above normal (~2–3s locally) but still bounded.
-      // On timeout, report WHICH stage(s) didn't fire so future failures are diagnosable.
-      try {
-        await Task.WhenAll(
-          preInlineCompletion.Task,
-          preAsyncCompletion.Task,
-          postAsyncCompletion.Task,
-          postInlineCompletion.Task
-        ).WaitAsync(TimeSpan.FromSeconds(120));
-      } catch (TimeoutException) {
-        var missing = new List<string>();
-        if (!preInlineCompletion.Task.IsCompleted) {
-          missing.Add("PreInboxInline");
-        }
-        if (!preAsyncCompletion.Task.IsCompleted) {
-          missing.Add("PreInboxDetached");
-        }
-        if (!postAsyncCompletion.Task.IsCompleted) {
-          missing.Add("PostInboxDetached");
-        }
-        if (!postInlineCompletion.Task.IsCompleted) {
-          missing.Add("PostInboxInline");
-        }
-        throw new TimeoutException(
-          $"Inbox lifecycle stages did not all fire within 120s. " +
-          $"Missing stages: [{string.Join(", ", missing)}]. " +
-          $"Fired: PreInboxInline={preInlineReceptor.InvocationCount}, " +
-          $"PreInboxDetached={preAsyncReceptor.InvocationCount}, " +
-          $"PostInboxDetached={postAsyncReceptor.InvocationCount}, " +
-          $"PostInboxInline={postInlineReceptor.InvocationCount}.");
-      }
-
-      // Assert - All stages should have been invoked
-      await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(preAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(postAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(postInlineReceptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      // Unregister all receptors
-      registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
-      registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
-    }
+    await Assert.That((await preInlineTask).InvocationCount).IsEqualTo(1);
+    await Assert.That((await preAsyncTask).InvocationCount).IsEqualTo(1);
+    await Assert.That((await postAsyncTask).InvocationCount).IsEqualTo(1);
+    await Assert.That((await postInlineTask).InvocationCount).IsEqualTo(1);
   }
 
   /// <summary>
   /// Verifies that multiple inbox messages trigger all Inbox stages for each message.
   /// </summary>
   [Test]
+  [Timeout(180_000)]
   public async Task InboxStages_MultipleMessages_AllStagesFireForEachAsync(CancellationToken cancellationToken) {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var commands = new[] {
@@ -397,26 +319,14 @@ public class InboxLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+    var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>();
 
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxInline);
-
-    try {
-      // Act - Dispatch multiple commands
-      foreach (var command in commands) {
-        await fixture.Dispatcher.SendAsync(command);
-      }
-
-      // Wait for last event to complete PostInboxInline
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-      // Assert - Receptor should have been invoked at least once
-      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxInline);
+    foreach (var command in commands) {
+      await fixture.Dispatcher.SendAsync(command);
     }
+
+    var receptor = await receptorTask;
+
+    await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
   }
 }
