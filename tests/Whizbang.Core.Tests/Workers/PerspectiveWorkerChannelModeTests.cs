@@ -137,27 +137,6 @@ public class PerspectiveWorkerChannelModeTests {
 
   private sealed record TestEvent(string Data) : IEvent;
 
-  private sealed class CapturingPerspectiveCompletionChannel : IPerspectiveCompletionChannel {
-    public ConcurrentBag<Guid> EventWorkIds { get; } = [];
-    public ConcurrentBag<PerspectiveCursorCompletion> Cursors { get; } = [];
-    public ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default) {
-      EventWorkIds.Add(eventWorkId);
-      return ValueTask.CompletedTask;
-    }
-    public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default) {
-      Cursors.Add(cursor);
-      return ValueTask.CompletedTask;
-    }
-  }
-
-  private sealed class CapturingFailureChannel : IFailureChannel {
-    public ConcurrentBag<(WorkCategory category, MessageFailure failure)> Items { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
-      Items.Add((category, failure));
-      return ValueTask.CompletedTask;
-    }
-  }
-
   private sealed class FakeWorkCoordinatorReturningCursor : IWorkCoordinator {
     public int ProcessWorkBatchAsyncCallCount { get; private set; }
     public int CommitHandlerResultCallCount { get; private set; }
