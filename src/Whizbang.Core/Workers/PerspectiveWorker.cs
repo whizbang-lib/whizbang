@@ -299,20 +299,29 @@ public partial class PerspectiveWorker(
     while (!stoppingToken.IsCancellationRequested) {
       // Block until either channel has work. WaitToReadAsync returns true when an item is
       // available (or false when the channel is closed). We race both readers to avoid
-      // starving drain mode behind a quiet perspective channel (or vice versa).
+      // starving drain mode behind a quiet perspective channel (or vice versa). A timeout
+      // task keeps the database-readiness counter ticking even when no work arrives — the
+      // legacy poll loop did this naturally; the channel architecture needs it explicit.
       var workWait = workReader.WaitToReadAsync(stoppingToken).AsTask();
       var drainWait = drainReader is null
         ? new TaskCompletionSource<bool>().Task // never completes — only workReader is consulted
         : drainReader.WaitToReadAsync(stoppingToken).AsTask();
+      var idleTimeout = Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
 
       try {
-        await Task.WhenAny(workWait, drainWait).ConfigureAwait(false);
+        await Task.WhenAny(workWait, drainWait, idleTimeout).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         break;
       }
 
       if (stoppingToken.IsCancellationRequested) {
         break;
+      }
+
+      // Database readiness check — tracks the counter for tests + ops monitoring. Even without
+      // work, we tick the readiness check on every loop iteration the way the legacy poll did.
+      if (!await _checkDatabaseReadinessAsync(stoppingToken).ConfigureAwait(false)) {
+        continue;
       }
 
       // Drain whatever is currently queued on both channels (non-blocking after the wait).
@@ -329,7 +338,9 @@ public partial class PerspectiveWorker(
       }
 
       if (workBatch.Count == 0 && drainStreamIds.Count == 0) {
-        // Channel(s) closed — both WaitToReadAsync calls returned without yielding an item.
+        // Idle tick: no work after wait. Track empty-poll state the way the legacy poll loop
+        // did so OnWorkProcessingIdle fires + ConsecutiveEmptyPolls reflects reality.
+        _updateWorkStateTracking(hasWork: false);
         continue;
       }
 
