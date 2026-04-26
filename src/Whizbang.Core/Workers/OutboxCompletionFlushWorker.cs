@@ -13,33 +13,30 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-public sealed partial class OutboxCompletionFlushWorker(
-  IServiceScopeFactory scopeFactory,
-  IOptions<OutboxCompletionFlushWorkerOptions> options,
-  ILogger<OutboxCompletionFlushWorker> logger
-) : BackgroundService, IOutboxCompletionChannel {
-  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly OutboxCompletionFlushWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<OutboxCompletionFlushWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private BatchFlusher<Guid>? _flusher;
+public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOutboxCompletionChannel {
+  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly OutboxCompletionFlushWorkerOptions _options;
+  private readonly ILogger<OutboxCompletionFlushWorker> _logger;
+  private readonly BatchFlusher<Guid> _flusher;
+
+  /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+  public OutboxCompletionFlushWorker(
+    IServiceScopeFactory scopeFactory,
+    IOptions<OutboxCompletionFlushWorkerOptions> options,
+    ILogger<OutboxCompletionFlushWorker> logger) {
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger);
+  }
 
   /// <inheritdoc />
-  public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
-    if (_flusher is null) {
-      throw new InvalidOperationException("OutboxCompletionFlushWorker not started");
-    }
-    return _flusher.Writer.WriteAsync(outboxMessageId, cancellationToken);
-  }
+  public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default)
+    => _flusher.Writer.WriteAsync(outboxMessageId, cancellationToken);
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.Flusher.MaxBatchSize, _options.Flusher.CoalesceWindowMs);
-
-    _flusher = new BatchFlusher<Guid>(
-      flush: _flushBatchAsync,
-      options: _options.Flusher,
-      logger: _logger);
-
     return _flusher.StoppedSignal;
   }
 
@@ -51,9 +48,7 @@ public sealed partial class OutboxCompletionFlushWorker(
 
   /// <inheritdoc />
   public override async Task StopAsync(CancellationToken cancellationToken) {
-    if (_flusher is not null) {
-      await _flusher.DisposeAsync();
-    }
+    await _flusher.DisposeAsync();
     await base.StopAsync(cancellationToken);
     LogStopped(_logger);
   }
