@@ -42,10 +42,12 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     var signalFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     writer.OnNewWorkAvailable += () => signalFired.TrySetResult();
 
-    // Act - Queue outbox message and flush
+    // Act - Queue outbox message and flush.
+    // FlushAsync is a no-op on IntervalStrategy (defers to timer); use FlushAndGetBatchAsync
+    // for the immediate-flush path the test needs.
     var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
     intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await intervalStrategy.FlushAsync(WorkBatchOptions.None);
+    _ = await intervalStrategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Signal was raised (publisher worker would wake and claim from DB)
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -76,10 +78,11 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
 
     var inboxWriter = sp.GetRequiredService<IInboxChannelWriter>();
 
-    // Act - Queue something so flush executes, coordinator returns inbox work
+    // Act - Queue something so flush executes, coordinator returns inbox work.
+    // Use FlushAndGetBatchAsync (FlushAsync is a no-op that defers to the timer).
     var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
     intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await intervalStrategy.FlushAsync(WorkBatchOptions.None);
+    _ = await intervalStrategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Inbox work was routed to the inbox channel
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -113,10 +116,11 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     var signalFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     writer.OnNewWorkAvailable += () => signalFired.TrySetResult();
 
-    // Act
+    // Act — FlushAsync is a no-op on BatchStrategy (waits for debounce/batch-size trigger).
+    // Use FlushAndGetBatchAsync for the immediate-flush path the test needs.
     var batchStrategy = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
     batchStrategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await batchStrategy.FlushAsync(WorkBatchOptions.None);
+    _ = await batchStrategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Signal was raised
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
