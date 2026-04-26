@@ -17,65 +17,10 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies that the worker uses the strategy to report perspective completions and failures.
 /// </summary>
 public class PerspectiveWorkerStrategyTests {
-  [Test]
-  public async Task PerspectiveWorker_WithBatchedStrategy_CollectsThenReportsOnNextCycle_Async() {
-    // Arrange
-    var strategy = new BatchedCompletionStrategy();
-    var coordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
-    // Return perspective work on each call
-    coordinator.ReturnWorkOnEveryCycle = true;
-    var streamId = Guid.NewGuid();
-    coordinator.PerspectiveWorkTemplate = new PerspectiveWork {
-      StreamId = streamId,
-      PerspectiveName = "TestPerspective",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
-    };
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      strategy,
-      databaseReadiness
-    );
-
-    // Act - Run worker for multiple poll cycles
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForProcessWorkBatchCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
-
-    // Assert - Batched strategy reports completions via ProcessWorkBatchAsync on the NEXT cycle
-    // First cycle: processes work, collects completion in strategy
-    // Second cycle: gets pending completions, reports them via ProcessWorkBatchAsync parameters
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(2)
-      .Because("Worker should have completed at least 2 poll cycles");
-    await Assert.That(coordinator.CompletionsReceivedViaProcessWorkBatch.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Batched strategy should report completions via ProcessWorkBatchAsync parameters on next cycle");
-    await Assert.That(coordinator.ReportCompletionCallCount).IsEqualTo(0)
-      .Because("Batched strategy should NOT use out-of-band reporting");
-  }
+  // DELETED (Category 1): PerspectiveWorker_WithBatchedStrategy_CollectsThenReportsOnNextCycle_Async
+  // The legacy assertion (completions reported via ProcessWorkBatchAsync parameters) doesn't apply
+  // post commit C — completions now flow through IPerspectiveCompletionChannel, not the SQL request.
+  // BatchedCompletionStrategy behavior is covered by PerspectiveCompletionStrategyTests directly.
 
   [Test]
   public async Task PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async() {
@@ -106,18 +51,27 @@ public class PerspectiveWorkerStrategyTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness
+      databaseReadiness,
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act - Run worker and wait for the instant strategy to report completion
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -176,18 +130,27 @@ public class PerspectiveWorkerStrategyTests {
 
       var serviceProvider = services.BuildServiceProvider();
 
+      var harness = new PerspectiveWorkerTestHarness();
       var worker = new PerspectiveWorker(
         instanceProvider,
         serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
         strategy,
-        databaseReadiness
+        databaseReadiness,
+        eventTypeProvider: null,
+        perspectiveChannelWriter: harness.ChannelWriter,
+        perspectiveCompletionChannel: harness.CompletionCapture,
+        failureChannel: harness.FailureCapture,
+        perspectiveDrainChannel: harness.DrainChannel
       );
 
       // Act - Run worker and wait for the failure to propagate through the strategy
       using var cts = new CancellationTokenSource();
       var workerTask = worker.StartAsync(cts.Token);
+      foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+        await harness.EnqueueWorkAsync(__w, cts.Token);
+      }
       await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(5));
       cts.Cancel();
 
@@ -240,18 +203,27 @@ public class PerspectiveWorkerStrategyTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness
+      databaseReadiness,
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act - Run worker and wait for completion to be reported
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
 
     // Wait for completion to be reported (deterministic, no timers!)
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
@@ -302,18 +274,27 @@ public class PerspectiveWorkerStrategyTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness
+      databaseReadiness,
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act - Run worker and wait for registry lookup to occur
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
 
     // Wait for registry to signal that lookup occurred (deterministic, no timers!)
     await registry.WaitForLookupAsync(timeout: TimeSpan.FromSeconds(5));
@@ -363,18 +344,27 @@ public class PerspectiveWorkerStrategyTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness
+      databaseReadiness,
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act - Run worker and wait for registry lookup to occur
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
 
     // Wait for registry to signal that lookup occurred (deterministic, no timers!)
     await registry.WaitForLookupAsync(timeout: TimeSpan.FromSeconds(5));
