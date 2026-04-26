@@ -1,0 +1,7 @@
+NAME                     CPU %     MEM USAGE / LIMIT    MEM %
+jdx-playwright-sidecar   0.00%     108.8MiB / 7.75GiB   1.37%
+jdx-storage              0.02%     120.7MiB / 7.75GiB   1.52%
+jdx-rabbitmq             0.82%     164.5MiB / 7.75GiB   2.07%
+jdx-app-config           0.01%     183.7MiB / 7.75GiB   2.31%
+jdx-traefik              0.00%     110.4MiB / 7.75GiB   1.39%
+jdx-postgres             0.00%     2.182GiB / 7.75GiB   28.16%
