@@ -266,6 +266,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -273,7 +274,11 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      eventTypeProvider: null
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     var lifecycleCoordinator = serviceProvider.GetRequiredService<ILifecycleCoordinator>();
