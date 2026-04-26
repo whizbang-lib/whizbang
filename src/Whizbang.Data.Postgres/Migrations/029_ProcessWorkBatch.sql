@@ -1406,3 +1406,636 @@ Benefits:
 - Better performance analysis
 - Clearer dependency graph
 - Maintainable codebase';
+
+
+-- ============================================================================
+-- claim_work — focused replacement for the claim portion of process_work_batch.
+-- Phase A of work-pump decomposition. Empty-call short-circuit: when all queues
+-- are empty, return immediately without invoking any claim_orphaned_* function,
+-- cutting the structural ~17 ms idle floor of process_work_batch to ≤ 1 ms.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('claim_work');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
+  p_instance_id UUID,
+  p_service_name TEXT,
+  p_host_name TEXT,
+  p_process_id INTEGER,
+  p_max_streams INTEGER DEFAULT 1000,
+  p_partition_count INTEGER DEFAULT 10000,
+  p_lease_seconds INTEGER DEFAULT 300
+) RETURNS TABLE(
+  source VARCHAR(20),           -- 'outbox' | 'inbox' | 'receptor' | 'perspective'
+  work_id UUID,
+  work_stream_id UUID,
+  partition_number INTEGER,
+  destination VARCHAR(200),
+  message_type VARCHAR(500),
+  envelope_type VARCHAR(500),
+  message_data TEXT,
+  metadata JSONB,
+  status INTEGER,
+  attempts INTEGER,
+  is_newly_stored BOOLEAN,
+  is_orphaned BOOLEAN,
+  perspective_name VARCHAR(200)
+) AS $$
+DECLARE
+  v_has_any_work BOOLEAN;
+BEGIN
+  -- Empty-call short-circuit: cheap indexed EXISTS lookups on partial indexes.
+  -- Each LIMIT 1 against an existing partial index is sub-millisecond when buffer-cached.
+  -- Note: wh_receptor_processing uses completed_at (not processed_at) for the "is done" semantic.
+  v_has_any_work := EXISTS (SELECT 1 FROM __SCHEMA__.wh_outbox WHERE processed_at IS NULL LIMIT 1)
+                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_inbox WHERE processed_at IS NULL LIMIT 1)
+                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NULL LIMIT 1)
+                 OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_receptor_processing WHERE completed_at IS NULL LIMIT 1);
+
+  IF NOT v_has_any_work THEN
+    RETURN;  -- empty result set; orphan-claim sub-functions never invoked
+  END IF;
+
+  -- Non-empty path: claim outbox work and return it.
+  -- Inbox / receptor / perspective claim + return land in subsequent TDD cycles.
+  DECLARE
+    v_now TIMESTAMPTZ := NOW();
+    v_lease_expiry TIMESTAMPTZ := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
+    v_stale_cutoff TIMESTAMPTZ := v_now - INTERVAL '30 seconds';
+    v_rank INTEGER;
+    v_count INTEGER;
+  BEGIN
+    SELECT instance_rank, active_instance_count INTO v_rank, v_count
+    FROM __SCHEMA__.calculate_instance_rank(p_instance_id, v_stale_cutoff);
+
+    -- Claim orphaned / unowned work across all categories for this instance.
+    PERFORM __SCHEMA__.claim_orphaned_outbox(
+      p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
+    );
+    PERFORM __SCHEMA__.claim_orphaned_inbox(
+      p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
+    );
+    PERFORM __SCHEMA__.claim_orphaned_perspective_events(
+      p_instance_id, v_lease_expiry, v_now, p_max_streams
+    );
+
+    -- Return outbox work owned by this instance.
+    -- Per-stream rank prevents one busy stream from starving others; global LIMIT bounds the batch.
+    RETURN QUERY
+    WITH eligible_outbox AS (
+      SELECT
+        o.*,
+        ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) AS stream_rank
+      FROM __SCHEMA__.wh_outbox o
+      WHERE o.instance_id = p_instance_id
+        AND o.lease_expiry > v_now
+        AND o.processed_at IS NULL
+        AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now)
+    ),
+    ordered_outbox AS (
+      SELECT eo.*, ROW_NUMBER() OVER (ORDER BY eo.created_at) AS row_num
+      FROM eligible_outbox eo
+      ORDER BY eo.created_at
+      LIMIT p_max_streams
+    )
+    SELECT
+      'outbox'::VARCHAR(20)         AS source,
+      oo.message_id                 AS work_id,
+      oo.stream_id                  AS work_stream_id,
+      oo.partition_number,
+      oo.destination::VARCHAR(200),
+      oo.message_type::VARCHAR(500),
+      oo.envelope_type::VARCHAR(500),
+      oo.event_data::TEXT           AS message_data,
+      oo.metadata,
+      oo.status,
+      oo.attempts,
+      false                         AS is_newly_stored,
+      false                         AS is_orphaned,
+      NULL::VARCHAR(200)            AS perspective_name
+    FROM ordered_outbox oo;
+
+    -- Return inbox work owned by this instance. Inbox uses handler_name (cast to destination)
+    -- and received_at (cast to created_at). envelope_type is NULL for inbox.
+    RETURN QUERY
+    WITH eligible_inbox AS (
+      SELECT
+        i.*,
+        ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) AS stream_rank
+      FROM __SCHEMA__.wh_inbox i
+      WHERE i.instance_id = p_instance_id
+        AND i.lease_expiry > v_now
+        AND i.processed_at IS NULL
+    ),
+    ordered_inbox AS (
+      SELECT ei.*, ROW_NUMBER() OVER (ORDER BY ei.received_at) AS row_num
+      FROM eligible_inbox ei
+      ORDER BY ei.received_at
+      LIMIT p_max_streams
+    )
+    SELECT
+      'inbox'::VARCHAR(20)          AS source,
+      oi.message_id                 AS work_id,
+      oi.stream_id                  AS work_stream_id,
+      oi.partition_number,
+      oi.handler_name::VARCHAR(200) AS destination,
+      oi.message_type::VARCHAR(500),
+      NULL::VARCHAR(500)            AS envelope_type,
+      oi.event_data::TEXT           AS message_data,
+      oi.metadata,
+      oi.status,
+      oi.attempts,
+      false                         AS is_newly_stored,
+      false                         AS is_orphaned,
+      NULL::VARCHAR(200)            AS perspective_name
+    FROM ordered_inbox oi;
+
+    -- Return perspective work as one row per distinct stream owned by this instance.
+    -- Two-tier fairness ranking lands in a future TDD cycle; this is the basic shape.
+    RETURN QUERY
+    SELECT DISTINCT
+      'perspective_stream'::VARCHAR(20) AS source,
+      NULL::UUID                        AS work_id,
+      pe.stream_id                      AS work_stream_id,
+      NULL::INTEGER                     AS partition_number,
+      NULL::VARCHAR(200)                AS destination,
+      NULL::VARCHAR(500)                AS message_type,
+      NULL::VARCHAR(500)                AS envelope_type,
+      NULL::TEXT                        AS message_data,
+      NULL::JSONB                       AS metadata,
+      0::INTEGER                        AS status,
+      0::INTEGER                        AS attempts,
+      false                             AS is_newly_stored,
+      false                             AS is_orphaned,
+      NULL::VARCHAR(200)                AS perspective_name
+    FROM __SCHEMA__.wh_perspective_events pe
+    WHERE pe.instance_id = p_instance_id
+      AND pe.lease_expiry > v_now
+      AND pe.processed_at IS NULL
+    LIMIT p_max_streams;
+
+    -- Drain-mode hint: if this instance has more eligible work than fits in a single
+    -- batch, RAISE NOTICE so the C# claim worker skips its wait and re-polls immediately.
+    -- Survives pgbouncer (protocol message, not a session-state thing).
+    DECLARE
+      v_pending INTEGER;
+    BEGIN
+      SELECT
+        (SELECT COUNT(*) FROM __SCHEMA__.wh_outbox o
+           WHERE o.instance_id = p_instance_id AND o.lease_expiry > v_now AND o.processed_at IS NULL
+             AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now))
+        + (SELECT COUNT(*) FROM __SCHEMA__.wh_inbox i
+           WHERE i.instance_id = p_instance_id AND i.lease_expiry > v_now AND i.processed_at IS NULL)
+        + (SELECT COUNT(DISTINCT pe.stream_id) FROM __SCHEMA__.wh_perspective_events pe
+           WHERE pe.instance_id = p_instance_id AND pe.lease_expiry > v_now AND pe.processed_at IS NULL)
+      INTO v_pending;
+
+      IF v_pending > p_max_streams THEN
+        RAISE NOTICE 'whizbang.has_more=true';
+      END IF;
+    END;
+  END;
+
+  RETURN;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.claim_work IS
+'Phase A focused claim function replacing the claim portion of process_work_batch. Returns work for the calling instance with an empty-call short-circuit that skips orphan-claim scans when all queues are empty (drops idle floor from ~17 ms to ≤ 1 ms). Real claim logic lands in subsequent TDD cycles; old process_work_batch remains the active production path until Phase C migrates IWorkCoordinator callers.';
+
+
+-- ============================================================================
+-- commit_handler_result — atomic transactional bundle for inbox handler completion.
+-- Combines: inbox completion + emitted new outbox/inbox messages, in one transaction.
+-- This is the only true transactional unit in the work-pump decomposition; everything
+-- else in the new function family is independently committable.
+-- Phase A of work-pump decomposition.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('commit_handler_result');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_result(
+  p_request JSONB
+) RETURNS VOID AS $$
+DECLARE
+  v_instance_id UUID := (p_request ->> 'instance_id')::UUID;
+  v_now TIMESTAMPTZ := NOW();
+  v_lease_expiry TIMESTAMPTZ := v_now + INTERVAL '300 seconds';
+  v_partition_count INTEGER := COALESCE((p_request ->> 'partition_count')::INTEGER, 10000);
+  v_inbox_completion JSONB := p_request -> 'inbox_completion';
+  v_new_outbox JSONB := COALESCE(p_request -> 'new_outbox_messages', '[]'::JSONB);
+  v_new_inbox JSONB := COALESCE(p_request -> 'new_inbox_messages', '[]'::JSONB);
+  v_outbox_inserted INTEGER := 0;
+  v_inbox_inserted INTEGER := 0;
+BEGIN
+  -- 1. Mark inbox completion (if present). process_inbox_completions takes a JSONB array;
+  --    wrap the single completion in an array.
+  IF v_inbox_completion IS NOT NULL AND v_inbox_completion::TEXT != 'null' THEN
+    PERFORM __SCHEMA__.process_inbox_completions(
+      jsonb_build_array(v_inbox_completion),
+      v_now,
+      FALSE  -- debug_mode off
+    );
+  END IF;
+
+  -- 2. Store new outbox messages emitted by the handler.
+  IF jsonb_array_length(v_new_outbox) > 0 THEN
+    PERFORM __SCHEMA__.store_outbox_messages(
+      v_new_outbox,
+      v_instance_id,
+      v_lease_expiry,
+      v_now,
+      v_partition_count
+    );
+    v_outbox_inserted := jsonb_array_length(v_new_outbox);
+  END IF;
+
+  -- 3. Store new inbox messages emitted by the handler (rare path).
+  IF jsonb_array_length(v_new_inbox) > 0 THEN
+    PERFORM __SCHEMA__.store_inbox_messages(
+      v_new_inbox,
+      v_instance_id,
+      v_lease_expiry,
+      v_now,
+      v_partition_count
+    );
+    v_inbox_inserted := jsonb_array_length(v_new_inbox);
+  END IF;
+
+  -- 4. NOTIFY signal types — one per category that received new rows.
+  --    pg_notify deduplicates (channel, payload) within the same transaction at COMMIT,
+  --    so 10 000 inserts → one delivered notification per category. Free.
+  IF v_outbox_inserted > 0 THEN
+    PERFORM pg_notify('wh_work', 'outbox');
+  END IF;
+  IF v_inbox_inserted > 0 THEN
+    PERFORM pg_notify('wh_work', 'inbox');
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.commit_handler_result IS
+'Atomic transactional bundle for inbox handler completion. Marks the inbox completion AND stores the new outbox/inbox messages the handler emitted in one transaction; if any step fails the whole bundle rolls back. Emits pg_notify(''wh_work'', category) per category that received new rows, dedup at COMMIT means burst inserts collapse to one delivered notification. Phase A of work-pump decomposition.';
+
+
+-- ============================================================================
+-- commit_handler_batch — SAVEPOINT-per-handler batched commit. The throughput
+-- multiplier: N handler results in one round-trip, one fsync at the outer commit,
+-- with per-handler success/failure isolation. PL/pgSQL BEGIN..EXCEPTION blocks
+-- create implicit subtransactions (savepoints), so a failing handler rolls back
+-- ONLY its own effects; siblings are unaffected.
+-- Phase A of work-pump decomposition.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('commit_handler_batch');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_batch(
+  p_results JSONB
+) RETURNS TABLE(
+  handler_id UUID,
+  success BOOLEAN,
+  error_message TEXT
+) AS $$
+DECLARE
+  r RECORD;
+  v_handler_id UUID;
+BEGIN
+  IF jsonb_array_length(p_results) = 0 THEN
+    RETURN;
+  END IF;
+
+  FOR r IN
+    SELECT elem
+    FROM jsonb_array_elements(p_results) AS elem
+  LOOP
+    v_handler_id := (r.elem ->> 'handler_id')::UUID;
+
+    BEGIN
+      -- Implicit SAVEPOINT scope: any exception inside this BEGIN..EXCEPTION block
+      -- rolls back ONLY this iteration's writes, then control jumps to the EXCEPTION
+      -- branch and the loop continues with the next handler.
+      PERFORM __SCHEMA__.commit_handler_result(r.elem);
+      RETURN QUERY SELECT v_handler_id AS handler_id, TRUE AS success, NULL::TEXT AS error_message;
+    EXCEPTION WHEN OTHERS THEN
+      RETURN QUERY SELECT v_handler_id AS handler_id, FALSE AS success, SQLERRM::TEXT AS error_message;
+    END;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch IS
+'SAVEPOINT-per-handler batched commit. Accepts an array of handler-result bundles; runs each through commit_handler_result inside its own implicit subtransaction. A failing handler rolls back only its own effects; siblings commit normally. Returns per-handler (handler_id, success, error_message) for the C# flusher to ack successes and re-queue failures. Single fsync at outer commit covers all successful handlers — the throughput multiplier vs single-handler-per-call.';
+
+
+-- ============================================================================
+-- complete_outbox_published — fire-and-forget batched mark-as-processed for outbox
+-- rows after the transport publish succeeds. Coalesced by the C# flush worker.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('complete_outbox_published');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.complete_outbox_published(
+  p_ids UUID[]
+) RETURNS INTEGER AS $$
+DECLARE
+  v_updated INTEGER;
+BEGIN
+  IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  UPDATE __SCHEMA__.wh_outbox
+  SET processed_at = NOW(),
+      status = status | 4  -- Published flag (additive bit set)
+  WHERE message_id = ANY(p_ids)
+    AND processed_at IS NULL;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  RETURN v_updated;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.complete_outbox_published IS
+'Marks outbox rows as processed after successful transport publish. Fire-and-forget; unknown ids silently ignored (idempotent). Coalesced + batched by the C# OutboxCompletionFlushWorker. Returns rows-affected for ack tracking.';
+
+
+-- ============================================================================
+-- record_heartbeat — decoupled heartbeat function. Separated from claim_work so
+-- the heartbeat timer can fire on its own cadence (5 s default) independent of
+-- polling. Sub-millisecond UPSERT.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('record_heartbeat');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.record_heartbeat(
+  p_instance_id UUID,
+  p_service_name TEXT,
+  p_host_name TEXT,
+  p_process_id INTEGER,
+  p_metadata JSONB DEFAULT '{}'::JSONB
+) RETURNS VOID AS $$
+BEGIN
+  INSERT INTO __SCHEMA__.wh_service_instances
+    (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+  VALUES
+    (p_instance_id, p_service_name, p_host_name, p_process_id, NOW(), NOW(), p_metadata)
+  ON CONFLICT (instance_id) DO UPDATE SET
+    last_heartbeat_at = NOW(),
+    metadata = EXCLUDED.metadata;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.record_heartbeat IS
+'Decoupled heartbeat UPSERT. Inserts a new wh_service_instances row on first call, updates last_heartbeat_at on subsequent calls. Called by C# HeartbeatWorker on its own timer (5 s default), independent of polling cadence. Sub-millisecond cost.';
+
+
+-- ============================================================================
+-- complete_perspective — batched perspective completion. Combines event-row
+-- deletion (status flag = 1 means "completed/processed") with cursor advancement
+-- in a single call. Coalesced flush from C# PerspectiveCompletionFlushWorker.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('complete_perspective');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective(
+  p_cursors JSONB,        -- [{StreamId, PerspectiveName}] for cursor advancement
+  p_event_work_ids UUID[] -- event_work_id rows to mark complete (deleted in production mode)
+) RETURNS VOID AS $$
+DECLARE
+  v_now TIMESTAMPTZ := NOW();
+  v_completions JSONB;
+BEGIN
+  -- Build the JSONB array of completions from the work-id list. StatusFlags = 1 = Completed.
+  IF p_event_work_ids IS NOT NULL AND array_length(p_event_work_ids, 1) IS NOT NULL THEN
+    SELECT jsonb_agg(jsonb_build_object('EventWorkId', wid, 'StatusFlags', 1))
+    INTO v_completions
+    FROM unnest(p_event_work_ids) AS wid;
+
+    PERFORM __SCHEMA__.process_perspective_event_completions(
+      COALESCE(v_completions, '[]'::JSONB),
+      v_now,
+      FALSE  -- debug_mode off → DELETE rows
+    );
+  END IF;
+
+  -- Advance cursors for the (StreamId, PerspectiveName) pairs in p_cursors.
+  IF p_cursors IS NOT NULL AND jsonb_array_length(p_cursors) > 0 THEN
+    PERFORM __SCHEMA__.update_perspective_cursors(p_cursors, FALSE);
+  END IF;
+
+  -- NOTIFY for downstream wakeups (e.g., perspective-sync awaiters watching for cursor advancement).
+  IF (p_cursors IS NOT NULL AND jsonb_array_length(p_cursors) > 0)
+     OR (p_event_work_ids IS NOT NULL AND array_length(p_event_work_ids, 1) IS NOT NULL) THEN
+    PERFORM pg_notify('wh_work', 'perspective');
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.complete_perspective IS
+'Batched perspective completion. Marks event-work rows complete (DELETEs them in production mode) and advances cursors in a single round-trip. Coalesced flush from C# PerspectiveCompletionFlushWorker. Emits pg_notify(''wh_work'', ''perspective'') so peers know cursors moved.';
+
+
+-- ============================================================================
+-- report_failures — category-aware batched failure reporter. Routes to the
+-- correct underlying process_*_failures sub-function based on p_category.
+-- Coalesced flush from C# FailureFlushWorker.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('report_failures');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.report_failures(
+  p_category TEXT,
+  p_failures JSONB
+) RETURNS VOID AS $$
+DECLARE
+  v_now TIMESTAMPTZ := NOW();
+BEGIN
+  IF p_failures IS NULL OR jsonb_array_length(p_failures) = 0 THEN
+    RETURN;
+  END IF;
+
+  CASE p_category
+    WHEN 'outbox' THEN
+      PERFORM __SCHEMA__.process_outbox_failures(p_failures, v_now);
+    WHEN 'inbox' THEN
+      PERFORM __SCHEMA__.process_inbox_failures(p_failures, v_now);
+    WHEN 'perspective_event' THEN
+      PERFORM __SCHEMA__.process_perspective_event_failures(p_failures, v_now);
+    ELSE
+      RAISE EXCEPTION 'report_failures: unknown category %', p_category
+        USING HINT = 'Valid categories: outbox, inbox, perspective_event';
+  END CASE;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.report_failures IS
+'Category-aware batched failure reporter. Dispatches to process_outbox_failures / process_inbox_failures / process_perspective_event_failures based on p_category. Coalesced flush from C# FailureFlushWorker. Raises on unknown category.';
+
+
+-- ============================================================================
+-- renew_leases — per-category batched lease extension. Called by C# LeaseRenewalWorker
+-- when in-flight items are within lease/3 of expiry. Coalesced flush.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('renew_leases');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.renew_leases(
+  p_category TEXT,
+  p_ids UUID[],
+  p_lease_seconds INTEGER DEFAULT 300
+) RETURNS INTEGER AS $$
+DECLARE
+  v_new_expiry TIMESTAMPTZ := NOW() + (p_lease_seconds || ' seconds')::INTERVAL;
+  v_updated INTEGER;
+BEGIN
+  IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  CASE p_category
+    WHEN 'outbox' THEN
+      UPDATE __SCHEMA__.wh_outbox
+        SET lease_expiry = v_new_expiry
+        WHERE message_id = ANY(p_ids)
+          AND processed_at IS NULL;
+    WHEN 'inbox' THEN
+      UPDATE __SCHEMA__.wh_inbox
+        SET lease_expiry = v_new_expiry
+        WHERE message_id = ANY(p_ids)
+          AND processed_at IS NULL;
+    WHEN 'perspective_event' THEN
+      UPDATE __SCHEMA__.wh_perspective_events
+        SET lease_expiry = v_new_expiry
+        WHERE event_work_id = ANY(p_ids)
+          AND processed_at IS NULL;
+    ELSE
+      RAISE EXCEPTION 'renew_leases: unknown category %', p_category
+        USING HINT = 'Valid categories: outbox, inbox, perspective_event';
+  END CASE;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  RETURN v_updated;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.renew_leases IS
+'Batched lease extension per category. UPDATEs lease_expiry to NOW() + p_lease_seconds for the supplied ids in the chosen category table, only for rows that are not yet processed. Returns rows-affected. Called by C# LeaseRenewalWorker when in-flight items approach lease/3 from expiry.';
+
+
+-- ============================================================================
+-- flush_completions — composite single-round-trip flusher. Combines the per-category
+-- completion functions into one call when the C# flusher has multiple categories
+-- buffered. Single fsync at outer commit covers all sub-operations.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('flush_completions');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.flush_completions(
+  p_outbox_ids UUID[],
+  p_perspective_cursors JSONB,
+  p_perspective_event_work_ids UUID[],
+  p_failures JSONB           -- [{Category: 'outbox'|'inbox'|'perspective_event', Items: [...]}]
+) RETURNS VOID AS $$
+DECLARE
+  v_failure_group RECORD;
+BEGIN
+  IF p_outbox_ids IS NOT NULL AND array_length(p_outbox_ids, 1) IS NOT NULL THEN
+    PERFORM __SCHEMA__.complete_outbox_published(p_outbox_ids);
+  END IF;
+
+  IF (p_perspective_cursors IS NOT NULL AND jsonb_array_length(p_perspective_cursors) > 0)
+     OR (p_perspective_event_work_ids IS NOT NULL AND array_length(p_perspective_event_work_ids, 1) IS NOT NULL) THEN
+    PERFORM __SCHEMA__.complete_perspective(
+      COALESCE(p_perspective_cursors, '[]'::JSONB),
+      COALESCE(p_perspective_event_work_ids, ARRAY[]::UUID[])
+    );
+  END IF;
+
+  IF p_failures IS NOT NULL AND jsonb_array_length(p_failures) > 0 THEN
+    FOR v_failure_group IN
+      SELECT
+        elem->>'Category' AS category,
+        elem->'Items' AS items
+      FROM jsonb_array_elements(p_failures) AS elem
+    LOOP
+      PERFORM __SCHEMA__.report_failures(v_failure_group.category, v_failure_group.items);
+    END LOOP;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.flush_completions IS
+'Composite single-round-trip flusher. Called by C# flush worker when it has multiple completion categories buffered. Combines complete_outbox_published + complete_perspective + report_failures (per-category) into one call. Single fsync at outer commit covers all sub-operations — the latency-and-throughput optimization for high-volume flush ticks.';
+
+
+-- ============================================================================
+-- resolve_sync_inquiries — read-only PerspectiveSyncAwaiter path. Reports pending
+-- vs processed event counts per (stream, perspective) pair so the awaiter can
+-- wait for cursor advancement. No writes; safe to call without a transaction.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('resolve_sync_inquiries');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.resolve_sync_inquiries(
+  p_inquiries JSONB
+) RETURNS TABLE(
+  inquiry_id UUID,
+  stream_id UUID,
+  pending_count INTEGER,
+  processed_count INTEGER,
+  pending_event_ids UUID[],
+  processed_event_ids UUID[]
+) AS $$
+BEGIN
+  IF p_inquiries IS NULL OR jsonb_array_length(p_inquiries) = 0 THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    (inquiry->>'InquiryId')::UUID,
+    (inquiry->>'StreamId')::UUID,
+    COUNT(es.event_id) FILTER (WHERE pe.processed_at IS NULL)::INTEGER AS pending_count,
+    COUNT(es.event_id) FILTER (WHERE pe.processed_at IS NOT NULL)::INTEGER AS processed_count,
+    CASE
+      WHEN (inquiry->>'IncludePendingEventIds')::BOOLEAN = true
+      THEN ARRAY_AGG(es.event_id) FILTER (WHERE pe.processed_at IS NULL)
+      ELSE NULL
+    END AS pending_event_ids,
+    CASE
+      WHEN (inquiry->>'IncludeProcessedEventIds')::BOOLEAN = true
+      THEN ARRAY_AGG(es.event_id) FILTER (WHERE pe.processed_at IS NOT NULL)
+      ELSE NULL
+    END AS processed_event_ids
+  FROM jsonb_array_elements(p_inquiries) AS inquiry
+  LEFT JOIN __SCHEMA__.wh_event_store es
+    ON es.stream_id = (inquiry->>'StreamId')::UUID
+    AND (
+      (inquiry->'EventIds') IS NULL
+      OR jsonb_array_length(inquiry->'EventIds') = 0
+      OR es.event_id = ANY(ARRAY(SELECT (jsonb_array_elements_text(inquiry->'EventIds'))::UUID))
+    )
+    AND (
+      (inquiry->'EventTypeFilter') IS NULL
+      OR jsonb_array_length(inquiry->'EventTypeFilter') = 0
+      OR es.event_type = ANY(ARRAY(SELECT jsonb_array_elements_text(inquiry->'EventTypeFilter')))
+    )
+  LEFT JOIN __SCHEMA__.wh_perspective_events pe
+    ON pe.event_id = es.event_id
+    AND pe.perspective_name = inquiry->>'PerspectiveName'
+  WHERE
+    CASE
+      WHEN (inquiry->>'DiscoverPendingFromOutbox')::BOOLEAN = true
+        THEN es.event_id IS NOT NULL
+      ELSE true
+    END
+  GROUP BY
+    inquiry->>'InquiryId',
+    inquiry->>'StreamId',
+    inquiry->>'IncludePendingEventIds',
+    inquiry->>'IncludeProcessedEventIds';
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.resolve_sync_inquiries IS
+'PerspectiveSyncAwaiter read-only path. For each inquiry, returns pending vs processed event counts (and optionally the event ID lists) by joining wh_event_store to wh_perspective_events. Filters by stream, optional event-id list, optional event-type-filter, optional perspective. No writes.';
