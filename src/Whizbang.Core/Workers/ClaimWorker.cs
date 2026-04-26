@@ -6,6 +6,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 
+#pragma warning disable IDE0290  // Allow explicit constructor for optional channel writers
+
 namespace Whizbang.Core.Workers;
 
 /// <summary>
@@ -20,6 +22,9 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
+  private readonly IWorkChannelWriter? _outboxChannel;
+  private readonly IInboxChannelWriter? _inboxChannel;
+  private readonly IPerspectiveChannelWriter? _perspectiveChannel;
   private readonly ClaimWorkerOptions _options;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly SemaphoreSlim _wake = new(0, 1);
@@ -31,12 +36,18 @@ public sealed partial class ClaimWorker : BackgroundService {
     IServiceInstanceProvider instanceProvider,
     IWorkNotificationListener notificationListener,
     IOptions<ClaimWorkerOptions> options,
-    ILogger<ClaimWorker> logger) {
+    ILogger<ClaimWorker> logger,
+    IWorkChannelWriter? outboxChannel = null,
+    IInboxChannelWriter? inboxChannel = null,
+    IPerspectiveChannelWriter? perspectiveChannel = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _outboxChannel = outboxChannel;
+    _inboxChannel = inboxChannel;
+    _perspectiveChannel = perspectiveChannel;
 
     // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
     _notificationListener.OnSignal += _onSignal;
@@ -73,6 +84,7 @@ public sealed partial class ClaimWorker : BackgroundService {
 
         if (hadWork) {
           _consecutiveEmptyPolls = 0;
+          await _distributeAsync(batch, stoppingToken);
           OnBatchClaimed?.Invoke(batch);
         } else {
           Interlocked.Increment(ref _consecutiveEmptyPolls);
@@ -93,6 +105,24 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
 
     LogStopped(_logger);
+  }
+
+  private async Task _distributeAsync(WorkBatch batch, CancellationToken ct) {
+    if (_outboxChannel is not null) {
+      foreach (var ow in batch.OutboxWork) {
+        await _outboxChannel.WriteAsync(ow, ct);
+      }
+    }
+    if (_inboxChannel is not null) {
+      foreach (var iw in batch.InboxWork) {
+        await _inboxChannel.WriteAsync(iw, ct);
+      }
+    }
+    if (_perspectiveChannel is not null) {
+      foreach (var pw in batch.PerspectiveWork) {
+        await _perspectiveChannel.WriteAsync(pw, ct);
+      }
+    }
   }
 
   private async Task<WorkBatch> _claimOnceAsync(CancellationToken ct) {
