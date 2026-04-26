@@ -744,6 +744,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -751,12 +752,19 @@ public class PerspectiveWorkerCoverageTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      syncSignaler: syncSignaler
+      syncSignaler: syncSignaler,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     // StopAsync cancels the worker AND waits for ExecuteAsync to complete
     // (unlike cts.Cancel() + await workerTask, which is a no-op since StartAsync returns Task.CompletedTask)
@@ -803,6 +811,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -811,12 +820,19 @@ public class PerspectiveWorkerCoverageTests {
       new InstantCompletionStrategy(),
       databaseReadiness,
       eventTypeProvider: eventTypeProvider,
-      syncEventTracker: syncEventTracker
+      syncEventTracker: syncEventTracker,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -865,6 +881,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -872,12 +889,19 @@ public class PerspectiveWorkerCoverageTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -926,6 +950,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -933,12 +958,19 @@ public class PerspectiveWorkerCoverageTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act — run the REAL PerspectiveWorker
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
 
     // Wait a bit for PostLifecycle to fire (it runs after completion reporting)
@@ -1000,18 +1032,26 @@ public class PerspectiveWorkerCoverageTests {
 
       var serviceProvider = services.BuildServiceProvider();
 
+      var harness = new PerspectiveWorkerTestHarness();
       var worker = new PerspectiveWorker(
         instanceProvider,
         serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
         new InstantCompletionStrategy(),
-        databaseReadiness
+        databaseReadiness,
+        perspectiveChannelWriter: harness.ChannelWriter,
+        perspectiveCompletionChannel: harness.CompletionCapture,
+        failureChannel: harness.FailureCapture,
+        perspectiveDrainChannel: harness.DrainChannel
       );
 
       // Act
       using var cts = new CancellationTokenSource();
       var workerTask = worker.StartAsync(cts.Token);
+      foreach (var w in coordinator.PerspectiveWorkToReturn) {
+        await harness.EnqueueWorkAsync(w, cts.Token);
+      }
       await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(10));
       cts.Cancel();
 
@@ -1067,25 +1107,32 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: tracingOptionsMonitor,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert - Worker processed work with tracing enabled (no crash)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
   }
 
@@ -1171,6 +1218,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -1178,12 +1226,19 @@ public class PerspectiveWorkerCoverageTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1225,6 +1280,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -1232,12 +1288,19 @@ public class PerspectiveWorkerCoverageTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
