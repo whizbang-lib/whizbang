@@ -11,6 +11,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
+[NotInParallel("WhizbangBackgroundServiceTests")]
 public class HeartbeatWorkerTests {
 
   private sealed class StubInstanceProvider(Guid id, string name, string host, int pid) : IServiceInstanceProvider {
