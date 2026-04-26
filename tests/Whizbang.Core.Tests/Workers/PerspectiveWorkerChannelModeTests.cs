@@ -87,6 +87,52 @@ public class PerspectiveWorkerChannelModeTests {
       .Because("Channel-mode must not call legacy ProcessWorkBatchAsync");
   }
 
+  [Test]
+  public async Task ProcessChannelBatchAsync_DrainStreamIds_AcceptedAndDoNotFallToLegacyAsync() {
+    // Arrange — empty per-event work + one drain stream ID. Verifies the channel-consumer
+    // overload accepts drain stream IDs and routes them through the existing drain path
+    // (_processDrainModeStreamsAsync). Full end-to-end drain processing requires the
+    // perspective registry to have been initialized via StartAsync, which is exercised by
+    // the integration tests in the EFCore Postgres test project — this unit test guards
+    // the API surface and the no-fall-back-to-legacy invariant.
+    var streamId = Guid.NewGuid();
+    var channelWriter = new PerspectiveChannelWriter();
+    var drainChannel = new PerspectiveDrainChannel();
+    var completionCapture = new CapturingPerspectiveCompletionChannel();
+    var failureCapture = new CapturingFailureChannel();
+
+    var coordinator = new FakeWorkCoordinatorReturningCursor();
+    var instanceProvider = new FakeServiceInstanceProvider();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry());
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(new FakeEventStore());
+    services.AddLogging();
+    var sp = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
+      tracingOptions: null,
+      completionStrategy: new BatchedCompletionStrategy(),
+      databaseReadinessCheck: new FakeDatabaseReadinessCheck { IsReady = true },
+      eventTypeProvider: new FakeEventTypeProvider([typeof(TestEvent)]),
+      perspectiveChannelWriter: channelWriter,
+      perspectiveCompletionChannel: completionCapture,
+      failureChannel: failureCapture,
+      perspectiveDrainChannel: drainChannel);
+
+    // Act — call the drain-aware overload with NO per-event work but ONE drain stream ID.
+    // This must not throw and must not touch the legacy poll path.
+    await worker.ProcessChannelBatchAsync([], [streamId], CancellationToken.None);
+
+    await Assert.That(coordinator.ProcessWorkBatchAsyncCallCount).IsEqualTo(0)
+      .Because("Channel-mode must never call legacy ProcessWorkBatchAsync, even with drain stream IDs");
+  }
+
   // ---------- Test fakes ----------
 
   private sealed record TestEvent(string Data) : IEvent;
@@ -115,6 +161,8 @@ public class PerspectiveWorkerChannelModeTests {
   private sealed class FakeWorkCoordinatorReturningCursor : IWorkCoordinator {
     public int ProcessWorkBatchAsyncCallCount { get; private set; }
     public int CommitHandlerResultCallCount { get; private set; }
+    public int GetStreamEventsCallCount { get; private set; }
+    public Guid? LastStreamEventsRequestedFor { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
       ProcessWorkBatchAsyncCallCount++;
@@ -123,6 +171,12 @@ public class PerspectiveWorkerChannelModeTests {
         InboxWork = [],
         PerspectiveWork = [],
       });
+    }
+
+    public Task<List<StreamEventData>> GetStreamEventsAsync(Guid instanceId, Guid[] streamIds, CancellationToken cancellationToken = default) {
+      GetStreamEventsCallCount++;
+      LastStreamEventsRequestedFor = streamIds.Length > 0 ? streamIds[0] : null;
+      return Task.FromResult(new List<StreamEventData>());
     }
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);

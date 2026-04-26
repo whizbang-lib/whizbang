@@ -25,6 +25,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IWorkChannelWriter? _outboxChannel;
   private readonly IInboxChannelWriter? _inboxChannel;
   private readonly IPerspectiveChannelWriter? _perspectiveChannel;
+  private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel;
   private readonly ClaimWorkerOptions _options;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly SemaphoreSlim _wake = new(0, 1);
@@ -39,7 +40,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     ILogger<ClaimWorker> logger,
     IWorkChannelWriter? outboxChannel = null,
     IInboxChannelWriter? inboxChannel = null,
-    IPerspectiveChannelWriter? perspectiveChannel = null) {
+    IPerspectiveChannelWriter? perspectiveChannel = null,
+    IPerspectiveDrainChannel? perspectiveDrainChannel = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
@@ -48,6 +50,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _outboxChannel = outboxChannel;
     _inboxChannel = inboxChannel;
     _perspectiveChannel = perspectiveChannel;
+    _perspectiveDrainChannel = perspectiveDrainChannel;
 
     // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
     _notificationListener.OnSignal += _onSignal;
@@ -121,6 +124,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (_perspectiveChannel is not null) {
       foreach (var pw in batch.PerspectiveWork) {
         await _perspectiveChannel.WriteAsync(pw, ct);
+      }
+    }
+    if (_perspectiveDrainChannel is not null) {
+      foreach (var streamId in batch.PerspectiveStreamIds) {
+        await _perspectiveDrainChannel.WriteAsync(streamId, ct);
       }
     }
   }
