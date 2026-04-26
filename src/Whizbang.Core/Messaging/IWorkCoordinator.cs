@@ -295,6 +295,160 @@ public interface IWorkCoordinator {
   Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Records a heartbeat for this instance. Decoupled from <see cref="ProcessWorkBatchAsync"/>
+  /// so the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
+  /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
+  /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">Instance identity + optional metadata.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRecordHeartbeatTests.cs:RecordHeartbeatAsync_NewInstance_InsertsRowAsync</tests>
+  Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
+
+  /// <summary>
+  /// Marks the supplied outbox messages as processed (transport publish succeeded).
+  /// Coalesced flush from the C# OutboxCompletionFlushWorker. Idempotent: unknown ids ignored.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="ids">Outbox message ids to mark as processed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually updated.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CompleteOutboxPublishedAsync.");
+
+  /// <summary>
+  /// Advances perspective cursors and deletes processed perspective_event rows in one round-trip.
+  /// Coalesced flush from the C# PerspectiveCompletionFlushWorker.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="cursors">Cursor advancement specs (StreamId + PerspectiveName per entry).</param>
+  /// <param name="eventWorkIds">wh_perspective_events.event_work_id rows to mark processed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CompletePerspectiveAsync.");
+
+  /// <summary>
+  /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category.
+  /// Called by C# LeaseRenewalWorker when in-flight items approach expiry.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="category">Which category table to update.</param>
+  /// <param name="ids">Message / work ids to renew.</param>
+  /// <param name="leaseSeconds">New lease duration from now (default 300).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually updated.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task<int> RenewLeasesAsync(
+    WorkCategory category,
+    IReadOnlyList<Guid> ids,
+    int leaseSeconds = 300,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement RenewLeasesAsync.");
+
+  /// <summary>
+  /// Reports failures for the supplied category. Increments retry counters and sets
+  /// error/failure_reason on the affected rows. Coalesced flush from C# FailureFlushWorker.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="category">Which category these failures belong to.</param>
+  /// <param name="failures">Failure records (MessageId/EventWorkId + CompletedStatus + Error + FailureReason).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task ReportFailuresAsync(
+    WorkCategory category,
+    IReadOnlyList<MessageFailure> failures,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ReportFailuresAsync.");
+
+  /// <summary>
+  /// Atomic transactional bundle for one handler's commit. Marks the inbox completion
+  /// AND stores any new outbox/inbox messages emitted by the handler in one transaction.
+  /// If any step fails the whole bundle rolls back. Emits pg_notify per category that
+  /// received new rows. Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">The handler's complete result bundle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+  Task CommitHandlerResultAsync(
+    HandlerCommitRequest request,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CommitHandlerResultAsync.");
+
+  /// <summary>
+  /// SAVEPOINT-per-handler batched commit. The throughput multiplier: N handler results
+  /// in one round-trip, single fsync at outer commit, with per-handler success/failure
+  /// isolation. A failing handler rolls back only its own effects; siblings unaffected.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="requests">Handler bundles to commit.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Per-handler success/failure status, one row per request.</returns>
+  /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+  Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
+    IReadOnlyList<HandlerCommitRequest> requests,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CommitHandlerBatchAsync.");
+
+  /// <summary>
+  /// Polls for work to claim. The only function the new ClaimWorker polls.
+  /// Empty-call short-circuit drops the legacy ~17 ms idle floor toward ≤ 1 ms.
+  /// Returns claimed outbox/inbox/perspective work; the C# layer distributes to channels.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">Claim parameters.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>WorkBatch with claimed work; empty if none available.</returns>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  Task<WorkBatch> ClaimWorkAsync(
+    ClaimWorkRequest request,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ClaimWorkAsync.");
+
+  /// <summary>
+  /// Composite single-round-trip flusher. Combines outbox completes, perspective completes,
+  /// and per-category failures into one call. Single fsync at outer commit.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">Composite flush payload.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task FlushCompletionsAsync(
+    FlushCompletionsRequest request,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement FlushCompletionsAsync.");
+
+  /// <summary>
+  /// PerspectiveSyncAwaiter read-only path. Returns pending vs processed event counts
+  /// per (stream, perspective) inquiry.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="inquiries">Inquiry list.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/sync</docs>
+  Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<Perspectives.Sync.SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ResolveSyncInquiriesAsync.");
+
+  /// <summary>
   /// Gathers expensive statistics (COUNT queries) for observability gauges.
   /// Called periodically (~every 60 ticks), NOT on every tick. Single source of truth
   /// for queue depth metrics that are too expensive for the hot path.
