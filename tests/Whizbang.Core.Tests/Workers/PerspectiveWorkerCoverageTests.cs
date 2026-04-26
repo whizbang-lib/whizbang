@@ -81,7 +81,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_StartsInIdleState_IsIdleTrueAsync() {
     // Arrange
-    var (worker, _, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     // Assert - Worker starts in idle state
     await Assert.That(worker.IsIdle).IsTrue();
@@ -93,7 +93,7 @@ public class PerspectiveWorkerCoverageTests {
   public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync() {
     // Arrange
     var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
     worker.OnWorkProcessingStarted += () => { startedSignal.TrySetResult(); };
 
     // Return work on first call
@@ -128,7 +128,7 @@ public class PerspectiveWorkerCoverageTests {
   public async Task Worker_AfterWorkCompletes_TransitionsToIdleAndFiresEventAsync() {
     // Arrange
     var idleFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var (worker, coordinator, _) = _createWorker(idleThresholdPolls: 2);
+    var (worker, coordinator, _, harness) = _createWorker(idleThresholdPolls: 2);
     worker.OnWorkProcessingIdle += () => { idleFired.TrySetResult(); };
 
     // Return work on first call only, then empty
@@ -145,6 +145,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
 
     // Wait for idle event (work consumed on first call, then 2 empty polls)
     using var idleCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -166,11 +167,12 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_NoWork_IncreasesConsecutiveEmptyPollsAsync() {
     // Arrange - No work returned
-    var (worker, _, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(1000); // Let several empty polls complete (generous for CI contention)
     cts.Cancel();
 
@@ -188,7 +190,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_DatabaseNotReady_IncrementsConsecutiveCheckCounterAsync() {
     // Arrange
-    var (worker, _, dbCheck) = _createWorker();
+    var (worker, coordinator, dbCheck, harness) = _createWorker();
     dbCheck.IsReady = false;
 
     // Act — wait for enough readiness checks that the main loop has run multiple iterations.
@@ -196,6 +198,7 @@ public class PerspectiveWorkerCoverageTests {
     // entering the main loop. Wait for 6 total to ensure multiple main-loop increments.
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await dbCheck.WaitForChecksAsync(6, TimeSpan.FromSeconds(10));
     cts.Cancel();
 
@@ -209,12 +212,13 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_DatabaseBecomesReady_ResetsConsecutiveCheckCounterAsync() {
     // Arrange - Start not ready, become ready after some polls
-    var (worker, _, dbCheck) = _createWorker();
+    var (worker, coordinator, dbCheck, harness) = _createWorker();
     dbCheck.IsReady = false;
 
     // Act - Start worker with database not ready
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
 
     // Wait for at least 3 not-ready checks via signal (no Task.Delay)
     await dbCheck.WaitForChecksAsync(3, TimeSpan.FromSeconds(10));
@@ -313,7 +317,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_MetadataOnPerspectiveFirstRow_ExtractsAcknowledgementCountsAsync() {
     // Arrange
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
     var streamId = Guid.NewGuid();
 
     // Return work with metadata on first perspective row
@@ -333,6 +337,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -345,7 +350,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_MetadataOnOutboxFirstRow_ExtractsAcknowledgementCountsAsync() {
     // Arrange - Metadata on outbox first row (no perspective work)
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     coordinator.WorkBatchOverride = new WorkBatch {
       PerspectiveWork = [],
@@ -374,6 +379,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300);
     cts.Cancel();
 
@@ -386,7 +392,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_MetadataOnInboxFirstRow_ExtractsAcknowledgementCountsAsync() {
     // Arrange - Metadata on inbox first row (no perspective or outbox work)
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     coordinator.WorkBatchOverride = new WorkBatch {
       PerspectiveWork = [],
@@ -412,6 +418,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300);
     cts.Cancel();
 
@@ -424,7 +431,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_NoMetadataOnAnyFirstRow_DefaultsToZeroAsync() {
     // Arrange - Return no metadata on any first row (covers all fallback paths)
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     coordinator.WorkBatchOverride = new WorkBatch {
       PerspectiveWork = [],
@@ -435,6 +442,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300); // Let a cycle complete
     cts.Cancel();
 
@@ -1240,7 +1248,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_WithoutEventTypeProvider_SkipsEventLoadingAsync() {
     // Arrange - No event type provider at all
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
@@ -1255,6 +1263,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1318,11 +1327,12 @@ public class PerspectiveWorkerCoverageTests {
 
   #region Helpers
 
-  private static (PerspectiveWorker Worker, FakeWorkCoordinator Coordinator, FakeDatabaseReadinessCheck DbCheck) _createWorker(int idleThresholdPolls = 2) {
+  private static (PerspectiveWorker Worker, FakeWorkCoordinator Coordinator, FakeDatabaseReadinessCheck DbCheck, PerspectiveWorkerTestHarness Harness) _createWorker(int idleThresholdPolls = 2) {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
     var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -1341,10 +1351,14 @@ public class PerspectiveWorkerCoverageTests {
       }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
-    return (worker, coordinator, databaseReadiness);
+    return (worker, coordinator, databaseReadiness, harness);
   }
 
   #endregion
@@ -1496,6 +1510,27 @@ public class PerspectiveWorkerCoverageTests {
     public WorkBatch? WorkBatchOverride { get; set; }
     public bool CaptureRequests { get; set; }
     public List<ProcessWorkBatchRequest> CapturedRequests { get; } = [];
+
+    /// <summary>
+    /// Pumps work into the harness channel and ticks the cycle counter on a loop.
+    /// Drives the worker the way ProcessWorkBatchAsync used to, before commit C deleted
+    /// the legacy poll path. Tests fire this after StartAsync to exercise channel mode.
+    /// </summary>
+    public async Task RunPumpLoopAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct) {
+      try {
+        while (!ct.IsCancellationRequested) {
+          ProcessWorkBatchCallCount++;
+          var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
+          PerspectiveWorkToReturn.Clear();
+          foreach (var w in work) {
+            await harness.EnqueueWorkAsync(w, ct);
+          }
+          await Task.Delay(20, ct);
+        }
+      } catch (OperationCanceledException) {
+        // expected on shutdown
+      }
+    }
 
     public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);
