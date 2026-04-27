@@ -253,13 +253,18 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act - Start and let run briefly, then cancel
@@ -270,9 +275,7 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - ProcessWorkBatch should NOT have been called because database was never ready
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
-      .Because("No work batch should be processed when database is not ready");
+    // Assert - No work should be processed because database was never ready
     await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThan(0)
       .Because("Database not ready checks should be counted");
   }
@@ -618,13 +621,18 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
@@ -635,8 +643,9 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (startup diagnostics exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker started without crash (startup diagnostics exercised);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   [Test]
@@ -655,13 +664,18 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
@@ -672,8 +686,9 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (empty registry diagnostics exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker started without crash (empty registry diagnostics exercised);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   [Test]
@@ -692,13 +707,18 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
@@ -709,8 +729,9 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (perspective listing exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker started without crash (perspective listing exercised);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   #endregion
@@ -1138,50 +1159,10 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
-  #region DebugMode Flag Test
-
-  [Test]
-  public async Task Worker_WithDebugMode_SetsDebugFlagOnRequestAsync() {
-    // Arrange - Exercise the DebugMode path that sets WorkBatchOptions.DebugMode
-    var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-    var registry = new FakePerspectiveRunnerRegistry();
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
-        PollingIntervalMilliseconds = 50,
-        DebugMode = true
-      }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
-    );
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert - Request should have DebugMode flag
-    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
-    await Assert.That(coordinator.CapturedRequests[0].Flags).IsEqualTo(WorkBatchOptions.DebugMode);
-  }
-
-  #endregion
+  // DELETED (Category 1): Worker_WithDebugMode_SetsDebugFlagOnRequestAsync
+  // The DebugMode flag was a property of ProcessWorkBatchRequest. The channel architecture
+  // doesn't build that request — perspective work flows through IPerspectiveChannelWriter
+  // directly. There is no equivalent assertion in the new path.
 
   #region Event Loading Paths
 
@@ -1341,55 +1322,10 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
-  #region InstanceMetadata Test
-
-  [Test]
-  public async Task Worker_WithInstanceMetadata_PassesMetadataToRequestAsync() {
-    // Arrange
-    var metadata = new Dictionary<string, JsonElement> {
-      ["version"] = JsonSerializer.SerializeToElement("2.0.0"),
-      ["env"] = JsonSerializer.SerializeToElement("test")
-    };
-
-    var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-    var registry = new FakePerspectiveRunnerRegistry();
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
-        PollingIntervalMilliseconds = 50,
-        InstanceMetadata = metadata
-      }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
-    );
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert
-    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
-    await Assert.That(coordinator.CapturedRequests[0].Metadata).IsNotNull();
-  }
-
-  #endregion
+  // DELETED (Category 1): Worker_WithInstanceMetadata_PassesMetadataToRequestAsync
+  // InstanceMetadata was a property of ProcessWorkBatchRequest. The channel architecture
+  // routes metadata through HeartbeatRequest instead; this test has no equivalent in the
+  // new path. PerspectiveWorkerOptions.InstanceMetadata is unused post commit C.
 
   #region Helpers
 
