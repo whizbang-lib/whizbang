@@ -550,12 +550,10 @@ public class PerspectiveWorkerRewindTests {
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - At least one request captured, and later requests should contain event completions
-    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThanOrEqualTo(1);
-
-    // The first batch processes the work; completions are sent in subsequent batches
-    var hasCompletions = coordinator.CapturedRequests.Any(r => r.PerspectiveEventCompletions.Length > 0);
-    await Assert.That(hasCompletions).IsTrue();
+    // Assert - Event work IDs flow through the completion channel (channel architecture
+    // replaces the legacy CapturedRequests.PerspectiveEventCompletions assertion).
+    await Assert.That(harness.CompletionCapture.EventWorkIds.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Worker should enqueue completed event work IDs to the perspective completion channel");
   }
 
   #endregion

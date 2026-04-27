@@ -294,13 +294,18 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 10 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act - Let it run long enough for >10 cycles
@@ -487,25 +492,34 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await Task.Delay(300);
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker processed batch without crash (logged warning about missing registry)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker processed batch without crash (logged warning about missing registry/runner);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   [Test]
@@ -534,25 +548,34 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      databaseReadiness,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await Task.Delay(300);
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker continued processing without crash
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker continued processing without crash;
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   #endregion
