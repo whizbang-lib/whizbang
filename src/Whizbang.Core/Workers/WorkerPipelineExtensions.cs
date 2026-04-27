@@ -41,6 +41,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<FailureFlushWorker>();
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
+    services.TryAddSingleton<MaintenanceWorker>();
     // OutboxPublishWorker + InboxDispatchWorker classes are registered here so opt-in
     // extensions can resolve them, but they are NOT auto-hosted yet — Phase H step 2 will
     // move the AddHostedService lines into this method once ECommerce sample fixtures
@@ -57,6 +58,9 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<FailureFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
+    // MaintenanceWorker is auto-hosted from step 1 (timer-based, no channel consumer race
+    // with the legacy publisher — safe to run alongside both old and new paths).
+    services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
@@ -91,6 +95,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxHandlerWorkerOptions>();
     services.AddOptions<OutboxPublishWorkerOptions>();
     services.AddOptions<InboxDispatchWorkerOptions>();
+    services.AddOptions<MaintenanceWorkerOptions>();
 
     return services;
   }
