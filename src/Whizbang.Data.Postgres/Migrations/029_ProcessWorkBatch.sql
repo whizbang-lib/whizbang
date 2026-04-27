@@ -1482,6 +1482,12 @@ BEGIN
       p_instance_id, v_rank, v_count, v_lease_expiry, v_now
     );
 
+    -- Back-fill wh_event_store + wh_perspective_events for inbox events claimed above.
+    -- Replaces legacy process_work_batch Phase 4.5B + 4.6 self-healing — ensures that by the
+    -- time an inbox event row reaches InboxDispatchWorker, its event_store row exists and
+    -- perspective_events have been created so PerspectiveWorker can pick them up.
+    PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now);
+
     -- Return outbox work owned by this instance.
     -- Per-stream rank prevents one busy stream from starving others; global LIMIT bounds the batch.
     RETURN QUERY
@@ -1783,6 +1789,134 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain IS
 'Helper extracted from process_work_batch Phase 4.5A + 4.6 — copies newly-stored outbox events into wh_event_store with sequential versioning and creates wh_perspective_events rows for matching perspective associations. Called by commit_handler_result after store_outbox_messages so handler-emitted events flow through to perspectives.';
+
+-- ============================================================================
+-- _emit_event_store_chain_for_inbox — Phase 4.5B + 4.6 equivalent for inbox-arrival
+-- events. The legacy process_work_batch ran this every claim cycle to back-fill the
+-- event_store + perspective_events from inbox rows that arrived via TransportConsumerWorker
+-- (which inserts into wh_inbox directly and lets self-healing create the event_store row).
+-- claim_work calls this after claim_orphaned_inbox so the new path preserves the same
+-- guarantee: by the time an inbox row is returned to InboxDispatchWorker, its event_store
+-- row exists and perspective_events have been created.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain_for_inbox');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
+  p_instance_id UUID,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ
+) RETURNS INTEGER AS $$
+DECLARE
+  v_stored_event_ids UUID[];
+  v_count INTEGER;
+  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_hops CONSTANT TEXT := 'Hops';
+  c_source_perspective CONSTANT TEXT := 'perspective';
+BEGIN
+  -- Auto-create event_store rows for inbox rows owned by this instance that:
+  --   • are events (is_event = true)
+  --   • have a stream_id
+  --   • aren't yet in wh_event_store (idempotent — ON CONFLICT swallows duplicates)
+  -- Bounded by lease ownership so we don't scan the whole inbox every tick.
+  WITH inbox_events AS (
+    SELECT
+      i.message_id,
+      i.stream_id,
+      i.message_type,
+      i.event_data,
+      i.metadata,
+      i.scope,
+      i.received_at,
+      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) AS row_num
+    FROM __SCHEMA__.wh_inbox i
+    WHERE i.instance_id = p_instance_id
+      AND i.lease_expiry > p_now
+      AND i.processed_at IS NULL
+      AND i.is_event = true
+      AND i.stream_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
+      )
+  ),
+  inbox_stream_versions AS (
+    SELECT es.stream_id, MAX(es.version) AS max_version
+    FROM __SCHEMA__.wh_event_store es
+    WHERE es.stream_id IN (SELECT DISTINCT stream_id FROM inbox_events)
+    GROUP BY es.stream_id
+  ),
+  inbox_base_versions AS (
+    SELECT
+      ie.*,
+      COALESCE(sv.max_version, 0) AS base_version
+    FROM inbox_events ie
+    LEFT JOIN inbox_stream_versions sv ON sv.stream_id = ie.stream_id
+  ),
+  stored_events AS (
+    INSERT INTO __SCHEMA__.wh_event_store (
+      event_id, stream_id, aggregate_id, aggregate_type, event_type,
+      event_data, metadata, scope, version, created_at
+    )
+    SELECT
+      bv.message_id,
+      bv.stream_id,
+      bv.stream_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1),
+      __SCHEMA__.normalize_event_type(bv.message_type),
+      COALESCE(bv.event_data::jsonb -> 'p', bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload'),
+      jsonb_build_object(
+        c_field_message_id, COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> c_field_message_id, bv.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> c_field_hops, bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+      ),
+      bv.scope,
+      bv.base_version + bv.row_num,
+      p_now
+    FROM inbox_base_versions bv
+    ON CONFLICT (event_id) DO NOTHING
+    RETURNING event_id
+  )
+  SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
+  v_stored_event_ids := COALESCE(v_stored_event_ids, '{}');
+  v_count := cardinality(v_stored_event_ids);
+
+  IF v_count = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Auto-create perspective_events for the newly-stored events.
+  INSERT INTO __SCHEMA__.wh_perspective_events (
+    event_work_id, stream_id, perspective_name, event_id,
+    status, attempts, created_at, instance_id, lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid(),
+    es.stream_id,
+    ma.target_name,
+    es.event_id,
+    1,                  -- Stored flag
+    0,
+    p_now,
+    p_instance_id,
+    p_lease_expiry
+  FROM __SCHEMA__.wh_event_store es
+  INNER JOIN __SCHEMA__.wh_message_associations ma
+    ON es.event_type = ma.normalized_message_type
+    AND ma.association_type = c_source_perspective
+  WHERE es.event_id = ANY(v_stored_event_ids)
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = ma.target_name
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox IS
+'Phase 4.5B + 4.6 equivalent — back-fills wh_event_store + wh_perspective_events from inbox rows that arrived via TransportConsumerWorker direct-INSERT. Called by claim_work after claim_orphaned_inbox so the new path preserves the legacy self-healing guarantee.';
 
 SELECT __SCHEMA__.drop_all_overloads('commit_handler_result');
 
