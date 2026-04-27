@@ -118,4 +118,170 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
       await Assert.That(count).IsEqualTo(1L);
     }
   }
+
+  /// <summary>
+  /// When the handler emits an outbox message marked IsEvent=true with a stream_id,
+  /// commit_handler_result must call _emit_event_store_chain so the event lands in
+  /// wh_event_store and any matching wh_message_associations triggers a
+  /// wh_perspective_events row. Without this chain, handler-emitted events sit in
+  /// wh_outbox forever without ever reaching perspective consumers.
+  /// </summary>
+  [Test]
+  public async Task CommitHandlerResult_HandlerEmitsEvent_StoresInEventStoreAndCreatesPerspectiveEventAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var emittedEventId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.OrderShippedEvent";
+
+    // Register a perspective association so the auto-create fires.
+    await using (var assoc = connection.CreateCommand()) {
+      assoc.CommandText = @"
+        INSERT INTO wh_message_associations
+          (id, message_type, association_type, target_name, service_name,
+           normalized_message_type, created_at, updated_at)
+        VALUES (gen_random_uuid(), @eventType, 'perspective', 'TestPerspective', 'test-service',
+                @eventType, NOW(), NOW())
+        ON CONFLICT DO NOTHING";
+      assoc.Parameters.AddWithValue("eventType", eventType);
+      await assoc.ExecuteNonQueryAsync();
+    }
+
+    var request = $$"""
+      {
+        "instance_id": "{{instanceId}}",
+        "service_name": "test",
+        "host_name": "test-host",
+        "process_id": 1,
+        "new_outbox_messages": [{
+          "MessageId": "{{emittedEventId}}",
+          "Destination": "out-topic",
+          "MessageType": "{{eventType}}",
+          "EnvelopeType": null,
+          "Envelope": {"Payload": {"OrderId": 42}, "MessageId": "{{emittedEventId}}", "Hops": []},
+          "Metadata": {},
+          "Scope": null,
+          "StreamId": "{{streamId}}",
+          "IsEvent": true
+        }]
+      }
+      """;
+
+    await using (var call = connection.CreateCommand()) {
+      call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+      call.Parameters.AddWithValue("req", request);
+      _ = await call.ExecuteScalarAsync();
+    }
+
+    // Event must be in wh_event_store with version >= 1.
+    await using (var verify = connection.CreateCommand()) {
+      verify.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
+      verify.Parameters.AddWithValue("id", emittedEventId);
+      var count = (long)(await verify.ExecuteScalarAsync())!;
+      await Assert.That(count).IsEqualTo(1L)
+        .Because("Event must be copied into wh_event_store via _emit_event_store_chain");
+    }
+
+    // Perspective event must be auto-created for the registered association.
+    await using (var verify = connection.CreateCommand()) {
+      verify.CommandText = @"
+        SELECT count(*) FROM wh_perspective_events
+        WHERE event_id = @eid AND perspective_name = 'TestPerspective'";
+      verify.Parameters.AddWithValue("eid", emittedEventId);
+      var count = (long)(await verify.ExecuteScalarAsync())!;
+      await Assert.That(count).IsEqualTo(1L)
+        .Because("Phase 4.6 perspective auto-create must fire for matching associations");
+    }
+  }
+
+  /// <summary>
+  /// _emit_event_store_chain must be idempotent — calling commit_handler_result twice
+  /// with the same emitted event must not produce duplicate wh_event_store or
+  /// wh_perspective_events rows.
+  /// </summary>
+  [Test]
+  public async Task CommitHandlerResult_HandlerEmitsEventTwice_IsIdempotentAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var emittedEventId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.IdempotentEvent";
+
+    await using (var assoc = connection.CreateCommand()) {
+      assoc.CommandText = @"
+        INSERT INTO wh_message_associations
+          (id, message_type, association_type, target_name, service_name,
+           normalized_message_type, created_at, updated_at)
+        VALUES (gen_random_uuid(), @eventType, 'perspective', 'IdempPerspective', 'test-service',
+                @eventType, NOW(), NOW())
+        ON CONFLICT DO NOTHING";
+      assoc.Parameters.AddWithValue("eventType", eventType);
+      await assoc.ExecuteNonQueryAsync();
+    }
+
+    var request = $$"""
+      {
+        "instance_id": "{{instanceId}}",
+        "service_name": "test",
+        "host_name": "test-host",
+        "process_id": 1,
+        "new_outbox_messages": [{
+          "MessageId": "{{emittedEventId}}",
+          "Destination": "out",
+          "MessageType": "{{eventType}}",
+          "EnvelopeType": null,
+          "Envelope": {"Payload": {}, "MessageId": "{{emittedEventId}}", "Hops": []},
+          "Metadata": {},
+          "Scope": null,
+          "StreamId": "{{streamId}}",
+          "IsEvent": true
+        }]
+      }
+      """;
+
+    // Call once.
+    await using (var call = connection.CreateCommand()) {
+      call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+      call.Parameters.AddWithValue("req", request);
+      _ = await call.ExecuteScalarAsync();
+    }
+
+    // Call again with the same event_id — should be a no-op via ON CONFLICT DO NOTHING.
+    // But we have to wrap in BEGIN..EXCEPTION since wh_outbox has its own uniqueness on message_id.
+    try {
+      await using var call2 = connection.CreateCommand();
+      call2.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+      call2.Parameters.AddWithValue("req", request);
+      _ = await call2.ExecuteScalarAsync();
+    } catch (Npgsql.PostgresException) {
+      // wh_outbox unique constraint may reject the second insert; that's fine — we only
+      // care that wh_event_store and wh_perspective_events stay at 1 row each.
+    }
+
+    await using (var verify = connection.CreateCommand()) {
+      verify.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
+      verify.Parameters.AddWithValue("id", emittedEventId);
+      var eventStoreCount = (long)(await verify.ExecuteScalarAsync())!;
+      await Assert.That(eventStoreCount).IsEqualTo(1L);
+    }
+
+    await using (var verify = connection.CreateCommand()) {
+      verify.CommandText = @"
+        SELECT count(*) FROM wh_perspective_events
+        WHERE event_id = @eid AND perspective_name = 'IdempPerspective'";
+      verify.Parameters.AddWithValue("eid", emittedEventId);
+      var perspectiveEventCount = (long)(await verify.ExecuteScalarAsync())!;
+      await Assert.That(perspectiveEventCount).IsEqualTo(1L);
+    }
+  }
 }

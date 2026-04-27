@@ -1656,6 +1656,134 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work IS
 -- Phase A of work-pump decomposition.
 -- ============================================================================
 
+SELECT __SCHEMA__.drop_all_overloads('emit_event_store_chain');
+
+-- ============================================================================
+-- _emit_event_store_chain — extracts Phase 4.5A + 4.6 logic from the legacy
+-- process_work_batch so commit_handler_result can call it after storing the
+-- handler's emitted outbox messages. Takes the message_ids of those newly-
+-- stored outbox rows; copies events with stream_id IS NOT NULL into
+-- wh_event_store with sequential versioning; auto-creates wh_perspective_events
+-- rows for events that match wh_message_associations.
+--
+-- Idempotent via ON CONFLICT (event_id) DO NOTHING — re-running with the same
+-- message_ids is safe.
+-- ============================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain');
+
+CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
+  p_outbox_message_ids UUID[],
+  p_instance_id UUID,
+  p_lease_expiry TIMESTAMPTZ,
+  p_now TIMESTAMPTZ
+) RETURNS INTEGER AS $$
+DECLARE
+  v_stored_event_ids UUID[];
+  v_count INTEGER;
+  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_hops CONSTANT TEXT := 'Hops';
+  c_source_perspective CONSTANT TEXT := 'perspective';
+BEGIN
+  IF p_outbox_message_ids IS NULL OR cardinality(p_outbox_message_ids) = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
+  WITH outbox_events AS (
+    SELECT
+      o.message_id,
+      o.stream_id,
+      o.message_type,
+      o.event_data,
+      o.metadata,
+      o.scope,
+      o.created_at,
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) AS row_num
+    FROM __SCHEMA__.wh_outbox o
+    WHERE o.message_id = ANY(p_outbox_message_ids)
+      AND o.is_event = true
+      AND o.stream_id IS NOT NULL
+  ),
+  outbox_stream_versions AS (
+    SELECT es.stream_id, MAX(es.version) AS max_version
+    FROM __SCHEMA__.wh_event_store es
+    WHERE es.stream_id IN (SELECT DISTINCT stream_id FROM outbox_events)
+    GROUP BY es.stream_id
+  ),
+  outbox_base_versions AS (
+    SELECT
+      oe.*,
+      COALESCE(sv.max_version, 0) AS base_version
+    FROM outbox_events oe
+    LEFT JOIN outbox_stream_versions sv ON sv.stream_id = oe.stream_id
+  ),
+  stored_events AS (
+    INSERT INTO __SCHEMA__.wh_event_store (
+      event_id, stream_id, aggregate_id, aggregate_type, event_type,
+      event_data, metadata, scope, version, created_at
+    )
+    SELECT
+      bv.message_id,
+      bv.stream_id,
+      bv.stream_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1),
+      __SCHEMA__.normalize_event_type(bv.message_type),
+      COALESCE(bv.event_data::jsonb -> 'p', bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload'),
+      jsonb_build_object(
+        c_field_message_id, COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> c_field_message_id, bv.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> c_field_hops, bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+      ),
+      bv.scope,
+      bv.base_version + bv.row_num,
+      p_now
+    FROM outbox_base_versions bv
+    ON CONFLICT (event_id) DO NOTHING
+    RETURNING event_id
+  )
+  SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
+  v_stored_event_ids := COALESCE(v_stored_event_ids, '{}');
+  v_count := cardinality(v_stored_event_ids);
+
+  IF v_count = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Phase 4.6-equivalent: auto-create perspective events for matching event types.
+  INSERT INTO __SCHEMA__.wh_perspective_events (
+    event_work_id, stream_id, perspective_name, event_id,
+    status, attempts, created_at, instance_id, lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid(),
+    es.stream_id,
+    ma.target_name,
+    es.event_id,
+    1,                  -- Stored flag
+    0,
+    p_now,
+    p_instance_id,      -- Immediate lease to commit instance
+    p_lease_expiry
+  FROM __SCHEMA__.wh_event_store es
+  INNER JOIN __SCHEMA__.wh_message_associations ma
+    ON es.event_type = ma.normalized_message_type
+    AND ma.association_type = c_source_perspective
+  WHERE es.event_id = ANY(v_stored_event_ids)
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = ma.target_name
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain IS
+'Helper extracted from process_work_batch Phase 4.5A + 4.6 — copies newly-stored outbox events into wh_event_store with sequential versioning and creates wh_perspective_events rows for matching perspective associations. Called by commit_handler_result after store_outbox_messages so handler-emitted events flow through to perspectives.';
+
 SELECT __SCHEMA__.drop_all_overloads('commit_handler_result');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_result(
@@ -1692,6 +1820,26 @@ BEGIN
       v_partition_count
     );
     v_outbox_inserted := jsonb_array_length(v_new_outbox);
+
+    -- 2.5. Event-store auto-create chain. For events with stream_id, copy into
+    -- wh_event_store and auto-create wh_perspective_events rows for matching
+    -- perspectives. Without this step, handler-emitted events sit in wh_outbox
+    -- but never reach perspective consumers.
+    DECLARE
+      v_emitted_ids UUID[];
+    BEGIN
+      SELECT array_agg((elem ->> 'MessageId')::UUID)
+      INTO v_emitted_ids
+      FROM jsonb_array_elements(v_new_outbox) AS elem
+      WHERE (elem ->> 'IsEvent')::BOOLEAN = true
+        AND elem ->> 'StreamId' IS NOT NULL;
+
+      IF v_emitted_ids IS NOT NULL AND cardinality(v_emitted_ids) > 0 THEN
+        PERFORM __SCHEMA__._emit_event_store_chain(
+          v_emitted_ids, v_instance_id, v_lease_expiry, v_now
+        );
+      END IF;
+    END;
   END IF;
 
   -- 3. Store new inbox messages emitted by the handler (rare path).
@@ -1711,6 +1859,9 @@ BEGIN
   --    so 10 000 inserts → one delivered notification per category. Free.
   IF v_outbox_inserted > 0 THEN
     PERFORM pg_notify('wh_work', 'outbox');
+    -- Also notify perspective category since the event-store auto-create chain may
+    -- have queued perspective events. Postgres dedups within the tx at COMMIT.
+    PERFORM pg_notify('wh_work', 'perspective');
   END IF;
   IF v_inbox_inserted > 0 THEN
     PERFORM pg_notify('wh_work', 'inbox');
@@ -1719,7 +1870,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.commit_handler_result IS
-'Atomic transactional bundle for inbox handler completion. Marks the inbox completion AND stores the new outbox/inbox messages the handler emitted in one transaction; if any step fails the whole bundle rolls back. Emits pg_notify(''wh_work'', category) per category that received new rows, dedup at COMMIT means burst inserts collapse to one delivered notification. Phase A of work-pump decomposition.';
+'Atomic transactional bundle for inbox handler completion. Marks the inbox completion AND stores the new outbox/inbox messages the handler emitted in one transaction; if any step fails the whole bundle rolls back. Handler-emitted events with a stream_id flow through _emit_event_store_chain which copies them into wh_event_store and creates matching wh_perspective_events rows so perspective consumers see them. Emits pg_notify(''wh_work'', category) per category that received new rows, dedup at COMMIT means burst inserts collapse to one delivered notification. Phase A of work-pump decomposition.';
 
 
 -- ============================================================================
