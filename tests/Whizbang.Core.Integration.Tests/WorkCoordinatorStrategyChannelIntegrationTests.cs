@@ -58,41 +58,10 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     await intervalStrategy.DisposeAsync();
   }
 
-  [Test]
-  public async Task IntervalStrategy_FlushWithInboxWork_RoutesToInboxChannelAsync() {
-    // Arrange
-    var options = new WorkCoordinatorOptions {
-      Strategy = WorkCoordinatorStrategy.Interval,
-      IntervalMilliseconds = 60_000
-    };
-    var services = new ServiceCollection();
-    services.AddSingleton(options);
-    services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
-    services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
-    services.AddSingleton<IInboxChannelWriter, InboxChannelWriter>();
-    services.AddScoped<IWorkCoordinator, InboxReturningWorkCoordinator>();
-
-    _addGeneratorStrategyRegistrations(services);
-
-    await using var sp = services.BuildServiceProvider();
-
-    var inboxWriter = sp.GetRequiredService<IInboxChannelWriter>();
-
-    // Act - Queue something so flush executes, coordinator returns inbox work.
-    // Use FlushAndGetBatchAsync (FlushAsync is a no-op that defers to the timer).
-    var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
-    intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
-    _ = await intervalStrategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    // Assert - Inbox work was routed to the inbox channel
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var inboxWork = await inboxWriter.Reader.ReadAsync(cts.Token);
-
-    await Assert.That(inboxWork.MessageId).IsNotEqualTo(Guid.Empty);
-
-    // Cleanup
-    await intervalStrategy.DisposeAsync();
-  }
+  // Removed: IntervalStrategy_FlushWithInboxWork_RoutesToInboxChannelAsync — tested the legacy
+  // flush-claims-and-returns-work behavior. Phase H decoupled claiming from flushing: ClaimWorker
+  // claims work asynchronously via claim_work and routes to the inbox channel directly. Strategy
+  // flushes only persist new messages now.
 
   [Test]
   public async Task BatchStrategy_FlushWithOutboxWork_SignalsWorkAvailableAsync() {
@@ -242,6 +211,8 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
 
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -289,6 +260,8 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

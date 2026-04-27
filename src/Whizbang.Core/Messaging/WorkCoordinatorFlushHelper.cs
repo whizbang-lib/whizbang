@@ -88,8 +88,38 @@ internal static class WorkCoordinatorFlushHelper {
     try {
       var partitionCount = _resolvePartitionCount(scopedProvider, ctx.Options);
 
-      if (ctx.OutboxMessages.Length > 0) {
-        await coordinator.StoreOutboxMessagesAsync(ctx.OutboxMessages, partitionCount, ct).ConfigureAwait(false);
+      var enableLifecycleTracing = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+      var lifecycleScopeFactory = ctx.ScopeFactory ?? scopedProvider?.GetService<IServiceScopeFactory>();
+
+      var distributeContext = new DistributeLifecycleContext(
+        ctx.OutboxMessages,
+        ctx.InboxMessages,
+        lifecycleScopeFactory,
+        ctx.LifecycleMessageDeserializer,
+        ctx.Logger,
+        enableLifecycleTracing,
+        ctx.LifecycleMetrics);
+
+      if (!ctx.SkipLifecycle) {
+        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+          LifecycleStage.PreDistributeDetached,
+          LifecycleStage.PreDistributeInline,
+          distributeContext,
+          ct).ConfigureAwait(false);
+
+        LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+          LifecycleStage.DistributeDetached,
+          distributeContext,
+          ct);
+      }
+
+      var outboxToStore = ctx.OutboxMessages;
+      if (ctx.PendingAuditMessages is { Length: > 0 }) {
+        outboxToStore = [.. ctx.OutboxMessages, .. ctx.PendingAuditMessages];
+      }
+
+      if (outboxToStore.Length > 0) {
+        await coordinator.StoreOutboxMessagesAsync(outboxToStore, partitionCount, ct).ConfigureAwait(false);
       }
 
       if (ctx.InboxMessages.Length > 0) {
@@ -114,6 +144,14 @@ internal static class WorkCoordinatorFlushHelper {
       }
 
       ctx.WorkChannelWriter?.SignalNewWorkAvailable();
+
+      if (!ctx.SkipLifecycle) {
+        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+          LifecycleStage.PostDistributeDetached,
+          LifecycleStage.PostDistributeInline,
+          distributeContext,
+          ct).ConfigureAwait(false);
+      }
     } finally {
       flushScope?.Dispose();
     }

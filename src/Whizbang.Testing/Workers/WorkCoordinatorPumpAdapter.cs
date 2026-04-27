@@ -30,20 +30,34 @@ public static class WorkCoordinatorPumpAdapter {
     ArgumentNullException.ThrowIfNull(harness);
 
     var instanceId = Guid.NewGuid();
-    var claimRequest = new ClaimWorkRequest(
-      InstanceId: instanceId,
-      ServiceName: "test-pump",
-      HostName: "test-host",
-      ProcessId: 0,
-      MaxStreams: 1000,
-      PartitionCount: 100,
-      LeaseSeconds: 300);
+    var stubRequest = new ProcessWorkBatchRequest {
+      InstanceId = instanceId,
+      ServiceName = "test-pump",
+      HostName = "test-host",
+      ProcessId = 0,
+      Metadata = null,
+      OutboxCompletions = [],
+      OutboxFailures = [],
+      InboxCompletions = [],
+      InboxFailures = [],
+      ReceptorCompletions = [],
+      ReceptorFailures = [],
+      PerspectiveCompletions = [],
+      PerspectiveEventCompletions = [],
+      PerspectiveFailures = [],
+      NewOutboxMessages = [],
+      NewInboxMessages = [],
+      RenewOutboxLeaseIds = [],
+      RenewInboxLeaseIds = [],
+      LeaseSeconds = 300,
+      PartitionCount = 100
+    };
 
     try {
       while (!cancellationToken.IsCancellationRequested) {
         WorkBatch batch;
         try {
-          batch = await coordinator.ClaimWorkAsync(claimRequest, cancellationToken).ConfigureAwait(false);
+          batch = await coordinator.ProcessWorkBatchAsync(stubRequest, cancellationToken).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           break;
         }
