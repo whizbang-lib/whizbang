@@ -20,6 +20,9 @@
 
     <!-- RabbitMQ transport compiler directive -->
     <DefineConstants>RABBITMQ</DefineConstants>
+
+    <!-- Don't capture test output so Console.WriteLine appears in terminal during diagnosis -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
   </PropertyGroup>
 
   <ItemGroup>
