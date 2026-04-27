@@ -165,10 +165,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
         };
 
-        // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing)
-        // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
-        // However, we track it to ensure completion before returning from RunAsync.
-        var preAsyncTask = Task.Run(async () => {
+        // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing).
+        // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
+        // (pooled thread) so this stage isn't starved when the ThreadPool is saturated by EF
+        // continuations + transport callbacks during heavy processing. This invocation IS awaited
+        // via backgroundTasks below — without LongRunning, pool starvation causes the await to
+        // block past the test deadline even though the body is trivial.
+        var preAsyncTask = global::Whizbang.Core.Workers.BackgroundStageDispatch.StartLongRunning(async () => {
           await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
           if (receptorInvoker is not null) {
@@ -368,11 +371,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
           };
 
-          // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits)
-          // Note: We don't await this immediately, allowing perspective processing to complete.
-          // However, we track it to ensure completion before returning from RunAsync.
-          // Envelope passed to preserve security context from message hops
-          var postAsyncTask = Task.Run(async () => {
+          // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits).
+          // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
+          // for the same reason as PrePerspectiveDetached above — under heavy parallel load,
+          // pooled-thread Task.Run continuations get starved and the awaiting Task.WhenAll
+          // hangs past the test deadline.
+          var postAsyncTask = global::Whizbang.Core.Workers.BackgroundStageDispatch.StartLongRunning(async () => {
             await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
             var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
             if (receptorInvoker is not null) {
