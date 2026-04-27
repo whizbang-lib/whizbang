@@ -51,12 +51,14 @@ public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null,
-  int commandTimeoutSeconds = 5
+  int commandTimeoutSeconds = 5,
+  WorkCoordinatorGate? gate = null
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
   private readonly int _commandTimeoutSeconds = commandTimeoutSeconds;
+  private readonly WorkCoordinatorGate? _gate = gate;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
@@ -849,6 +851,7 @@ public partial class DapperWorkCoordinator(
   /// <inheritdoc />
   public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var metadataJson = request.Metadata is { } meta ? meta.GetRawText() : "{}";
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -863,6 +866,7 @@ public partial class DapperWorkCoordinator(
     if (ids.Count == 0) {
       return 0;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var idArray = ids is Guid[] arr ? arr : [.. ids];
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -880,6 +884,7 @@ public partial class DapperWorkCoordinator(
     if (cursors.Count == 0 && eventWorkIds.Count == 0) {
       return;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var cursorsJson = cursors.Count == 0 ? "[]" : _serializePerspectiveCompletions([.. cursors]);
     var idArray = eventWorkIds is Guid[] earr ? earr : [.. eventWorkIds];
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -898,6 +903,7 @@ public partial class DapperWorkCoordinator(
     if (failures.Count == 0) {
       return;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var failuresJson = _serializeFailures([.. failures]);
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -916,6 +922,7 @@ public partial class DapperWorkCoordinator(
     if (ids.Count == 0) {
       return 0;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var idArray = ids is Guid[] arr ? arr : [.. ids];
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -927,6 +934,7 @@ public partial class DapperWorkCoordinator(
   /// <inheritdoc />
   public async Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var payload = _buildHandlerCommitPayload(request);
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -941,6 +949,7 @@ public partial class DapperWorkCoordinator(
     if (requests.Count == 0) {
       return Array.Empty<HandlerBatchResult>();
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var sb = new System.Text.StringBuilder("[");
     for (var i = 0; i < requests.Count; i++) {
       if (i > 0) {
@@ -961,6 +970,7 @@ public partial class DapperWorkCoordinator(
   /// <inheritdoc />
   public async Task FlushCompletionsAsync(FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var outboxIds = request.OutboxIds is null ? Array.Empty<Guid>()
       : (request.OutboxIds is Guid[] a ? a : [.. request.OutboxIds]);
     var perspIds = request.PerspectiveEventWorkIds is null ? Array.Empty<Guid>()
@@ -983,6 +993,7 @@ public partial class DapperWorkCoordinator(
     if (inquiries.Count == 0) {
       return Array.Empty<SyncInquiryResult>();
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var json = _buildInquiriesJson(inquiries);
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -1000,6 +1011,7 @@ public partial class DapperWorkCoordinator(
   /// <inheritdoc />
   public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
     // Phase C lands the full envelope-deserializing path. For now Dapper backend

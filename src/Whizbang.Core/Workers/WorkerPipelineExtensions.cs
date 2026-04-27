@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 
 namespace Whizbang.Core.Workers;
@@ -50,6 +51,11 @@ public static class WorkerPipelineExtensions {
     // NoOp notification listener by default — driver-specific extensions
     // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
+
+    // Defense-in-depth concurrency cap on IWorkCoordinator calls. Default 50 (matches
+    // recommended Npgsql Maximum Pool Size). Users can register their own gate before
+    // calling AddWhizbang to override.
+    services.TryAddSingleton(_ => new WorkCoordinatorGate(maxConcurrent: 50));
 
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
