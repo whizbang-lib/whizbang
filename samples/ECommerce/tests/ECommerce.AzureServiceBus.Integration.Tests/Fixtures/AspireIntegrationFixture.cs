@@ -427,7 +427,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -569,7 +570,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with actual topic names matching BFF.API

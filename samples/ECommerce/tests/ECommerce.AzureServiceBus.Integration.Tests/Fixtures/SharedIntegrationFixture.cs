@@ -330,7 +330,8 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -458,7 +459,8 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Register Service Bus consumer to receive events
@@ -601,11 +603,11 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
   public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
     // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
     var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
+      .OfType<OutboxPublishWorker>()
       .FirstOrDefault();
 
     var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
+      .OfType<OutboxPublishWorker>()
       .FirstOrDefault();
 
     // Get PerspectiveWorker instances (perspective materialization)

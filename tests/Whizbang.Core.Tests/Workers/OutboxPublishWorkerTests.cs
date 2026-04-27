@@ -149,9 +149,10 @@ public class OutboxPublishWorkerTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      strategy, channel, completion, failure, renewal, gate,
+      channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions()),
-      NullLogger<OutboxPublishWorker>.Instance);
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -182,9 +183,10 @@ public class OutboxPublishWorkerTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      strategy, channel, completion, failure, renewal, gate,
+      channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { MaxBulkPublishBatchSize = 10 }),
-      NullLogger<OutboxPublishWorker>.Instance);
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -224,11 +226,12 @@ public class OutboxPublishWorkerTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      strategy, channel, completion, failure, renewal, gate,
+      channel, completion, failure, renewal, gate,
       // Short retry delay so we don't sit in the busy-loop guard for the full 100ms default
       // on test shutdown — also lets us shut down quickly after the renewal assertion.
       Options.Create(new OutboxPublishWorkerOptions { TransportNotReadyRetryDelayMilliseconds = 25 }),
-      NullLogger<OutboxPublishWorker>.Instance);
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -261,9 +264,10 @@ public class OutboxPublishWorkerTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      strategy, channel, completion, failure, renewal, gate,
+      channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions()),
-      NullLogger<OutboxPublishWorker>.Instance);
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -295,9 +299,10 @@ public class OutboxPublishWorkerTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      strategy, channel, completion, failure, renewal, gate,
+      channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = false }),
-      NullLogger<OutboxPublishWorker>.Instance);
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -327,9 +332,10 @@ public class OutboxPublishWorkerTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      strategy, channel, completion, failure, renewal, gate,
+      channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions()),
-      NullLogger<OutboxPublishWorker>.Instance);
+      NullLogger<OutboxPublishWorker>.Instance,
+      publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -163,7 +163,8 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
         // Register the worker (same as Program.cs)
-        services.AddHostedService<WorkCoordinatorPublisherWorker>();
+        services.AddWhizbangOutboxPublisher();
+        services.AddWhizbangInboxDispatcher();
       })
       .Build();
 
@@ -277,7 +278,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
     // Assert - Verify hosted services are running
     var hostedServices = _testHost.Services.GetServices<IHostedService>();
-    await Assert.That(hostedServices.OfType<WorkCoordinatorPublisherWorker>())
+    await Assert.That(hostedServices.OfType<OutboxPublishWorker>())
       .HasCount()
       .EqualTo(1)
       .Because("WorkCoordinatorPublisherWorker should be registered as hosted service");

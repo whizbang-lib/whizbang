@@ -2,15 +2,20 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// Drains orphan inbox work from <see cref="IInboxChannelWriter"/> and packages each item as a
-/// <see cref="HandlerCommitRequest"/> routed to <see cref="IInboxHandlerCommitChannel"/>, which
-/// the <see cref="InboxHandlerWorker"/> commits via <c>commit_handler_batch</c>.
+/// Drains orphan inbox work from <see cref="IInboxChannelWriter"/>, fires the inbox lifecycle
+/// stages (Pre/Post Inbox Detached/Inline + PostAllPerspectives/PostLifecycle for events with no
+/// registered perspectives), and packages each item as a <see cref="HandlerCommitRequest"/>
+/// routed to <see cref="IInboxHandlerCommitChannel"/> (which the <see cref="InboxHandlerWorker"/>
+/// commits via <c>commit_handler_batch</c>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -26,15 +31,16 @@ namespace Whizbang.Core.Workers;
 /// being re-tried.
 /// </para>
 /// <para>
-/// Lifecycle stage invocation (Pre/Post Inbox Inline/Detached, PostAllPerspectives,
-/// PostLifecycle) is deferred to a follow-up cycle. The legacy publisher only fires those
-/// when <c>ILifecycleMessageDeserializer</c> + <c>IReceptorInvoker</c> are both present;
-/// when absent it skips them — v1 of this worker does the same (skips). Add lifecycle
-/// invocation alongside ECommerce sample fixture rewiring when integration tests demand it.
+/// PostInboxDetached uses <see cref="BackgroundStageDispatch.StartLongRunning"/> instead of
+/// <c>Task.Run</c> to avoid ThreadPool starvation under load. This mirrors the legacy publisher's
+/// guard at line 1311-1313 — when PerspectiveWorker drains its channel concurrently with
+/// our PostInbox dispatch, the ThreadPool can be saturated, and pooled <c>Task.Run</c>
+/// continuations get queued past the test deadline.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
 public sealed partial class InboxDispatchWorker : BackgroundService {
+  private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxChannelWriter _inboxChannelWriter;
   private readonly IInboxHandlerCommitChannel _handlerCommitChannel;
@@ -42,16 +48,20 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxDispatchWorkerOptions _options;
   private readonly ILogger<InboxDispatchWorker> _logger;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
 
   /// <summary>Constructor.</summary>
   public InboxDispatchWorker(
+    IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
     IInboxChannelWriter inboxChannelWriter,
     IInboxHandlerCommitChannel handlerCommitChannel,
     IFailureChannel failureChannel,
     ISchemaReadyGate schemaReadyGate,
     IOptions<InboxDispatchWorkerOptions> options,
-    ILogger<InboxDispatchWorker> logger) {
+    ILogger<InboxDispatchWorker> logger,
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null) {
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
     _handlerCommitChannel = handlerCommitChannel ?? throw new ArgumentNullException(nameof(handlerCommitChannel));
@@ -59,6 +69,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   }
 
   /// <inheritdoc />
@@ -105,22 +116,49 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private async Task _processOneAsync(InboxWork work, CancellationToken ct) {
     var maxAttempts = _options.MaxInboxAttempts;
     if (maxAttempts.HasValue && work.Attempts >= maxAttempts.Value) {
-      // Dead-letter: terminal completion (status |= Published). Mirrors legacy publisher's
-      // _processInboxWorkAsync purge branch (lines 1252-1259). The DB row is still removed
-      // by commit_handler_batch — the difference is no retry will re-claim it.
       LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
       return;
     }
 
+    // Lifecycle stages: scope-once, fire Pre + Post + (optional) PostAllPerspectives/PostLifecycle.
+    // The lifecycle invocation no-ops cleanly when ILifecycleMessageDeserializer or IReceptorInvoker
+    // is absent — same as the legacy publisher's _invokeInboxLifecycleStagesAsync.
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+
+    await _invokeInboxLifecycleStageAsync(
+      work, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+      "PreInbox", useLongRunningForDetached: false, ct);
+
+    // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
+    // calls commit_handler_batch.
     var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
     await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+
+    // PostInbox lands AFTER event storage. Use LongRunning for the Detached stage so it can't be
+    // starved by PerspectiveWorker drain churn.
+    await _invokeInboxLifecycleStageAsync(
+      work, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+      "PostInbox", useLongRunningForDetached: true, ct);
+
+    // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
+    // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
+    if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
+      await _invokeInboxLifecycleStageAsync(
+        work, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
+        "PostAllPerspectives", useLongRunningForDetached: false, ct);
+      await _invokeInboxLifecycleStageAsync(
+        work, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
+        "PostLifecycle", useLongRunningForDetached: false, ct);
+    }
   }
 
   private HandlerCommitRequest _buildCommitRequest(InboxWork work, int status)
     => new(
-      HandlerId: work.MessageId,                 // one handler per orphan; HandlerId == MessageId is fine
+      HandlerId: work.MessageId,
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
@@ -129,6 +167,91 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       InboxCompletion: new HandlerInboxCompletion(work.MessageId, status),
       NewOutboxMessages: null,
       NewInboxMessages: null);
+
+  // ============================================================
+  // Lifecycle invocation (ported from legacy
+  // WorkCoordinatorPublisherWorker._invokeInboxLifecycleStagesAsync)
+  // ============================================================
+
+  private async Task _invokeInboxLifecycleStageAsync(
+      InboxWork work,
+      AsyncServiceScope scope,
+      IReceptorInvoker? receptorInvoker,
+      LifecycleStage detachedStage,
+      LifecycleStage inlineStage,
+      string stageName,
+      bool useLongRunningForDetached,
+      CancellationToken cancellationToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
+    try {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = detachedStage,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = work.Attempts
+      };
+
+      // Detached: fire-and-forget on a dedicated DI scope. PostInbox uses LongRunning to avoid
+      // ThreadPool starvation under PerspectiveWorker drain churn (legacy guard at lines 1311-1313).
+      Func<Func<Task>, CancellationToken, Task> scheduler = useLongRunningForDetached
+        ? (body, ct) => BackgroundStageDispatch.StartLongRunning(body, ct)
+        : (body, ct) => Task.Run(body, ct);
+
+      _ = scheduler(async () => {
+        try {
+          await using var detachedScope = _scopeFactory.CreateAsyncScope();
+          await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
+          var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+          if (detachedInvoker is null) {
+            return;
+          }
+          var ctx = lifecycleContext with { CurrentStage = detachedStage };
+          await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, cancellationToken);
+          await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+            ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+          // graceful shutdown
+        } catch (Exception ex) {
+          LogLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
+        }
+      }, cancellationToken);
+
+      // Inline: blocks until complete
+      lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
+      await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+        lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+    } catch (Exception ex) {
+      LogLifecycleError(_logger, work.MessageId, stageName, ex);
+    }
+  }
+
+  private static bool _hasNoPerspectives(string messageType, IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      return true;
+    }
+    var normalized = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+    foreach (var perspective in registry.GetRegisteredPerspectives()) {
+      foreach (var eventType in perspective.EventTypes) {
+        if (string.Equals(normalized, EventTypeMatchingHelper.NormalizeTypeName(eventType), StringComparison.Ordinal)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // ============================================================
+  // Logging
+  // ============================================================
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "InboxDispatchWorker started: maxInboxAttempts={MaxInboxAttempts}")]
@@ -145,6 +268,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} >= max={MaxAttempts}")]
   static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
+  static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 }
 
 /// <summary>Configuration for <see cref="InboxDispatchWorker"/>.</summary>
@@ -158,14 +284,12 @@ public sealed class InboxDispatchWorkerOptions {
   /// <summary>
   /// Dead-letter threshold. When set, work whose <see cref="InboxWork.Attempts"/> meets or
   /// exceeds this value is committed with a terminal status (no further retries) instead of
-  /// being re-processed. Null disables the threshold (retry forever — production default
-  /// matches legacy: prefer null and let alerting catch poison messages). Default <c>null</c>.
+  /// being re-processed. Null disables. Default <c>null</c>.
   /// </summary>
   public int? MaxInboxAttempts { get; set; }
 
   /// <summary>
-  /// Modulo partition count carried into <see cref="HandlerCommitRequest"/>. Must match the
-  /// rest of the work-pump pipeline (default 10000, matches <c>ClaimWorkerOptions</c>).
+  /// Modulo partition count carried into <see cref="HandlerCommitRequest"/>. Default 10000.
   /// </summary>
   public int PartitionCount { get; set; } = 10_000;
 }
