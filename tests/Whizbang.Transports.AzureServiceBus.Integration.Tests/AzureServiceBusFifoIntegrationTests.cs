@@ -26,6 +26,15 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly List<IAsyncDisposable> _disposables = [];
+
+  [After(Test)]
+  public async Task DisposeTrackedTransportsAsync() {
+    foreach (var d in _disposables) {
+      try { await d.DisposeAsync(); } catch { /* best-effort cleanup */ }
+    }
+    _disposables.Clear();
+  }
 
   // ========================================
   // SINGLE-MESSAGE FIFO TESTS
@@ -37,6 +46,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var options = new AzureServiceBusOptions { EnableSessions = true, AutoProvisionInfrastructure = true };
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var streamId = Guid.CreateVersion7();
@@ -97,6 +107,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var options = new AzureServiceBusOptions { EnableSessions = true, MaxConcurrentSessions = 3, AutoProvisionInfrastructure = true };
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var streams = new[] { Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7() };
@@ -174,6 +185,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var options = new AzureServiceBusOptions { EnableSessions = true, AutoProvisionInfrastructure = true };
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var streamId = Guid.CreateVersion7();
@@ -247,6 +259,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
       AutoProvisionInfrastructure = true
     };
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var streamId = Guid.CreateVersion7();
@@ -311,6 +324,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var options = new AzureServiceBusOptions { EnableSessions = true };
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
 
     // Act
     var capabilities = transport.Capabilities;
@@ -325,6 +339,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, options);
+    _disposables.Add(transport);
 
     // Act
     var capabilities = transport.Capabilities;

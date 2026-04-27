@@ -27,6 +27,15 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly List<IAsyncDisposable> _disposables = [];
+
+  [After(Test)]
+  public async Task DisposeTrackedTransportsAsync() {
+    foreach (var d in _disposables) {
+      try { await d.DisposeAsync(); } catch { /* best-effort cleanup */ }
+    }
+    _disposables.Clear();
+  }
 
   [Test]
   public async Task Capabilities_DefaultOptions_IncludesOrderedAsync() {
@@ -39,6 +48,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     // Act
     var capabilities = transport.Capabilities;
@@ -64,6 +74,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       jsonOptions,
       options
     );
+    _disposables.Add(transport);
 
     // Act
     var capabilities = transport.Capabilities;
@@ -86,6 +97,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     // Act & Assert
     await Assert.That(transport.IsInitialized).IsFalse();
@@ -102,6 +114,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     // Act
     await transport.InitializeAsync();
@@ -121,6 +134,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     // Act - Call InitializeAsync multiple times
     await transport.InitializeAsync();
@@ -142,6 +156,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 
@@ -178,6 +193,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       jsonOptions,
       options
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 
@@ -245,6 +261,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       jsonOptions,
       options
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 
@@ -275,6 +292,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 
@@ -306,6 +324,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 
@@ -339,6 +358,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 

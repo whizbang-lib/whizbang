@@ -31,12 +31,22 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly List<IAsyncDisposable> _disposables = [];
+
+  [After(Test)]
+  public async Task DisposeTrackedTransportsAsync() {
+    foreach (var d in _disposables) {
+      try { await d.DisposeAsync(); } catch { /* best-effort cleanup */ }
+    }
+    _disposables.Clear();
+  }
 
   [Test]
   public async Task Worker_ReceivesMessage_ProcessesThroughHandleMessageAsync() {
     // Arrange: Wire up worker with real transport and test strategy
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var capturedInboxMessages = new List<InboxMessage>();
@@ -96,6 +106,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     IScopeContext? capturedScope = null;
@@ -154,6 +165,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange: Strategy returns empty work batch for duplicates
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var processedMessageIds = new List<Guid>();
@@ -205,6 +217,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var strategy = new NoOpWorkCoordinatorStrategy();
@@ -243,6 +256,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var strategy = new NoOpWorkCoordinatorStrategy();
@@ -281,6 +295,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var strategy = new NoOpWorkCoordinatorStrategy();
@@ -317,6 +332,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange: Publish message with AggregateId in hop metadata
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var capturedInboxMessages = new List<InboxMessage>();
@@ -368,6 +384,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     // Arrange: Message without AggregateId metadata - should fall back to MessageId
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions, new AzureServiceBusOptions { EnableSessions = false });
+    _disposables.Add(transport);
     await transport.InitializeAsync();
 
     var capturedInboxMessages = new List<InboxMessage>();
