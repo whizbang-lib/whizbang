@@ -338,8 +338,13 @@ public partial class PerspectiveWorker(
       }
 
       if (workBatch.Count == 0 && drainStreamIds.Count == 0) {
-        // Idle tick: no work after wait. Track empty-poll state the way the legacy poll loop
-        // did so OnWorkProcessingIdle fires + ConsecutiveEmptyPolls reflects reality.
+        // Idle tick: no work after wait. Flush any completions buffered from the prior batch
+        // (the legacy poll loop flushed at the START of every cycle; the channel architecture
+        // only triggers ProcessChannelBatchAsync when work arrives, so without this flush,
+        // post-batch completions could sit in the queue forever).
+        await _flushPendingCompletionsToChannelsAsync(stoppingToken).ConfigureAwait(false);
+        // Track empty-poll state the way the legacy poll loop did so OnWorkProcessingIdle
+        // fires + ConsecutiveEmptyPolls reflects reality.
         _updateWorkStateTracking(hasWork: false);
         continue;
       }
