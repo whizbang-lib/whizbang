@@ -82,4 +82,24 @@ public static class WorkerPipelineExtensions {
     return services;
   }
 
+  /// <summary>
+  /// Registers the legacy <see cref="WorkCoordinatorPublisherWorker"/> and configures the new
+  /// <see cref="ClaimWorker"/> to skip its claim loop (<see cref="ClaimWorkerOptions.PerspectiveOnly"/>).
+  /// Use this when a host wants the legacy publisher as the sole poller — the publisher then
+  /// forwards <see cref="WorkBatch.PerspectiveStreamIds"/> onto <see cref="IPerspectiveDrainChannel"/>
+  /// so PerspectiveWorker (channel-consumer mode) still receives drain hints.
+  /// </summary>
+  /// <remarks>
+  /// Without this flag, ClaimWorker and the legacy publisher race to call <c>claim_work</c> /
+  /// <c>process_work_batch</c>. ClaimWorker's <c>claim_work</c> leases orphan rows first, then
+  /// the publisher's <c>process_work_batch</c> sees an empty <c>temp_orphaned_inbox</c> and
+  /// Phase 4.5B's event-store auto-create chain never fires for those rows.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/legacy-publisher-coexistence</docs>
+  public static IServiceCollection AddWhizbangLegacyPublisher(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    services.Configure<ClaimWorkerOptions>(o => o.PerspectiveOnly = true);
+    return services;
+  }
 }

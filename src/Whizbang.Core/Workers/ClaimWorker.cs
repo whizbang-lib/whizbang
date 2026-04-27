@@ -80,6 +80,21 @@ public sealed partial class ClaimWorker : BackgroundService {
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
 
+    // PerspectiveOnly mode: legacy WorkCoordinatorPublisherWorker is wired up and is the
+    // sole poller. Its process_work_batch handles outbox/inbox/perspective claiming and
+    // routes PerspectiveStreamIds onto the drain channel. ClaimWorker doing its own
+    // claim_work would race the publisher and break Phase 4.5B's event-store auto-create
+    // chain (orphan rows get leased before process_work_batch sees them).
+    if (_options.PerspectiveOnly) {
+      try {
+        await Task.Delay(Timeout.Infinite, stoppingToken);
+      } catch (OperationCanceledException) {
+        // expected on shutdown
+      }
+      LogStopped(_logger);
+      return;
+    }
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         var batch = await _claimOnceAsync(stoppingToken);
@@ -180,6 +195,15 @@ public sealed class ClaimWorkerOptions {
   public int PollingMaxIntervalMilliseconds { get; set; } = 10_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// When true, ClaimWorker only distributes perspective stream IDs to the drain channel
+  /// and ignores any outbox/inbox/per-event-perspective work in the claim batch.
+  /// Set this when the legacy <c>WorkCoordinatorPublisherWorker</c> is also registered —
+  /// otherwise both workers race to claim inbox/outbox rows and Phase 4.5B's event-store
+  /// auto-create chain inside <c>process_work_batch</c> never sees the rows as orphans.
+  /// </summary>
+  public bool PerspectiveOnly { get; set; }
   /// <summary>Modulo partition count. Default 10000.</summary>
   public int PartitionCount { get; set; } = 10_000;
   /// <summary>Lease duration applied to claimed work. Default 300 s.</summary>

@@ -100,7 +100,9 @@ builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 // Use AddOptions().Bind() for AOT compatibility (instead of Configure<T>())
 builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
   .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+// AddWhizbangLegacyPublisher registers the publisher AND flips the auto-registered
+// ClaimWorker into PerspectiveOnly mode so the two pollers don't race.
+builder.Services.AddWhizbangLegacyPublisher();
 
 // Perspective worker - processes perspective checkpoints using IPerspectiveRunner instances
 // Options configured via appsettings.json "PerspectiveWorker" section
