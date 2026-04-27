@@ -70,9 +70,11 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent in BFF (where perspective processing happens)
+    // Act - Register receptor for ProductCreatedEvent in BFF (where perspective processing happens).
+    // Filter by ProductId so a stale event from a prior test cannot satisfy our wait.
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+      timeoutMilliseconds: 20000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -127,9 +129,11 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent in BFF
+    // Act - Register receptor for ProductCreatedEvent in BFF, filtered to OUR event only
+    // (stale event from prior test would otherwise satisfy this wait).
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+      timeoutMilliseconds: 20000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -162,7 +166,8 @@ public class PerspectiveLifecycleTests {
     // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
     // flakes under heavy parallel load.
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -194,9 +199,11 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent in BFF
+    // Act - Register receptor for ProductCreatedEvent in BFF, filtered to OUR ProductId
+    // (stale events from prior tests would otherwise satisfy this wait).
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 20000);
+      timeoutMilliseconds: 20000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -229,7 +236,8 @@ public class PerspectiveLifecycleTests {
     // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
     // flakes under heavy parallel load.
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -262,8 +270,9 @@ public class PerspectiveLifecycleTests {
     // receptor synchronously up to its first await, so by the time we dispatch both are armed.
     // The helper's timeout scales with WHIZBANG_TEST_TIMEOUT_MULTIPLIER.
     const int perStageTimeoutMs = 60_000;
-    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs);
-    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs);
+    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
+    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -305,7 +314,8 @@ public class PerspectiveLifecycleTests {
     // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
     // flakes under heavy parallel load.
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     await fixture.Dispatcher.SendAsync(command);
 
@@ -337,7 +347,8 @@ public class PerspectiveLifecycleTests {
     // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
     // flakes under heavy parallel load.
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 45000);
+      timeoutMilliseconds: 45000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -381,10 +392,11 @@ public class PerspectiveLifecycleTests {
     // 120s per helper: under heavy parallel load (12k+ tests), the RabbitMQ → BFF inbox-dispatch
     // chain plus perspective worker can occasionally exceed the 45s default.
     const int perStageTimeoutMs = 120_000;
-    var preInlineTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs);
-    var preAsyncTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs);
-    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs);
-    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs);
+    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    var preInlineTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
+    var preAsyncTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
+    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
+    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
 
     // Act - Dispatch command (event will be processed by ProductCatalog perspective in BFF)
     await fixture.Dispatcher.SendAsync(command);
@@ -428,8 +440,12 @@ public class PerspectiveLifecycleTests {
     // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the first
     // event arrives. The helper uses TaskCompletionSource + scaled timeout
     // (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing flakes under heavy parallel load.
+    // Filter to ProductIds for THIS test's products only — without it, a stale event from a prior
+    // test could satisfy this wait spuriously.
+    var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => commandIds.Contains(e.ProductId));
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {

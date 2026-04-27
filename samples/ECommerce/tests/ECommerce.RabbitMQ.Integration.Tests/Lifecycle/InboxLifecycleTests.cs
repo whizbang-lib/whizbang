@@ -68,10 +68,12 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF from RabbitMQ)
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
+    // Act - Register receptor for ProductCreatedEvent (received by BFF from RabbitMQ).
+    // Filter by ProductId so any in-flight stale event from a prior test (still flowing through
+    // RabbitMQ between this test's CleanupDatabaseAsync and dispatch) is ignored — the receptor
+    // only signals completion when our own ProductCreatedEvent arrives.
     var receptorTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>(
-);
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -106,10 +108,10 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF)
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
+    // Act - Register receptor for ProductCreatedEvent (received by BFF).
+    // Filter on ProductId so a stale event still in flight from a prior test cannot satisfy our wait.
     var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
-);
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -141,9 +143,10 @@ public class InboxLifecycleTests {
     };
 
     // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the event arrives.
-    // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), matching
-    // the pattern of the other tests in this file.
-    var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>();
+    // Filter by ProductId so the wait only signals on OUR event, not a stale in-flight event from a
+    // prior test that survived CleanupDatabaseAsync's queue purge.
+    var receptorTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     await fixture.Dispatcher.SendAsync(command);
 
@@ -173,10 +176,11 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF)
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
+    // Act - Register receptor for ProductCreatedEvent (received by BFF).
+    // Filter by ProductId — without it, a stale event from the prior test (still flushing through
+    // RabbitMQ) can satisfy this wait and mismatch the assertion further down.
     var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
-);
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -207,7 +211,8 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>();
+    var receptorTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     await fixture.Dispatcher.SendAsync(command);
 
@@ -237,10 +242,10 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor for ProductCreatedEvent (received by BFF)
-    // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
+    // Act - Register receptor for ProductCreatedEvent (received by BFF).
+    // Filter on ProductId so we ignore stale events still flushing through RabbitMQ.
     var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(
-);
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -278,10 +283,13 @@ public class InboxLifecycleTests {
     // Register all four lifecycle waits BEFORE dispatching. Each helper internally registers
     // its receptor synchronously up to its first await, so by the time we dispatch all four
     // are armed. The helper's timeout scales with WHIZBANG_TEST_TIMEOUT_MULTIPLIER.
-    var preInlineTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>();
-    var preAsyncTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>();
-    var postAsyncTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>();
-    var postInlineTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>();
+    // Filter by ProductId so each receptor only signals on OUR event — without filter, a stale
+    // event from the prior test could satisfy any of these waits.
+    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    var preInlineTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>(messageFilter: filter);
+    var preAsyncTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(messageFilter: filter);
+    var postAsyncTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(messageFilter: filter);
+    var postInlineTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(messageFilter: filter);
 
     await fixture.Dispatcher.SendAsync(command);
 
@@ -319,7 +327,12 @@ public class InboxLifecycleTests {
       }
     };
 
-    var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>();
+    // Filter to events for THIS test's products only — without it, a stale event from a prior
+    // test could satisfy this wait (the assertion is "≥ 1" so it would pass spuriously, but the
+    // receptor's LastMessage would be wrong).
+    var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
+    var receptorTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(
+      messageFilter: e => commandIds.Contains(e.ProductId));
 
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
