@@ -1580,12 +1580,25 @@ BEGIN
     LIMIT p_max_streams;
 
     -- Return perspective work as one row per distinct stream owned by this instance.
-    -- Two-tier fairness ranking lands in a future TDD cycle; this is the basic shape.
+    -- Two-tier fairness ordering: small streams (≤ 100 pending events) come first, then
+    -- large streams. Without this, a single large stream with thousands of pending events
+    -- could starve many small streams behind it on every claim cycle. The 100-event tier
+    -- threshold matches the typical perspective batch size.
     RETURN QUERY
-    SELECT DISTINCT
+    WITH stream_counts AS (
+      SELECT
+        pe.stream_id,
+        COUNT(*) AS pending_count
+      FROM __SCHEMA__.wh_perspective_events pe
+      WHERE pe.instance_id = p_instance_id
+        AND pe.lease_expiry > v_now
+        AND pe.processed_at IS NULL
+      GROUP BY pe.stream_id
+    )
+    SELECT
       'perspective_stream'::VARCHAR(20) AS source,
       NULL::UUID                        AS work_id,
-      pe.stream_id                      AS work_stream_id,
+      sc.stream_id                      AS work_stream_id,
       NULL::INTEGER                     AS partition_number,
       NULL::VARCHAR(200)                AS destination,
       NULL::VARCHAR(500)                AS message_type,
@@ -1597,10 +1610,10 @@ BEGIN
       false                             AS is_newly_stored,
       false                             AS is_orphaned,
       NULL::VARCHAR(200)                AS perspective_name
-    FROM __SCHEMA__.wh_perspective_events pe
-    WHERE pe.instance_id = p_instance_id
-      AND pe.lease_expiry > v_now
-      AND pe.processed_at IS NULL
+    FROM stream_counts sc
+    ORDER BY
+      CASE WHEN sc.pending_count <= 100 THEN 0 ELSE 1 END,  -- small streams first
+      sc.pending_count                                       -- within tier, smallest-first
     LIMIT p_max_streams;
 
     -- Drain-mode hint: if this instance has more eligible work than fits in a single
