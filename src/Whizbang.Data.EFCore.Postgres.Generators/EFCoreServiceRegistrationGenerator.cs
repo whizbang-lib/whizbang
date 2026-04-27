@@ -1900,8 +1900,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates code for migration tuples to embed in generated file.
-  /// Reads migration SQL files from generator's own Templates/Migrations (authoritative source).
-  /// NOTE: Templates/Migrations must be kept in sync with Whizbang.Data.Postgres/Migrations manually.
+  /// SQL files physically live in <c>Whizbang.Data.Postgres/Migrations/</c> and are linked into
+  /// this generator's embedded resources at build time via <c>&lt;EmbeddedResource Include=...
+  /// Link="Templates\Migrations\..."/&gt;</c> in the .csproj. There is exactly ONE physical
+  /// source of truth for the SQL files — no manual sync required.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
   private static string _generateMigrationsCode(SourceProductionContext context) {
