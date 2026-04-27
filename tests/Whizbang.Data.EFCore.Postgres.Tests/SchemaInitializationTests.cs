@@ -143,18 +143,18 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(outboxColumns).Contains("instance_id");
     await Assert.That(outboxColumns).Contains("lease_expiry");
 
-    // Migration 014 - process_work_batch function exists
+    // Phase H replaced process_work_batch with the focused claim_work function.
     const string sql2 = @"
       SELECT routine_name
       FROM information_schema.routines
       WHERE routine_schema = 'public'
-        AND routine_name = 'process_work_batch'
+        AND routine_name = 'claim_work'
         AND routine_type = 'FUNCTION'";
 
     await using var command2 = new NpgsqlCommand(sql2, connection);
     var functionName = await command2.ExecuteScalarAsync() as string;
 
-    await Assert.That(functionName).IsEqualTo("process_work_batch");
+    await Assert.That(functionName).IsEqualTo("claim_work");
   }
 
   [Test]
