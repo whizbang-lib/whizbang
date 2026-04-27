@@ -90,7 +90,8 @@ public partial class WorkCoordinatorPublisherWorker(
   TransportMetrics? transportMetrics = null,
   WorkCoordinatorMetrics? workCoordinatorMetrics = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null,
-  IInboxChannelWriter? inboxChannelWriter = null
+  IInboxChannelWriter? inboxChannelWriter = null,
+  IPerspectiveDrainChannel? perspectiveDrainChannel = null
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -1080,6 +1081,7 @@ public partial class WorkCoordinatorPublisherWorker(
     await _enqueueOutboxWorkToChannelAsync(workBatch, cancellationToken);
     await _processBatchInboxWorkAsync(workBatch, cancellationToken);
     await _drainInboxChannelAsync(cancellationToken);
+    await _enqueuePerspectiveStreamsAsync(workBatch, cancellationToken);
 
     _trackWorkStateTransitions(workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0);
   }
@@ -1101,6 +1103,20 @@ public partial class WorkCoordinatorPublisherWorker(
         // Only renew when nearing lease expiry (>half the lease duration)
         _leaseRenewals.Add(work.MessageId);
       }
+    }
+  }
+
+  // Forwards perspective stream IDs returned by process_work_batch onto the drain channel
+  // so PerspectiveWorker (in channel-consumer mode) can pick them up. This is the legacy
+  // publisher's bridge into the new channel architecture: when ECommerce wires this worker
+  // up alongside ClaimWorker, ClaimWorker is configured PerspectiveOnly and exits early,
+  // and this method becomes the sole producer onto the drain channel.
+  private async Task _enqueuePerspectiveStreamsAsync(WorkBatch workBatch, CancellationToken cancellationToken) {
+    if (perspectiveDrainChannel is null || workBatch.PerspectiveStreamIds.Count == 0) {
+      return;
+    }
+    foreach (var streamId in workBatch.PerspectiveStreamIds) {
+      await perspectiveDrainChannel.WriteAsync(streamId, cancellationToken);
     }
   }
 

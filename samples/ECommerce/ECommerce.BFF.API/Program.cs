@@ -177,8 +177,10 @@ builder.Services.AddSingleton(consumerOptions);
 builder.Services.AddHostedService<TransportConsumerWorker>();
 
 // Outbox publisher worker - publishes pending messages from outbox to Service Bus
-// Options configured via appsettings.json "WorkCoordinatorPublisher" section
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+// Options configured via appsettings.json "WorkCoordinatorPublisher" section.
+// AddWhizbangLegacyPublisher registers the publisher AND flips the auto-registered
+// ClaimWorker into PerspectiveOnly mode so the two pollers don't race.
+builder.Services.AddWhizbangLegacyPublisher();
 
 // Configure PerspectiveWorkerOptions from appsettings.json
 builder.Services.AddOptions<PerspectiveWorkerOptions>()
