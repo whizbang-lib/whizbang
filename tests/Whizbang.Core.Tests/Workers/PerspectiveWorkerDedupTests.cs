@@ -23,6 +23,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// These tests use a SpyObserver to deterministically capture and assert on dedup decisions,
 /// and a CountingRunner to track how many times RunAsync is invoked.
 /// </remarks>
+[NotInParallel("PerspectiveWorkerDedup")]
 public class PerspectiveWorkerDedupTests {
   // ==================== Core Dedup Tests ====================
 
