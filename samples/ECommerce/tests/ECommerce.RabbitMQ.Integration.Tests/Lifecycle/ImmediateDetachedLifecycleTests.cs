@@ -66,7 +66,8 @@ public class ImmediateDetachedLifecycleTests {
 
     // Act - Register receptor and dispatch command
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 5000);
+      timeoutMilliseconds: 5000,
+      messageFilter: c => c.ProductId == command.ProductId);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -100,7 +101,8 @@ public class ImmediateDetachedLifecycleTests {
     // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
     // flakes under heavy parallel load.
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 5000);
+      timeoutMilliseconds: 5000,
+      messageFilter: c => c.ProductId == command.ProductId);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -148,11 +150,12 @@ public class ImmediateDetachedLifecycleTests {
       }
     };
 
-    // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the first
-    // command runs. The helper uses TaskCompletionSource + scaled timeout
-    // (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing flakes under heavy parallel load.
+    // Register the lifecycle wait BEFORE dispatching. Filter by the set of ProductIds so a stale
+    // command from a prior test cannot satisfy the wait.
+    var commandIds = commands.Select(c => c.ProductId).ToHashSet();
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 10000);
+      timeoutMilliseconds: 10000,
+      messageFilter: c => commandIds.Contains(c.ProductId));
 
     // Act - Dispatch all commands
     foreach (var command in commands) {
@@ -191,7 +194,8 @@ public class ImmediateDetachedLifecycleTests {
     // 2. Awaits completion concurrently with dispatch
     // 3. Handles unregistration in finally block
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 5000);
+      timeoutMilliseconds: 5000,
+      messageFilter: c => c.ProductId == command.ProductId);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
@@ -227,7 +231,8 @@ public class ImmediateDetachedLifecycleTests {
     // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
     // flakes under heavy parallel load.
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
-      timeoutMilliseconds: 10000);
+      timeoutMilliseconds: 10000,
+      messageFilter: c => c.ProductId == command.ProductId);
 
     // Act - Dispatch
     await fixture.Dispatcher.SendAsync(command);

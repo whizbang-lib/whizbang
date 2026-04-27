@@ -72,7 +72,8 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -112,7 +113,8 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -152,7 +154,8 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -193,12 +196,13 @@ public class DistributeLifecycleTests {
       }
     };
 
-    // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the event arrives.
-    // The helper uses TaskCompletionSource + scaled timeout (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing
-    // flakes under heavy parallel load.
+    // Register the lifecycle wait BEFORE dispatching. Filter by the set of ProductIds for THIS
+    // test's commands so a stale event from a prior test cannot satisfy the wait.
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
+    var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
     var receptorTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => commandIds.Contains(e.ProductId));
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
@@ -237,7 +241,8 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -276,7 +281,8 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => e.ProductId == command.ProductId.Value);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -319,11 +325,12 @@ public class DistributeLifecycleTests {
     // 5 distribute stages can occasionally exceed the 45s default.
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     const int perStageTimeoutMs = 120_000;
-    var preInlineTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs);
-    var preAsyncTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs);
-    var distributeAsyncTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs);
-    var postAsyncTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs);
-    var postInlineTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs);
+    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    var preInlineTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
+    var preAsyncTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
+    var distributeAsyncTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
+    var postAsyncTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
+    var postInlineTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -366,11 +373,12 @@ public class DistributeLifecycleTests {
     };
 
     // Register the lifecycle wait BEFORE dispatching so the receptor is in place when the first
-    // event arrives. The helper uses TaskCompletionSource + scaled timeout
-    // (WHIZBANG_TEST_TIMEOUT_MULTIPLIER), preventing flakes under heavy parallel load.
+    // event arrives. Filter by ProductId set so a stale event from a prior test cannot satisfy the wait.
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
+    var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 60000);
+      timeoutMilliseconds: 60000,
+      messageFilter: e => commandIds.Contains(e.ProductId));
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
