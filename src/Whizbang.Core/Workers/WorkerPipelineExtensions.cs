@@ -41,10 +41,12 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<FailureFlushWorker>();
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
-    // OutboxPublishWorker class is registered here so opt-in extensions can resolve it,
-    // but it is NOT auto-hosted yet — Phase H step 2 will move the AddHostedService line
-    // into this method once ECommerce sample fixtures switch off AddWhizbangLegacyPublisher.
+    // OutboxPublishWorker + InboxDispatchWorker classes are registered here so opt-in
+    // extensions can resolve them, but they are NOT auto-hosted yet — Phase H step 2 will
+    // move the AddHostedService lines into this method once ECommerce sample fixtures
+    // switch off AddWhizbangLegacyPublisher.
     services.TryAddSingleton<OutboxPublishWorker>();
+    services.TryAddSingleton<InboxDispatchWorker>();
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
@@ -88,6 +90,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<LeaseRenewalWorkerOptions>();
     services.AddOptions<InboxHandlerWorkerOptions>();
     services.AddOptions<OutboxPublishWorkerOptions>();
+    services.AddOptions<InboxDispatchWorkerOptions>();
 
     return services;
   }
@@ -129,6 +132,25 @@ public static class WorkerPipelineExtensions {
   public static IServiceCollection AddWhizbangOutboxPublisher(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
+    return services;
+  }
+
+  /// <summary>
+  /// Registers <see cref="InboxDispatchWorker"/> as a hosted service. Call this when ready to
+  /// migrate off <see cref="AddWhizbangLegacyPublisher"/> — it consumes from the same
+  /// <see cref="IInboxChannelWriter"/>, so the two cannot both be active (only one will
+  /// receive each orphan inbox row). The legacy publisher should be removed in the same change.
+  /// </summary>
+  /// <remarks>
+  /// Phase H step 1 ships this opt-in extension so the worker is available behind an explicit
+  /// flag. Phase H step 2 will move the <c>AddHostedService</c> line into
+  /// <see cref="AddWhizbangWorkers"/> and delete this extension and
+  /// <see cref="AddWhizbangLegacyPublisher"/>.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
+  public static IServiceCollection AddWhizbangInboxDispatcher(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     return services;
   }
 }
