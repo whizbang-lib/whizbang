@@ -46,7 +46,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
   ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
-  WorkCoordinatorMetrics? metrics = null
+  WorkCoordinatorMetrics? metrics = null,
+  WorkCoordinatorGate? gate = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -55,6 +56,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
+  private readonly WorkCoordinatorGate? _gate = gate;
 
   private static TDbContext _initDbContext(TDbContext ctx) {
     ArgumentNullException.ThrowIfNull(ctx);
@@ -766,6 +768,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -793,6 +796,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (ids.Count == 0) {
       return 0;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -827,6 +831,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (cursors.Count == 0 && eventWorkIds.Count == 0) {
       return;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -852,6 +857,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task FlushCompletionsAsync(
     FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -908,6 +914,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (inquiries.Count == 0) {
       return Array.Empty<SyncInquiryResult>();
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -981,6 +988,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<WorkBatch> ClaimWorkAsync(
     ClaimWorkRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -1047,6 +1055,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     HandlerCommitRequest request,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -1074,6 +1083,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (requests.Count == 0) {
       return Array.Empty<HandlerBatchResult>();
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -1146,6 +1156,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (failures.Count == 0) {
       return;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
@@ -1176,6 +1187,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (ids.Count == 0) {
       return 0;
     }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
