@@ -129,8 +129,13 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // Wait for at least one readiness check to complete
-    await databaseReadinessCheck.WaitForCheckAsync(TimeSpan.FromSeconds(5));
+    // Wait for the counter to actually increment. The fake's WaitForCheckAsync signals
+    // when IsReadyAsync is called — but the counter increment happens AFTER the await
+    // returns. Polling on the metric the assertion checks is the deterministic synchronization.
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+    while (worker.ConsecutiveDatabaseNotReadyChecks < 1 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10, CancellationToken.None);
+    }
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
