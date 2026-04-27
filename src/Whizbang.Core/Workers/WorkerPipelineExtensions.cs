@@ -24,22 +24,35 @@ public static class WorkerPipelineExtensions {
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
-    // Hosted services — each runs as BackgroundService.
-    services.AddHostedService<HeartbeatWorker>();
-    services.AddHostedService<ClaimWorker>();
-    services.AddHostedService<OutboxCompletionFlushWorker>();
-    services.AddHostedService<PerspectiveCompletionFlushWorker>();
-    services.AddHostedService<FailureFlushWorker>();
-    services.AddHostedService<LeaseRenewalWorker>();
-    services.AddHostedService<InboxHandlerWorker>();
+    // Register each worker type as a singleton so the channel-surface registrations
+    // can resolve the SAME instance the hosted-service collection runs.
+    // This avoids a circular DI deadlock: if we resolved the channel via
+    // sp.GetServices<IHostedService>() and any other hosted service depended on
+    // a channel surface, IHostedService resolution would recurse on itself.
+    services.TryAddSingleton<HeartbeatWorker>();
+    services.TryAddSingleton<ClaimWorker>();
+    services.TryAddSingleton<OutboxCompletionFlushWorker>();
+    services.TryAddSingleton<PerspectiveCompletionFlushWorker>();
+    services.TryAddSingleton<FailureFlushWorker>();
+    services.TryAddSingleton<LeaseRenewalWorker>();
+    services.TryAddSingleton<InboxHandlerWorker>();
 
-    // Channel interfaces — singletons resolved to the same hosted-service instance.
-    // TryAdd so AddWhizbang() (which calls this) is safe to invoke multiple times.
-    services.TryAddSingleton<IOutboxCompletionChannel>(sp => _resolveHostedSingleton<OutboxCompletionFlushWorker>(sp));
-    services.TryAddSingleton<IPerspectiveCompletionChannel>(sp => _resolveHostedSingleton<PerspectiveCompletionFlushWorker>(sp));
-    services.TryAddSingleton<IFailureChannel>(sp => _resolveHostedSingleton<FailureFlushWorker>(sp));
-    services.TryAddSingleton<ILeaseRenewalChannel>(sp => _resolveHostedSingleton<LeaseRenewalWorker>(sp));
-    services.TryAddSingleton<IInboxHandlerCommitChannel>(sp => _resolveHostedSingleton<InboxHandlerWorker>(sp));
+    // Hosted services — delegate to the singleton instance so DI hands the same one
+    // to both the hosted-service collection and the channel-surface registrations.
+    services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<ClaimWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<FailureFlushWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
+
+    // Channel interfaces — singletons that delegate to the singleton worker.
+    services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
+    services.TryAddSingleton<IPerspectiveCompletionChannel>(sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
+    services.TryAddSingleton<IFailureChannel>(sp => sp.GetRequiredService<FailureFlushWorker>());
+    services.TryAddSingleton<ILeaseRenewalChannel>(sp => sp.GetRequiredService<LeaseRenewalWorker>());
+    services.TryAddSingleton<IInboxHandlerCommitChannel>(sp => sp.GetRequiredService<InboxHandlerWorker>());
 
     // Perspective work-distribution channel: ClaimWorker writes here, PerspectiveWorker reads.
     // Singleton so producer + consumer share the same Channel<T>.
@@ -69,18 +82,4 @@ public static class WorkerPipelineExtensions {
     return services;
   }
 
-  /// <summary>
-  /// AddHostedService registers as IHostedService; we want the same instance to satisfy
-  /// the channel-surface interfaces too. This finds the hosted instance by type.
-  /// </summary>
-  private static T _resolveHostedSingleton<T>(IServiceProvider sp) where T : class {
-    foreach (var hosted in sp.GetServices<IHostedService>()) {
-      if (hosted is T match) {
-        return match;
-      }
-    }
-    throw new InvalidOperationException(
-      $"{typeof(T).Name} is not registered as a hosted service. " +
-      "Did you call AddWhizbangWorkers() before resolving the channel interface?");
-  }
 }
