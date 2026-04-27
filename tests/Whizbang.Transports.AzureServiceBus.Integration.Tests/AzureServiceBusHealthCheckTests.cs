@@ -21,6 +21,15 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusHealthCheckTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly List<IAsyncDisposable> _disposables = [];
+
+  [After(Test)]
+  public async Task DisposeTrackedTransportsAsync() {
+    foreach (var d in _disposables) {
+      try { await d.DisposeAsync(); } catch { /* best-effort cleanup */ }
+    }
+    _disposables.Clear();
+  }
 
   [Test]
   public async Task CheckHealthAsync_WithAzureServiceBusTransport_ReturnsHealthyAsync() {
@@ -33,6 +42,7 @@ public class AzureServiceBusHealthCheckTests(ServiceBusEmulatorFixtureSource fix
       _fixture.Client,
       jsonOptions
     );
+    _disposables.Add(transport);
 
     await transport.InitializeAsync();
 
