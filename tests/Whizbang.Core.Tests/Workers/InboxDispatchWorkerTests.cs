@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -101,7 +102,9 @@ public class InboxDispatchWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
+    var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1234 }),
       NullLogger<InboxDispatchWorker>.Instance);
@@ -136,7 +139,9 @@ public class InboxDispatchWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
+    var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       NullLogger<InboxDispatchWorker>.Instance);
@@ -166,7 +171,9 @@ public class InboxDispatchWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();  // gate ready, but Enabled=false should still skip
 
+    var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { Enabled = false }),
       NullLogger<InboxDispatchWorker>.Instance);
@@ -193,7 +200,9 @@ public class InboxDispatchWorkerTests {
     var failure = new FakeFailureChannel();
     var gate = new SchemaReadyGate();  // not marked ready
 
+    var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       NullLogger<InboxDispatchWorker>.Instance);
@@ -224,7 +233,9 @@ public class InboxDispatchWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
+    var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       NullLogger<InboxDispatchWorker>.Instance);

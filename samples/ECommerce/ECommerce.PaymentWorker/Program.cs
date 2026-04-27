@@ -77,8 +77,8 @@ builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-
+builder.Services.AddWhizbangOutboxPublisher();
+builder.Services.AddWhizbangInboxDispatcher();
 var host = builder.Build();
 
 // Initialize database schema on startup

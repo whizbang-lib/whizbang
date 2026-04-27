@@ -180,8 +180,8 @@ builder.Services.AddHostedService<TransportConsumerWorker>();
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section.
 // AddWhizbangLegacyPublisher registers the publisher AND flips the auto-registered
 // ClaimWorker into PerspectiveOnly mode so the two pollers don't race.
-builder.Services.AddWhizbangLegacyPublisher();
-
+builder.Services.AddWhizbangOutboxPublisher();
+builder.Services.AddWhizbangInboxDispatcher();
 // Configure PerspectiveWorkerOptions from appsettings.json
 builder.Services.AddOptions<PerspectiveWorkerOptions>()
   .Bind(builder.Configuration.GetSection("PerspectiveWorker"));

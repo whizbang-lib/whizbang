@@ -292,15 +292,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     }
 
-    // 4. Clear publisher in-flight state AFTER workers are idle
-    // Workers may have re-added entries during the idle drain above
-    var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    inventoryPublisher?.ClearPublishInFlightState();
-
-    var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    bffPublisher?.ClearPublishInFlightState();
+    // 4. Clear publisher in-flight state AFTER workers are idle.
+    // The new path tracks in-flight on IWorkChannelWriter (singleton across the publish pipeline);
+    // calling ClearInFlight directly avoids the per-worker wrapper the legacy publisher exposed.
+    _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+    _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
 
     Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
   }
@@ -438,7 +434,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // Register OrderedStreamProcessor for message ordering
@@ -605,7 +602,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // RabbitMQ consumer with test-specific routing
@@ -737,13 +735,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<OutboxPublishWorker>().FirstOrDefault();
+    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<OutboxPublishWorker>().FirstOrDefault();
     var inventoryPersp = _inventoryHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
     var bffPersp = _bffHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
 
-    // Wire one-shot idle handlers — signal fires when worker reaches idle after processing
-    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+    void WireOutboxOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
       WorkProcessingIdleHandler? h = null;
@@ -761,8 +758,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       if (w.IsIdle) { tcs.TrySetResult(true); }
     }
 
-    WireOnce(inventoryPub, tcsInventoryPub);
-    WireOnce(bffPub, tcsBffPub);
+    WireOutboxOnce(inventoryPub, tcsInventoryPub);
+    WireOutboxOnce(bffPub, tcsBffPub);
     WirePerspOnce(inventoryPersp, tcsInventoryPersp);
     WirePerspOnce(bffPersp, tcsBffPersp);
 
@@ -896,7 +893,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+      .OfType<OutboxPublishWorker>().FirstOrDefault();
     if (worker is null) {
       throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
     }

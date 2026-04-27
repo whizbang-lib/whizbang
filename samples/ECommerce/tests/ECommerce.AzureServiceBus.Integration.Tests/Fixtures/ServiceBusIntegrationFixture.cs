@@ -507,7 +507,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer for InventoryWorker
@@ -705,7 +706,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddWhizbangOutboxPublisher();
+    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
@@ -987,14 +989,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           ", cancellationToken);
           Console.WriteLine("[ServiceBusFixture] All tables truncated.");
 
-          // Clear publisher in-flight state (prevents stale entries from blocking new messages)
-          var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-          inventoryPublisher?.ClearPublishInFlightState();
-
-          var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-          bffPublisher?.ClearPublishInFlightState();
+          // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
+          // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
+          _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+          _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
         }
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
@@ -1460,7 +1458,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+      .OfType<OutboxPublishWorker>().FirstOrDefault();
     if (worker is null) {
       throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
     }
@@ -1526,15 +1524,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var inventoryPub = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+      .OfType<OutboxPublishWorker>().FirstOrDefault();
     var bffPub = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+      .OfType<OutboxPublishWorker>().FirstOrDefault();
     var inventoryPersp = _inventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
       .OfType<PerspectiveWorker>().FirstOrDefault();
     var bffPersp = _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
       .OfType<PerspectiveWorker>().FirstOrDefault();
 
-    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+    void WireOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
       WorkProcessingIdleHandler? h = null;

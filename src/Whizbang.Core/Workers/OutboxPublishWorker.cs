@@ -1,8 +1,13 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Workers;
 
@@ -10,7 +15,9 @@ namespace Whizbang.Core.Workers;
 /// Drains outbox work from <see cref="IWorkChannelWriter"/> and publishes each item to transport via
 /// <see cref="IMessagePublishStrategy"/>. On success enqueues to <see cref="IOutboxCompletionChannel"/>;
 /// on failure routes to <see cref="IFailureChannel"/>; on transport-not-ready re-buffers to the same
-/// channel and queues a lease renewal via <see cref="ILeaseRenewalChannel"/>.
+/// channel and queues a lease renewal via <see cref="ILeaseRenewalChannel"/>. Fires Pre/Post Outbox
+/// lifecycle stages (PreOutboxDetached/Inline before publish, PostOutboxDetached/Inline +
+/// PostLifecycleDetached/Inline after publish) when the lifecycle deps are wired.
 /// </summary>
 /// <remarks>
 /// Replaces the publish-half of the legacy <c>WorkCoordinatorPublisherWorker</c>. The claim-half lives
@@ -19,8 +26,13 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/outbox-publish</docs>
 public sealed partial class OutboxPublishWorker : BackgroundService {
+  private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
+  private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
+  private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
+  private const string LIFECYCLE_POST_OUTBOX_INLINE = "Lifecycle PostOutboxInline";
+
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IMessagePublishStrategy _publishStrategy;
+  private readonly IMessagePublishStrategy? _publishStrategy;
   private readonly IWorkChannelWriter _workChannelWriter;
   private readonly IOutboxCompletionChannel _outboxCompletionChannel;
   private readonly IFailureChannel _failureChannel;
@@ -28,20 +40,29 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly OutboxPublishWorkerOptions _options;
   private readonly ILogger<OutboxPublishWorker> _logger;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
 
-  /// <summary>Constructor.</summary>
+  /// <summary>
+  /// Constructor. <paramref name="publishStrategy"/> is optional so this worker can be
+  /// resolved by hosts that don't have a transport registered (e.g., DI-validation tests).
+  /// When the strategy is null, <see cref="ExecuteAsync"/> logs a warning and exits — equivalent
+  /// to <see cref="OutboxPublishWorkerOptions.Enabled"/> being false.
+  /// </summary>
   public OutboxPublishWorker(
     IServiceScopeFactory scopeFactory,
-    IMessagePublishStrategy publishStrategy,
     IWorkChannelWriter workChannelWriter,
     IOutboxCompletionChannel outboxCompletionChannel,
     IFailureChannel failureChannel,
     ILeaseRenewalChannel leaseRenewalChannel,
     ISchemaReadyGate schemaReadyGate,
     IOptions<OutboxPublishWorkerOptions> options,
-    ILogger<OutboxPublishWorker> logger) {
+    ILogger<OutboxPublishWorker> logger,
+    IMessagePublishStrategy? publishStrategy = null,
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IOptionsMonitor<TracingOptions>? tracingOptions = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
+    _publishStrategy = publishStrategy;
     _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
     _outboxCompletionChannel = outboxCompletionChannel ?? throw new ArgumentNullException(nameof(outboxCompletionChannel));
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
@@ -49,13 +70,45 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _tracingOptions = tracingOptions;
+  }
+
+  /// <summary>
+  /// Event raised after a message is successfully published to transport. Mirrors the legacy
+  /// <c>WorkCoordinatorPublisherWorker.OnOutboxMessagePublished</c> contract — test fixtures use it
+  /// for deterministic synchronization.
+  /// </summary>
+  /// <docs>operations/workers/outbox-publish-worker#processing-hooks</docs>
+  public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
+
+  /// <summary>
+  /// Event raised after the publish loop drains a batch and finds the work channel empty.
+  /// Mirrors the legacy <c>WorkCoordinatorPublisherWorker.OnWorkProcessingIdle</c> contract —
+  /// test fixtures use it as a "this worker has no pending work" signal.
+  /// </summary>
+  /// <docs>operations/workers/outbox-publish-worker#processing-hooks</docs>
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
+
+  /// <summary>
+  /// True when the work channel currently has no pending items. Best-effort proxy — a producer
+  /// can write between this read and the next loop iteration. Test fixtures wire
+  /// <see cref="OnWorkProcessingIdle"/> after sampling <c>IsIdle</c> to close the race window.
+  /// </summary>
+  public bool IsIdle => _workChannelWriter.Reader.Count == 0;
+
+  private void _maybeFireIdle() {
+    if (_workChannelWriter.Reader.Count == 0) {
+      OnWorkProcessingIdle?.Invoke();
+    }
   }
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    LogStarted(_logger, _publishStrategy.SupportsBulkPublish, _options.MaxBulkPublishBatchSize);
+    LogStarted(_logger, _publishStrategy?.SupportsBulkPublish ?? false, _options.MaxBulkPublishBatchSize);
 
-    if (!_options.Enabled) {
+    if (!_options.Enabled || _publishStrategy is null) {
+      if (_publishStrategy is null) { LogNoTransportRegistered(_logger); }
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
       LogStopped(_logger);
@@ -69,7 +122,7 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
     }
 
     try {
-      if (_publishStrategy.SupportsBulkPublish) {
+      if (_publishStrategy!.SupportsBulkPublish) {
         await _bulkLoopAsync(stoppingToken);
       } else {
         await _singularLoopAsync(stoppingToken);
@@ -81,15 +134,32 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
     LogStopped(_logger);
   }
 
+  // ============================================================
+  // Singular path
+  // ============================================================
+
   private async Task _singularLoopAsync(CancellationToken stoppingToken) {
     await foreach (var work in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
       try {
-        if (!await _publishStrategy.IsReadyAsync(stoppingToken)) {
+        if (!await _publishStrategy!.IsReadyAsync(stoppingToken)) {
           await _handleTransportNotReadyAsync(work, stoppingToken);
           continue;
         }
 
-        var result = await _publishStrategy.PublishAsync(work, stoppingToken);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, stoppingToken);
+        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        var traceContext = _extractTraceContext(work);
+        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+        var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
+          work, scope, receptorInvoker, traceContext, enableLifecycleSpans, stoppingToken);
+
+        var result = await _publishStrategy!.PublishAsync(work, stoppingToken);
+
+        await _invokePostOutboxLifecycleAsync(
+          work, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans, stoppingToken);
+
         await _routeResultAsync(work, result, stoppingToken);
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         throw;
@@ -103,8 +173,13 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
           Reason = MessageFailureReason.Unknown
         }, stoppingToken);
       }
+      _maybeFireIdle();
     }
   }
+
+  // ============================================================
+  // Bulk path
+  // ============================================================
 
   private async Task _bulkLoopAsync(CancellationToken stoppingToken) {
     var maxBatchSize = _options.MaxBulkPublishBatchSize;
@@ -115,24 +190,45 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
       }
 
       try {
-        if (!await _publishStrategy.IsReadyAsync(stoppingToken)) {
+        if (!await _publishStrategy!.IsReadyAsync(stoppingToken)) {
           foreach (var w in batch) {
             await _handleTransportNotReadyAsync(w, stoppingToken);
           }
           continue;
         }
 
-        var results = await _publishStrategy.PublishBatchAsync(batch, stoppingToken);
+        // Per-item scope + Pre lifecycle prep BEFORE bulk publish
+        var contexts = new List<BulkBatchContext>(batch.Count);
         foreach (var w in batch) {
-          var r = results.FirstOrDefault(x => x.MessageId == w.MessageId)
+          var scope = _scopeFactory.CreateAsyncScope();
+          await SecurityContextHelper.EstablishFullContextAsync(w.Envelope, scope.ServiceProvider, stoppingToken);
+          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+          var traceContext = _extractTraceContext(w);
+          var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+          var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
+            w, scope, receptorInvoker, traceContext, enableLifecycleSpans, stoppingToken);
+          contexts.Add(new BulkBatchContext(w, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans));
+        }
+
+        var results = await _publishStrategy!.PublishBatchAsync(batch, stoppingToken);
+
+        // Per-item Post lifecycle + result routing
+        foreach (var ctx in contexts) {
+          var r = results.FirstOrDefault(x => x.MessageId == ctx.Work.MessageId)
             ?? new MessagePublishResult {
-              MessageId = w.MessageId,
+              MessageId = ctx.Work.MessageId,
               Success = false,
-              CompletedStatus = w.Status,
+              CompletedStatus = ctx.Work.Status,
               Error = "No result returned from batch publish",
               Reason = MessageFailureReason.Unknown
             };
-          await _routeResultAsync(w, r, stoppingToken);
+          try {
+            await _invokePostOutboxLifecycleAsync(
+              ctx.Work, ctx.Scope, ctx.Tracking, ctx.TypedEnvelope, ctx.TraceContext, ctx.EnableLifecycleSpans, stoppingToken);
+            await _routeResultAsync(ctx.Work, r, stoppingToken);
+          } finally {
+            await ctx.Scope.DisposeAsync();
+          }
         }
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         throw;
@@ -148,12 +244,35 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
           }, stoppingToken);
         }
       }
+      _maybeFireIdle();
     }
   }
 
+  private readonly record struct BulkBatchContext(
+    OutboxWork Work,
+    AsyncServiceScope Scope,
+    ILifecycleTracking? Tracking,
+    IMessageEnvelope? TypedEnvelope,
+    ActivityContext TraceContext,
+    bool EnableLifecycleSpans);
+
+  // ============================================================
+  // Common: route results, transport-not-ready
+  // ============================================================
+
   private async Task _routeResultAsync(OutboxWork work, MessagePublishResult result, CancellationToken ct) {
+    // Killswitch: drop the batch silently when disabled (defense-in-depth — ExecuteAsync gate
+    // also short-circuits, but the inner loop may still drain a few items if Enabled flips
+    // mid-run via IOptionsMonitor in a future revision).
+    if (!_options.Enabled) {
+      return;
+    }
     if (result.Success) {
       await _outboxCompletionChannel.EnqueueAsync(work.MessageId, ct);
+      OnOutboxMessagePublished?.Invoke(new OutboxMessagePublishedEvent {
+        MessageId = work.MessageId,
+        Destination = work.Destination
+      });
     } else {
       _workChannelWriter.RemoveInFlight(work.MessageId);
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
@@ -166,12 +285,8 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
   }
 
   private async Task _handleTransportNotReadyAsync(OutboxWork work, CancellationToken ct) {
-    // Re-buffer to the same channel so it gets retried; queue a lease renewal so the
-    // claim path doesn't reclaim it from under us while transport is unavailable.
     await _leaseRenewalChannel.EnqueueAsync(WorkCategory.Outbox, work.MessageId, ct);
     _workChannelWriter.TryWrite(work);
-    // Small backoff so we don't busy-loop hammering IsReadyAsync when transport stays down.
-    // Without this, a permanently-down transport with re-buffered work pegs a CPU core.
     var delayMs = _options.TransportNotReadyRetryDelayMilliseconds;
     if (delayMs > 0) {
       try {
@@ -181,6 +296,127 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
       }
     }
   }
+
+  // ============================================================
+  // Lifecycle helpers (ported from legacy WorkCoordinatorPublisherWorker
+  // _invokePreOutboxLifecycleAsync / _invokePostOutboxLifecycleAsync)
+  // ============================================================
+
+  private static ActivityContext _extractTraceContext(OutboxWork work) {
+    var latestHop = work.Envelope.Hops?.LastOrDefault();
+    ActivityContext traceContext = default;
+    if (latestHop?.TraceParent is not null &&
+        ActivityContext.TryParse(latestHop.TraceParent, null, out var parsed)) {
+      traceContext = parsed;
+    }
+    return traceContext;
+  }
+
+  private async Task<(ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope)> _invokePreOutboxLifecycleAsync(
+      OutboxWork work,
+      AsyncServiceScope scope,
+      IReceptorInvoker? receptorInvoker,
+      ActivityContext traceContext,
+      bool enableLifecycleSpans,
+      CancellationToken stoppingToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return (null, null);
+    }
+    // Skip PreOutbox lifecycle for event-store-only messages (null destination).
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return (null, null);
+    }
+
+    var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+    var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+    var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+    if (coordinator is not null) {
+      var tracking = coordinator.BeginTracking(
+        work.MessageId, typedEnvelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await tracking.AdvanceToAsync(LifecycleStage.PreOutboxDetached, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await tracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, stoppingToken);
+      }
+      return (tracking, typedEnvelope);
+    }
+
+    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, LIFECYCLE_PRE_OUTBOX_ASYNC, tracingOptions, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, LIFECYCLE_PRE_OUTBOX_INLINE, tracingOptions, stoppingToken);
+    return (null, typedEnvelope);
+  }
+
+  private static async Task _invokePostOutboxLifecycleAsync(
+      OutboxWork work,
+      AsyncServiceScope scope,
+      ILifecycleTracking? tracking,
+      IMessageEnvelope? typedEnvelope,
+      ActivityContext traceContext,
+      bool enableLifecycleSpans,
+      CancellationToken stoppingToken) {
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return;
+    }
+
+    var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+    if (tracking is not null && coordinator is not null) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await tracking.AdvanceToAsync(LifecycleStage.PostOutboxDetached, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await tracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleDetached", ActivityKind.Internal, parentContext: traceContext) : null) {
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
+      }
+      coordinator.AbandonTracking(work.MessageId);
+      return;
+    }
+
+    if (typedEnvelope is null) {
+      return;
+    }
+    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    if (receptorInvoker is null) {
+      return;
+    }
+    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PostOutboxDetached, work.Attempts, LIFECYCLE_POST_OUTBOX_ASYNC, tracingOptions, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, LIFECYCLE_POST_OUTBOX_INLINE, tracingOptions, stoppingToken);
+  }
+
+  private readonly record struct LifecycleTracingOptions(bool EnableLifecycleSpans, ActivityContext TraceContext);
+
+  private static async Task _invokeLifecycleDirectAsync(
+      IReceptorInvoker receptorInvoker,
+      IMessageEnvelope typedEnvelope,
+      LifecycleStage stage,
+      int attempts,
+      string activityName,
+      LifecycleTracingOptions tracingOptions,
+      CancellationToken stoppingToken) {
+    using (tracingOptions.EnableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(activityName, ActivityKind.Internal, parentContext: tracingOptions.TraceContext) : null) {
+      var ctx = new LifecycleExecutionContext {
+        CurrentStage = stage,
+        MessageSource = MessageSource.Outbox,
+        AttemptNumber = attempts
+      };
+      await receptorInvoker.InvokeAsync(typedEnvelope, stage, ctx, stoppingToken);
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+        ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, stoppingToken);
+    }
+  }
+
+  // ============================================================
+  // Logging
+  // ============================================================
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "OutboxPublishWorker started: bulk={SupportsBulk}, maxBulkBatchSize={MaxBulkBatchSize}")]
@@ -194,6 +430,9 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "OutboxPublishWorker publish failed for message {MessageId}; routing to failure channel")]
   static partial void LogPublishFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "OutboxPublishWorker has no IMessagePublishStrategy registered — publish loop skipped (host did not register a transport)")]
+  static partial void LogNoTransportRegistered(ILogger logger);
 }
 
 /// <summary>Configuration for <see cref="OutboxPublishWorker"/>.</summary>
