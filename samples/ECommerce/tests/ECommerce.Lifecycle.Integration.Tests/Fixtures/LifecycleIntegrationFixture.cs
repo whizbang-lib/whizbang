@@ -230,8 +230,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     });
 
     // Background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // RabbitMQ consumer with test-specific routing

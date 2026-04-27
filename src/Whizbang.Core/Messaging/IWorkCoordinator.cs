@@ -475,6 +475,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Stores new outbox messages directly. Lightweight alternative to <c>process_work_batch</c>
+  /// that calls <c>store_outbox_messages</c> SQL function. Used by Dispatcher's
+  /// <see cref="IWorkCoordinatorStrategy"/> implementations to insert queued outbox messages
+  /// during flush. Default impl throws so non-Postgres backends opt in when ready.
+  /// </summary>
+  /// <param name="messages">Outbox messages to store.</param>
+  /// <param name="partitionCount">Number of partitions for load balancing. Must match the
+  /// service's configured <see cref="ClaimWorkerOptions.PartitionCount"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  Task StoreOutboxMessagesAsync(
+    OutboxMessage[] messages,
+    int partitionCount,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement StoreOutboxMessagesAsync.");
+
+  /// <summary>
   /// Recomputes <c>partition_number</c> on <c>wh_inbox</c>, <c>wh_outbox</c>, and
   /// <c>wh_active_streams</c> using the supplied <paramref name="partitionCount"/>,
   /// fixing any rows whose stored value disagrees with

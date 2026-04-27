@@ -24,10 +24,9 @@ public static class PostgresDriverExtensions {
   extension(IDriverOptions options) {
     /// <summary>
     /// Configures PostgreSQL as the database driver for EF Core perspectives.
-    /// Registers IPerspectiveStore&lt;T&gt;, ILensQuery&lt;T&gt;, IInbox, IOutbox, IEventStore,
-    /// and IDatabaseReadinessCheck for all discovered perspective models via source-generated AOT-compatible code.
+    /// Registers IPerspectiveStore&lt;T&gt;, ILensQuery&lt;T&gt;, IInbox, IOutbox, and IEventStore
+    /// for all discovered perspective models via source-generated AOT-compatible code.
     /// Uses PostgresUpsertStrategy for native PostgreSQL ON CONFLICT support.
-    /// Automatically registers database readiness check for resilient worker startup.
     /// </summary>
     /// <returns>A WhizbangPerspectiveBuilder for further configuration.</returns>
     /// <exception cref="InvalidOperationException">Thrown if Postgres driver is used with non-EF Core storage.</exception>
@@ -130,30 +129,6 @@ public static class PostgresDriverExtensions {
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
         selector.Services.AddHostedService<TableStatisticsCollector>();
-
-        // Register IDatabaseReadinessCheck - CRITICAL for resilient worker startup
-        // Uses NpgsqlDataSource directly to create connections (avoids password stripping bug)
-        // This ensures workers wait for database schema to be ready before processing
-        selector.Services.TryAddSingleton<IDatabaseReadinessCheck>(sp => {
-          var dataSource = sp.GetService<NpgsqlDataSource>();
-          if (dataSource == null) {
-            // Fallback: return default check that always returns true
-            // User should register NpgsqlDataSource for proper readiness checking
-            var fallbackLogger = sp.GetService<ILogger<DefaultDatabaseReadinessCheck>>();
-#pragma warning disable CA1848 // Use the LoggerMessage delegates - startup logging doesn't need high performance
-            fallbackLogger?.LogWarning(
-              "NpgsqlDataSource not registered. Database readiness check will always return true. " +
-              "For proper startup resilience, register NpgsqlDataSource before AddDbContext.");
-#pragma warning restore CA1848
-            return new DefaultDatabaseReadinessCheck();
-          }
-
-          // IMPORTANT: Pass NpgsqlDataSource directly instead of extracting ConnectionString.
-          // NpgsqlDataSource.ConnectionString strips passwords for security, causing auth failures.
-          // DataSource.CreateConnection() properly retains credentials internally.
-          var logger = sp.GetRequiredService<ILogger<PostgresDatabaseReadinessCheck>>();
-          return new PostgresDatabaseReadinessCheck(dataSource, logger);
-        });
 
         return new WhizbangPerspectiveBuilder(selector.Services);
       }

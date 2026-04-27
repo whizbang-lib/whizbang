@@ -330,8 +330,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -459,8 +457,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Register Service Bus consumer to receive events

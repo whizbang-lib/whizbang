@@ -203,8 +203,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
     return builder.Build();

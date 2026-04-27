@@ -434,8 +434,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // Register OrderedStreamProcessor for message ordering
@@ -602,8 +600,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // RabbitMQ consumer with test-specific routing

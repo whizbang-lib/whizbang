@@ -105,7 +105,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
     IWorkChannelWriter? workChannelWriter = null,
-    Microsoft.Extensions.Options.IOptions<WorkCoordinatorPublisherOptions>? publisherOptions = null
+    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -129,7 +129,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _serviceName = serviceInstanceProvider?.ServiceName;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
-    _partitionCount = publisherOptions?.Value?.PartitionCount ?? new WorkCoordinatorPublisherOptions().PartitionCount;
+    _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;

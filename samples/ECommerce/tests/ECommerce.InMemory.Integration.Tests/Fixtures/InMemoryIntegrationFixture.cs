@@ -392,8 +392,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
@@ -556,8 +554,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync

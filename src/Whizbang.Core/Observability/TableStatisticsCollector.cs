@@ -15,7 +15,7 @@ namespace Whizbang.Core.Observability;
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
-  IDatabaseReadinessCheck? databaseReadinessCheck = null,
+  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
   ILogger<TableStatisticsCollector>? logger = null
 ) : BackgroundService {
 
@@ -26,13 +26,13 @@ public sealed partial class TableStatisticsCollector(
 
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    // Wait for database readiness
-    if (databaseReadinessCheck is not null) {
-      while (!stoppingToken.IsCancellationRequested) {
-        if (await databaseReadinessCheck.IsReadyAsync(stoppingToken)) {
-          break;
-        }
-        await Task.Delay(1000, stoppingToken);
+    // Wait for schema readiness (replaces IDatabaseReadinessCheck — same intent: don't query
+    // statistics tables before migrations have created them).
+    if (schemaReadyGate is not null) {
+      try {
+        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
+      } catch (OperationCanceledException) {
+        return;
       }
     }
 

@@ -507,8 +507,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer for InventoryWorker
@@ -706,8 +704,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddWhizbangOutboxPublisher();
-    builder.Services.AddWhizbangInboxDispatcher();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
