@@ -17,6 +17,7 @@ namespace Whizbang.Core.Workers;
 public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandlerCommitChannel {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IFailureChannel _failureChannel;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxHandlerWorkerOptions _options;
   private readonly ILogger<InboxHandlerWorker> _logger;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
@@ -25,10 +26,12 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,
     IFailureChannel failureChannel,
+    ISchemaReadyGate schemaReadyGate,
     IOptions<InboxHandlerWorkerOptions> options,
     ILogger<InboxHandlerWorker> logger) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
+    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _flusher = new BatchFlusher<HandlerCommitRequest>(_flushBatchAsync, _options.Flusher, _logger);
@@ -42,11 +45,19 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
+    if (!_options.Enabled) {
+      LogDisabled(_logger);
+      return Task.Delay(Timeout.Infinite, stoppingToken).ContinueWith(_ => { }, TaskScheduler.Default);
+    }
     LogStarted(_logger, _options.Flusher.MaxBatchSize, _options.Flusher.CoalesceWindowMs);
     return _flusher.StoppedSignal;
   }
 
   private async Task _flushBatchAsync(IReadOnlyList<HandlerCommitRequest> batch, CancellationToken ct) {
+    if (!_options.Enabled) {
+      return;
+    }
+    await _schemaReadyGate.WaitForReadyAsync(ct);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -81,6 +92,9 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "InboxHandlerWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "InboxHandlerWorker disabled via options — handler-batch commits skipped")]
+  static partial void LogDisabled(ILogger logger);
 }
 
 /// <summary>Channel surface for handler-result producers (the inbox dispatch path).</summary>
@@ -92,6 +106,9 @@ public interface IInboxHandlerCommitChannel {
 /// <summary>Configuration for <see cref="InboxHandlerWorker"/>.</summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed class InboxHandlerWorkerOptions {
+  /// <summary>Killswitch — set to <c>false</c> to halt handler-batch commits. Default <c>true</c>.</summary>
+  public bool Enabled { get; set; } = true;
+
   /// <summary>Tuning for the inner <see cref="BatchFlusher{T}"/>.</summary>
   public BatchFlusherOptions Flusher { get; set; } = new() {
     MaxBatchSize = 100,

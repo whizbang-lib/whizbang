@@ -14,6 +14,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewalChannel {
   private readonly IServiceScopeFactory _scopeFactory;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly LeaseRenewalWorkerOptions _options;
   private readonly ILogger<LeaseRenewalWorker> _logger;
   private readonly BatchFlusher<CategorizedLeaseRenewal> _flusher;
@@ -21,9 +22,11 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
   public LeaseRenewalWorker(
     IServiceScopeFactory scopeFactory,
+    ISchemaReadyGate schemaReadyGate,
     IOptions<LeaseRenewalWorkerOptions> options,
     ILogger<LeaseRenewalWorker> logger) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger);
@@ -35,11 +38,19 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
+    if (!_options.Enabled) {
+      LogDisabled(_logger);
+      return Task.Delay(Timeout.Infinite, stoppingToken).ContinueWith(_ => { }, TaskScheduler.Default);
+    }
     LogStarted(_logger, _options.LeaseSeconds);
     return _flusher.StoppedSignal;
   }
 
   private async Task _flushBatchAsync(IReadOnlyList<CategorizedLeaseRenewal> batch, CancellationToken ct) {
+    if (!_options.Enabled) {
+      return;
+    }
+    await _schemaReadyGate.WaitForReadyAsync(ct);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     foreach (var group in batch.GroupBy(b => b.Category)) {
@@ -59,6 +70,8 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
   static partial void LogStarted(ILogger logger, int leaseSeconds);
   [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "LeaseRenewalWorker stopped")]
   static partial void LogStopped(ILogger logger);
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "LeaseRenewalWorker disabled via options — flusher idle")]
+  static partial void LogDisabled(ILogger logger);
 }
 
 /// <summary>Categorized lease-renewal request.</summary>
@@ -73,6 +86,9 @@ public interface ILeaseRenewalChannel {
 /// <summary>Configuration for <see cref="LeaseRenewalWorker"/>.</summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed class LeaseRenewalWorkerOptions {
+  /// <summary>Killswitch — set to <c>false</c> to halt flushing. Default <c>true</c>.</summary>
+  public bool Enabled { get; set; } = true;
+
   /// <summary>New lease duration applied per renewal call. Default 300 (5 minutes).</summary>
   public int LeaseSeconds { get; set; } = 300;
 

@@ -15,6 +15,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService, IPerspectiveCompletionChannel {
   private readonly IServiceScopeFactory _scopeFactory;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly PerspectiveCompletionFlushWorkerOptions _options;
   private readonly ILogger<PerspectiveCompletionFlushWorker> _logger;
   private readonly BatchFlusher<PerspectiveCompletionItem> _flusher;
@@ -22,9 +23,11 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
   public PerspectiveCompletionFlushWorker(
     IServiceScopeFactory scopeFactory,
+    ISchemaReadyGate schemaReadyGate,
     IOptions<PerspectiveCompletionFlushWorkerOptions> options,
     ILogger<PerspectiveCompletionFlushWorker> logger) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _flusher = new BatchFlusher<PerspectiveCompletionItem>(_flushBatchAsync, _options.Flusher, _logger);
@@ -40,11 +43,19 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
+    if (!_options.Enabled) {
+      LogDisabled(_logger);
+      return Task.Delay(Timeout.Infinite, stoppingToken).ContinueWith(_ => { }, TaskScheduler.Default);
+    }
     LogStarted(_logger);
     return _flusher.StoppedSignal;
   }
 
   private async Task _flushBatchAsync(IReadOnlyList<PerspectiveCompletionItem> batch, CancellationToken ct) {
+    if (!_options.Enabled) {
+      return;
+    }
+    await _schemaReadyGate.WaitForReadyAsync(ct);
     var workIds = batch.Where(i => i.EventWorkId.HasValue).Select(i => i.EventWorkId!.Value).ToArray();
     var cursors = batch.Where(i => i.Cursor is not null).Select(i => i.Cursor!).ToArray();
     using var scope = _scopeFactory.CreateScope();
@@ -63,6 +74,8 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   static partial void LogStarted(ILogger logger);
   [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "PerspectiveCompletionFlushWorker stopped")]
   static partial void LogStopped(ILogger logger);
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PerspectiveCompletionFlushWorker disabled via options — flusher idle")]
+  static partial void LogDisabled(ILogger logger);
 }
 
 /// <summary>Discriminated payload carried by the perspective-completion channel.</summary>
@@ -79,6 +92,9 @@ public interface IPerspectiveCompletionChannel {
 /// <summary>Configuration for <see cref="PerspectiveCompletionFlushWorker"/>.</summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed class PerspectiveCompletionFlushWorkerOptions {
+  /// <summary>Killswitch — set to <c>false</c> to halt flushing. Default <c>true</c>.</summary>
+  public bool Enabled { get; set; } = true;
+
   /// <summary>Tuning for the inner <see cref="BatchFlusher{T}"/>.</summary>
   public BatchFlusherOptions Flusher { get; set; } = new() {
     MaxBatchSize = 1000,

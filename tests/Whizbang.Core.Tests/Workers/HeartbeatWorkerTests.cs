@@ -79,9 +79,12 @@ public class HeartbeatWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
     var worker = new HeartbeatWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       instProvider,
+      gate,
       Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
       NullLogger<HeartbeatWorker>.Instance);
 
@@ -106,11 +109,78 @@ public class HeartbeatWorkerTests {
       _ = new HeartbeatWorker(
         null!,
         new StubInstanceProvider(Guid.NewGuid(), "s", "h", 1),
+        new SchemaReadyGate(),
         Options.Create(new HeartbeatWorkerOptions()),
         NullLogger<HeartbeatWorker>.Instance);
     } catch (ArgumentNullException) {
       threw = true;
     }
     await Assert.That(threw).IsTrue();
+  }
+
+  [Test]
+  public async Task ExecuteAsync_DisabledOptions_NoHeartbeatFiresAsync() {
+    var instanceId = TrackedGuid.NewMedo();
+    var instProvider = new StubInstanceProvider((Guid)instanceId, "svc", "host", 1);
+    var coord = new StubCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();  // gate ready but Enabled=false should still skip
+    var worker = new HeartbeatWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instProvider,
+      gate,
+      Options.Create(new HeartbeatWorkerOptions { Enabled = false, IntervalSeconds = 1 }),
+      NullLogger<HeartbeatWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // Give the worker a moment — if the killswitch leaks, the first heartbeat will fire fast.
+    var raced = await Task.WhenAny(
+        coord.FirstHeartbeat.Task,
+        Task.Delay(500, CancellationToken.None));
+    await Assert.That(coord.FirstHeartbeat.Task.IsCompleted).IsFalse();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
+    var instanceId = TrackedGuid.NewMedo();
+    var instProvider = new StubInstanceProvider((Guid)instanceId, "svc", "host", 1);
+    var coord = new StubCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();  // NOT marked ready
+    var worker = new HeartbeatWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instProvider,
+      gate,
+      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
+      NullLogger<HeartbeatWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // Confirm no heartbeat while gate is closed.
+    var racedBefore = await Task.WhenAny(
+        coord.FirstHeartbeat.Task,
+        Task.Delay(300, CancellationToken.None));
+    await Assert.That(coord.FirstHeartbeat.Task.IsCompleted).IsFalse();
+
+    // Open gate — heartbeat should arrive promptly.
+    gate.MarkReady();
+    var first = await coord.FirstHeartbeat.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(first.InstanceId).IsEqualTo((Guid)instanceId);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 }

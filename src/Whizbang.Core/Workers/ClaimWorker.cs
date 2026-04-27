@@ -22,6 +22,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IWorkChannelWriter? _outboxChannel;
   private readonly IInboxChannelWriter? _inboxChannel;
   private readonly IPerspectiveChannelWriter? _perspectiveChannel;
@@ -36,6 +37,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
     IWorkNotificationListener notificationListener,
+    ISchemaReadyGate schemaReadyGate,
     IOptions<ClaimWorkerOptions> options,
     ILogger<ClaimWorker> logger,
     IWorkChannelWriter? outboxChannel = null,
@@ -45,6 +47,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
+    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _outboxChannel = outboxChannel;
@@ -79,6 +82,29 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
+
+    // Killswitch: ops can disable this worker via ClaimWorkerOptions.Enabled = false
+    // (e.g., maintenance window, isolating a misbehaving instance) without removing the
+    // registration from DI.
+    if (!_options.Enabled) {
+      LogDisabled(_logger);
+      try {
+        await Task.Delay(Timeout.Infinite, stoppingToken);
+      } catch (OperationCanceledException) {
+        // expected on shutdown
+      }
+      return;
+    }
+
+    // Hold off on any SQL until the schema is provisioned. The driver's initializer
+    // (WhizbangDatabaseInitializerService) signals the gate after migrations succeed.
+    // This decouples worker startup from hosted-service registration order — even if
+    // this worker's StartAsync runs before the initializer, we still wait here.
+    try {
+      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+    } catch (OperationCanceledException) {
+      return;
+    }
 
     // PerspectiveOnly mode: legacy WorkCoordinatorPublisherWorker is wired up and is the
     // sole poller. Its process_work_batch handles outbox/inbox/perspective claiming and
@@ -182,11 +208,21 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "ClaimWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "ClaimWorker disabled via options — claim loop skipped")]
+  static partial void LogDisabled(ILogger logger);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed class ClaimWorkerOptions {
+  /// <summary>
+  /// Killswitch. Set to <c>false</c> to disable the claim loop entirely; the worker still
+  /// runs as a hosted service but skips its <see cref="ExecuteAsync"/> body. Useful for
+  /// maintenance windows or isolating a misbehaving instance without redeploying. Default <c>true</c>.
+  /// </summary>
+  public bool Enabled { get; set; } = true;
+
   /// <summary>Base polling cadence in ms. Default 250.</summary>
   public int PollingIntervalMilliseconds { get; set; } = 250;
   /// <summary>Adaptive backoff cap in ms. Default 10 000 (10 s).

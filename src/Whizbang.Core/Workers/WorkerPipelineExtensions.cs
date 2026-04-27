@@ -24,6 +24,11 @@ public static class WorkerPipelineExtensions {
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
+    // Schema-ready gate — workers await this before issuing any SQL. The driver's
+    // initializer (e.g., WhizbangDatabaseInitializerService) calls MarkReady after migrations
+    // complete. Singleton because all workers + the initializer must observe the same instance.
+    services.TryAddSingleton<ISchemaReadyGate, SchemaReadyGate>();
+
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
     // This avoids a circular DI deadlock: if we resolved the channel via
