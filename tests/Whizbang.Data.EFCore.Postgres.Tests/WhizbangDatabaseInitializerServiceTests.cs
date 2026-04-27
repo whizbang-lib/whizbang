@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -34,13 +35,16 @@ public class WhizbangDatabaseInitializerServiceTests {
 
     var sp = new FakeServiceProvider();
     var logger = NullLogger<WhizbangDatabaseInitializerService>.Instance;
-    var service = new WhizbangDatabaseInitializerService(sp, logger);
+    var gate = new SchemaReadyGate();
+    var service = new WhizbangDatabaseInitializerService(sp, gate, logger);
 
     // Act
     await service.StartAsync(CancellationToken.None);
 
     // Assert — the registered callback was invoked via InitializeAllAsync
     await Assert.That(callbackInvoked).IsTrue();
+    // Assert — the schema-ready gate has been opened so workers can proceed.
+    await Assert.That(gate.IsReady).IsTrue();
   }
 
   [Test]
@@ -48,7 +52,8 @@ public class WhizbangDatabaseInitializerServiceTests {
     // Arrange
     var sp = new FakeServiceProvider();
     var logger = NullLogger<WhizbangDatabaseInitializerService>.Instance;
-    var service = new WhizbangDatabaseInitializerService(sp, logger);
+    var gate = new SchemaReadyGate();
+    var service = new WhizbangDatabaseInitializerService(sp, gate, logger);
 
     // Act
     var task = service.StopAsync(CancellationToken.None);

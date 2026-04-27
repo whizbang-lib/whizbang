@@ -63,10 +63,13 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
     var worker = new ClaimWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new StubInstanceProvider(),
       new NoOpWorkNotificationListener(),
+      gate,
       Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       NullLogger<ClaimWorker>.Instance);
 
@@ -87,10 +90,13 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
     var worker = new ClaimWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new StubInstanceProvider(),
       new NoOpWorkNotificationListener(),
+      gate,
       Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 10_000,            // very long
         PollingMaxIntervalMilliseconds = 60_000           // very long
@@ -112,6 +118,69 @@ public class ClaimWorkerTests {
     }
 
     await Assert.That(coord.CallCount).IsGreaterThan(startCount);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_DisabledOptions_NoClaimFiresAsync() {
+    var coord = new FakeCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();  // gate ready but Enabled=false should still suppress the claim loop
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions {
+        Enabled = false,
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 200
+      }),
+      NullLogger<ClaimWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var raced = await Task.WhenAny(coord.FirstCallSignal.Task, Task.Delay(500, CancellationToken.None));
+    await Assert.That(coord.CallCount).IsEqualTo(0);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
+    var coord = new FakeCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();  // not marked ready
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      NullLogger<ClaimWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // No claim while gate is closed.
+    var racedBefore = await Task.WhenAny(coord.FirstCallSignal.Task, Task.Delay(300, CancellationToken.None));
+    await Assert.That(coord.CallCount).IsEqualTo(0);
+
+    // Open gate — claim fires.
+    gate.MarkReady();
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(1);
+
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }

@@ -88,18 +88,12 @@ public static class PostgresDriverExtensions {
         // so a built-in receptor shipped from this assembly needs runtime registration.
         selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
 
-        // TURNKEY: Auto-initialize database schema before any other hosted service runs.
-        // Insert at position 0 so StartAsync runs FIRST in the IHostedService chain.
-        // Otherwise workers registered earlier in the call chain (HeartbeatWorker, ClaimWorker
-        // from AddWhizbangWorkers — which runs inside AddWhizbang() BEFORE .WithDriver.Postgres)
-        // fire SQL calls against unmigrated databases and emit noisy startup errors.
-        // Generic Host's default behavior is sequential StartAsync of hosted services in
-        // registration order, so position 0 = "runs first."
-        selector.Services.Insert(0,
-            new ServiceDescriptor(
-                typeof(IHostedService),
-                typeof(WhizbangDatabaseInitializerService),
-                ServiceLifetime.Singleton));
+        // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
+        // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
+        // initializer's registration order in the IHostedService chain doesn't matter — even
+        // if a worker's StartAsync runs first, it blocks on the gate until the initializer
+        // calls MarkReady() at the end of migrations.
+        selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
         // Message type registry populator — reconciles wh_message_type_registry against the
         // compile-time IMessageTypeCatalog at startup. Uses NpgsqlDataSource directly so it

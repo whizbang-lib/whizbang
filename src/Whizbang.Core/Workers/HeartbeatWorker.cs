@@ -17,17 +17,31 @@ namespace Whizbang.Core.Workers;
 public partial class HeartbeatWorker(
   IServiceScopeFactory scopeFactory,
   IServiceInstanceProvider instanceProvider,
+  ISchemaReadyGate schemaReadyGate,
   IOptions<HeartbeatWorkerOptions> options,
   ILogger<HeartbeatWorker> logger
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.IntervalSeconds, _instanceProvider.InstanceId);
+
+    if (!_options.Enabled) {
+      LogDisabled(_logger);
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      return;
+    }
+
+    try {
+      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+    } catch (OperationCanceledException) {
+      return;
+    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -70,6 +84,9 @@ public partial class HeartbeatWorker(
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "HeartbeatWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "HeartbeatWorker disabled via options — heartbeat skipped")]
+  static partial void LogDisabled(ILogger logger);
 }
 
 /// <summary>
@@ -77,6 +94,14 @@ public partial class HeartbeatWorker(
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public class HeartbeatWorkerOptions {
+  /// <summary>
+  /// Killswitch. Set to <c>false</c> to disable the heartbeat loop entirely. The worker
+  /// stays registered as a hosted service but skips its <see cref="ExecuteAsync"/> body.
+  /// Without heartbeats, peers will eventually flag this instance stale — useful for
+  /// gracefully draining an instance ahead of decommission. Default <c>true</c>.
+  /// </summary>
+  public bool Enabled { get; set; } = true;
+
   /// <summary>
   /// Heartbeat cadence in seconds. Must be less than
   /// <c>WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds / 3</c>

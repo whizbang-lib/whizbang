@@ -1,28 +1,30 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// Hosted service that initializes the Whizbang database schema before workers start.
+/// Hosted service that initializes the Whizbang database schema before workers issue SQL.
 /// Registered as a plain IHostedService (not BackgroundService) so StartAsync blocks
-/// until initialization completes, ensuring correct ordering with downstream workers.
+/// until initialization completes. After migrations succeed, signals <see cref="ISchemaReadyGate"/>
+/// so workers (which await the gate at the top of their ExecuteAsync) can proceed.
 /// </summary>
 /// <remarks>
-/// Message-type-registry population happens per-DbContext inside the init callback
-/// (right after <c>EnsureWhizbangDatabaseInitializedAsync</c> + migration 039 create the
-/// table), not here — each DbContext owns its own database and connection, and running
-/// globally against a singleton <c>NpgsqlDataSource</c> would hit the wrong DB in
-/// multi-DbContext consumers.
+/// On migration failure, the gate is NOT marked ready — StartAsync throws, the host aborts,
+/// and workers never enter their main loop. This keeps the system in a safe halted state
+/// instead of running on a broken schema.
 /// </remarks>
 /// <docs>data/turnkey-initialization</docs>
 internal sealed class WhizbangDatabaseInitializerService(
     IServiceProvider serviceProvider,
+    ISchemaReadyGate schemaReadyGate,
     ILogger<WhizbangDatabaseInitializerService> logger) : IHostedService {
 
   public async Task StartAsync(CancellationToken cancellationToken) {
     await DbContextInitializationRegistry.InitializeAllAsync(
         serviceProvider, logger, cancellationToken);
+    schemaReadyGate.MarkReady();
   }
 
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
