@@ -729,6 +729,42 @@ public partial class PerspectiveWorker(
             groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
             lastProcessedEventId, ct);
 
+          // Rewind path: the range-based load above covers events above the pre-rewind
+          // cursor. Events below the cursor (the rewind trigger AND any other late arrivals
+          // that accumulated during the rewind window) live in the perspective work queue —
+          // IPerspectiveReplayReader is the authoritative source for that "is_new" set.
+          // When registered, we use it to pull every pending event the rewind should fire
+          // handlers for. When not registered, we fall back to the narrow trigger-only
+          // lookup so existing deployments keep working.
+          if (processingMode == ProcessingMode.Replay) {
+            var replayReader = groupScope.ServiceProvider.GetService<Whizbang.Core.Perspectives.IPerspectiveReplayReader>();
+            if (replayReader is not null && _eventTypeProvider is not null) {
+              var eventTypes = _eventTypeProvider.GetEventTypes();
+              var seen = processedEvents.Select(e => e.MessageId.Value).ToHashSet();
+              await foreach (var annotated in replayReader.ReadReplayEventsAsync(
+                  streamId, perspectiveName, fromVersionExclusive: 0, eventTypes, ct)) {
+                if (annotated.IsNew && seen.Add(annotated.Envelope.MessageId.Value)) {
+                  processedEvents.Insert(0, annotated.Envelope);
+                }
+              }
+            } else if (checkpoint?.RewindTriggerEventId is { } triggerId
+                       && eventStore is not null
+                       && _eventTypeProvider is not null
+                       && !processedEvents.Any(e => e.MessageId.Value == triggerId)) {
+              var envelopesUpToTrigger = await eventStore.GetEventsBetweenPolymorphicAsync(
+                streamId,
+                afterEventId: null,
+                upToEventId: triggerId,
+                _eventTypeProvider.GetEventTypes(),
+                ct);
+              var triggerEnvelope = envelopesUpToTrigger
+                .FirstOrDefault(e => e.MessageId.Value == triggerId);
+              if (triggerEnvelope is not null) {
+                processedEvents.Insert(0, triggerEnvelope);
+              }
+            }
+          }
+
           foreach (var envelope in processedEvents) {
             var id = envelope.MessageId.Value;
             batchProcessedEvents.TryAdd(id, (envelope, streamId));
