@@ -531,17 +531,11 @@ public class PerspectiveApplyExactlyOnceTests {
     ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-  }
-
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
       IWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry registry,
       IEventStore eventStore) {
     var instanceProvider = new _fakeInstanceProvider();
-    var databaseReadiness = new _fakeDatabaseReadiness();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
@@ -561,7 +555,6 @@ public class PerspectiveApplyExactlyOnceTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,

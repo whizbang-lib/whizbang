@@ -29,8 +29,6 @@ public class PerspectiveWorkerStrategyTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     // Return 1 perspective work item
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
@@ -58,7 +56,6 @@ public class PerspectiveWorkerStrategyTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -108,8 +105,6 @@ public class PerspectiveWorkerStrategyTests {
       var registry = new FakePerspectiveRunnerRegistry {
         ShouldThrow = true // Force runner to throw exception
       };
-      var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
       // Return 1 perspective work item
       var streamId = Guid.NewGuid();
       coordinator.PerspectiveWorkToReturn = [
@@ -137,7 +132,6 @@ public class PerspectiveWorkerStrategyTests {
         Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
         strategy,
-        databaseReadiness,
         eventTypeProvider: null,
         perspectiveChannelWriter: harness.ChannelWriter,
         perspectiveCompletionChannel: harness.CompletionCapture,
@@ -181,8 +175,6 @@ public class PerspectiveWorkerStrategyTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new ClrTypeNameAwarePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     // Database returns work with CLR format perspective name
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
@@ -210,7 +202,6 @@ public class PerspectiveWorkerStrategyTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -252,8 +243,6 @@ public class PerspectiveWorkerStrategyTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new ClrTypeNameAwarePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     // Database returns work with INCORRECT simple name (the bug!)
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
@@ -281,7 +270,6 @@ public class PerspectiveWorkerStrategyTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -322,8 +310,6 @@ public class PerspectiveWorkerStrategyTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new ClrTypeNameAwarePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     // Database returns work with deeply nested CLR format name
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
@@ -351,7 +337,6 @@ public class PerspectiveWorkerStrategyTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -528,15 +513,6 @@ public class PerspectiveWorkerStrategyTests {
       };
     }
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReady);
-    }
-  }
-
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
     public bool ShouldThrow { get; set; }
 

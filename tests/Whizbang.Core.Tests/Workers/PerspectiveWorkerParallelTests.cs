@@ -167,7 +167,6 @@ public sealed class PerspectiveWorkerParallelTests {
       IPerspectiveRunnerRegistry registry,
       int maxConcurrentPerspectives) {
     var instanceProvider = new TestServiceInstanceProvider();
-    var databaseReadiness = new TestDatabaseReadinessCheck();
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
@@ -188,7 +187,6 @@ public sealed class PerspectiveWorkerParallelTests {
       }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -386,11 +384,5 @@ public sealed class PerspectiveWorkerParallelTests {
       ProcessId = ProcessId
     };
   }
-
-  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(true);
-  }
-
   #endregion
 }

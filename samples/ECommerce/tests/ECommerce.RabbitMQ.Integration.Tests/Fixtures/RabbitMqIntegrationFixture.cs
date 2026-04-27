@@ -343,13 +343,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<InventoryDbContext> with UseNpgsql
     // - IDbContextFactory<InventoryDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture ensures the database schema is created before starting hosts,
-    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
@@ -414,15 +407,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
@@ -512,13 +496,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:bff-db" above)
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture ensures the database schema is created before starting hosts,
-    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
@@ -580,15 +557,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;

@@ -32,7 +32,6 @@ public partial class PerspectiveWorker(
   IOptions<PerspectiveWorkerOptions> options,
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   IPerspectiveCompletionStrategy? completionStrategy = null,
-  Whizbang.Core.Messaging.IDatabaseReadinessCheck? databaseReadinessCheck = null,
   IEventTypeProvider? eventTypeProvider = null,
   IPerspectiveSyncSignaler? syncSignaler = null,
   ISyncEventTracker? syncEventTracker = null,
@@ -72,10 +71,6 @@ public partial class PerspectiveWorker(
       : 1.0,
     maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
-
-  // Retained as a constructor parameter for source-compatibility with legacy tests; the field is never read.
-  // Workers gate startup via ISchemaReadyGate now.
-  private readonly Whizbang.Core.Messaging.IDatabaseReadinessCheck? _legacyDatabaseReadinessCheck = databaseReadinessCheck;
 
   private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
   private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions?.Value ?? new PerspectiveRewindOptions();
@@ -160,16 +155,6 @@ public partial class PerspectiveWorker(
   /// Resets to 0 when work is found.
   /// </summary>
   public int ConsecutiveEmptyPolls => _consecutiveEmptyPolls;
-
-  /// <summary>
-  /// Always 0 — retained for source compatibility with tests that asserted on legacy
-  /// readiness-check counters. Worker startup now gates on
-  /// <see cref="Whizbang.Core.Workers.ISchemaReadyGate"/>.
-  /// </summary>
-  /// <remarks>References <see cref="_legacyDatabaseReadinessCheck"/> to keep CA1822 happy without altering observable behavior.</remarks>
-#pragma warning disable CA1822 // Mark members as static — kept instance for source-compat with legacy tests.
-  public int ConsecutiveDatabaseNotReadyChecks => _legacyDatabaseReadinessCheck is null ? 0 : 0;
-#pragma warning restore CA1822
 
   /// <summary>
   /// Gets whether the worker is currently in idle state (no work being processed).

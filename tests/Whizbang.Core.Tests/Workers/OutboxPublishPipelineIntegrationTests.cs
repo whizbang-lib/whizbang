@@ -389,9 +389,6 @@ public class OutboxPublishPipelineIntegrationTests {
     services.AddSingleton(publishStrategy);
     services.AddSingleton(instanceProvider);
     services.AddSingleton(channelWriter);
-    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
-      PollingIntervalMilliseconds = 50
-    }));
     services.AddLogging();
     services.AddSingleton<OutboxPublishWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
@@ -415,9 +412,6 @@ public class OutboxPublishPipelineIntegrationTests {
     services.AddSingleton(publishStrategy);
     services.AddSingleton(instanceProvider);
     services.AddSingleton(channelWriter);
-    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
-      PollingIntervalMilliseconds = 50
-    }));
     services.AddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
     services.AddScoped<IReceptorInvoker>(sp => new PostLifecycleTrackingInvoker(stagesFired, postLifecycleSignal));
     services.AddSingleton<ILifecycleMessageDeserializer>(new PassthroughLifecycleMessageDeserializer());

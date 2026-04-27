@@ -25,7 +25,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -53,7 +52,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -93,7 +91,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -120,7 +117,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider: null, // Explicitly null
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -267,12 +263,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
     public int ProcessId { get; } = 12345;
     public ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
-  }
-
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => new FakePerspectiveRunner();
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];

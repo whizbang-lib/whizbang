@@ -553,7 +553,6 @@ public class PerspectiveDedupIntegrationTests {
     IEventStore? eventStore = null,
     IEventTypeProvider? eventTypeProvider = null) {
     var instanceProvider = new _fakeInstanceProvider();
-    var databaseReadiness = new _fakeDatabaseReadiness();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
       : new InstantCompletionStrategy();
@@ -584,7 +583,6 @@ public class PerspectiveDedupIntegrationTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: eventTypeProvider,
       processedEventCacheObserver: observer,
       timeProvider: timeProvider,
@@ -825,11 +823,6 @@ public class PerspectiveDedupIntegrationTests {
     ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-  }
-
   // ==================== Lifecycle Integration Test Fakes ====================
 
   /// <summary>

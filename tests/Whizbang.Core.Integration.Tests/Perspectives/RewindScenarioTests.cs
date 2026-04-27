@@ -760,7 +760,6 @@ public class RewindScenarioTests {
     IPerspectiveReplayReader? replayReader = null) {
 
     var instanceProvider = new _fakeInstanceProvider();
-    var databaseReadiness = new _fakeDatabaseReadiness();
     // Use Instant strategy so completion flows through to the coordinator immediately,
     // making cursor-state transitions deterministic between cycles.
     IPerspectiveCompletionStrategy strategy = new InstantCompletionStrategy();
@@ -791,7 +790,6 @@ public class RewindScenarioTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -1350,9 +1348,5 @@ public class RewindScenarioTests {
     public int ProcessId { get; } = 12345;
     ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
-  }
-
-  private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 }
