@@ -376,6 +376,86 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// Two-tier perspective fairness: streams with ≤ 100 pending events come BEFORE streams
+  /// with > 100 pending events in the claim_work return. Without this, a single huge stream
+  /// could starve many small streams behind it on every claim cycle. This test seeds one
+  /// large stream (200 events) and one small stream (1 event), then asserts the small one
+  /// is returned first.
+  /// </summary>
+  [Test]
+  public async Task ClaimWork_PerspectiveTwoTierFairness_SmallStreamReturnsBeforeLargeAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var largeStreamId = Guid.NewGuid();
+    var smallStreamId = Guid.NewGuid();
+
+    await using (var hb = connection.CreateCommand()) {
+      hb.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+
+    // Seed 200 events on the large stream + 1 event on the small stream, all owned by us.
+    await using (var bulk = connection.CreateCommand()) {
+      bulk.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at,
+           instance_id, lease_expiry)
+        SELECT gen_random_uuid(), gen_random_uuid(), @largeStream, 'TestPerspective', 0, 0, NOW(),
+               @inst, NOW() + INTERVAL '5 minutes'
+        FROM generate_series(1, 200);
+
+        INSERT INTO wh_perspective_events
+          (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at,
+           instance_id, lease_expiry)
+        VALUES (gen_random_uuid(), gen_random_uuid(), @smallStream, 'TestPerspective', 0, 0, NOW(),
+                @inst, NOW() + INTERVAL '5 minutes');";
+      bulk.Parameters.AddWithValue("largeStream", largeStreamId);
+      bulk.Parameters.AddWithValue("smallStream", smallStreamId);
+      bulk.Parameters.AddWithValue("inst", instanceId);
+      await bulk.ExecuteNonQueryAsync();
+    }
+
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      SELECT source, work_stream_id FROM claim_work(
+        p_instance_id => @id,
+        p_service_name => 'test',
+        p_host_name => 'test-host',
+        p_process_id => 1,
+        p_max_streams => 100,
+        p_partition_count => 10000,
+        p_lease_seconds => 300
+      )";
+    cmd.Parameters.AddWithValue("id", instanceId);
+
+    var perspectiveStreams = new List<Guid>();
+    await using (var reader = await cmd.ExecuteReaderAsync()) {
+      while (await reader.ReadAsync()) {
+        if (reader.GetString(0) == "perspective_stream") {
+          perspectiveStreams.Add(reader.GetGuid(1));
+        }
+      }
+    }
+
+    var smallIdx = perspectiveStreams.IndexOf(smallStreamId);
+    var largeIdx = perspectiveStreams.IndexOf(largeStreamId);
+
+    await Assert.That(smallIdx).IsGreaterThanOrEqualTo(0)
+      .Because("Small stream must appear in the result set");
+    await Assert.That(smallIdx).IsLessThan(largeIdx == -1 ? int.MaxValue : largeIdx)
+      .Because("Two-tier fairness — small stream must come BEFORE large stream");
+  }
+
+  /// <summary>
   /// claim_work must claim and return receptor work (wh_receptor_processing rows where
   /// the calling instance owns the lease + completed_at IS NULL). Source returned as 'receptor';
   /// work_id is the processing row's <c>id</c>, not a message_id.
