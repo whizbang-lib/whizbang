@@ -376,6 +376,83 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// claim_work must claim and return receptor work (wh_receptor_processing rows where
+  /// the calling instance owns the lease + completed_at IS NULL). Source returned as 'receptor';
+  /// work_id is the processing row's <c>id</c>, not a message_id.
+  /// </summary>
+  [Test]
+  public async Task ClaimWork_ReceptorHasUnprocessedWork_ReturnsThatWorkAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var processingId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    await using (var hb = connection.CreateCommand()) {
+      hb.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+
+    // Receptor row has FK to wh_event_store(event_id), so seed an event row first.
+    await using (var seedEvent = connection.CreateCommand()) {
+      seedEvent.CommandText = @"
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+        VALUES (@eid, @stream, @stream, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, NOW())";
+      seedEvent.Parameters.AddWithValue("eid", eventId);
+      seedEvent.Parameters.AddWithValue("stream", streamId);
+      await seedEvent.ExecuteNonQueryAsync();
+    }
+
+    // Insert a receptor row already leased to this instance with completed_at NULL.
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_receptor_processing
+          (id, event_id, receptor_name, stream_id, partition_number, status, attempts,
+           instance_id, lease_expiry, started_at, claimed_at)
+        VALUES (@pid, @eid, 'TestReceptor', @stream, 0, 0, 0,
+                @inst, NOW() + INTERVAL '5 minutes', NOW(), NOW())";
+      ins.Parameters.AddWithValue("pid", processingId);
+      ins.Parameters.AddWithValue("eid", eventId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      SELECT source, work_id, work_stream_id FROM claim_work(
+        p_instance_id => @id,
+        p_service_name => 'test',
+        p_host_name => 'test-host',
+        p_process_id => 1,
+        p_max_streams => 100,
+        p_partition_count => 10000,
+        p_lease_seconds => 300
+      )";
+    cmd.Parameters.AddWithValue("id", instanceId);
+
+    var rows = new List<(string source, Guid workId, Guid streamId)>();
+    await using (var reader = await cmd.ExecuteReaderAsync()) {
+      while (await reader.ReadAsync()) {
+        rows.Add((reader.GetString(0), reader.GetGuid(1), reader.GetGuid(2)));
+      }
+    }
+
+    await Assert.That(rows.Any(r => r.source == "receptor" && r.workId == processingId && r.streamId == streamId)).IsTrue()
+      .Because("claim_work must return the receptor row owned by this instance");
+  }
+
+  /// <summary>
   /// When claim_work returns a full batch (rows == p_max_streams), it must RAISE NOTICE
   /// 'whizbang.has_more=true' so the C# claim worker can skip its wait and re-poll
   /// immediately. This is the in-band drain-mode signal — survives pgbouncer because

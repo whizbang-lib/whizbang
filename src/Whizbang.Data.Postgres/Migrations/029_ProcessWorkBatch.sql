@@ -1478,6 +1478,9 @@ BEGIN
     PERFORM __SCHEMA__.claim_orphaned_perspective_events(
       p_instance_id, v_lease_expiry, v_now, p_max_streams
     );
+    PERFORM __SCHEMA__.claim_orphaned_receptor_work(
+      p_instance_id, v_rank, v_count, v_lease_expiry, v_now
+    );
 
     -- Return outbox work owned by this instance.
     -- Per-stream rank prevents one busy stream from starving others; global LIMIT bounds the batch.
@@ -1550,6 +1553,32 @@ BEGIN
       NULL::VARCHAR(200)            AS perspective_name
     FROM ordered_inbox oi;
 
+    -- Return receptor work owned by this instance.
+    -- Receptor work uses `id` as the work_id (not message_id) and `completed_at` as the "done" marker.
+    -- Most fields are NULL — receptors carry their state in dedicated columns the worker reads
+    -- directly via the work_id; the row here just signals "this receptor needs attention".
+    RETURN QUERY
+    SELECT
+      'receptor'::VARCHAR(20)       AS source,
+      rp.id                         AS work_id,
+      rp.stream_id                  AS work_stream_id,
+      rp.partition_number,
+      NULL::VARCHAR(200)            AS destination,
+      NULL::VARCHAR(500)            AS message_type,
+      NULL::VARCHAR(500)            AS envelope_type,
+      NULL::TEXT                    AS message_data,
+      NULL::JSONB                   AS metadata,
+      rp.status::INTEGER,
+      rp.attempts,
+      false                         AS is_newly_stored,
+      false                         AS is_orphaned,
+      NULL::VARCHAR(200)            AS perspective_name
+    FROM __SCHEMA__.wh_receptor_processing rp
+    WHERE rp.instance_id = p_instance_id
+      AND rp.lease_expiry > v_now
+      AND rp.completed_at IS NULL
+    LIMIT p_max_streams;
+
     -- Return perspective work as one row per distinct stream owned by this instance.
     -- Two-tier fairness ranking lands in a future TDD cycle; this is the basic shape.
     RETURN QUERY
@@ -1586,6 +1615,8 @@ BEGIN
              AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now))
         + (SELECT COUNT(*) FROM __SCHEMA__.wh_inbox i
            WHERE i.instance_id = p_instance_id AND i.lease_expiry > v_now AND i.processed_at IS NULL)
+        + (SELECT COUNT(*) FROM __SCHEMA__.wh_receptor_processing rp
+           WHERE rp.instance_id = p_instance_id AND rp.lease_expiry > v_now AND rp.completed_at IS NULL)
         + (SELECT COUNT(DISTINCT pe.stream_id) FROM __SCHEMA__.wh_perspective_events pe
            WHERE pe.instance_id = p_instance_id AND pe.lease_expiry > v_now AND pe.processed_at IS NULL)
       INTO v_pending;
