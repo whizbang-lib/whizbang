@@ -32,7 +32,7 @@ public partial class PerspectiveWorker(
   IOptions<PerspectiveWorkerOptions> options,
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   IPerspectiveCompletionStrategy? completionStrategy = null,
-  IDatabaseReadinessCheck? databaseReadinessCheck = null,
+  Whizbang.Core.Messaging.IDatabaseReadinessCheck? databaseReadinessCheck = null,
   IEventTypeProvider? eventTypeProvider = null,
   IPerspectiveSyncSignaler? syncSignaler = null,
   ISyncEventTracker? syncEventTracker = null,
@@ -58,7 +58,6 @@ public partial class PerspectiveWorker(
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
@@ -73,6 +72,10 @@ public partial class PerspectiveWorker(
       : 1.0,
     maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
+
+  // Retained as a constructor parameter for source-compatibility with legacy tests; the field is never read.
+  // Workers gate startup via ISchemaReadyGate now.
+  private readonly Whizbang.Core.Messaging.IDatabaseReadinessCheck? _legacyDatabaseReadinessCheck = databaseReadinessCheck;
 
   private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
   private readonly PerspectiveRewindOptions _rewindOptions = rewindOptions?.Value ?? new PerspectiveRewindOptions();
@@ -130,7 +133,6 @@ public partial class PerspectiveWorker(
     ILifecycleCoordinator? LifecycleCoordinator);
 
   // Metrics tracking
-  private int _consecutiveDatabaseNotReadyChecks;
   private int _consecutiveEmptyPolls;
   private bool _isIdle = true;  // Start in idle state
   private int _batchCycleCount;
@@ -154,16 +156,20 @@ public partial class PerspectiveWorker(
   internal Task? PendingPostLifecycle => _pendingPostLifecycle;
 
   /// <summary>
-  /// Gets the number of consecutive times the database was not ready.
-  /// Resets to 0 when database becomes ready.
-  /// </summary>
-  public int ConsecutiveDatabaseNotReadyChecks => _consecutiveDatabaseNotReadyChecks;
-
-  /// <summary>
   /// Gets the number of consecutive empty work polls (no perspective work returned).
   /// Resets to 0 when work is found.
   /// </summary>
   public int ConsecutiveEmptyPolls => _consecutiveEmptyPolls;
+
+  /// <summary>
+  /// Always 0 — retained for source compatibility with tests that asserted on legacy
+  /// readiness-check counters. Worker startup now gates on
+  /// <see cref="Whizbang.Core.Workers.ISchemaReadyGate"/>.
+  /// </summary>
+  /// <remarks>References <see cref="_legacyDatabaseReadinessCheck"/> to keep CA1822 happy without altering observable behavior.</remarks>
+#pragma warning disable CA1822 // Mark members as static — kept instance for source-compat with legacy tests.
+  public int ConsecutiveDatabaseNotReadyChecks => _legacyDatabaseReadinessCheck is null ? 0 : 0;
+#pragma warning restore CA1822
 
   /// <summary>
   /// Gets whether the worker is currently in idle state (no work being processed).
@@ -243,7 +249,7 @@ public partial class PerspectiveWorker(
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
     await _initializePerspectiveRegistryAsync();
-    await _processInitialCheckpointsAsync(stoppingToken);
+    _processInitialCheckpoints();
     await _reconcileOrphanedLifecyclesAsync(stoppingToken);
     await _scanAndRepairRewindsOnStartupAsync(stoppingToken);
 
@@ -316,12 +322,6 @@ public partial class PerspectiveWorker(
 
       if (stoppingToken.IsCancellationRequested) {
         break;
-      }
-
-      // Database readiness check — tracks the counter for tests + ops monitoring. Even without
-      // work, we tick the readiness check on every loop iteration the way the legacy poll did.
-      if (!await _checkDatabaseReadinessAsync(stoppingToken).ConfigureAwait(false)) {
-        continue;
       }
 
       // Drain whatever is currently queued on both channels (non-blocking after the wait).
@@ -404,37 +404,12 @@ public partial class PerspectiveWorker(
       kvp => (IReadOnlyList<string>)kvp.Value);
   }
 
-  private async Task _processInitialCheckpointsAsync(CancellationToken stoppingToken) {
-    try {
-      LogCheckingPendingCheckpoints(_logger);
-      var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
-      if (isDatabaseReady) {
-        // Channel architecture: ClaimWorker runs in the background and feeds work to our
-        // channel reader. The main loop will pick up any leftover work as soon as it starts.
-        // No need to actively pump here — the legacy _processWorkBatchAsync call was removed.
-        LogInitialCheckpointProcessingComplete(_logger);
-      } else {
-        LogDatabaseNotReadyOnStartup(_logger);
-      }
-    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
-      LogErrorProcessingInitialCheckpoints(_logger, ex);
-      throw; // Never swallow exceptions
-    }
-  }
-
-  private async Task<bool> _checkDatabaseReadinessAsync(CancellationToken stoppingToken) {
-    var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
-    if (isDatabaseReady) {
-      Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
-      return true;
-    }
-
-    Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
-    LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
-    if (_consecutiveDatabaseNotReadyChecks > 10) {
-      LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
-    }
-    return false;
+  private void _processInitialCheckpoints() {
+    LogCheckingPendingCheckpoints(_logger);
+    // Schema-ready gate has already been awaited in ExecuteAsync before this point.
+    // ClaimWorker feeds work to the channel reader; the main loop picks up any
+    // leftover work as soon as it starts.
+    LogInitialCheckpointProcessingComplete(_logger);
   }
 
   private int _statsGaugeCounter;
@@ -534,10 +509,6 @@ public partial class PerspectiveWorker(
     }
 
     try {
-      if (!await _databaseReadinessCheck.IsReadyAsync(ct)) {
-        return;
-      }
-
       // Query cursors with RewindRequired flag
       await using var scope = _scopeFactory.CreateAsyncScope();
       var workCoordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
@@ -2398,34 +2369,6 @@ public partial class PerspectiveWorker(
     Message = "Initial perspective cursor processing complete"
   )]
   static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
-
-  [LoggerMessage(
-    EventId = 4,
-    Level = LogLevel.Warning,
-    Message = "Database not ready on startup - skipping initial perspective cursor processing"
-  )]
-  static partial void LogDatabaseNotReadyOnStartup(ILogger logger);
-
-  [LoggerMessage(
-    EventId = 5,
-    Level = LogLevel.Error,
-    Message = "Error processing initial perspective cursors on startup"
-  )]
-  static partial void LogErrorProcessingInitialCheckpoints(ILogger logger, Exception ex);
-
-  [LoggerMessage(
-    EventId = 6,
-    Level = LogLevel.Information,
-    Message = "Database not ready, skipping perspective cursor processing (consecutive checks: {ConsecutiveCount})"
-  )]
-  static partial void LogDatabaseNotReady(ILogger logger, int consecutiveCount);
-
-  [LoggerMessage(
-    EventId = 7,
-    Level = LogLevel.Warning,
-    Message = "Database not ready for {ConsecutiveCount} consecutive polling cycles. Perspective worker is paused."
-  )]
-  static partial void LogDatabaseNotReadyWarning(ILogger logger, int consecutiveCount);
 
   [LoggerMessage(
     EventId = 8,

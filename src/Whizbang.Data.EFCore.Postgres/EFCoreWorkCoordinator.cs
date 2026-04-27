@@ -1311,6 +1311,35 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  public async Task StoreOutboxMessagesAsync(
+    OutboxMessage[] messages,
+    int partitionCount,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    var json = _serializeNewOutboxMessages(messages);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
+
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    var sql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
+#pragma warning restore S2077
+
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      var now = DateTime.UtcNow;
+      await _dbContext.Database.ExecuteSqlRawAsync(
+        sql,
+        [json, now, partitionCount],
+        cancellationToken);
+    }, logger: _logger, cancellationToken: cancellationToken);
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {

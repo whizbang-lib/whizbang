@@ -97,8 +97,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     }
 
     // Query database for sync status
-    var batch = await _querySyncStatusAsync(inquiries, ct);
-    var results = batch.SyncInquiryResults ?? [];
+    var results = await _querySyncStatusAsync(inquiries, ct);
 
     // Match results with their inquiry to set ExpectedEventIds for proper IsFullySynced evaluation
     // This prevents false positives when events haven't reached wh_perspective_events yet
@@ -340,37 +339,13 @@ public sealed partial class PerspectiveSyncAwaiter(
   }
 
   /// <summary>
-  /// Queries the database for sync status using the batch function.
+  /// Queries the database for sync status using the new-path
+  /// <see cref="IWorkCoordinator.ResolveSyncInquiriesAsync"/> SQL function.
   /// </summary>
-  private async Task<WorkBatch> _querySyncStatusAsync(
+  private async Task<IReadOnlyList<SyncInquiryResult>> _querySyncStatusAsync(
       SyncInquiry[] inquiries,
       CancellationToken ct) {
-    // Create minimal request just for sync queries
-    var request = new ProcessWorkBatchRequest {
-      // Use placeholder values for sync-only queries
-      // The batch function will process sync inquiries regardless of instance info
-      InstanceId = Guid.Empty,
-      ServiceName = "SyncQuery",
-      HostName = "local",
-      ProcessId = 0,
-      OutboxCompletions = [],
-      OutboxFailures = [],
-      InboxCompletions = [],
-      InboxFailures = [],
-      ReceptorCompletions = [],
-      ReceptorFailures = [],
-      PerspectiveCompletions = [],
-      PerspectiveEventCompletions = [],
-      PerspectiveFailures = [],
-      NewOutboxMessages = [],
-      NewInboxMessages = [],
-      RenewOutboxLeaseIds = [],
-      RenewInboxLeaseIds = [],
-      PerspectiveSyncInquiries = inquiries,
-      Flags = WorkBatchOptions.None // Sync queries are processed regardless of flags
-    };
-
-    return await _coordinator.ProcessWorkBatchAsync(request, ct);
+    return await _coordinator.ResolveSyncInquiriesAsync(inquiries, ct);
   }
 
   /// <summary>

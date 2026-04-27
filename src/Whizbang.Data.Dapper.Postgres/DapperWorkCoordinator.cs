@@ -538,6 +538,31 @@ public partial class DapperWorkCoordinator(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  public async Task StoreOutboxMessagesAsync(
+    OutboxMessage[] messages,
+    int partitionCount,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    var json = _serializeNewOutboxMessages(messages);
+
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var connection = new NpgsqlConnection(_connectionString);
+      await connection.OpenAsync(cancellationToken);
+
+      var now = DateTimeOffset.UtcNow;
+      await connection.ExecuteAsync(
+        "SELECT * FROM store_outbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
+        new {
+          messages = json,
+          now,
+          partitionCount
+        });
+    }, logger: _logger, cancellationToken: cancellationToken);
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {

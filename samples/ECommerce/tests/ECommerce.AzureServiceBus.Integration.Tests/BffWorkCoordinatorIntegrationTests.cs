@@ -163,8 +163,6 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
         // Register the worker (same as Program.cs)
-        services.AddWhizbangOutboxPublisher();
-        services.AddWhizbangInboxDispatcher();
       })
       .Build();
 

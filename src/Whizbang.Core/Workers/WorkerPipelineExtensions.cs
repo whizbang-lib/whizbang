@@ -42,10 +42,6 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
     services.TryAddSingleton<MaintenanceWorker>();
-    // OutboxPublishWorker + InboxDispatchWorker classes are registered here so opt-in
-    // extensions can resolve them, but they are NOT auto-hosted yet — Phase H step 2 will
-    // move the AddHostedService lines into this method once ECommerce sample fixtures
-    // switch off AddWhizbangLegacyPublisher.
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
 
@@ -58,9 +54,9 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<FailureFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
-    // MaintenanceWorker is auto-hosted from step 1 (timer-based, no channel consumer race
-    // with the legacy publisher — safe to run alongside both old and new paths).
     services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
@@ -100,62 +96,4 @@ public static class WorkerPipelineExtensions {
     return services;
   }
 
-  /// <summary>
-  /// Registers the legacy <see cref="WorkCoordinatorPublisherWorker"/> and configures the new
-  /// <see cref="ClaimWorker"/> to skip its claim loop (<see cref="ClaimWorkerOptions.PerspectiveOnly"/>).
-  /// Use this when a host wants the legacy publisher as the sole poller — the publisher then
-  /// forwards <see cref="WorkBatch.PerspectiveStreamIds"/> onto <see cref="IPerspectiveDrainChannel"/>
-  /// so PerspectiveWorker (channel-consumer mode) still receives drain hints.
-  /// </summary>
-  /// <remarks>
-  /// Without this flag, ClaimWorker and the legacy publisher race to call <c>claim_work</c> /
-  /// <c>process_work_batch</c>. ClaimWorker's <c>claim_work</c> leases orphan rows first, then
-  /// the publisher's <c>process_work_batch</c> sees an empty <c>temp_orphaned_inbox</c> and
-  /// Phase 4.5B's event-store auto-create chain never fires for those rows.
-  /// </remarks>
-  /// <docs>fundamentals/work-coordinator/legacy-publisher-coexistence</docs>
-  public static IServiceCollection AddWhizbangLegacyPublisher(this IServiceCollection services) {
-    ArgumentNullException.ThrowIfNull(services);
-    services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    services.Configure<ClaimWorkerOptions>(o => o.PerspectiveOnly = true);
-    return services;
-  }
-
-  /// <summary>
-  /// Registers <see cref="OutboxPublishWorker"/> as a hosted service. Call this when ready to
-  /// migrate off <see cref="AddWhizbangLegacyPublisher"/> — it consumes from the same
-  /// <see cref="IWorkChannelWriter"/>, so the two cannot both be active (only one will receive
-  /// each message). The legacy publisher should be removed in the same change.
-  /// </summary>
-  /// <remarks>
-  /// Phase H step 1 ships this opt-in extension so the worker is available behind an explicit
-  /// flag. Phase H step 2 will move the <c>AddHostedService</c> line into
-  /// <see cref="AddWhizbangWorkers"/> and delete this extension and
-  /// <see cref="AddWhizbangLegacyPublisher"/>.
-  /// </remarks>
-  /// <docs>fundamentals/work-coordinator/outbox-publish</docs>
-  public static IServiceCollection AddWhizbangOutboxPublisher(this IServiceCollection services) {
-    ArgumentNullException.ThrowIfNull(services);
-    services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
-    return services;
-  }
-
-  /// <summary>
-  /// Registers <see cref="InboxDispatchWorker"/> as a hosted service. Call this when ready to
-  /// migrate off <see cref="AddWhizbangLegacyPublisher"/> — it consumes from the same
-  /// <see cref="IInboxChannelWriter"/>, so the two cannot both be active (only one will
-  /// receive each orphan inbox row). The legacy publisher should be removed in the same change.
-  /// </summary>
-  /// <remarks>
-  /// Phase H step 1 ships this opt-in extension so the worker is available behind an explicit
-  /// flag. Phase H step 2 will move the <c>AddHostedService</c> line into
-  /// <see cref="AddWhizbangWorkers"/> and delete this extension and
-  /// <see cref="AddWhizbangLegacyPublisher"/>.
-  /// </remarks>
-  /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
-  public static IServiceCollection AddWhizbangInboxDispatcher(this IServiceCollection services) {
-    ArgumentNullException.ThrowIfNull(services);
-    services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
-    return services;
-  }
 }

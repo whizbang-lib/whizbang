@@ -393,7 +393,8 @@ public class OutboxPublishPipelineIntegrationTests {
       PollingIntervalMilliseconds = 50
     }));
     services.AddLogging();
-    services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    services.AddSingleton<OutboxPublishWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     return services.BuildServiceProvider();
   }
 
@@ -421,7 +422,8 @@ public class OutboxPublishPipelineIntegrationTests {
     services.AddScoped<IReceptorInvoker>(sp => new PostLifecycleTrackingInvoker(stagesFired, postLifecycleSignal));
     services.AddSingleton<ILifecycleMessageDeserializer>(new PassthroughLifecycleMessageDeserializer());
     services.AddLogging();
-    services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    services.AddSingleton<OutboxPublishWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     return services.BuildServiceProvider();
   }
 
