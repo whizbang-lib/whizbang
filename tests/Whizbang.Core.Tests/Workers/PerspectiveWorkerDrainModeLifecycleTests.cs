@@ -197,12 +197,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public int ProcessId { get; } = 12345;
     public ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
-  }
-
   private sealed class FakeEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
   }
@@ -244,7 +238,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
 
     var coordinator = new DrainWorkCoordinator { StreamIdsToReturn = streamIds, StreamEventsToReturn = rawEvents };
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FilteringPerspectiveRunnerRegistry(perspectiveRegistrations);
     if (lifecycleStages is not null) {
       registry.LifecycleStagesWithReceptors = lifecycleStages;
@@ -273,7 +266,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,

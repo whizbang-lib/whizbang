@@ -38,8 +38,6 @@ public class PerspectiveWorkerChannelModeTests {
     eventStore.AddEvent(streamId, eventId, new TestEvent("channel-mode"));
     var eventTypeProvider = new FakeEventTypeProvider([typeof(TestEvent)]);
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry());
@@ -69,7 +67,6 @@ public class PerspectiveWorkerChannelModeTests {
       }),
       tracingOptions: null,
       completionStrategy: strategy,
-      databaseReadinessCheck: databaseReadiness,
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
@@ -118,7 +115,6 @@ public class PerspectiveWorkerChannelModeTests {
       Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
       tracingOptions: null,
       completionStrategy: new BatchedCompletionStrategy(),
-      databaseReadinessCheck: new FakeDatabaseReadinessCheck { IsReady = true },
       eventTypeProvider: new FakeEventTypeProvider([typeof(TestEvent)]),
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
@@ -182,12 +178,6 @@ public class PerspectiveWorkerChannelModeTests {
       ProcessId = ProcessId
     };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; }
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
-  }
-
   private sealed class FakeEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
   }

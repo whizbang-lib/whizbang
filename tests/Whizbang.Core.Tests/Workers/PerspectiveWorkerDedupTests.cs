@@ -322,7 +322,6 @@ public class PerspectiveWorkerDedupTests {
 
     // Wire worker WITH coordinator and spy invoker, but WITHOUT IEventStore
     // This means upcomingEvents will be null → ExpectPerspectiveCompletions never called (bug)
-    var databaseReadiness = new DedupFakeDatabaseReadinessCheck { IsReady = true };
     var instanceProvider = new DedupFakeServiceInstanceProvider();
     IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
 
@@ -345,7 +344,6 @@ public class PerspectiveWorkerDedupTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -416,7 +414,6 @@ public class PerspectiveWorkerDedupTests {
     IReceptorInvoker spyInvoker,
     IEventStore eventStore,
     IEventTypeProvider eventTypeProvider) {
-    var databaseReadiness = new DedupFakeDatabaseReadinessCheck { IsReady = true };
     var instanceProvider = new DedupFakeServiceInstanceProvider();
     IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
     var harness = new PerspectiveWorkerTestHarness();
@@ -440,7 +437,6 @@ public class PerspectiveWorkerDedupTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -456,7 +452,6 @@ public class PerspectiveWorkerDedupTests {
     IProcessedEventCacheObserver? observer = null,
     TimeProvider? timeProvider = null,
     bool useBatchedStrategy = true) {
-    var databaseReadiness = new DedupFakeDatabaseReadinessCheck { IsReady = true };
     var instanceProvider = new DedupFakeServiceInstanceProvider();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
@@ -481,7 +476,6 @@ public class PerspectiveWorkerDedupTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       processedEventCacheObserver: observer,
       timeProvider: timeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -682,13 +676,6 @@ public class PerspectiveWorkerDedupTests {
     public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class DedupFakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(IsReady);
-  }
-
   /// <summary>
   /// Spy invoker that counts PostLifecycleInline invocations.
   /// Detects whether PostLifecycle actually fires (not just whether tracking was abandoned).

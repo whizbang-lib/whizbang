@@ -26,7 +26,6 @@ public class PerspectiveWorkerDrainModeTests {
     // Arrange — coordinator returns PerspectiveStreamIds (drain mode) with no PerspectiveWork (legacy)
     var coordinator = new DrainModeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new DrainModePerspectiveRunnerRegistry();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -87,7 +86,6 @@ public class PerspectiveWorkerDrainModeTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider: null, // null — lazy-resolved from DI
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -234,11 +232,5 @@ public class PerspectiveWorkerDrainModeTests {
     public int ProcessId { get; } = 12345;
     public ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
-  }
-
   #endregion
 }

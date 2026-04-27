@@ -142,16 +142,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         // Register OrderedStreamProcessor (same as Program.cs)
         services.AddSingleton<OrderedStreamProcessor>();
 
-        // Register WorkCoordinatorPublisherWorker options (same as Program.cs would use)
-        services.Configure<WorkCoordinatorPublisherOptions>(options => {
-          options.PollingIntervalMilliseconds = 100; // Fast polling for tests
-          options.LeaseSeconds = 300;
-          options.AbandonStaleInstanceThresholdSeconds = 600;
-          options.DebugMode = true; // Keep completed messages for verification
-          options.PartitionCount = 10000;
-        });
-
-        // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+        // Register IMessagePublishStrategy for OutboxPublishWorker
         services.AddSingleton<IMessagePublishStrategy>(sp =>
           new TransportPublishStrategy(
             sp.GetRequiredService<ITransport>(),

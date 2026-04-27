@@ -1307,30 +1307,3 @@ public record PerspectiveEventCompletion {
   public int StatusFlags { get; init; } = (int)PerspectiveProcessingStatus.Completed;
 }
 
-/// <summary>
-/// Groups the parameters for <see cref="WorkCoordinatorExtensions.ProcessWorkBatchAsync"/>
-/// to avoid S107 (too many parameters). Maps directly to <see cref="ProcessWorkBatchRequest"/>.
-/// </summary>
-public readonly record struct ProcessWorkBatchContext(
-  Guid InstanceId,
-  string ServiceName,
-  string HostName,
-  int ProcessId,
-  Dictionary<string, JsonElement>? Metadata,
-  MessageCompletion[] OutboxCompletions,
-  MessageFailure[] OutboxFailures,
-  MessageCompletion[] InboxCompletions,
-  MessageFailure[] InboxFailures,
-  ReceptorProcessingCompletion[] ReceptorCompletions,
-  ReceptorProcessingFailure[] ReceptorFailures,
-  PerspectiveCursorCompletion[] PerspectiveCompletions,
-  PerspectiveCursorFailure[] PerspectiveFailures,
-  OutboxMessage[] NewOutboxMessages,
-  InboxMessage[] NewInboxMessages,
-  Guid[] RenewOutboxLeaseIds,
-  Guid[] RenewInboxLeaseIds,
-  WorkBatchOptions Flags = WorkBatchOptions.None,
-  int PartitionCount = 10_000,
-  int LeaseSeconds = 300,
-  int AbandonStaleInstanceThresholdSeconds = 30);
-

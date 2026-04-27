@@ -26,7 +26,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -67,7 +66,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -94,7 +92,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -123,7 +120,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -150,7 +146,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var locker = new FakePerspectiveStreamLocker();
@@ -191,7 +186,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       streamLocker: locker,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -221,7 +215,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var locker = new FakePerspectiveStreamLocker { AcquireResult = false };
@@ -262,7 +255,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       streamLocker: locker,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -297,7 +289,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var snapshotStore = new FakeSnapshotStore { HasSnapshots = false };
@@ -338,7 +329,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       snapshotStore: snapshotStore,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -366,7 +356,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var snapshotStore = new FakeSnapshotStore { HasSnapshots = true };
@@ -406,7 +395,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       snapshotStore: snapshotStore,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -433,7 +421,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange - brand new stream with no cursor position
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var snapshotStore = new FakeSnapshotStore { HasSnapshots = false };
@@ -463,7 +450,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       snapshotStore: snapshotStore,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -495,7 +481,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -533,7 +518,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -565,7 +549,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new ThrowingPerspectiveRunner(new InvalidOperationException("Snapshot corrupt"));
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -605,7 +588,6 @@ public class PerspectiveWorkerRewindTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -746,13 +728,6 @@ public class PerspectiveWorkerRewindTests {
       ProcessId = ProcessId
     };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; }
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(IsReady);
-  }
-
   private sealed class SingleRunnerRegistry(string perspectiveName, IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) =>
       name == perspectiveName ? runner : null;

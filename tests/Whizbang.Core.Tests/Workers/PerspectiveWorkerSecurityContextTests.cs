@@ -69,8 +69,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     // Return perspective work
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
@@ -100,7 +98,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -161,8 +158,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -189,7 +184,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -247,8 +241,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -276,7 +268,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -341,8 +332,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -371,7 +360,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -447,8 +435,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -477,7 +463,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -540,8 +525,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -570,7 +553,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -657,8 +639,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -687,7 +667,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -764,8 +743,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -794,7 +771,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -868,8 +844,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -898,7 +872,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -991,8 +964,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -1023,7 +994,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -1243,8 +1213,6 @@ public class PerspectiveWorkerSecurityContextTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
         StreamId = streamId,
@@ -1274,7 +1242,6 @@ public class PerspectiveWorkerSecurityContextTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -1685,15 +1652,6 @@ public class PerspectiveWorkerSecurityContextTests {
       };
     }
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReady);
-    }
-  }
-
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
       return new FakePerspectiveRunner();
