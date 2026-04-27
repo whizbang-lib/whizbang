@@ -191,8 +191,13 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
-    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
+    // Wait for the publisher's singular loop to actually process all 3 buffered messages.
+    // Coordinator-side CallCount is too coarse — the channel write + publisher read race
+    // means CallCount can be 2 before the publisher loop has drained anything.
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+    while (worker.BufferedMessageCount < 3 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10, CancellationToken.None);
+    }
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -220,8 +225,11 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    // Wait for 2nd call — by then the first batch is fully processed (buffered + lease renewed)
-    await workCoordinator.WaitForCallCountAsync(2, TimeSpan.FromSeconds(30));
+    // Wait for the publisher's singular loop to actually process both buffered messages.
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+    while (worker.TotalLeaseRenewals < 2 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10, CancellationToken.None);
+    }
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
