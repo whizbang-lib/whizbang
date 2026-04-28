@@ -143,7 +143,18 @@ internal static class WorkCoordinatorFlushHelper {
         }
       }
 
-      ctx.WorkChannelWriter?.SignalNewWorkAvailable();
+      // Wake ClaimWorker immediately so freshly-stored outbox/inbox rows are claimed
+      // on this tick instead of after the next 250 ms poll. ClaimWorker subscribes to
+      // OnNewWorkAvailable / OnNewInboxWorkAvailable to translate this signal into
+      // an immediate poll. Without this, dispatch-then-immediately-read flows see a
+      // sub-second perspective lag that reads as "no activity" in the UI.
+      if (outboxToStore.Length > 0) {
+        ctx.WorkChannelWriter?.SignalNewWorkAvailable();
+      }
+      if (ctx.InboxMessages.Length > 0) {
+        var inboxChannelWriter = scopedProvider?.GetService<IInboxChannelWriter>();
+        inboxChannelWriter?.SignalNewInboxWorkAvailable();
+      }
 
       if (!ctx.SkipLifecycle) {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
