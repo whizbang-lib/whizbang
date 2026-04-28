@@ -22,8 +22,6 @@ DECLARE
   v_partition INTEGER;
   v_was_new BOOLEAN;
   v_inserted_event_ids UUID[] := ARRAY[]::UUID[];
-  v_effective_instance_id UUID := COALESCE(p_instance_id, '00000000-0000-0000-0000-000000000000'::UUID);
-  v_effective_lease_expiry TIMESTAMPTZ := COALESCE(p_lease_expiry, p_now + INTERVAL '300 seconds');
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -114,11 +112,18 @@ BEGIN
   -- path, NOT via InboxDispatchWorker → commit_handler_result) sit forever in
   -- wh_outbox and never reach perspective consumers — UI shows "no activity" because
   -- read models are never updated.
+  --
+  -- When the strategy flush calls us with NULL p_instance_id / p_lease_expiry, pass
+  -- those through unchanged. The created wh_perspective_events rows then have NULL
+  -- instance_id and NULL lease_expiry, which claim_orphaned_perspective_events claims
+  -- on the next ClaimWorker tick (its filter is `instance_id IS NULL OR lease_expiry
+  -- < now`). Defaulting to a placeholder UUID + future lease here strands the rows
+  -- in unclaimable state forever.
   IF cardinality(v_inserted_event_ids) > 0 THEN
     PERFORM __SCHEMA__._emit_event_store_chain(
       v_inserted_event_ids,
-      v_effective_instance_id,
-      v_effective_lease_expiry,
+      p_instance_id,
+      p_lease_expiry,
       p_now
     );
   END IF;
@@ -126,4 +131,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages IS
-'Stores new outbox messages. Optionally with immediate lease (when p_instance_id + p_lease_expiry are non-null) or without lease (NULL params — claim_orphaned_outbox picks them up next tick). After inserting, calls _emit_event_store_chain for newly-inserted events with stream_id so locally-dispatched events reach wh_event_store + wh_perspective_events without going through commit_handler_result. Returns (message_id, stream_id, was_newly_created) per row.';
+'Stores new outbox messages. Optionally with immediate lease (when p_instance_id + p_lease_expiry are non-null) or without lease (NULL params — claim_orphaned_outbox picks them up next tick). After inserting, calls _emit_event_store_chain for newly-inserted events with stream_id so locally-dispatched events reach wh_event_store + wh_perspective_events without going through commit_handler_result. NULL instance_id / lease_expiry pass through to the chain so claim_orphaned_perspective_events can claim the new rows on the next tick. Returns (message_id, stream_id, was_newly_created) per row.';
