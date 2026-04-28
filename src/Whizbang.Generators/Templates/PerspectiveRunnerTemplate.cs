@@ -135,12 +135,54 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       currentModel = CreateEmptyModel(streamId);
     }
 
+    // Idempotency guard: skip events already applied to this row.
+    // The cursor advances in a separate transaction (PerspectiveCompletionFlushWorker) than
+    // the row upsert (this method). When the worker dies between commits, the same events
+    // get re-claimed and would re-apply to a populated model — duplicating list-style
+    // projection rows. UUIDv7 ids are time-ordered AND lex-ordered, so a string compare on
+    // the canonical "D" form is sufficient to detect "already applied".
+    var existingMetadata = modelLoadedFromDb
+        ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
+        : null;
+    var lastAppliedEventId = existingMetadata?.EventId;
+    if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
+      var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
+      foreach (var e in events) {
+        if (string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) > 0) {
+          filtered.Add(e);
+        }
+      }
+      if (filtered.Count != events.Count) {
+        _logger.LogInformation(
+            "Skipped {Skipped} already-applied events for {PerspectiveName} stream {StreamId} (last applied {LastEventId})",
+            events.Count - filtered.Count,
+            perspectiveName,
+            streamId,
+            lastAppliedEventId);
+        if (filtered.Count == 0) {
+          // All events already applied — advance the caller's cursor to the persisted point.
+          var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
+          return new PerspectiveCursorCompletion {
+            StreamId = streamId,
+            PerspectiveName = perspectiveName,
+            PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+            LastEventId = alreadyAppliedAsGuid != Guid.Empty ? alreadyAppliedAsGuid : (lastProcessedEventId ?? Guid.Empty),
+            Status = PerspectiveProcessingStatus.None,
+            EventsProcessed = 0,
+            ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
+          };
+        }
+      }
+      events = filtered;
+    }
+
     // Get perspective instance from DI
     var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
 
     // Track progress
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
+    string? lastSuccessfulEventType = existingMetadata?.EventType;
     var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
@@ -288,6 +330,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
         eventsProcessed++;
       }
 
@@ -321,6 +364,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
+              lastSuccessfulEventType ?? string.Empty,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
@@ -427,6 +471,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 streamId,
                 updatedModel,
                 lastSuccessfulEventId.Value,
+                lastSuccessfulEventType ?? string.Empty,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
@@ -515,9 +560,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid streamId,
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
+      string checkpointEventType,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false) {
+
+    // Build metadata that captures the last applied event id. The runner reads this back
+    // on the next run via GetMetadataByStreamIdAsync to filter out already-applied events,
+    // making projections idempotent across worker crashes between row upsert and cursor advance.
+    var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
+      EventId = checkpointEventId.ToString("D"),
+      EventType = checkpointEventType,
+      Timestamp = DateTime.UtcNow
+    };
 
     #region UPSERT_CALL
     // Upsert model (insert or update)
@@ -527,12 +582,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           streamId,
           model,
           scope,
+          forceUpdateScope,
+          metadata,
           cancellationToken
       );
     } else {
       await _perspectiveStore.UpsertAsync(
           streamId,
           model,
+          new global::Whizbang.Core.Lenses.PerspectiveScope(),
+          false,
+          metadata,
           cancellationToken
       );
     }
@@ -631,6 +691,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Track progress
     var eventsProcessed = 0;
     Guid? lastSuccessfulEventId = replayFromEventId;
+    string? lastSuccessfulEventType = null;
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;
     PerspectiveScope? lastScope = null;
@@ -701,6 +762,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       lastSuccessfulEventId = envelope.MessageId.Value;
+      lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
     }
 
@@ -710,7 +772,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);
