@@ -21,6 +21,9 @@ DECLARE
   v_msg RECORD;
   v_partition INTEGER;
   v_was_new BOOLEAN;
+  v_inserted_event_ids UUID[] := ARRAY[]::UUID[];
+  v_effective_instance_id UUID := COALESCE(p_instance_id, '00000000-0000-0000-0000-000000000000'::UUID);
+  v_effective_lease_expiry TIMESTAMPTZ := COALESCE(p_lease_expiry, p_now + INTERVAL '300 seconds');
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -88,6 +91,12 @@ BEGIN
     -- Check if insert succeeded (ROW_COUNT = 1 means new row)
     GET DIAGNOSTICS v_was_new = ROW_COUNT;
 
+    -- Collect inserted-event ids for the event-store chain below. Only events with a
+    -- non-null stream_id participate (matches commit_handler_result's filter exactly).
+    IF v_was_new AND COALESCE(v_msg.is_event, false) AND v_msg.stream_id IS NOT NULL THEN
+      v_inserted_event_ids := array_append(v_inserted_event_ids, v_msg.msg_id);
+    END IF;
+
     -- NOTE: wh_active_streams refresh is deliberately NOT done here. It is driven
     -- from process_work_batch end-of-tick in a single batched, sorted UPSERT
     -- covering all four stream sources (orphan outbox, orphan inbox, new outbox,
@@ -98,8 +107,23 @@ BEGIN
 
     RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
   END LOOP;
+
+  -- Phase 4.5A-equivalent: copy newly-inserted outbox events into wh_event_store and
+  -- create wh_perspective_events rows for matching perspectives. Without this step,
+  -- locally-emitted events (from receptors invoked via Dispatcher's strategy flush
+  -- path, NOT via InboxDispatchWorker → commit_handler_result) sit forever in
+  -- wh_outbox and never reach perspective consumers — UI shows "no activity" because
+  -- read models are never updated.
+  IF cardinality(v_inserted_event_ids) > 0 THEN
+    PERFORM __SCHEMA__._emit_event_store_chain(
+      v_inserted_event_ids,
+      v_effective_instance_id,
+      v_effective_lease_expiry,
+      p_now
+    );
+  END IF;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages IS
-'Stores new outbox messages with immediate lease to current instance. Returns message IDs for NewlyStored flag in orchestrator response. Does NOT touch wh_active_streams — that is refreshed in one batched statement at end of process_work_batch tick.';
+'Stores new outbox messages. Optionally with immediate lease (when p_instance_id + p_lease_expiry are non-null) or without lease (NULL params — claim_orphaned_outbox picks them up next tick). After inserting, calls _emit_event_store_chain for newly-inserted events with stream_id so locally-dispatched events reach wh_event_store + wh_perspective_events without going through commit_handler_result. Returns (message_id, stream_id, was_newly_created) per row.';
