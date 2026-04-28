@@ -553,6 +553,81 @@ public class EFCorePostgresPerspectiveStoreTests {
     await Assert.That(row!.Scope.TenantId).IsNull();
     await Assert.That(row.Scope.UserId).IsNull();
   }
+
+  [Test]
+  public async Task GetMetadataByStreamIdAsync_WhenRowDoesNotExist_ReturnsNullAsync() {
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+
+    var metadata = await store.GetMetadataByStreamIdAsync(_idProvider.NewGuid());
+
+    await Assert.That(metadata).IsNull();
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_PersistsEventIdForIdempotencyAsync() {
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid eventId = _idProvider.NewGuid();
+
+    var metadata = new PerspectiveMetadata {
+      EventId = eventId.ToString("D"),
+      EventType = "TestNamespace.OrderCreatedEvent",
+      Timestamp = DateTime.UtcNow
+    };
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "Idempotent", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        metadata);
+
+    var roundtripped = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(roundtripped).IsNotNull();
+    await Assert.That(roundtripped!.EventId).IsEqualTo(eventId.ToString("D"));
+    await Assert.That(roundtripped.EventType).IsEqualTo("TestNamespace.OrderCreatedEvent");
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_OverwritesPreviousMetadataOnEachCallAsync() {
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid firstEventId = _idProvider.NewGuid();
+    Guid secondEventId = _idProvider.NewGuid();
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "v1", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        new PerspectiveMetadata {
+          EventId = firstEventId.ToString("D"),
+          EventType = "ev.First",
+          Timestamp = DateTime.UtcNow
+        });
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "v2", Value = 2 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        new PerspectiveMetadata {
+          EventId = secondEventId.ToString("D"),
+          EventType = "ev.Second",
+          Timestamp = DateTime.UtcNow
+        });
+
+    var metadata = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.EventId).IsEqualTo(secondEventId.ToString("D"));
+    await Assert.That(metadata.EventType).IsEqualTo("ev.Second");
+  }
 }
 
 /// <summary>

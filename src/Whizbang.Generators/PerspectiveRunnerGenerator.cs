@@ -415,20 +415,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// so zero-scope perspectives can use the scope-less overload.
   /// </summary>
   private static void _appendSimpleUpsertCode(StringBuilder sb) {
-    sb.AppendLine("    // Upsert model (insert or update)");
-    sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+    sb.AppendLine("    // Upsert model (insert or update) — metadata.EventId records the last applied event so the");
+    sb.AppendLine("    // next run can skip already-applied events (see RunWithEventsAsync idempotency guard).");
     sb.AppendLine("    if (scope != null) {");
     sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
     sb.AppendLine("          streamId,");
     sb.AppendLine("          model,");
     sb.AppendLine("          scope,");
     sb.AppendLine("          forceUpdateScope,");
+    sb.AppendLine("          metadata,");
     sb.AppendLine("          cancellationToken");
     sb.AppendLine("      );");
     sb.AppendLine("    } else {");
     sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
     sb.AppendLine("          streamId,");
     sb.AppendLine("          model,");
+    sb.AppendLine("          new global::Whizbang.Core.Lenses.PerspectiveScope(),");
+    sb.AppendLine("          false,");
+    sb.AppendLine("          metadata,");
     sb.AppendLine("          cancellationToken");
     sb.AppendLine("      );");
     sb.AppendLine("    }");
@@ -445,14 +449,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       _appendSplitModePhysicalFieldStripping(sb, perspective);
     }
 
-    sb.AppendLine("    // Upsert model with physical field values (insert or update)");
-    sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+    sb.AppendLine("    // Upsert model with physical field values — metadata.EventId records the last applied event");
+    sb.AppendLine("    // so the next run can skip already-applied events (see RunWithEventsAsync idempotency guard).");
     sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
     sb.AppendLine("        streamId,");
     sb.AppendLine("        model,");
     sb.AppendLine("        physicalFieldValues,");
     sb.AppendLine("        scope,");
     sb.AppendLine("        forceUpdateScope,");
+    sb.AppendLine("        metadata,");
     sb.AppendLine("        cancellationToken");
     sb.AppendLine("    );");
   }
