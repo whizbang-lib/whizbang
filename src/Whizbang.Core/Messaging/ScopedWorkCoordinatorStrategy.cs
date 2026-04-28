@@ -184,29 +184,16 @@ public partial class ScopedWorkCoordinatorStrategy(
     // Clear queues after successful flush
     _queues.Clear();
 
-    _logPostFlushDiagnostics(workBatch, outboxMessages);
     _routeClaimedInboxWorkToChannel(workBatch);
 
     return workBatch;
   }
 
-  /// <summary>Diagnostic log + sample of the first three returned outbox work items; falls
-  /// back to a "no work returned" warning when the batch came back empty despite having
-  /// queued outbox messages. Only fires when a logger is attached.</summary>
-  private void _logPostFlushDiagnostics(WorkBatch workBatch, OutboxMessage[] outboxMessages) {
-    if (_logger is null) {
-      return;
-    }
-    LogProcessWorkBatchResult(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count, workBatch.PerspectiveWork.Count);
-    if (workBatch.OutboxWork.Count > 0) {
-      foreach (var work in workBatch.OutboxWork.Take(3)) {
-        var isNewlyStored = (work.Flags & WorkBatchOptions.NewlyStored) != 0;
-        LogReturnedOutboxWork(_logger, work.MessageId, work.Destination, isNewlyStored);
-      }
-    } else if (outboxMessages.Length > 0) {
-      LogNoWorkReturned(_logger, outboxMessages.Length, _instanceProvider.InstanceId);
-    }
-  }
+  // Removed _logPostFlushDiagnostics: the legacy ProcessWorkBatchAsync path returned the
+  // claimed batch synchronously, so an empty result after a non-empty queue indicated a
+  // real bug. After the Phase H decomposition the flush helper persists messages and
+  // returns an empty WorkBatch by design — claiming is now async via ClaimWorker. The
+  // "CRITICAL BUG" log floods the BFF console with false positives on every dispatch.
 
   /// <summary>Routes claimed inbox work to the publisher worker via the in-memory channel,
   /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
@@ -367,29 +354,5 @@ public partial class ScopedWorkCoordinatorStrategy(
     Message = "Flushing {Count} outbox messages with InstanceId={InstanceId}, Service={ServiceName}"
   )]
   static partial void LogFlushingWithInstanceId(ILogger logger, Guid instanceId, string serviceName, int count);
-
-  /// <summary>Logs the work batch result counts returned from ProcessWorkBatchAsync.</summary>
-  [LoggerMessage(
-    EventId = 13,
-    Level = LogLevel.Debug,
-    Message = "ProcessWorkBatchAsync returned: Outbox={OutboxCount}, Inbox={InboxCount}, Perspective={PerspectiveCount}"
-  )]
-  static partial void LogProcessWorkBatchResult(ILogger logger, int outboxCount, int inboxCount, int perspectiveCount);
-
-  /// <summary>Logs details of returned outbox work items for diagnostics.</summary>
-  [LoggerMessage(
-    EventId = 14,
-    Level = LogLevel.Debug,
-    Message = "Returned outbox work: MessageId={MessageId}, Destination={Destination}, IsNewlyStored={IsNewlyStored}"
-  )]
-  static partial void LogReturnedOutboxWork(ILogger logger, Guid messageId, string? destination, bool isNewlyStored);
-
-  /// <summary>Logs a critical error when queued outbox messages produce zero work items.</summary>
-  [LoggerMessage(
-    EventId = 15,
-    Level = LogLevel.Error,
-    Message = "CRITICAL BUG: Queued {QueuedCount} outbox messages but ProcessWorkBatchAsync returned 0! InstanceId={InstanceId}"
-  )]
-  static partial void LogNoWorkReturned(ILogger logger, int queuedCount, Guid instanceId);
 
 }
