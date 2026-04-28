@@ -57,6 +57,17 @@ public sealed partial class ClaimWorker : BackgroundService {
 
     // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
     _notificationListener.OnSignal += _onSignal;
+
+    // Wake immediately when a strategy persists new outbox/inbox rows — eliminates the
+    // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that
+    // process_work_batch used to provide. Must remain attached for the lifetime of the
+    // worker; BackgroundService disposal handles cleanup.
+    if (_outboxChannel is not null) {
+      _outboxChannel.OnNewWorkAvailable += RequestImmediatePoll;
+    }
+    if (_inboxChannel is not null) {
+      _inboxChannel.OnNewInboxWorkAvailable += RequestImmediatePoll;
+    }
   }
 
   private void _onSignal(WorkSignalCategory category) {
