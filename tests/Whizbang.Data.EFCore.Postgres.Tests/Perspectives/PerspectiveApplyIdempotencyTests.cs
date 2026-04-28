@@ -151,6 +151,12 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       var second = await runner2.RunAsync(streamId, "action_test", null, CancellationToken.None);
 
       await Assert.That(second.EventsProcessed).IsEqualTo(0);
+      // Status MUST be Completed even though zero events were applied — otherwise the worker
+      // skips _enqueueDrainModePerspectiveCompletions and the wh_perspective_events rows
+      // never get deleted. claim_orphaned_perspective_events would then re-claim them every
+      // safety-net interval forever (the JDNext "Skipped 1 already-applied" hot loop).
+      await Assert.That(second.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+      await Assert.That(second.ProcessedEventIds).IsNotEmpty();
     }
 
     await using var verify = CreateDbContext();
