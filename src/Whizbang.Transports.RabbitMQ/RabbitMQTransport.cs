@@ -763,6 +763,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
   /// <summary>
   /// Nacks a message when the subscription is paused, requeueing for later delivery.
+  /// Tolerates a closed/disposed channel — happens during shutdown when the consumer
+  /// receives one last delivery between subscription pause and channel teardown. The
+  /// broker's own redelivery mechanism handles the unacked message.
   /// </summary>
   private async Task _nackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
@@ -770,7 +773,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
-    await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
+    try {
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(
+        ex,
+        "RabbitMQ channel closed/disposed while NACKing paused message {MessageId} from queue {QueueName} — broker will redeliver",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
+        queueName
+      );
+    }
   }
 
   /// <summary>
@@ -807,6 +819,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
   /// <summary>
   /// Nacks a message that failed deserialization, sending it to the dead letter queue.
+  /// Tolerates a closed/disposed channel — same shutdown-race rationale as
+  /// <see cref="_nackPausedMessageAsync"/>.
   /// </summary>
   private async Task _nackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
@@ -814,7 +828,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
-    await channel.BasicNackAsync(args.DeliveryTag, false, false);
+    try {
+      await channel.BasicNackAsync(args.DeliveryTag, false, false);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(
+        ex,
+        "RabbitMQ channel closed/disposed while NACKing deserialization failure for message {MessageId} from queue {QueueName}",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
+        queueName
+      );
+    }
   }
 
   /// <summary>
