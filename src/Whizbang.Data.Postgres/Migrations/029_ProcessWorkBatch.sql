@@ -298,6 +298,26 @@ BEGIN
     RETURN 0;
   END IF;
 
+  -- Per-stream advisory locks. Without these, two concurrent transactions can both
+  -- read MAX(version)=N from wh_event_store and both attempt INSERT at version=N+1,
+  -- violating idx_event_store_stream UNIQUE(stream_id, version) (PG error 23505). The
+  -- legacy process_work_batch ran serially through one ProcessWorkBatchAsync call so
+  -- the race didn't exist; the new path lets parallel handlers / strategy flushes
+  -- target the same stream concurrently.
+  --
+  -- Lock order is hashtext(stream_id::text), sorted ascending — ensures deadlock-free
+  -- nesting between any pair of transactions touching overlapping stream sets.
+  -- pg_advisory_xact_lock auto-releases at commit/rollback.
+  PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || sid::text))
+  FROM (
+    SELECT DISTINCT o.stream_id AS sid
+    FROM __SCHEMA__.wh_outbox o
+    WHERE o.message_id = ANY(p_outbox_message_ids)
+      AND o.is_event = true
+      AND o.stream_id IS NOT NULL
+    ORDER BY o.stream_id
+  ) AS streams_to_lock;
+
   -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
   WITH outbox_events AS (
     SELECT
