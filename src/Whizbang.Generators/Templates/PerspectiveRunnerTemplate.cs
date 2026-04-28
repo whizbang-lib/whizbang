@@ -160,14 +160,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             streamId,
             lastAppliedEventId);
         if (filtered.Count == 0) {
-          // All events already applied — advance the caller's cursor to the persisted point.
+          // All events already applied. Status MUST be Completed (not None) so the
+          // PerspectiveWorker enqueues each EventWorkId for deletion from wh_perspective_events
+          // — otherwise claim_orphaned_perspective_events keeps re-claiming the same rows
+          // every safety-net interval and we get a hot loop of "Skipped 1 already-applied".
+          // The events ARE done from the perspective-events table standpoint; the runner just
+          // had no model work to do because the row already reflects them.
           var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
           return new PerspectiveCursorCompletion {
             StreamId = streamId,
             PerspectiveName = perspectiveName,
             PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
             LastEventId = alreadyAppliedAsGuid != Guid.Empty ? alreadyAppliedAsGuid : (lastProcessedEventId ?? Guid.Empty),
-            Status = PerspectiveProcessingStatus.None,
+            Status = PerspectiveProcessingStatus.Completed,
             EventsProcessed = 0,
             ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
           };
