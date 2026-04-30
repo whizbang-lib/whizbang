@@ -102,7 +102,7 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
       _ = await call.ExecuteScalarAsync();
     }
 
-    // Assert inbox row is now processed.
+    // Assert inbox row is now processed (status has bits 1+4 = 5, EventStored not set, so retained).
     await using (var verify = connection.CreateCommand()) {
       verify.CommandText = "SELECT processed_at IS NOT NULL FROM wh_inbox WHERE message_id = @msg";
       verify.Parameters.AddWithValue("msg", inboxMessageId);
@@ -117,6 +117,116 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
       var count = (long)(await verify.ExecuteScalarAsync())!;
       await Assert.That(count).IsEqualTo(1L);
     }
+  }
+
+  /// <summary>
+  /// commit_handler_result must read <c>debug_mode</c> from the request JSONB and propagate it
+  /// to <c>process_inbox_completions</c>. With debug_mode=true, the inbox row is retained even
+  /// when status flags would normally trigger production DELETE (EventStored bit set + Published bit set).
+  /// </summary>
+  [Test]
+  public async Task CommitHandlerResult_DebugModeInRequest_RetainsInboxRowEvenWhenEventStoredAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var inboxMessageId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+
+    // Pre-insert with EventStored bit (2) already set — production would DELETE on commit.
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 3, 0, NOW(),
+                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", inboxMessageId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var request = $$"""
+      {
+        "instance_id": "{{instanceId}}",
+        "service_name": "test",
+        "host_name": "test-host",
+        "process_id": 1,
+        "debug_mode": true,
+        "inbox_completion": { "MessageId": "{{inboxMessageId}}", "Status": 4 }
+      }
+      """;
+
+    await using (var call = connection.CreateCommand()) {
+      call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+      call.Parameters.AddWithValue("req", request);
+      _ = await call.ExecuteScalarAsync();
+    }
+
+    await using var verify = connection.CreateCommand();
+    verify.CommandText = "SELECT count(*) FROM wh_inbox WHERE message_id = @msg AND processed_at IS NOT NULL";
+    verify.Parameters.AddWithValue("msg", inboxMessageId);
+    var retained = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(retained).IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// Production mode (no debug_mode key in request, defaults FALSE): an inbox row whose final status
+  /// has the EventStored bit set must be DELETEd. Confirms the negative path of the same wiring as
+  /// <see cref="CommitHandlerResult_DebugModeInRequest_RetainsInboxRowEvenWhenEventStoredAsync"/>.
+  /// </summary>
+  [Test]
+  public async Task CommitHandlerResult_ProductionMode_DeletesInboxRowOnEventStoredCompletionAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = Guid.NewGuid();
+    var inboxMessageId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+
+    // Pre-insert with EventStored bit (2) set + Stored bit (1).
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 3, 0, NOW(),
+                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", inboxMessageId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    // No debug_mode key in request → COALESCE defaults to FALSE → production mode.
+    var request = $$"""
+      {
+        "instance_id": "{{instanceId}}",
+        "service_name": "test",
+        "host_name": "test-host",
+        "process_id": 1,
+        "inbox_completion": { "MessageId": "{{inboxMessageId}}", "Status": 4 }
+      }
+      """;
+
+    await using (var call = connection.CreateCommand()) {
+      call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
+      call.Parameters.AddWithValue("req", request);
+      _ = await call.ExecuteScalarAsync();
+    }
+
+    await using var verify = connection.CreateCommand();
+    verify.CommandText = "SELECT count(*) FROM wh_inbox WHERE message_id = @msg";
+    verify.Parameters.AddWithValue("msg", inboxMessageId);
+    var remaining = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(remaining).IsEqualTo(0L);
   }
 
   /// <summary>

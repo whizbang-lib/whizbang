@@ -552,6 +552,10 @@ DECLARE
   v_now TIMESTAMPTZ := NOW();
   v_lease_expiry TIMESTAMPTZ := v_now + INTERVAL '300 seconds';
   v_partition_count INTEGER := COALESCE((p_request ->> 'partition_count')::INTEGER, 10000);
+  -- Production: completions DELETE rows. Debug: retain with processed_at stamped.
+  -- Caller (C# OutboxDrainWorker / InboxDrainWorker / completion flushers) reads from
+  -- IWorkCoordinatorStrategy.DebugMode and sets this on the request.
+  v_debug_mode BOOLEAN := COALESCE((p_request ->> 'debug_mode')::BOOLEAN, FALSE);
   v_inbox_completion JSONB := p_request -> 'inbox_completion';
   v_new_outbox JSONB := COALESCE(p_request -> 'new_outbox_messages', '[]'::JSONB);
   v_new_inbox JSONB := COALESCE(p_request -> 'new_inbox_messages', '[]'::JSONB);
@@ -564,7 +568,7 @@ BEGIN
     PERFORM __SCHEMA__.process_inbox_completions(
       jsonb_build_array(v_inbox_completion),
       v_now,
-      FALSE  -- debug_mode off
+      v_debug_mode  -- production: DELETE; debug: stamp processed_at and retain
     );
   END IF;
 
@@ -766,8 +770,9 @@ COMMENT ON FUNCTION __SCHEMA__.record_heartbeat IS
 SELECT __SCHEMA__.drop_all_overloads('complete_perspective');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective(
-  p_cursors JSONB,        -- [{StreamId, PerspectiveName}] for cursor advancement
-  p_event_work_ids UUID[] -- event_work_id rows to mark complete (deleted in production mode)
+  p_cursors JSONB,                          -- [{StreamId, PerspectiveName}] for cursor advancement
+  p_event_work_ids UUID[],                  -- event_work_id rows to mark complete
+  p_debug_mode BOOLEAN DEFAULT FALSE        -- production: DELETE rows; debug: retain with processed_at stamped
 ) RETURNS VOID AS $$
 DECLARE
   v_now TIMESTAMPTZ := NOW();
@@ -782,13 +787,13 @@ BEGIN
     PERFORM __SCHEMA__.process_perspective_event_completions(
       COALESCE(v_completions, '[]'::JSONB),
       v_now,
-      FALSE  -- debug_mode off → DELETE rows
+      p_debug_mode  -- production: DELETE; debug: stamp processed_at and retain
     );
   END IF;
 
   -- Advance cursors for the (StreamId, PerspectiveName) pairs in p_cursors.
   IF p_cursors IS NOT NULL AND jsonb_array_length(p_cursors) > 0 THEN
-    PERFORM __SCHEMA__.update_perspective_cursors(p_cursors, FALSE);
+    PERFORM __SCHEMA__.update_perspective_cursors(p_cursors, p_debug_mode);
   END IF;
 
   -- NOTIFY for downstream wakeups (e.g., perspective-sync awaiters watching for cursor advancement).
@@ -800,7 +805,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.complete_perspective IS
-'Batched perspective completion. Marks event-work rows complete (DELETEs them in production mode) and advances cursors in a single round-trip. Coalesced flush from C# PerspectiveCompletionFlushWorker. Emits pg_notify(''wh_work'', ''perspective'') so peers know cursors moved.';
+'Batched perspective completion. Production (p_debug_mode=FALSE, default): DELETEs event-work rows and advances cursors. Debug (p_debug_mode=TRUE): retains rows with processed_at stamped (eligible_perspective_events filters processed_at IS NULL → row treated as deleted by claim_work). Single round-trip. Coalesced flush from C# PerspectiveCompletionFlushWorker. Emits pg_notify(''wh_work'', ''perspective'') so peers know cursors moved.';
 
 
 -- ============================================================================
