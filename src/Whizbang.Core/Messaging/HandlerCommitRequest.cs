@@ -16,6 +16,9 @@ namespace Whizbang.Core.Messaging;
 /// <param name="InboxCompletion">The inbox row this handler is acknowledging. Required.</param>
 /// <param name="NewOutboxMessages">Outbox messages emitted by the handler. May be empty.</param>
 /// <param name="NewInboxMessages">Inbox messages emitted by the handler (rare). May be empty.</param>
+/// <param name="DebugMode">From IWorkCoordinatorStrategy.DebugMode at the call site. When true,
+/// process_inbox_completions retains the row with processed_at stamped instead of DELETEing it
+/// (production semantic). Serialized into the commit_handler_result JSONB request as <c>debug_mode</c>.</param>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
 public sealed record HandlerCommitRequest(
   Guid HandlerId,
@@ -26,7 +29,8 @@ public sealed record HandlerCommitRequest(
   int PartitionCount,
   HandlerInboxCompletion InboxCompletion,
   IReadOnlyList<OutboxMessage>? NewOutboxMessages = null,
-  IReadOnlyList<InboxMessage>? NewInboxMessages = null);
+  IReadOnlyList<InboxMessage>? NewInboxMessages = null,
+  bool DebugMode = false);
 
 /// <summary>The inbox row being acknowledged by a handler.</summary>
 /// <param name="MessageId">The wh_inbox.message_id row to mark.</param>

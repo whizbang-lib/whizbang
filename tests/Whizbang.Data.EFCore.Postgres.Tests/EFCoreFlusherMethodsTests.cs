@@ -21,7 +21,7 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
     new(ctx, JsonContextRegistry.CreateCombinedOptions());
 
   [Test]
-  public async Task CompleteOutboxPublishedAsync_MarksProvidedIdsProcessedAsync() {
+  public async Task CompleteOutboxPublishedAsync_DeletesRowsInProductionModeAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = Coord(dbContext);
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -41,22 +41,22 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    var updated = await coordinator.CompleteOutboxPublishedAsync(ids);
+    var affected = await coordinator.CompleteOutboxPublishedAsync(ids, debugMode: false);
 
-    await Assert.That(updated).IsEqualTo(2);
+    await Assert.That(affected).IsEqualTo(2);
 
     await using var verify = conn.CreateCommand();
-    verify.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
+    verify.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_id = ANY(@ids)";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids });
-    var count = (long)(await verify.ExecuteScalarAsync())!;
-    await Assert.That(count).IsEqualTo(2L);
+    var remaining = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(remaining).IsEqualTo(0L);
   }
 
   [Test]
   public async Task CompleteOutboxPublishedAsync_EmptyList_ReturnsZeroAndNoSqlAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = Coord(dbContext);
-    var updated = await coordinator.CompleteOutboxPublishedAsync(Array.Empty<Guid>());
+    var updated = await coordinator.CompleteOutboxPublishedAsync(Array.Empty<Guid>(), debugMode: false);
     await Assert.That(updated).IsEqualTo(0);
   }
 
@@ -83,7 +83,8 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
 
     await coordinator.CompletePerspectiveAsync(
       cursors: Array.Empty<PerspectiveCursorCompletion>(),
-      eventWorkIds: new[] { workId });
+      eventWorkIds: new[] { workId },
+      debugMode: false);
 
     await using var verify = conn.CreateCommand();
     verify.CommandText = "SELECT count(*) FROM wh_perspective_events WHERE event_work_id = @work";

@@ -107,6 +107,7 @@ public class InboxDispatchWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1234 }),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
@@ -144,6 +145,7 @@ public class InboxDispatchWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
@@ -176,6 +178,7 @@ public class InboxDispatchWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { Enabled = false }),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
@@ -205,6 +208,7 @@ public class InboxDispatchWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
@@ -238,6 +242,7 @@ public class InboxDispatchWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance);
 
     using var cts = new CancellationTokenSource();

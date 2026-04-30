@@ -17,6 +17,7 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly PerspectiveCompletionFlushWorkerOptions _options;
+  private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<PerspectiveCompletionFlushWorker> _logger;
   private readonly BatchFlusher<PerspectiveCompletionItem> _flusher;
 
@@ -25,10 +26,12 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,
     IOptions<PerspectiveCompletionFlushWorkerOptions> options,
+    IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<PerspectiveCompletionFlushWorker> logger) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _flusher = new BatchFlusher<PerspectiveCompletionItem>(_flushBatchAsync, _options.Flusher, _logger);
   }
@@ -60,7 +63,7 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     var cursors = batch.Where(i => i.Cursor is not null).Select(i => i.Cursor!).ToArray();
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    await coordinator.CompletePerspectiveAsync(cursors, workIds, ct);
+    await coordinator.CompletePerspectiveAsync(cursors, workIds, _coordinatorOptions.DebugMode, ct);
   }
 
   /// <inheritdoc />

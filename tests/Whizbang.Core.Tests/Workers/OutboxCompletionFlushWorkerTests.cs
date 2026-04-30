@@ -53,6 +53,7 @@ public class OutboxCompletionFlushWorkerTests {
           ChannelCapacity = 1_000
         }
       }),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<OutboxCompletionFlushWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
@@ -91,6 +92,7 @@ public class OutboxCompletionFlushWorkerTests {
           ChannelCapacity = 1_000
         }
       }),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<OutboxCompletionFlushWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
@@ -131,6 +133,7 @@ public class OutboxCompletionFlushWorkerTests {
           ChannelCapacity = 1_000
         }
       }),
+      Options.Create(new WorkCoordinatorOptions()),
       NullLogger<OutboxCompletionFlushWorker>.Instance);
 
     using var cts = new CancellationTokenSource();
