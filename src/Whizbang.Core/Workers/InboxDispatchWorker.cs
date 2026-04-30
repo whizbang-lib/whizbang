@@ -47,6 +47,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IFailureChannel _failureChannel;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxDispatchWorkerOptions _options;
+  private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<InboxDispatchWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
 
@@ -59,6 +60,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IFailureChannel failureChannel,
     ISchemaReadyGate schemaReadyGate,
     IOptions<InboxDispatchWorkerOptions> options,
+    IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<InboxDispatchWorker> logger,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -68,6 +70,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   }
@@ -166,7 +169,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       PartitionCount: _options.PartitionCount,
       InboxCompletion: new HandlerInboxCompletion(work.MessageId, status),
       NewOutboxMessages: null,
-      NewInboxMessages: null);
+      NewInboxMessages: null,
+      DebugMode: _coordinatorOptions.DebugMode);
 
   // ============================================================
   // Lifecycle invocation (ported from legacy

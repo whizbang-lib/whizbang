@@ -17,6 +17,7 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly OutboxCompletionFlushWorkerOptions _options;
+  private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly ILogger<OutboxCompletionFlushWorker> _logger;
   private readonly BatchFlusher<Guid> _flusher;
 
@@ -25,10 +26,12 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,
     IOptions<OutboxCompletionFlushWorkerOptions> options,
+    IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<OutboxCompletionFlushWorker> logger) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger);
   }
@@ -61,7 +64,7 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
 
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    await coordinator.CompleteOutboxPublishedAsync(ids, ct);
+    await coordinator.CompleteOutboxPublishedAsync(ids, _coordinatorOptions.DebugMode, ct);
   }
 
   /// <inheritdoc />

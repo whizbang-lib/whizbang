@@ -259,7 +259,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <inheritdoc />
   public async Task<int> CompleteOutboxPublishedAsync(
-    IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default) {
+    IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
       return 0;
@@ -272,19 +272,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "complete_outbox_published");
 
-#pragma warning disable S2077
-    var sql = $"SELECT {functionName}({{0}})";
-#pragma warning restore S2077
-
     var idArray = ids is Guid[] arr ? arr : [.. ids];
     var conn = _dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync(cancellationToken);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {functionName}(@p_ids)";
-    var p = new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray };
-    cmd.Parameters.Add(p);
+    cmd.CommandText = $"SELECT {functionName}(@p_ids, @p_debug_mode)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
+    cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }
@@ -293,6 +289,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task CompletePerspectiveAsync(
     IReadOnlyList<PerspectiveCursorCompletion> cursors,
     IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(cursors);
     ArgumentNullException.ThrowIfNull(eventWorkIds);
@@ -315,9 +312,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await conn.OpenAsync(cancellationToken);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {functionName}(@p_cursors::jsonb, @p_ids)";
+    cmd.CommandText = $"SELECT {functionName}(@p_cursors::jsonb, @p_ids, @p_debug_mode)";
     cmd.Parameters.Add(new NpgsqlParameter("p_cursors", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = cursorsJson });
     cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
+    cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
   }
 
@@ -590,7 +588,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   private string _buildHandlerCommitPayload(HandlerCommitRequest request) {
     // Build JSONB that commit_handler_result expects:
-    //   { instance_id, service_name, host_name, process_id, partition_count,
+    //   { instance_id, service_name, host_name, process_id, partition_count, debug_mode,
     //     handler_id, inbox_completion: {MessageId, Status},
     //     new_outbox_messages: [...], new_inbox_messages: [...] }
     var sb = new System.Text.StringBuilder("{");
@@ -600,6 +598,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
+    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? "true" : "false");
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -1346,6 +1345,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <docs>fundamentals/perspectives/drain-mode</docs>
   public async Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) {
     if (workItemIds.Length == 0) {
       return 0;
@@ -1364,13 +1364,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT {functionName}(@p_event_work_ids)";
+    cmd.CommandText = $"SELECT {functionName}(@p_event_work_ids, @p_debug_mode)";
 #pragma warning restore S2077
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_event_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = workItemIds
     });
 #pragma warning restore RCS1130
+    cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return result is int count ? count : 0;

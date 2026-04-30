@@ -261,6 +261,23 @@ public interface IWorkCoordinator {
   /// <returns>Number of rows actually updated.</returns>
   /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
   Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default)
+    => CompleteOutboxPublishedAsync(ids, debugMode: false, cancellationToken);
+
+  /// <summary>
+  /// Marks outbox rows complete after successful transport publish.
+  /// Production (<paramref name="debugMode"/>=false): DELETEs the rows so claim_work cannot re-issue them.
+  /// Debug (<paramref name="debugMode"/>=true): retains rows with <c>published_at</c> + <c>processed_at</c>
+  /// stamped — eligible_outbox filters <c>published_at IS NULL</c> so claim_work treats them as deleted.
+  /// </summary>
+  /// <param name="ids">Outbox message ids whose transport publish succeeded.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually affected.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement CompleteOutboxPublishedAsync.");
 
@@ -276,6 +293,23 @@ public interface IWorkCoordinator {
   Task CompletePerspectiveAsync(
     IReadOnlyList<PerspectiveCursorCompletion> cursors,
     IReadOnlyList<Guid> eventWorkIds,
+    CancellationToken cancellationToken = default)
+    => CompletePerspectiveAsync(cursors, eventWorkIds, debugMode: false, cancellationToken);
+
+  /// <summary>
+  /// Same as the simpler <see cref="CompletePerspectiveAsync(IReadOnlyList{PerspectiveCursorCompletion}, IReadOnlyList{Guid}, CancellationToken)"/>
+  /// but propagates <paramref name="debugMode"/> to SQL. Production: DELETEs perspective_event rows.
+  /// Debug: retains rows with <c>processed_at</c> stamped.
+  /// </summary>
+  /// <param name="cursors">Cursor advancement specs.</param>
+  /// <param name="eventWorkIds">Event-work ids to mark processed.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement CompletePerspectiveAsync.");
@@ -587,6 +621,20 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/perspectives/drain-mode</docs>
   Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
+    CancellationToken cancellationToken = default) => CompletePerspectiveEventsAsync(workItemIds, debugMode: false, cancellationToken);
+
+  /// <summary>
+  /// Same as the simpler <see cref="CompletePerspectiveEventsAsync(Guid[], CancellationToken)"/>
+  /// overload but propagates <paramref name="debugMode"/> to the SQL. Production: DELETEs the rows.
+  /// Debug: retains rows with <c>processed_at</c> stamped.
+  /// </summary>
+  /// <param name="workItemIds">Array of event_work_id values to complete.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows affected.</returns>
+  Task<int> CompletePerspectiveEventsAsync(
+    Guid[] workItemIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
 
   /// <summary>

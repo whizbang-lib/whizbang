@@ -309,13 +309,14 @@ public partial class DapperWorkCoordinator(
   /// </summary>
   public async Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
     return await connection.QuerySingleAsync<int>(
-      "SELECT complete_perspective_events(@p_event_work_ids)",
-      new { p_event_work_ids = workItemIds });
+      "SELECT complete_perspective_events(@p_event_work_ids, @p_debug_mode)",
+      new { p_event_work_ids = workItemIds, p_debug_mode = debugMode });
   }
 
   /// <summary>
@@ -578,7 +579,7 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default) {
+  public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
       return 0;
@@ -588,13 +589,14 @@ public partial class DapperWorkCoordinator(
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
     return await connection.ExecuteScalarAsync<int>(
-      "SELECT complete_outbox_published(@Ids)", new { Ids = idArray });
+      "SELECT complete_outbox_published(@Ids, @DebugMode)", new { Ids = idArray, DebugMode = debugMode });
   }
 
   /// <inheritdoc />
   public async Task CompletePerspectiveAsync(
     IReadOnlyList<PerspectiveCursorCompletion> cursors,
     IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(cursors);
     ArgumentNullException.ThrowIfNull(eventWorkIds);
@@ -607,8 +609,8 @@ public partial class DapperWorkCoordinator(
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
     await connection.ExecuteAsync(
-      "SELECT complete_perspective(@Cursors::jsonb, @Ids)",
-      new { Cursors = cursorsJson, Ids = idArray });
+      "SELECT complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
+      new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode });
   }
 
   /// <inheritdoc />
@@ -776,6 +778,7 @@ public partial class DapperWorkCoordinator(
     sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
+    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? "true" : "false");
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
