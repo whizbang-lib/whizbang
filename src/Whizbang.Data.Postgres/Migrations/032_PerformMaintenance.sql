@@ -18,42 +18,63 @@ DECLARE
   v_rows BIGINT;
   v_dedup_retention_days INTEGER;
   v_stuck_inbox_retention_days INTEGER;
+  v_debug_mode BOOLEAN;
 BEGIN
+  -- Read debug_mode flag once for the cycle. When true, the complete_* functions
+  -- retain rows for forensics with processed_at stamped — this maintenance pass
+  -- MUST skip purging those rows or the debug-mode design breaks.
+  SELECT COALESCE(
+    (SELECT setting_value::BOOLEAN FROM wh_settings WHERE setting_key = 'debug_mode'),
+    FALSE
+  ) INTO v_debug_mode;
+
   -- ========================================
   -- Task 1: Purge completed outbox messages
   -- ========================================
   v_start := clock_timestamp();
-  DELETE FROM wh_outbox WHERE processed_at IS NOT NULL;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    DELETE FROM wh_outbox WHERE processed_at IS NOT NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
   RETURN QUERY SELECT
     'purge_completed_outbox'::TEXT,
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
-    'ok'::TEXT;
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
 
   -- ========================================
   -- Task 2: Purge completed inbox messages
   -- ========================================
   v_start := clock_timestamp();
-  DELETE FROM wh_inbox WHERE processed_at IS NOT NULL;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    DELETE FROM wh_inbox WHERE processed_at IS NOT NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
   RETURN QUERY SELECT
     'purge_completed_inbox'::TEXT,
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
-    'ok'::TEXT;
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
 
   -- ========================================
   -- Task 3: Purge completed perspective events
   -- ========================================
   v_start := clock_timestamp();
-  DELETE FROM wh_perspective_events WHERE processed_at IS NOT NULL;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    DELETE FROM wh_perspective_events WHERE processed_at IS NOT NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
   RETURN QUERY SELECT
     'purge_completed_perspective_events'::TEXT,
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
-    'ok'::TEXT;
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
 
   -- ========================================
   -- Task 4: Purge old deduplication entries
@@ -129,6 +150,14 @@ ON CONFLICT (setting_key) DO NOTHING;
 
 INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
 VALUES ('stuck_inbox_retention_days', '7', 'integer', 'Days to retain inbox messages that were never processed')
+ON CONFLICT (setting_key) DO NOTHING;
+
+-- Debug-mode flag mirrors IWorkCoordinatorStrategy.DebugMode in C#. When true, the
+-- complete_* functions retain rows for forensics with processed_at stamped, and
+-- perform_maintenance skips its purge tasks so those rows survive maintenance cycles.
+-- Default false: production ephemeral semantics.
+INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('debug_mode', 'false', 'boolean', 'When true, complete_* functions retain rows and perform_maintenance skips purge of completed messages.')
 ON CONFLICT (setting_key) DO NOTHING;
 
 COMMENT ON FUNCTION __SCHEMA__.perform_maintenance IS
