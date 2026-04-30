@@ -654,6 +654,37 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
 
   /// <summary>
+  /// Per-stream-id payload fetch for the OutboxDrainWorker. Given stream_ids that
+  /// <see cref="ClaimWorkAsync"/> emitted as <see cref="WorkBatch.OutboxStreamIds"/>, returns the
+  /// actual leased outbox rows for those streams in stream-FIFO order. Caps at
+  /// <paramref name="maxPerStream"/> rows per stream so one busy stream cannot monopolize a fetch.
+  /// </summary>
+  /// <param name="streamIds">Stream ids to fetch leased outbox rows for.</param>
+  /// <param name="instanceId">Calling instance — only its leased rows are returned.</param>
+  /// <param name="maxPerStream">Per-stream cap. Default 100.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Leased outbox rows in (stream_id, created_at, message_id) order.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<OutboxBatchRow>>(Array.Empty<OutboxBatchRow>());
+
+  /// <summary>
+  /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
+  /// <see cref="FetchOutboxBatchAsync"/> for <c>wh_inbox</c>, ordered by received_at within each stream.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<InboxBatchRow>>(Array.Empty<InboxBatchRow>());
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
   /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
   /// </summary>
@@ -1353,5 +1384,67 @@ public record PerspectiveEventCompletion {
   /// Status flags to set on the event (e.g., Completed = 2).
   /// </summary>
   public int StatusFlags { get; init; } = (int)PerspectiveProcessingStatus.Completed;
+}
+
+/// <summary>
+/// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
+/// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before publishing.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record OutboxBatchRow {
+  /// <summary>Outbox message id (wh_outbox.message_id).</summary>
+  public required Guid MessageId { get; init; }
+  /// <summary>Stream id this message belongs to (may be null for unbound messages).</summary>
+  public Guid? StreamId { get; init; }
+  /// <summary>Transport destination (topic). Null for event-store-only messages.</summary>
+  public string? Destination { get; init; }
+  /// <summary>Assembly-qualified message payload type.</summary>
+  public required string MessageType { get; init; }
+  /// <summary>Assembly-qualified envelope type.</summary>
+  public string? EnvelopeType { get; init; }
+  /// <summary>Serialized envelope JSON (event_data column).</summary>
+  public required string EventData { get; init; }
+  /// <summary>Hop metadata JSON.</summary>
+  public required string Metadata { get; init; }
+  /// <summary>Scope JSON (may be null).</summary>
+  public string? Scope { get; init; }
+  /// <summary>Status bit flags.</summary>
+  public int Status { get; init; }
+  /// <summary>Number of previous publish attempts.</summary>
+  public int Attempts { get; init; }
+  /// <summary>Computed partition for this stream.</summary>
+  public int? PartitionNumber { get; init; }
+  /// <summary>True if this outbox message is also written to the event store.</summary>
+  public bool IsEvent { get; init; }
+}
+
+/// <summary>
+/// One leased inbox row returned from <see cref="IWorkCoordinator.FetchInboxBatchAsync"/>.
+/// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before dispatching to its handler.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record InboxBatchRow {
+  /// <summary>Inbox message id (wh_inbox.message_id).</summary>
+  public required Guid MessageId { get; init; }
+  /// <summary>Stream id this message belongs to (may be null).</summary>
+  public Guid? StreamId { get; init; }
+  /// <summary>Handler name (e.g., the receptor type's full name).</summary>
+  public required string HandlerName { get; init; }
+  /// <summary>Assembly-qualified message payload type.</summary>
+  public required string MessageType { get; init; }
+  /// <summary>Serialized envelope JSON (event_data column).</summary>
+  public required string EventData { get; init; }
+  /// <summary>Hop metadata JSON.</summary>
+  public required string Metadata { get; init; }
+  /// <summary>Scope JSON (may be null).</summary>
+  public string? Scope { get; init; }
+  /// <summary>Status bit flags.</summary>
+  public int Status { get; init; }
+  /// <summary>Number of previous handler attempts.</summary>
+  public int Attempts { get; init; }
+  /// <summary>Computed partition for this stream.</summary>
+  public int? PartitionNumber { get; init; }
+  /// <summary>True if this inbox message is also written to the event store.</summary>
+  public bool IsEvent { get; init; }
 }
 
