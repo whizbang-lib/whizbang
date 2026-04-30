@@ -1,0 +1,212 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+
+namespace Whizbang.Core.Workers;
+
+/// <summary>
+/// Per-stream-id outbox drainer. Reads a stream_id from <see cref="IOutboxDrainChannel"/>,
+/// calls <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/> to pull all leased messages for
+/// that stream, publishes each in stream-FIFO order via <see cref="IMessagePublishStrategy"/>,
+/// and enqueues completion (or failure) via the per-category channels.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Restores the archive-specified poller-vs-drainer split. The poller (<c>ClaimWorker</c>)
+/// emits stream_ids only — small payload, cheap empty polls. This drainer fetches the actual
+/// message bodies on demand and enforces per-stream FIFO automatically via channel-reader
+/// semantics (one drainer task per stream_id at a time).
+/// </para>
+/// <para>
+/// Replaces the body-on-poller path of <c>OutboxPublishWorker</c>. Lifecycle hooks
+/// (PreOutboxDetached/Inline, PostOutboxDetached/Inline) and security context propagation are
+/// deferred to a follow-up commit; this MVP focuses on the publish-and-complete core.
+/// </para>
+/// </remarks>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed partial class OutboxDrainWorker : BackgroundService {
+  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly IServiceInstanceProvider _instanceProvider;
+  private readonly IOutboxDrainChannel _drainChannel;
+  private readonly IOutboxCompletionChannel _completionChannel;
+  private readonly IFailureChannel _failureChannel;
+  private readonly ISchemaReadyGate _schemaReadyGate;
+  private readonly IMessagePublishStrategy? _publishStrategy;
+  private readonly OutboxDrainWorkerOptions _options;
+  private readonly JsonSerializerOptions _jsonOptions;
+  private readonly ILogger<OutboxDrainWorker> _logger;
+
+  /// <summary>Constructor.</summary>
+  public OutboxDrainWorker(
+    IServiceScopeFactory scopeFactory,
+    IServiceInstanceProvider instanceProvider,
+    IOutboxDrainChannel drainChannel,
+    IOutboxCompletionChannel completionChannel,
+    IFailureChannel failureChannel,
+    ISchemaReadyGate schemaReadyGate,
+    IOptions<OutboxDrainWorkerOptions> options,
+    JsonSerializerOptions jsonOptions,
+    ILogger<OutboxDrainWorker> logger,
+    IMessagePublishStrategy? publishStrategy = null) {
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+    _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
+    _completionChannel = completionChannel ?? throw new ArgumentNullException(nameof(completionChannel));
+    _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
+    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _publishStrategy = publishStrategy;
+  }
+
+  /// <inheritdoc />
+  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    LogStarted(_logger, _options.MaxPerStream);
+
+    if (!_options.Enabled || _publishStrategy is null) {
+      if (_publishStrategy is null) { LogNoTransportRegistered(_logger); }
+      LogDisabled(_logger);
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      LogStopped(_logger);
+      return;
+    }
+
+    try {
+      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
+    } catch (OperationCanceledException) {
+      return;
+    }
+
+    try {
+      await foreach (var streamId in _drainChannel.Reader.ReadAllAsync(stoppingToken)) {
+        try {
+          await _drainStreamAsync(streamId, stoppingToken);
+        } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          LogDrainError(_logger, streamId, ex);
+        }
+      }
+    } catch (OperationCanceledException) {
+      // expected on shutdown
+    }
+
+    LogStopped(_logger);
+  }
+
+  private async Task _drainStreamAsync(Guid streamId, CancellationToken ct) {
+    using var scope = _scopeFactory.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+    var rows = await coordinator.FetchOutboxBatchAsync(
+      [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+
+    if (rows.Count == 0) {
+      return;
+    }
+
+    foreach (var row in rows) {
+      OutboxWork work;
+      try {
+        work = _toOutboxWork(row);
+      } catch (Exception ex) {
+        LogDeserializeFailed(_logger, row.MessageId, ex);
+        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+          MessageId = row.MessageId,
+          CompletedStatus = (MessageProcessingStatus)row.Status,
+          Error = ex.Message,
+          Reason = MessageFailureReason.Unknown,
+        }, ct);
+        continue;
+      }
+
+      MessagePublishResult result;
+      try {
+        result = await _publishStrategy!.PublishAsync(work, ct);
+      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+        throw;
+      } catch (Exception ex) {
+        LogPublishFailed(_logger, row.MessageId, ex);
+        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+          MessageId = row.MessageId,
+          CompletedStatus = (MessageProcessingStatus)row.Status,
+          Error = ex.Message,
+          Reason = MessageFailureReason.Unknown,
+        }, ct);
+        continue;
+      }
+
+      if (result.Success) {
+        await _completionChannel.EnqueueAsync(row.MessageId, ct);
+      } else {
+        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+          MessageId = row.MessageId,
+          CompletedStatus = result.CompletedStatus,
+          Error = result.Error ?? "publish failed",
+          Reason = result.Reason,
+        }, ct);
+      }
+    }
+  }
+
+  private OutboxWork _toOutboxWork(OutboxBatchRow row) {
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
+    var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope for message {row.MessageId}.");
+
+    return new OutboxWork {
+      MessageId = row.MessageId,
+      Destination = row.Destination,
+      Envelope = envelope,
+      EnvelopeType = row.EnvelopeType ?? string.Empty,
+      MessageType = row.MessageType,
+      StreamId = row.StreamId,
+      PartitionNumber = row.PartitionNumber,
+      Attempts = row.Attempts,
+      Status = (MessageProcessingStatus)row.Status,
+      Flags = WorkBatchOptions.None,
+    };
+  }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Information,
+    Message = "OutboxDrainWorker started: maxPerStream={MaxPerStream}")]
+  static partial void LogStarted(ILogger logger, int maxPerStream);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "OutboxDrainWorker stopped")]
+  static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "OutboxDrainWorker disabled — idle")]
+  static partial void LogDisabled(ILogger logger);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: no IMessagePublishStrategy registered — drainer disabled")]
+  static partial void LogNoTransportRegistered(ILogger logger);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Error,
+    Message = "OutboxDrainWorker: drain failed for stream {StreamId}")]
+  static partial void LogDrainError(ILogger logger, Guid streamId, Exception ex);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Error,
+    Message = "OutboxDrainWorker: failed to deserialize envelope for {MessageId}")]
+  static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Error,
+    Message = "OutboxDrainWorker: publish threw for {MessageId}")]
+  static partial void LogPublishFailed(ILogger logger, Guid messageId, Exception ex);
+}
+
+/// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed class OutboxDrainWorkerOptions {
+  /// <summary>Killswitch — set to <c>false</c> to disable the drainer entirely.</summary>
+  public bool Enabled { get; set; } = true;
+
+  /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
+  public int MaxPerStream { get; set; } = 100;
+}
