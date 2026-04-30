@@ -347,6 +347,106 @@ public partial class DapperWorkCoordinator(
     })];
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      return Array.Empty<OutboxBatchRow>();
+    }
+
+    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<OutboxBatchRowDto>(
+      "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+
+    return [.. rows.Select(r => new OutboxBatchRow {
+      MessageId = r.message_id,
+      StreamId = r.stream_id,
+      Destination = r.destination,
+      MessageType = r.message_type,
+      EnvelopeType = r.envelope_type,
+      EventData = r.event_data,
+      Metadata = r.metadata,
+      Scope = r.scope,
+      Status = r.status,
+      Attempts = r.attempts,
+      PartitionNumber = r.partition_number,
+      IsEvent = r.is_event
+    })];
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      return Array.Empty<InboxBatchRow>();
+    }
+
+    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<InboxBatchRowDto>(
+      "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+
+    return [.. rows.Select(r => new InboxBatchRow {
+      MessageId = r.message_id,
+      StreamId = r.stream_id,
+      HandlerName = r.handler_name,
+      MessageType = r.message_type,
+      EventData = r.event_data,
+      Metadata = r.metadata,
+      Scope = r.scope,
+      Status = r.status,
+      Attempts = r.attempts,
+      PartitionNumber = r.partition_number,
+      IsEvent = r.is_event
+    })];
+  }
+
+#pragma warning disable CA1707, IDE1006, S1144 // Dapper DTO with snake_case to match SQL function output columns.
+  private sealed class OutboxBatchRowDto {
+    public Guid message_id { get; set; }
+    public Guid? stream_id { get; set; }
+    public string? destination { get; set; }
+    public string message_type { get; set; } = string.Empty;
+    public string? envelope_type { get; set; }
+    public string event_data { get; set; } = string.Empty;
+    public string metadata { get; set; } = string.Empty;
+    public string? scope { get; set; }
+    public int status { get; set; }
+    public int attempts { get; set; }
+    public int? partition_number { get; set; }
+    public bool is_event { get; set; }
+  }
+
+  private sealed class InboxBatchRowDto {
+    public Guid message_id { get; set; }
+    public Guid? stream_id { get; set; }
+    public string handler_name { get; set; } = string.Empty;
+    public string message_type { get; set; } = string.Empty;
+    public string event_data { get; set; } = string.Empty;
+    public string metadata { get; set; } = string.Empty;
+    public string? scope { get; set; }
+    public int status { get; set; }
+    public int attempts { get; set; }
+    public int? partition_number { get; set; }
+    public bool is_event { get; set; }
+  }
+#pragma warning restore CA1707, IDE1006, S1144
+
   /// <summary>
   /// Gets the current checkpoint for a perspective stream.
   /// Returns null if no checkpoint exists yet.
