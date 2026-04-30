@@ -102,6 +102,7 @@ BEGIN
       WHERE o.instance_id = p_instance_id
         AND o.lease_expiry > v_now
         AND o.processed_at IS NULL
+        AND o.published_at IS NULL  -- skip debug-mode forensic rows (production never sets this — row is deleted)
         AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now)
     ),
     ordered_outbox AS (
@@ -687,28 +688,43 @@ COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch IS
 SELECT __SCHEMA__.drop_all_overloads('complete_outbox_published');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_outbox_published(
-  p_ids UUID[]
+  p_ids UUID[],
+  p_debug_mode BOOLEAN DEFAULT FALSE
 ) RETURNS INTEGER AS $$
 DECLARE
-  v_updated INTEGER;
+  v_affected INTEGER;
 BEGIN
   IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
     RETURN 0;
   END IF;
 
-  UPDATE __SCHEMA__.wh_outbox
-  SET processed_at = NOW(),
-      status = status | 4  -- Published flag (additive bit set)
-  WHERE message_id = ANY(p_ids)
-    AND processed_at IS NULL;
+  IF p_debug_mode THEN
+    -- Debug mode: retain the row for forensics; stamp published_at + processed_at
+    -- and set the Published bit. eligible_outbox filters published_at IS NULL so
+    -- claim_work treats the row as if deleted on subsequent polls.
+    UPDATE __SCHEMA__.wh_outbox
+    SET processed_at = NOW(),
+        published_at = NOW(),
+        status = status | 4,         -- Published flag
+        instance_id = NULL,
+        lease_expiry = NULL
+    WHERE message_id = ANY(p_ids)
+      AND processed_at IS NULL;
+  ELSE
+    -- Production mode: row exits the table on success — structurally immune to
+    -- claim_work re-issuing it on the next poll cycle.
+    DELETE FROM __SCHEMA__.wh_outbox
+    WHERE message_id = ANY(p_ids)
+      AND processed_at IS NULL;
+  END IF;
 
-  GET DIAGNOSTICS v_updated = ROW_COUNT;
-  RETURN v_updated;
+  GET DIAGNOSTICS v_affected = ROW_COUNT;
+  RETURN v_affected;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.complete_outbox_published IS
-'Marks outbox rows as processed after successful transport publish. Fire-and-forget; unknown ids silently ignored (idempotent). Coalesced + batched by the C# OutboxCompletionFlushWorker. Returns rows-affected for ack tracking.';
+'Completes outbox rows after successful transport publish. Production (p_debug_mode=FALSE, default): DELETEs the row — structurally immune to claim_work re-issuing it. Debug mode (p_debug_mode=TRUE): retains the row, stamps published_at + processed_at + Published bit; eligible_outbox filters published_at IS NULL so claim_work skips it. Coalesced + batched by C# OutboxCompletionFlushWorker. Idempotent — unknown ids silently no-op. Returns rows-affected (deletions in prod, updates in debug).';
 
 
 -- ============================================================================
