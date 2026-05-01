@@ -101,6 +101,15 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   }
 
   private async Task _drainStreamAsync(Guid streamId, CancellationToken ct) {
+    _drainChannel.MarkDraining(streamId);
+    try {
+      await _drainStreamInnerAsync(streamId, ct);
+    } finally {
+      _drainChannel.MarkDrained(streamId);
+    }
+  }
+
+  private async Task _drainStreamInnerAsync(Guid streamId, CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
