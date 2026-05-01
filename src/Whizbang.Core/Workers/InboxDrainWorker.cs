@@ -167,13 +167,12 @@ public sealed class InboxDrainWorkerOptions {
   /// <summary>
   /// Killswitch.
   /// <para>
-  /// <strong>Default: <c>false</c></strong>. The legacy ClaimWorker still populates
-  /// <see cref="IInboxChannelWriter"/> directly from <c>WorkBatch.InboxWork</c>; enabling this
-  /// drainer while inbox bodies are still in <c>claim_work</c>'s projection would dispatch
-  /// every inbox row twice. Step 5d flips this default and drops the inbox projection.
+  /// <strong>Default: <c>true</c></strong> as of Phase H step 5d-flip. <c>claim_work</c>
+  /// projects stream_ids only for inbox; this drainer is the only source of <see cref="InboxWork"/>
+  /// for <c>InboxDispatchWorker</c>. Disabling it stops inbox dispatch entirely.
   /// </para>
   /// </summary>
-  public bool Enabled { get; set; }
+  public bool Enabled { get; set; } = true;
 
   /// <summary>Cap on how many leased inbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;

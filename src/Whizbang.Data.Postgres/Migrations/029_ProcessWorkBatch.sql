@@ -150,20 +150,20 @@ BEGIN
       ORDER BY ei.received_at
       LIMIT p_max_streams
     )
-    -- Inbox body projection retained until InboxDrainWorker ships (Phase H step 5d). The
-    -- legacy InboxDispatchWorker still reads InboxWork off the inbox channel — dropping the
-    -- bodies here would starve it. Once InboxDrainWorker takes over, this projection follows
-    -- the outbox section into stream-ids-only.
+    -- Per-stream-drain projection (Phase H step 5d): inbox follows outbox into stream-ids-only.
+    -- InboxDrainWorker reads stream_ids off IInboxDrainChannel and pulls payloads on demand
+    -- via fetch_inbox_batch. Body columns are NULL — keeps claim_work's bytes-on-the-wire
+    -- proportional to active stream count.
     SELECT
       'inbox'::VARCHAR(20)          AS source,
       oi.message_id                 AS work_id,
       oi.stream_id                  AS work_stream_id,
       oi.partition_number,
-      oi.handler_name::VARCHAR(200) AS destination,
-      oi.message_type::VARCHAR(500),
+      NULL::VARCHAR(200)            AS destination,
+      NULL::VARCHAR(500)            AS message_type,
       NULL::VARCHAR(500)            AS envelope_type,
-      oi.event_data::TEXT           AS message_data,
-      oi.metadata,
+      NULL::TEXT                    AS message_data,
+      NULL::JSONB                   AS metadata,
       oi.status,
       oi.attempts,
       false                         AS is_newly_stored,
