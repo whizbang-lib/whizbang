@@ -166,7 +166,7 @@ public class OutboxDrainWorkerTests {
     var worker = new OutboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { MaxPerStream = 100 }),
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       NullLogger<OutboxDrainWorker>.Instance,
       publish);
@@ -222,7 +222,7 @@ public class OutboxDrainWorkerTests {
     var worker = new OutboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { MaxPerStream = 100 }),
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       NullLogger<OutboxDrainWorker>.Instance,
       publish);
