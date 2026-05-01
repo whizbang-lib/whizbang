@@ -45,6 +45,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
+    services.TryAddSingleton<InboxDrainWorker>();
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
@@ -59,6 +60,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<InboxDrainWorker>());
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
@@ -101,6 +103,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxDispatchWorkerOptions>();
     services.AddOptions<MaintenanceWorkerOptions>();
     services.AddOptions<OutboxDrainWorkerOptions>();
+    services.AddOptions<InboxDrainWorkerOptions>();
 
     return services;
   }
