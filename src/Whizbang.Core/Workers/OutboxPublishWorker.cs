@@ -439,10 +439,20 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed class OutboxPublishWorkerOptions {
   /// <summary>
-  /// Killswitch. Set to <c>false</c> to disable the publish loop entirely; the worker stays
-  /// registered but skips its <see cref="OutboxPublishWorker.ExecuteAsync"/> body. Default <c>true</c>.
+  /// Killswitch.
+  /// <para>
+  /// <strong>Default <c>false</c></strong> as of Phase H step 4b — the per-stream-id
+  /// <see cref="OutboxDrainWorker"/> is now the active outbox publish path. This worker stays
+  /// registered for one release as a rollback escape hatch; ops can flip both this and
+  /// <see cref="OutboxDrainWorkerOptions.Enabled"/> to revert to the legacy full-body path.
+  /// </para>
+  /// <para>
+  /// Setting both <see cref="OutboxPublishWorkerOptions.Enabled"/> and
+  /// <see cref="OutboxDrainWorkerOptions.Enabled"/> to <c>true</c> simultaneously will publish
+  /// every outbox row twice — exactly the multi-fire bug the new architecture eliminates. Pick one.
+  /// </para>
   /// </summary>
-  public bool Enabled { get; set; } = true;
+  public bool Enabled { get; set; }
 
   /// <summary>Maximum batch size per bulk-publish call. Default 100.</summary>
   public int MaxBulkPublishBatchSize { get; set; } = 100;

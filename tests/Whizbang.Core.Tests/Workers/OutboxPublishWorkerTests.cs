@@ -150,7 +150,7 @@ public class OutboxPublishWorkerTests {
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions()),
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy);
 
@@ -184,7 +184,7 @@ public class OutboxPublishWorkerTests {
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { MaxBulkPublishBatchSize = 10 }),
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy);
 
@@ -229,7 +229,7 @@ public class OutboxPublishWorkerTests {
       channel, completion, failure, renewal, gate,
       // Short retry delay so we don't sit in the busy-loop guard for the full 100ms default
       // on test shutdown — also lets us shut down quickly after the renewal assertion.
-      Options.Create(new OutboxPublishWorkerOptions { TransportNotReadyRetryDelayMilliseconds = 25 }),
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, TransportNotReadyRetryDelayMilliseconds = 25 }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy);
 
@@ -265,7 +265,7 @@ public class OutboxPublishWorkerTests {
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions()),
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy);
 
@@ -333,7 +333,7 @@ public class OutboxPublishWorkerTests {
     var worker = new OutboxPublishWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions()),
+      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy);
 

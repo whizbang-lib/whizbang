@@ -207,18 +207,12 @@ public sealed class OutboxDrainWorkerOptions {
   /// <summary>
   /// Killswitch.
   /// <para>
-  /// <strong>Default: <c>false</c></strong> during the Phase H step 4 transition. The legacy
-  /// <see cref="OutboxPublishWorker"/> still reads full-body <c>OutboxWork</c> off the work channel
-  /// and publishes; if this drainer were also enabled, it would publish the same rows in parallel
-  /// (each row's stream_id is now also written to the drain channel by <c>ClaimWorker</c>). Step 5
-  /// flips this default and removes <see cref="OutboxPublishWorker"/> from registration.
-  /// </para>
-  /// <para>
-  /// Ops can flip this to <c>true</c> earlier per-environment to roll out the new drainer
-  /// while disabling the legacy worker via <see cref="OutboxPublishWorkerOptions.Enabled"/>.
+  /// <strong>Default: <c>true</c></strong> as of Phase H step 4b — this is the active outbox
+  /// publish path. The legacy <see cref="OutboxPublishWorker"/> defaults to disabled; ops can
+  /// flip both for a rollback if needed but should not enable both at once (double publish).
   /// </para>
   /// </summary>
-  public bool Enabled { get; set; }
+  public bool Enabled { get; set; } = true;
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
