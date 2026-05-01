@@ -209,18 +209,17 @@ public class ClaimWorkerTests {
   }
 
   [Test]
-  public async Task Distribute_OutboxWork_AlsoEmitsDistinctStreamIds_ToOutboxDrainChannelAsync() {
+  public async Task Distribute_OutboxStreamIds_RoutedToOutboxDrainChannelAsync() {
     var streamA = (Guid)TrackedGuid.NewMedo();
     var streamB = (Guid)TrackedGuid.NewMedo();
+    // Coordinator populates OutboxStreamIds on the batch (real EFCoreWorkCoordinator dedups
+    // these from claim_work output). ClaimWorker just forwards to the drain channel.
     var coord = new FakeCoordinator {
       BatchToReturn = new WorkBatch {
-        OutboxWork = [
-          _stubOutboxWork(streamA),
-          _stubOutboxWork(streamA),  // dupe stream — should not emit twice
-          _stubOutboxWork(streamB),
-        ],
+        OutboxWork = [],
         InboxWork = [],
-        PerspectiveWork = []
+        PerspectiveWork = [],
+        OutboxStreamIds = [streamA, streamB]
       }
     };
 
@@ -253,22 +252,4 @@ public class ClaimWorkerTests {
     await Assert.That(drain.Written).Contains(streamB);
   }
 
-  private static OutboxWork _stubOutboxWork(Guid streamId) => new() {
-    MessageId = (Guid)TrackedGuid.NewMedo(),
-    Destination = "topic",
-    Envelope = new Whizbang.Core.Observability.MessageEnvelope<System.Text.Json.JsonElement> {
-      MessageId = Whizbang.Core.ValueObjects.MessageId.From((Guid)TrackedGuid.NewMedo()),
-      Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement,
-      DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
-        Mode = Whizbang.Core.Dispatch.DispatchModes.Local,
-        Source = Whizbang.Core.Messaging.MessageSource.Local,
-      },
-      Hops = [],
-    },
-    EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[System.Text.Json.JsonElement]",
-    MessageType = "TestMessage",
-    StreamId = streamId,
-    Attempts = 0,
-    Status = MessageProcessingStatus.Stored,
-  };
 }
