@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 
 namespace Whizbang.Core.Messaging;
@@ -23,12 +24,22 @@ public interface IInboxDrainChannel {
 
   /// <summary>Synchronous best-effort write; returns false when the channel is closed.</summary>
   bool TryWrite(Guid streamId);
+
+  /// <summary>True if the stream_id is currently being drained. Defense-in-depth filter for ClaimWorker.</summary>
+  bool IsInFlight(Guid streamId) => false;
+
+  /// <summary>Marks a stream_id as currently being drained.</summary>
+  void MarkDraining(Guid streamId) { }
+
+  /// <summary>Clears the in-flight marker after the drain batch completes.</summary>
+  void MarkDrained(Guid streamId) { }
 }
 
 /// <summary>Default unbounded channel implementation.</summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 public sealed class InboxDrainChannel : IInboxDrainChannel {
   private readonly Channel<Guid> _channel;
+  private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
 
   /// <summary>Unbounded channel — drain stream IDs are small and bounded by the active stream set.</summary>
   public InboxDrainChannel() {
@@ -48,4 +59,13 @@ public sealed class InboxDrainChannel : IInboxDrainChannel {
 
   /// <inheritdoc />
   public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
+
+  /// <inheritdoc />
+  public bool IsInFlight(Guid streamId) => _inFlight.ContainsKey(streamId);
+
+  /// <inheritdoc />
+  public void MarkDraining(Guid streamId) => _inFlight[streamId] = 1;
+
+  /// <inheritdoc />
+  public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
 }
