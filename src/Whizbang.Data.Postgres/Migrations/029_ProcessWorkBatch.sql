@@ -111,16 +111,20 @@ BEGIN
       ORDER BY eo.created_at
       LIMIT p_max_streams
     )
+    -- Per-stream-drain projection (Phase H step 5b): claim_work returns stream_ids only for
+    -- outbox. The OutboxDrainWorker consumes WorkBatch.OutboxStreamIds and pulls full payloads
+    -- on demand via fetch_outbox_batch. Body columns are NULL — keeps the bytes-on-the-wire
+    -- proportional to the active stream set, not the leased-row count × payload size.
     SELECT
       'outbox'::VARCHAR(20)         AS source,
       oo.message_id                 AS work_id,
       oo.stream_id                  AS work_stream_id,
       oo.partition_number,
-      oo.destination::VARCHAR(200),
-      oo.message_type::VARCHAR(500),
-      oo.envelope_type::VARCHAR(500),
-      oo.event_data::TEXT           AS message_data,
-      oo.metadata,
+      NULL::VARCHAR(200)            AS destination,
+      NULL::VARCHAR(500)            AS message_type,
+      NULL::VARCHAR(500)            AS envelope_type,
+      NULL::TEXT                    AS message_data,
+      NULL::JSONB                   AS metadata,
       oo.status,
       oo.attempts,
       false                         AS is_newly_stored,
@@ -146,16 +150,19 @@ BEGIN
       ORDER BY ei.received_at
       LIMIT p_max_streams
     )
+    -- Per-stream-drain projection (Phase H step 5b): claim_work returns stream_ids only for
+    -- inbox. The InboxDrainWorker consumes WorkBatch.InboxStreamIds and pulls full payloads
+    -- on demand via fetch_inbox_batch.
     SELECT
       'inbox'::VARCHAR(20)          AS source,
       oi.message_id                 AS work_id,
       oi.stream_id                  AS work_stream_id,
       oi.partition_number,
-      oi.handler_name::VARCHAR(200) AS destination,
-      oi.message_type::VARCHAR(500),
+      NULL::VARCHAR(200)            AS destination,
+      NULL::VARCHAR(500)            AS message_type,
       NULL::VARCHAR(500)            AS envelope_type,
-      oi.event_data::TEXT           AS message_data,
-      oi.metadata,
+      NULL::TEXT                    AS message_data,
+      NULL::JSONB                   AS metadata,
       oi.status,
       oi.attempts,
       false                         AS is_newly_stored,
