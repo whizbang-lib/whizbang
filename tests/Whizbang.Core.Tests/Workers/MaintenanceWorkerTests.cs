@@ -114,4 +114,31 @@ public class MaintenanceWorkerTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  // --- Audit gap #5 regression locks ---
+  //
+  // perform_maintenance is what cleans abandoned wh_active_streams + completed-row purges
+  // (production mode). If the maintenance worker silently runs at a bad cadence, dead
+  // ownership rows accumulate and degrade owner-preferring claim. These tests pin the
+  // contract so a future config refactor can't quietly disable cleanup.
+
+  [Test]
+  public async Task DefaultIntervalMinutes_IsLessThanOrEqualTo10MinutesForReasonableCleanupCadenceAsync() {
+    // Production cleanup of abandoned wh_active_streams runs ONLY through perform_maintenance.
+    // If the default interval is hours, dead-instance ownership accumulates for hours after
+    // a deploy/scale event. ≤10 min keeps the recovery boundary tight.
+    var defaults = new MaintenanceWorkerOptions();
+    await Assert.That(defaults.IntervalMinutes).IsLessThanOrEqualTo(10)
+      .Because("perform_maintenance is the only path that cleans abandoned wh_active_streams; >10 min lets dead-instance ownership accumulate.");
+  }
+
+  [Test]
+  public async Task DefaultEnabled_IsTrueAsync() {
+    // Maintenance must be on by default. If a future refactor flips this and ops doesn't notice,
+    // wh_outbox / wh_inbox / wh_message_deduplication grow without bound (production-mode
+    // completion now DELETEs but perform_maintenance still purges anything that slipped through
+    // failure paths).
+    var defaults = new MaintenanceWorkerOptions();
+    await Assert.That(defaults.Enabled).IsTrue();
+  }
 }

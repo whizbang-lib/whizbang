@@ -97,6 +97,16 @@ public sealed class MaintenanceWorkerOptions {
   /// </summary>
   public bool Enabled { get; set; } = true;
 
-  /// <summary>Interval between maintenance runs, in minutes. Default 60.</summary>
-  public int IntervalMinutes { get; set; } = 60;
+  /// <summary>
+  /// Interval between maintenance runs, in minutes. Default 10.
+  /// <para>
+  /// perform_maintenance is the only path that cleans abandoned <c>wh_active_streams</c> rows
+  /// (rows whose owning instance is no longer in <c>wh_service_instances</c>). When an instance
+  /// dies or is scaled in, its ownership rows persist until this loop runs. >10 min lets that
+  /// accumulate, degrading owner-preferring claim. The audit gap #5 lock test in
+  /// <c>MaintenanceWorkerTests.DefaultIntervalMinutes_IsLessThanOrEqualTo10MinutesAsync</c>
+  /// fails if a future refactor weakens this default.
+  /// </para>
+  /// </summary>
+  public int IntervalMinutes { get; set; } = 10;
 }
