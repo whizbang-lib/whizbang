@@ -105,79 +105,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 #pragma warning restore RCS1158
 
-  private OutboxWork _mapOutboxWork(WorkBatchRow r) {
-    var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
-    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
-
-    var messageType = !string.IsNullOrWhiteSpace(r.MessageType)
-      ? r.MessageType
-      : _extractMessageTypeFromEnvelopeType(r.EnvelopeType!);
-
-    return new OutboxWork {
-      MessageId = r.WorkId!.Value,
-      Destination = r.Destination!,
-      Envelope = jsonEnvelope,
-      EnvelopeType = r.EnvelopeType!,
-      MessageType = messageType,
-      StreamId = r.StreamId,
-      PartitionNumber = r.PartitionNumber,
-      Attempts = r.Attempts ?? 0,
-      Status = (MessageProcessingStatus)(r.Status ?? 0),
-      Flags = _buildFlags(r),
-      Metadata = _parseMetadataJson(r)
-    };
-  }
-
-  private InboxWork _mapInboxWork(WorkBatchRow r) {
-    if (string.IsNullOrWhiteSpace(r.MessageType)) {
-      throw new InvalidOperationException(
-        $"Inbox message {r.WorkId} has null/empty message_type.");
-    }
-
-    var envelope = _deserializeEnvelope(r.MessageType, r.MessageData!);
-    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
-
-    return new InboxWork {
-      MessageId = r.WorkId!.Value,
-      Envelope = jsonEnvelope,
-      MessageType = r.MessageType,
-      StreamId = r.StreamId,
-      PartitionNumber = r.PartitionNumber,
-      Attempts = r.Attempts ?? 0,
-      Status = (MessageProcessingStatus)(r.Status ?? 0),
-      Flags = _buildFlags(r),
-      Metadata = _parseMetadataJson(r)
-    };
-  }
-
-  private static WorkBatchOptions _buildFlags(WorkBatchRow r) {
-    var flags = WorkBatchOptions.None;
-    if (r.IsNewlyStored == true) { flags |= WorkBatchOptions.NewlyStored; }
-    if (r.IsOrphaned == true) { flags |= WorkBatchOptions.Orphaned; }
-    return flags;
-  }
-
-  private Dictionary<string, JsonElement>? _parseMetadataJson(WorkBatchRow r) {
-    if (string.IsNullOrWhiteSpace(r.Metadata)) { return null; }
-    try {
-      var metadataDoc = JsonDocument.Parse(r.Metadata);
-      return metadataDoc.RootElement.EnumerateObject()
-        .ToDictionary(p => p.Name, p => p.Value.Clone());
-    } catch (JsonException ex) {
-      _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
-      return null;
-    }
-  }
-
-  private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageEnvelope<JsonElement>.");
-    return JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
-      ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
-  }
-
   private string _serializeCompletions(MessageCompletion[] completions) {
     if (completions.Length == 0) { return "[]"; }
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageCompletion[]))
@@ -1074,31 +1001,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Extracts the message type name from an envelope type name.
-  /// Example: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
-  /// Returns: "MyApp.ProductCreatedEvent, MyApp"
-  /// </summary>
-  private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException(
-        $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
-    }
-
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
-
-    if (string.IsNullOrWhiteSpace(messageTypeName)) {
-      throw new InvalidOperationException(
-        $"Failed to extract message type name from envelope type: '{envelopeTypeName}'");
-    }
-
-    return messageTypeName;
-  }
-
-  /// <summary>
   /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchOptions.DebugMode is set in the SQL function.
   /// </summary>
@@ -1241,7 +1143,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_FallsBackToJsonDocumentParse_WhenTypeResolverFailsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetOrphanedLifecycleEventsAsync_DeserializesEventData_WithTypeDiscriminatorAsync</tests>
   private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
-    // Deserialize event_data as JsonElement for AOT compatibility — same pattern as _deserializeEnvelope.
+    // Deserialize event_data as JsonElement for AOT compatibility.
     // The concrete event type is resolved downstream by the lifecycle coordinator/receptors.
     JsonElement payload;
     try {
