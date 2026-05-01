@@ -184,4 +184,91 @@ public class ClaimWorkerTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  // --- Part C step 4: stream_id drain channels ---
+
+  private sealed class CapturingDrainChannel : IOutboxDrainChannel {
+    private readonly System.Threading.Channels.Channel<Guid> _ch = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+    public List<Guid> Written { get; } = [];
+    public TaskCompletionSource SecondWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+      Written.Add(streamId);
+      if (Written.Count >= 2) {
+        SecondWritten.TrySetResult();
+      }
+      return _ch.Writer.WriteAsync(streamId, ct);
+    }
+    public bool TryWrite(Guid streamId) {
+      Written.Add(streamId);
+      if (Written.Count >= 2) {
+        SecondWritten.TrySetResult();
+      }
+      return _ch.Writer.TryWrite(streamId);
+    }
+  }
+
+  [Test]
+  public async Task Distribute_OutboxWork_AlsoEmitsDistinctStreamIds_ToOutboxDrainChannelAsync() {
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    var coord = new FakeCoordinator {
+      BatchToReturn = new WorkBatch {
+        OutboxWork = [
+          _stubOutboxWork(streamA),
+          _stubOutboxWork(streamA),  // dupe stream — should not emit twice
+          _stubOutboxWork(streamB),
+        ],
+        InboxWork = [],
+        PerspectiveWork = []
+      }
+    };
+
+    var drain = new CapturingDrainChannel();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      NullLogger<ClaimWorker>.Instance,
+      outboxDrainChannel: drain);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    await drain.SecondWritten.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Two distinct stream_ids written even though OutboxWork had 3 items (one dupe).
+    await Assert.That(drain.Written.Count).IsEqualTo(2);
+    await Assert.That(drain.Written).Contains(streamA);
+    await Assert.That(drain.Written).Contains(streamB);
+  }
+
+  private static OutboxWork _stubOutboxWork(Guid streamId) => new() {
+    MessageId = (Guid)TrackedGuid.NewMedo(),
+    Destination = "topic",
+    Envelope = new Whizbang.Core.Observability.MessageEnvelope<System.Text.Json.JsonElement> {
+      MessageId = Whizbang.Core.ValueObjects.MessageId.From((Guid)TrackedGuid.NewMedo()),
+      Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new Whizbang.Core.Observability.MessageDispatchContext {
+        Mode = Whizbang.Core.Dispatch.DispatchModes.Local,
+        Source = Whizbang.Core.Messaging.MessageSource.Local,
+      },
+      Hops = [],
+    },
+    EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[System.Text.Json.JsonElement]",
+    MessageType = "TestMessage",
+    StreamId = streamId,
+    Attempts = 0,
+    Status = MessageProcessingStatus.Stored,
+  };
 }

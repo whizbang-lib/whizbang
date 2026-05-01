@@ -27,12 +27,15 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IInboxChannelWriter? _inboxChannel;
   private readonly IPerspectiveChannelWriter? _perspectiveChannel;
   private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel;
+  private readonly IOutboxDrainChannel? _outboxDrainChannel;
+  private readonly IInboxDrainChannel? _inboxDrainChannel;
   private readonly ClaimWorkerOptions _options;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private int _consecutiveEmptyPolls;
 
   /// <summary>Constructor.</summary>
+#pragma warning disable S107 // ClaimWorker is the central poller — its channel/option dependencies are unavoidable.
   public ClaimWorker(
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
@@ -43,7 +46,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     IWorkChannelWriter? outboxChannel = null,
     IInboxChannelWriter? inboxChannel = null,
     IPerspectiveChannelWriter? perspectiveChannel = null,
-    IPerspectiveDrainChannel? perspectiveDrainChannel = null) {
+    IPerspectiveDrainChannel? perspectiveDrainChannel = null,
+    IOutboxDrainChannel? outboxDrainChannel = null,
+    IInboxDrainChannel? inboxDrainChannel = null) {
+#pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
@@ -54,6 +60,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     _inboxChannel = inboxChannel;
     _perspectiveChannel = perspectiveChannel;
     _perspectiveDrainChannel = perspectiveDrainChannel;
+    _outboxDrainChannel = outboxDrainChannel;
+    _inboxDrainChannel = inboxDrainChannel;
 
     // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
     _notificationListener.OnSignal += _onSignal;
@@ -181,6 +189,29 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (_perspectiveDrainChannel is not null) {
       foreach (var streamId in batch.PerspectiveStreamIds) {
         await _perspectiveDrainChannel.WriteAsync(streamId, ct);
+      }
+    }
+    // Per-stream-drain emit: derive distinct stream_ids from the batch and signal the
+    // drainer workers. Runs alongside the legacy outbox/inbox channels so existing
+    // consumers keep working while the new drainer takes over. Phase H step 4 transition:
+    // the drain channels carry only stream_ids (cheap, small payload) — drainer fetches
+    // the actual rows on demand via FetchOutboxBatchAsync / FetchInboxBatchAsync.
+    if (_outboxDrainChannel is not null) {
+      var seen = new HashSet<Guid>();
+      foreach (var ow in batch.OutboxWork) {
+        var sid = ow.StreamId ?? ow.MessageId;
+        if (seen.Add(sid)) {
+          await _outboxDrainChannel.WriteAsync(sid, ct);
+        }
+      }
+    }
+    if (_inboxDrainChannel is not null) {
+      var seen = new HashSet<Guid>();
+      foreach (var iw in batch.InboxWork) {
+        var sid = iw.StreamId ?? iw.MessageId;
+        if (seen.Add(sid)) {
+          await _inboxDrainChannel.WriteAsync(sid, ct);
+        }
       }
     }
   }

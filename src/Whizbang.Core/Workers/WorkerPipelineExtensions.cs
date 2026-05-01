@@ -44,6 +44,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<MaintenanceWorker>();
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
+    services.TryAddSingleton<OutboxDrainWorker>();
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
@@ -57,6 +58,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
@@ -71,6 +73,12 @@ public static class WorkerPipelineExtensions {
 
     // Drain-mode channel: stream IDs that claim_work flagged for batched (RunWithEventsAsync) processing.
     services.TryAddSingleton<Whizbang.Core.Messaging.IPerspectiveDrainChannel, Whizbang.Core.Messaging.PerspectiveDrainChannel>();
+
+    // Per-stream-id outbox/inbox drain channels: ClaimWorker writes stream_ids; OutboxDrainWorker /
+    // InboxDrainWorker read them and call FetchOutboxBatchAsync / FetchInboxBatchAsync to pull
+    // payloads on demand. Restores archive design where the poller does not carry full bodies.
+    services.TryAddSingleton<Whizbang.Core.Messaging.IOutboxDrainChannel, Whizbang.Core.Messaging.OutboxDrainChannel>();
+    services.TryAddSingleton<Whizbang.Core.Messaging.IInboxDrainChannel, Whizbang.Core.Messaging.InboxDrainChannel>();
 
     // NoOp notification listener by default — driver-specific extensions
     // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
@@ -92,6 +100,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<OutboxPublishWorkerOptions>();
     services.AddOptions<InboxDispatchWorkerOptions>();
     services.AddOptions<MaintenanceWorkerOptions>();
+    services.AddOptions<OutboxDrainWorkerOptions>();
 
     return services;
   }
