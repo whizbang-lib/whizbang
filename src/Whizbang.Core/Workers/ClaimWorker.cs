@@ -143,7 +143,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     while (!stoppingToken.IsCancellationRequested) {
       try {
         var batch = await _claimOnceAsync(stoppingToken);
-        var hadWork = batch.OutboxWork.Count > 0 || batch.InboxWork.Count > 0 || batch.PerspectiveStreamIds.Count > 0;
+        var hadWork = batch.OutboxWork.Count > 0
+                   || batch.InboxWork.Count > 0
+                   || batch.PerspectiveStreamIds.Count > 0
+                   || batch.OutboxStreamIds.Count > 0
+                   || batch.InboxStreamIds.Count > 0;
 
         if (hadWork) {
           _consecutiveEmptyPolls = 0;
