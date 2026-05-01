@@ -17,6 +17,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   stream_id UUID,
   was_newly_created BOOLEAN
 ) AS $$
+#variable_conflict use_column
 DECLARE
   v_msg RECORD;
   v_partition INTEGER;
@@ -95,13 +96,26 @@ BEGIN
       v_inserted_event_ids := array_append(v_inserted_event_ids, v_msg.msg_id);
     END IF;
 
-    -- NOTE: wh_active_streams refresh is deliberately NOT done here. It is driven
-    -- from process_work_batch end-of-tick in a single batched, sorted UPSERT
-    -- covering all four stream sources (orphan outbox, orphan inbox, new outbox,
-    -- new inbox). Keeping the outbox write path free of wh_active_streams means
-    -- store_outbox_messages never takes a row lock on a shared resource — it only
-    -- writes per-message-id rows to wh_outbox. Eliminates the 40P01 cycle class
-    -- observed in JDNext.
+    -- Stream ownership pinning (Phase H step 6 slice 1). UPSERT into wh_active_streams
+    -- on first event for the stream — first-write-wins via ON CONFLICT DO NOTHING.
+    -- Subsequent stores by other instances do NOT steal ownership; they no-op on the
+    -- conflict check. The deterministic stream-id ordering at the FOR loop keeps row-
+    -- lock acquisition canonical across concurrent callers, blocking the 40P01 cycle
+    -- class that prompted the original deletion of this UPSERT.
+    -- The local UUID/INTEGER variables avoid plpgsql FOR-record field-name shadowing
+    -- that would otherwise make `stream_id` ambiguous to the planner.
+    IF v_was_new AND v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
+      DECLARE
+        v_pin_stream UUID := v_msg.stream_id;
+        v_pin_partition INTEGER := COALESCE(v_partition, 0);
+      BEGIN
+        INSERT INTO __SCHEMA__.wh_active_streams
+          (stream_id, partition_number, assigned_instance_id, last_activity_at)
+        VALUES
+          (v_pin_stream, v_pin_partition, p_instance_id, p_now)
+        ON CONFLICT (stream_id) DO NOTHING;
+      END;
+    END IF;
 
     RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
   END LOOP;

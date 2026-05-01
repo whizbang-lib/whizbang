@@ -155,6 +155,21 @@ public partial class DapperWorkCoordinator(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  /// <inheritdoc />
+  public async Task<int> CleanupCompletedStreamsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default) {
+    if (streamIds is null || streamIds.Count == 0) {
+      return 0;
+    }
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT cleanup_completed_streams(@streamIds)",
+      new { streamIds = streamIds.ToArray() });
+  }
+
   private string _serializeCompletions(MessageCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";

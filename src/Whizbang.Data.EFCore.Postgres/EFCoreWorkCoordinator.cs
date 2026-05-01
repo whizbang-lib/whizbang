@@ -750,6 +750,38 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  /// <inheritdoc />
+  public async Task<int> CleanupCompletedStreamsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default) {
+    if (streamIds is null || streamIds.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "cleanup_completed_streams");
+
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_stream_ids)";
+    var p = cmd.CreateParameter();
+    p.ParameterName = "p_stream_ids";
+    p.Value = streamIds.ToArray();
+    if (p is Npgsql.NpgsqlParameter np) {
+      np.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid;
+    }
+    cmd.Parameters.Add(p);
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return result is int evicted ? evicted : 0;
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
