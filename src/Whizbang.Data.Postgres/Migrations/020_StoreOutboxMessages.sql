@@ -138,7 +138,8 @@ BEGIN
       v_inserted_event_ids,
       p_instance_id,
       p_lease_expiry,
-      p_now
+      p_now,
+      p_partition_count  -- Phase H step 6 slice 2: thread partition_count for wh_perspective_events.partition_number
     );
   END IF;
 END;

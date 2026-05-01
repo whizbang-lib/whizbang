@@ -79,7 +79,7 @@ BEGIN
       p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
     );
     PERFORM __SCHEMA__.claim_orphaned_perspective_events(
-      p_instance_id, v_lease_expiry, v_now, p_max_streams
+      p_instance_id, v_lease_expiry, v_now, p_max_streams, v_rank, v_count
     );
     PERFORM __SCHEMA__.claim_orphaned_receptor_work(
       p_instance_id, v_rank, v_count, v_lease_expiry, v_now
@@ -89,7 +89,7 @@ BEGIN
     -- Replaces legacy process_work_batch Phase 4.5B + 4.6 self-healing — ensures that by the
     -- time an inbox event row reaches InboxDispatchWorker, its event_store row exists and
     -- perspective_events have been created so PerspectiveWorker can pick them up.
-    PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now);
+    PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now, p_partition_count);
 
     -- Return outbox work owned by this instance.
     -- Per-stream rank prevents one busy stream from starving others; global LIMIT bounds the batch.
@@ -294,7 +294,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
   p_outbox_message_ids UUID[],
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
-  p_now TIMESTAMPTZ
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER DEFAULT 10000
 ) RETURNS INTEGER AS $$
 DECLARE
   v_stored_event_ids UUID[];
@@ -388,15 +389,19 @@ BEGIN
   END IF;
 
   -- Phase 4.6-equivalent: auto-create perspective events for matching event types.
+  -- Phase H step 6 slice 2: populate partition_number via compute_partition(stream_id, p_partition_count)
+  -- so claim_orphaned_perspective_events can apply partition-modulo load balancing symmetric
+  -- with the outbox / inbox claim paths.
   INSERT INTO __SCHEMA__.wh_perspective_events (
     event_work_id, stream_id, perspective_name, event_id,
-    status, attempts, created_at, instance_id, lease_expiry
+    partition_number, status, attempts, created_at, instance_id, lease_expiry
   )
   SELECT DISTINCT
     gen_random_uuid(),
     es.stream_id,
     ma.target_name,
     es.event_id,
+    __SCHEMA__.compute_partition(es.stream_id, p_partition_count),
     1,                  -- Stored flag
     0,
     p_now,
@@ -437,7 +442,8 @@ SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain_for_inbox');
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
-  p_now TIMESTAMPTZ
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER DEFAULT 10000
 ) RETURNS INTEGER AS $$
 DECLARE
   v_stored_event_ids UUID[];
@@ -516,15 +522,17 @@ BEGIN
   END IF;
 
   -- Auto-create perspective_events for the newly-stored events.
+  -- Phase H step 6 slice 2: populate partition_number for symmetric load balancing.
   INSERT INTO __SCHEMA__.wh_perspective_events (
     event_work_id, stream_id, perspective_name, event_id,
-    status, attempts, created_at, instance_id, lease_expiry
+    partition_number, status, attempts, created_at, instance_id, lease_expiry
   )
   SELECT DISTINCT
     gen_random_uuid(),
     es.stream_id,
     ma.target_name,
     es.event_id,
+    __SCHEMA__.compute_partition(es.stream_id, p_partition_count),
     1,                  -- Stored flag
     0,
     p_now,
@@ -606,7 +614,7 @@ BEGIN
 
       IF v_emitted_ids IS NOT NULL AND cardinality(v_emitted_ids) > 0 THEN
         PERFORM __SCHEMA__._emit_event_store_chain(
-          v_emitted_ids, v_instance_id, v_lease_expiry, v_now
+          v_emitted_ids, v_instance_id, v_lease_expiry, v_now, v_partition_count
         );
       END IF;
     END;
