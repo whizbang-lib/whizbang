@@ -150,19 +150,20 @@ BEGIN
       ORDER BY ei.received_at
       LIMIT p_max_streams
     )
-    -- Per-stream-drain projection (Phase H step 5b): claim_work returns stream_ids only for
-    -- inbox. The InboxDrainWorker consumes WorkBatch.InboxStreamIds and pulls full payloads
-    -- on demand via fetch_inbox_batch.
+    -- Inbox body projection retained until InboxDrainWorker ships (Phase H step 5d). The
+    -- legacy InboxDispatchWorker still reads InboxWork off the inbox channel — dropping the
+    -- bodies here would starve it. Once InboxDrainWorker takes over, this projection follows
+    -- the outbox section into stream-ids-only.
     SELECT
       'inbox'::VARCHAR(20)          AS source,
       oi.message_id                 AS work_id,
       oi.stream_id                  AS work_stream_id,
       oi.partition_number,
-      NULL::VARCHAR(200)            AS destination,
-      NULL::VARCHAR(500)            AS message_type,
+      oi.handler_name::VARCHAR(200) AS destination,
+      oi.message_type::VARCHAR(500),
       NULL::VARCHAR(500)            AS envelope_type,
-      NULL::TEXT                    AS message_data,
-      NULL::JSONB                   AS metadata,
+      oi.event_data::TEXT           AS message_data,
+      oi.metadata,
       oi.status,
       oi.attempts,
       false                         AS is_newly_stored,

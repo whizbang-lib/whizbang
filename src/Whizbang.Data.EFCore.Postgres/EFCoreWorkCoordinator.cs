@@ -501,9 +501,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
     }
 
-    // Phase H step 5b: claim_work no longer projects outbox/inbox bodies — only (work_id, stream_id).
-    // OutboxWork / InboxWork stay empty (the legacy OutboxPublishWorker is registered but disabled
-    // by default; the new OutboxDrainWorker reads OutboxStreamIds and pulls payloads on demand).
+    // Phase H step 5b (outbox only): claim_work no longer projects outbox bodies — only
+    // (work_id, stream_id). OutboxWork stays empty (legacy OutboxPublishWorker is disabled
+    // by default; OutboxDrainWorker reads OutboxStreamIds and pulls payloads on demand).
+    // Inbox still projects bodies until InboxDrainWorker ships (Phase H step 5d).
+    var inboxWork = rows.Where(r => r.Source == "inbox").Select(_mapInboxWork).ToList();
     var perspectiveStreamIds = rows
       .Where(r => r.Source == "perspective_stream" && r.StreamId.HasValue)
       .Select(r => r.StreamId!.Value)
@@ -523,7 +525,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     return new WorkBatch {
       OutboxWork = [],
-      InboxWork = [],
+      InboxWork = inboxWork,
       PerspectiveWork = [],
       PerspectiveStreamIds = perspectiveStreamIds,
       OutboxStreamIds = outboxStreamIds,
