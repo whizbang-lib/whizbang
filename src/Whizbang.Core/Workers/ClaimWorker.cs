@@ -191,27 +191,18 @@ public sealed partial class ClaimWorker : BackgroundService {
         await _perspectiveDrainChannel.WriteAsync(streamId, ct);
       }
     }
-    // Per-stream-drain emit: derive distinct stream_ids from the batch and signal the
-    // drainer workers. Runs alongside the legacy outbox/inbox channels so existing
-    // consumers keep working while the new drainer takes over. Phase H step 4 transition:
-    // the drain channels carry only stream_ids (cheap, small payload) — drainer fetches
-    // the actual rows on demand via FetchOutboxBatchAsync / FetchInboxBatchAsync.
+    // Per-stream-drain emit: signal the drainer workers with stream_ids. The coordinator
+    // populates WorkBatch.OutboxStreamIds / InboxStreamIds for us; we just forward. Step 5b
+    // drops the legacy OutboxWork/InboxWork projection from claim_work SQL, at which point
+    // these stream_id lists are the only outbox/inbox surface.
     if (_outboxDrainChannel is not null) {
-      var seen = new HashSet<Guid>();
-      foreach (var ow in batch.OutboxWork) {
-        var sid = ow.StreamId ?? ow.MessageId;
-        if (seen.Add(sid)) {
-          await _outboxDrainChannel.WriteAsync(sid, ct);
-        }
+      foreach (var sid in batch.OutboxStreamIds) {
+        await _outboxDrainChannel.WriteAsync(sid, ct);
       }
     }
     if (_inboxDrainChannel is not null) {
-      var seen = new HashSet<Guid>();
-      foreach (var iw in batch.InboxWork) {
-        var sid = iw.StreamId ?? iw.MessageId;
-        if (seen.Add(sid)) {
-          await _inboxDrainChannel.WriteAsync(sid, ct);
-        }
+      foreach (var sid in batch.InboxStreamIds) {
+        await _inboxDrainChannel.WriteAsync(sid, ct);
       }
     }
   }

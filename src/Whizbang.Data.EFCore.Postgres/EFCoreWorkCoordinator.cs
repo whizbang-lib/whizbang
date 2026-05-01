@@ -508,11 +508,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Select(r => r.StreamId!.Value)
       .ToList();
 
+    // Per-stream drain surface (Phase H step 5): distinct stream_ids per category for the new
+    // drainer workers. Derived from rows for now; once claim_work SQL drops the body projection
+    // for outbox/inbox, these are populated directly from the (work_id, stream_id) tuples and
+    // OutboxWork/InboxWork stay empty.
+    var outboxStreamIds = rows
+      .Where(r => r.Source == "outbox")
+      .Select(r => r.StreamId ?? r.WorkId ?? Guid.Empty)
+      .Where(g => g != Guid.Empty)
+      .Distinct()
+      .ToList();
+    var inboxStreamIds = rows
+      .Where(r => r.Source == "inbox")
+      .Select(r => r.StreamId ?? r.WorkId ?? Guid.Empty)
+      .Where(g => g != Guid.Empty)
+      .Distinct()
+      .ToList();
+
     return new WorkBatch {
       OutboxWork = outboxWork,
       InboxWork = inboxWork,
       PerspectiveWork = [],
-      PerspectiveStreamIds = perspectiveStreamIds
+      PerspectiveStreamIds = perspectiveStreamIds,
+      OutboxStreamIds = outboxStreamIds,
+      InboxStreamIds = inboxStreamIds
     };
   }
 

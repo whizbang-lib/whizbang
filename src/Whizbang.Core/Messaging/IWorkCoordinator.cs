@@ -811,6 +811,23 @@ public record WorkBatch {
   public List<Guid> PerspectiveStreamIds { get; init; } = [];
 
   /// <summary>
+  /// Distinct stream IDs that have leased outbox messages for this instance — the per-stream-id
+  /// drain channel surface for the new <c>OutboxDrainWorker</c>. Restored from the archive plan's
+  /// poller-vs-drainer split: the poller emits stream_ids only (small payload); the drainer
+  /// fetches payloads on demand via <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
+  /// During the Phase H step 5 transition this list is derived from <see cref="OutboxWork"/>;
+  /// once <c>claim_work</c> SQL drops the body projection, this becomes the only outbox surface.
+  /// </summary>
+  public List<Guid> OutboxStreamIds { get; init; } = [];
+
+  /// <summary>
+  /// Distinct stream IDs that have leased inbox messages for this instance — the per-stream-id
+  /// drain channel surface for the new <c>InboxDrainWorker</c>. Mirror of
+  /// <see cref="OutboxStreamIds"/> for inbox dispatch.
+  /// </summary>
+  public List<Guid> InboxStreamIds { get; init; } = [];
+
+  /// <summary>
   /// Results of sync inquiries from this batch call.
   /// Contains pending counts for each perspective/stream combination queried.
   /// Null if no sync inquiries were passed in the request.
