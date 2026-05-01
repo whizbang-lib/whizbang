@@ -170,34 +170,11 @@ public class InboxDrainWorkerTests {
   }
 
   [Test]
-  public async Task InboxDrainWorker_DefaultDisabled_NoActivityAsync() {
-    var coord = new FakeWorkCoordinator();
-    var drain = new FakeInboxDrainChannel();
-    var inbox = new CapturingInboxChannel();
-    var instance = new FakeServiceInstanceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coord);
-    var sp = services.BuildServiceProvider();
-
-    var worker = new InboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions()),  // default Enabled = false
-      _jsonOpts,
-      NullLogger<InboxDrainWorker>.Instance);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await drain.WriteAsync((Guid)TrackedGuid.NewMedo());
-
-    await Task.Delay(200);  // give worker any chance to misbehave
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
-
-    await Assert.That(inbox.Written.Count).IsEqualTo(0)
-      .Because("InboxDrainWorker default-disabled — must not fetch or write while ClaimWorker still feeds InboxWork directly.");
+  public async Task InboxDrainWorkerOptions_DefaultEnabled_IsTrueAsync() {
+    // After Phase H step 5d-flip, InboxDrainWorker is the only source of InboxWork records
+    // for InboxDispatchWorker. If a future refactor flips the default off, inbox dispatch
+    // breaks silently. Lock the default.
+    var defaults = new InboxDrainWorkerOptions();
+    await Assert.That(defaults.Enabled).IsTrue();
   }
 }
