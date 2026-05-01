@@ -501,17 +501,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
     }
 
-    var outboxWork = rows.Where(r => r.Source == "outbox").Select(_mapOutboxWork).ToList();
-    var inboxWork = rows.Where(r => r.Source == "inbox").Select(_mapInboxWork).ToList();
+    // Phase H step 5b: claim_work no longer projects outbox/inbox bodies — only (work_id, stream_id).
+    // OutboxWork / InboxWork stay empty (the legacy OutboxPublishWorker is registered but disabled
+    // by default; the new OutboxDrainWorker reads OutboxStreamIds and pulls payloads on demand).
     var perspectiveStreamIds = rows
       .Where(r => r.Source == "perspective_stream" && r.StreamId.HasValue)
       .Select(r => r.StreamId!.Value)
       .ToList();
-
-    // Per-stream drain surface (Phase H step 5): distinct stream_ids per category for the new
-    // drainer workers. Derived from rows for now; once claim_work SQL drops the body projection
-    // for outbox/inbox, these are populated directly from the (work_id, stream_id) tuples and
-    // OutboxWork/InboxWork stay empty.
     var outboxStreamIds = rows
       .Where(r => r.Source == "outbox")
       .Select(r => r.StreamId ?? r.WorkId ?? Guid.Empty)
@@ -526,8 +522,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .ToList();
 
     return new WorkBatch {
-      OutboxWork = outboxWork,
-      InboxWork = inboxWork,
+      OutboxWork = [],
+      InboxWork = [],
       PerspectiveWork = [],
       PerspectiveStreamIds = perspectiveStreamIds,
       OutboxStreamIds = outboxStreamIds,
