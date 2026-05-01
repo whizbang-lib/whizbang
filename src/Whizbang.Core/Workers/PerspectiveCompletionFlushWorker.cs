@@ -64,6 +64,22 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     await coordinator.CompletePerspectiveAsync(cursors, workIds, _coordinatorOptions.DebugMode, ct);
+
+    // Slice 1: opportunistic stream eviction. After completions land in DB, distinct
+    // stream_ids from the cursors might now have empty pending-work tables and can
+    // exit wh_active_streams so the next event for that stream rebinds via the
+    // store_*_messages UPSERT. The SQL function self-checks pending work — passing a
+    // stream that still has work is safe (no-op DELETE).
+    if (cursors.Length > 0) {
+      var streamIds = cursors.Select(c => c.StreamId).Distinct().ToArray();
+      try {
+        await coordinator.CleanupCompletedStreamsAsync(streamIds, ct);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Eviction is opportunistic — failures are non-fatal. MaintenanceWorker provides
+        // the backstop on its IntervalMinutes cadence.
+        LogCleanupFailed(_logger, ex);
+      }
+    }
   }
 
   /// <inheritdoc />
@@ -79,6 +95,8 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
   static partial void LogStopped(ILogger logger);
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PerspectiveCompletionFlushWorker disabled via options — flusher idle")]
   static partial void LogDisabled(ILogger logger);
+  [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "PerspectiveCompletionFlushWorker: cleanup_completed_streams call failed; eviction will retry on MaintenanceWorker backstop")]
+  static partial void LogCleanupFailed(ILogger logger, Exception ex);
 }
 
 /// <summary>Discriminated payload carried by the perspective-completion channel.</summary>

@@ -468,6 +468,23 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement StoreOutboxMessagesAsync.");
 
   /// <summary>
+  /// Evicts streams from <c>wh_active_streams</c> when their pending-work tables are empty,
+  /// so the next event for an evicted stream rebinds via the
+  /// <c>store_outbox_messages</c> / <c>store_inbox_messages</c> UPSERT path. Called from
+  /// completion-flush workers after a batch lands.
+  /// </summary>
+  /// <remarks>
+  /// Default no-op so non-Postgres backends and test fakes don't need to override.
+  /// </remarks>
+  /// <param name="streamIds">Stream IDs that just had work completed; candidates for eviction.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Count of streams evicted.</returns>
+  Task<int> CleanupCompletedStreamsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0);
+
+  /// <summary>
   /// Recomputes <c>partition_number</c> on <c>wh_inbox</c>, <c>wh_outbox</c>, and
   /// <c>wh_active_streams</c> using the supplied <paramref name="partitionCount"/>,
   /// fixing any rows whose stored value disagrees with

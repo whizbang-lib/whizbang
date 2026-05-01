@@ -754,6 +754,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.record_heartbeat(
   p_process_id INTEGER,
   p_metadata JSONB DEFAULT '{}'::JSONB
 ) RETURNS VOID AS $$
+DECLARE
+  v_stale_cutoff TIMESTAMPTZ := NOW() - INTERVAL '30 seconds';
 BEGIN
   INSERT INTO __SCHEMA__.wh_service_instances
     (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
@@ -762,11 +764,26 @@ BEGIN
   ON CONFLICT (instance_id) DO UPDATE SET
     last_heartbeat_at = NOW(),
     metadata = EXCLUDED.metadata;
+
+  -- Opportunistic stale-peer cleanup (Phase H step 6 slice 1). When a peer has gone
+  -- silent past the stale cutoff, delete its row and release its leases so live
+  -- instances can claim on the next claim_work tick. Cheap pre-check on the indexed
+  -- last_heartbeat_at means the heavyweight DELETE+lease-null block only fires when
+  -- there's actually a stale peer — most heartbeats no-op past the EXISTS check.
+  -- Backstop: MaintenanceWorker also runs cleanup_stale_instances every IntervalMinutes.
+  IF EXISTS (
+    SELECT 1 FROM __SCHEMA__.wh_service_instances
+    WHERE last_heartbeat_at < v_stale_cutoff
+      AND instance_id != p_instance_id
+    LIMIT 1
+  ) THEN
+    PERFORM __SCHEMA__.cleanup_stale_instances(v_stale_cutoff);
+  END IF;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.record_heartbeat IS
-'Decoupled heartbeat UPSERT. Inserts a new wh_service_instances row on first call, updates last_heartbeat_at on subsequent calls. Called by C# HeartbeatWorker on its own timer (5 s default), independent of polling cadence. Sub-millisecond cost.';
+'Decoupled heartbeat UPSERT. Inserts a new wh_service_instances row on first call, updates last_heartbeat_at on subsequent calls. Called by C# HeartbeatWorker on its own timer (5 s default), independent of polling cadence. Opportunistically cleans up stale peers when detected (cheap pre-check guard). Sub-millisecond cost on the no-stale-peer path.';
 
 
 -- ============================================================================
