@@ -10,7 +10,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.store_perspective_events(
   p_events JSONB,
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
-  p_now TIMESTAMPTZ
+  p_now TIMESTAMPTZ,
+  p_partition_count INTEGER DEFAULT 10000
 ) RETURNS TABLE(
   event_work_id UUID,
   stream_id UUID,
@@ -34,12 +35,14 @@ BEGIN
     -- Generate work item ID
     v_work_id := gen_random_uuid();
 
-    -- Insert perspective event with immediate lease (ON CONFLICT for idempotency)
+    -- Insert perspective event with immediate lease (ON CONFLICT for idempotency).
+    -- Phase H step 6 slice 2: populate partition_number for symmetric load balancing.
     INSERT INTO wh_perspective_events (
       event_work_id,
       stream_id,
       perspective_name,
       event_id,
+      partition_number,
       status,
       attempts,
       created_at,
@@ -50,6 +53,7 @@ BEGIN
       v_event.v_stream_id,
       v_event.v_perspective_name,
       v_event.v_event_id,
+      __SCHEMA__.compute_partition(v_event.v_stream_id, p_partition_count),
       1,  -- Stored flag
       0,  -- Initial attempts
       p_now,

@@ -18,6 +18,13 @@ CREATE TABLE IF NOT EXISTS wh_perspective_events (
   instance_id UUID,
   lease_expiry TIMESTAMPTZ,
 
+  -- Partition for partition-modulo load balancing (Phase H step 6 slice 2 — symmetric with
+  -- wh_outbox / wh_inbox). Populated by compute_partition(stream_id, partition_count) at
+  -- insert time. claim_orphaned_perspective_events filters
+  -- (partition_number % active_instance_count) = instance_rank so unowned streams distribute
+  -- across alive instances.
+  partition_number INTEGER NOT NULL DEFAULT 0,
+
   -- Status tracking
   status INTEGER NOT NULL DEFAULT 0,  -- MessageProcessingStatus flags
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -37,6 +44,11 @@ CREATE TABLE IF NOT EXISTS wh_perspective_events (
   -- Stream ownership is enforced via wh_active_streams table
   CONSTRAINT uq_perspective_event UNIQUE (stream_id, perspective_name, event_id)
 );
+
+-- Backfill partition_number on schemas that pre-date Phase H step 6 (pre-v1.0 mutable migration).
+-- Safe to run on every init: compute_partition is IMMUTABLE so running again is idempotent.
+ALTER TABLE wh_perspective_events
+  ADD COLUMN IF NOT EXISTS partition_number INTEGER NOT NULL DEFAULT 0;
 
 -- Index for claiming work (used by claim_orphaned_perspective_events)
 CREATE INDEX IF NOT EXISTS idx_perspective_event_claim

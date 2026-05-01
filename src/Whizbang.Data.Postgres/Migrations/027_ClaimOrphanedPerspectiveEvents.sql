@@ -12,7 +12,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
   p_now TIMESTAMPTZ,
-  p_max_streams INTEGER DEFAULT 500
+  p_max_streams INTEGER DEFAULT 500,
+  p_instance_rank INTEGER DEFAULT 0,
+  p_active_instance_count INTEGER DEFAULT 1
 ) RETURNS TABLE(
   event_work_id UUID,
   stream_id UUID,
@@ -31,23 +33,29 @@ BEGIN
     WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
       AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
       AND pe.processed_at IS NULL
-      -- Respect stream ownership
+      -- Phase H step 6 slice 2: stream ownership now combines wh_active_streams pinning
+      -- (OWNER PATH — always wins) with partition-modulo load balancing for unowned streams
+      -- (UNOWNED PATH — symmetric with claim_orphaned_outbox / _inbox).
       AND (
-        NOT EXISTS (
+        -- OWNER PATH — wh_active_streams says this instance owns the stream. Always claim.
+        EXISTS (
           SELECT 1 FROM __SCHEMA__.wh_active_streams ast
           WHERE ast.stream_id = pe.stream_id
+            AND ast.assigned_instance_id = p_instance_id
         )
-        OR EXISTS (
-          SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-          WHERE ast.stream_id = pe.stream_id
-            AND (
-              ast.assigned_instance_id = p_instance_id
-              OR ast.lease_expiry <= p_now
-              OR NOT EXISTS (
+        OR
+        -- UNOWNED / ABANDONED PATH — partition-modulo selection for streams with no live owner.
+        (
+          (pe.partition_number % p_active_instance_count) = p_instance_rank
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_active_streams ast
+            WHERE ast.stream_id = pe.stream_id
+              AND ast.assigned_instance_id != p_instance_id
+              AND EXISTS (
                 SELECT 1 FROM __SCHEMA__.wh_service_instances si
                 WHERE si.instance_id = ast.assigned_instance_id
               )
-            )
+          )
         )
       )
       -- Ensure ordering - no earlier uncompleted events in same perspective
@@ -80,4 +88,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events IS
-'Claims orphaned perspective events with full-stream capture: selects up to p_max_streams distinct streams, then leases ALL unleased events for each selected stream. Ensures sequential ordering within stream/perspective by checking for earlier uncompleted events. Respects stream ownership. Returns claimed work IDs.';
+'Claims orphaned perspective events with full-stream capture: selects up to p_max_streams distinct streams, then leases ALL unleased events for each selected stream. Owner-preferring (wh_active_streams.assigned_instance_id = caller) + partition-modulo load balancing on unowned streams (partition_number % active_count = instance_rank). Symmetric with claim_orphaned_outbox / _inbox. Returns claimed work IDs.';
