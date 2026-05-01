@@ -31,8 +31,14 @@ public class ClaimWorkerTests {
   private sealed class FakeCoordinator : IWorkCoordinator {
     private readonly object _lock = new();
     private readonly System.Collections.Generic.Dictionary<int, TaskCompletionSource> _callWatchers = [];
+    private int _orderCounter;
     public TaskCompletionSource FirstCallSignal { get; } = new();
     public int CallCount { get; private set; }
+    public int HeartbeatCallCount { get; private set; }
+    /// <summary>Order index of the first ClaimWorkAsync call, or 0 if never called.</summary>
+    public int FirstClaimOrder { get; private set; }
+    /// <summary>Order index of the first RecordHeartbeatAsync call, or 0 if never called.</summary>
+    public int FirstHeartbeatOrder { get; private set; }
     public WorkBatch BatchToReturn { get; set; } = new() {
       OutboxWork = [],
       InboxWork = [],
@@ -42,10 +48,19 @@ public class ClaimWorkerTests {
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
       lock (_lock) {
         CallCount++;
+        if (FirstClaimOrder == 0) { FirstClaimOrder = ++_orderCounter; }
         FirstCallSignal.TrySetResult();
         if (_callWatchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
       return Task.FromResult(BatchToReturn);
+    }
+
+    public Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        HeartbeatCallCount++;
+        if (FirstHeartbeatOrder == 0) { FirstHeartbeatOrder = ++_orderCounter; }
+      }
+      return Task.CompletedTask;
     }
 
     /// <summary>Resolves once at least <paramref name="n"/> ClaimWorkAsync calls have been observed.</summary>
@@ -72,6 +87,42 @@ public class ClaimWorkerTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
     public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
     public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  }
+
+  [Test]
+  public async Task ExecuteAsync_RegistersInstanceViaHeartbeat_BeforeFirstClaimWorkAsync() {
+    // Regression lock: claim_work calls calculate_instance_rank, which raises P0001
+    // ("Instance not found in active instances") if the instance_id isn't in
+    // wh_service_instances. HeartbeatWorker UPSERTs the row but ticks on its own
+    // cadence — there's no ordering guarantee against ClaimWorker's first tick.
+    // ClaimWorker must therefore perform an initial heartbeat itself before its
+    // first claim cycle so the rank lookup succeeds. a consumer prod surfaced the raw
+    // race as repeated "ClaimWorker tick failed; will back off and retry" warnings.
+    var coord = new FakeCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      NullLogger<ClaimWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(coord.HeartbeatCallCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(coord.FirstHeartbeatOrder).IsGreaterThan(0);
+    await Assert.That(coord.FirstHeartbeatOrder).IsLessThan(coord.FirstClaimOrder);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]

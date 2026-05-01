@@ -125,6 +125,20 @@ public sealed partial class ClaimWorker : BackgroundService {
       return;
     }
 
+    // Register the instance in wh_service_instances before the first claim_work call.
+    // claim_work invokes calculate_instance_rank, which raises P0001 when our instance_id
+    // is missing from wh_service_instances. HeartbeatWorker performs the UPSERT but ticks
+    // on its own cadence — without this initial heartbeat, ClaimWorker can race ahead and
+    // hit the raise on startup. We block here so the very first claim cycle has a row to
+    // rank against. Failures are non-fatal (log and continue — claim_work will retry/back off).
+    try {
+      await _initialHeartbeatAsync(stoppingToken);
+    } catch (OperationCanceledException) {
+      return;
+    } catch (Exception ex) {
+      LogInitialHeartbeatFailed(_logger, ex);
+    }
+
     // PerspectiveOnly mode: legacy WorkCoordinatorPublisherWorker is wired up and is the
     // sole poller. Its process_work_batch handles outbox/inbox/perspective claiming and
     // routes PerspectiveStreamIds onto the drain channel. ClaimWorker doing its own
@@ -232,6 +246,16 @@ public sealed partial class ClaimWorker : BackgroundService {
       LeaseSeconds: _options.LeaseSeconds), ct);
   }
 
+  private async Task _initialHeartbeatAsync(CancellationToken ct) {
+    using var scope = _scopeFactory.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
+      InstanceId: _instanceProvider.InstanceId,
+      ServiceName: _instanceProvider.ServiceName,
+      HostName: _instanceProvider.HostName,
+      ProcessId: _instanceProvider.ProcessId), ct);
+  }
+
   private int _computeAdaptivePollWaitMs() {
     var baseMs = _options.PollingIntervalMilliseconds;
     var maxMs = _options.PollingMaxIntervalMilliseconds;
@@ -256,6 +280,10 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "ClaimWorker disabled via options — claim loop skipped")]
   static partial void LogDisabled(ILogger logger);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "ClaimWorker initial heartbeat failed; first claim_work calls may raise until HeartbeatWorker registers the instance")]
+  static partial void LogInitialHeartbeatFailed(ILogger logger, Exception ex);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>
