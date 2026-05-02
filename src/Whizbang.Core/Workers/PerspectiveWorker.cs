@@ -1064,9 +1064,27 @@ public partial class PerspectiveWorker(
       lastProcessedEventId = cachedEventId;
     }
 
+    // Phase H step 6 slice 4: cursor-inversion detector. If any pending event has
+    // event_id ≤ cached_cursor, the perspective row's metadata is past an event that's
+    // still in the pending queue — invariant violation. Trigger snapshot-aware rewind via
+    // RewindAndRunAsync(streamId, perspectiveName, earliestViolator). When cached_cursor
+    // is null (new perspective on existing stream OR cold start), no inversion is possible
+    // by definition; skip the check and forward-apply.
+    var inversionAnchor = lastProcessedEventId.HasValue
+      ? _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value)
+      : null;
+
     try {
-      var result = await runner.RunWithEventsAsync(
-        streamId, perspectiveName, lastProcessedEventId, filteredEvents, ct);
+      PerspectiveCursorCompletion result;
+      if (inversionAnchor.HasValue) {
+        // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
+        _cursorCache.Invalidate(streamId, perspectiveName);
+        LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId!.Value);
+        result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, ct);
+      } else {
+        result = await runner.RunWithEventsAsync(
+          streamId, perspectiveName, lastProcessedEventId, filteredEvents, ct);
+      }
 
       if (result.Status == PerspectiveProcessingStatus.Completed) {
         var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
@@ -1109,6 +1127,44 @@ public partial class PerspectiveWorker(
       await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
     }
   }
+
+  /// <summary>
+  /// Cursor-inversion detector. Returns the earliest event_id in <paramref name="events"/>
+  /// that is at-or-below <paramref name="cachedCursor"/>, or <c>null</c> if no inversion exists.
+  /// UUIDv7 is lexicographic-and-time-ordered, so the canonical "D" string compare matches the
+  /// time order — same comparison the runner template uses for its idempotency filter.
+  /// </summary>
+  /// <remarks>
+  /// Slice 4 — Phase H step 6. Inversion means a pending event's event_id is older than where
+  /// the cursor is — the perspective row's metadata advanced past an event that's still in the
+  /// pending queue. The strict invariant model (decision (a) in the design) treats this as
+  /// "model state is wrong, replay from before the violator". The earliest violator is the
+  /// rewind anchor — picking any later one risks a snapshot already past one of the
+  /// violating events.
+  /// </remarks>
+  internal static Guid? _findCursorInversionAnchor(
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      Guid cachedCursor) {
+    if (cachedCursor == Guid.Empty) {
+      return null;
+    }
+    var cursorStr = cachedCursor.ToString("D");
+    Guid? earliest = null;
+    foreach (var envelope in events) {
+      var msgId = envelope.MessageId.Value;
+      if (string.Compare(msgId.ToString("D"), cursorStr, StringComparison.Ordinal) <= 0) {
+        if (earliest is null
+            || string.Compare(msgId.ToString("D"), earliest.Value.ToString("D"), StringComparison.Ordinal) < 0) {
+          earliest = msgId;
+        }
+      }
+    }
+    return earliest;
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Cursor inversion detected: pending event {AnchorEventId} ≤ cached cursor {CachedCursor} for stream {StreamId} / perspective {PerspectiveName}; triggering rewind")]
+  private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
 
   /// <summary>
   /// Runs immediately after a successful RunWithEventsAsync and before the coordinator's
