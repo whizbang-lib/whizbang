@@ -1482,6 +1482,41 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<PendingPerspectiveEvent>> FetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "fetch_pending_perspective_events");
+
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
+    cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
+    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+
+    var results = new List<PendingPerspectiveEvent>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new PendingPerspectiveEvent(
+        EventWorkId: reader.GetGuid(0),
+        EventId: reader.GetGuid(1)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
