@@ -79,4 +79,47 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     await Assert.That(rows[0].EventWorkId).IsEqualTo(workId);
     await Assert.That(rows[0].EventId).IsEqualTo(eventId);
   }
+
+  [Test]
+  public async Task FetchEventsByIdsAsync_EmptyInput_ReturnsEmptyAsync() {
+    await using var dbContext = CreateDbContext();
+    var coord = Coord(dbContext);
+
+    var result = await coord.FetchEventsByIdsAsync(Array.Empty<Guid>());
+
+    await Assert.That(result.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FetchEventsByIdsAsync_RoundTripsAllColumnsAsync() {
+    await using var dbContext = CreateDbContext();
+    var coord = Coord(dbContext);
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at)
+        VALUES (@evt, @stream, @stream, 'agg', 'My.Type', '{""payload"":42}'::jsonb, '{""hop"":1}'::jsonb, '{""tenant"":""t1""}'::jsonb, 1, NOW())";
+      ins.Parameters.AddWithValue("evt", eventId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var rows = await coord.FetchEventsByIdsAsync(new[] { eventId });
+
+    await Assert.That(rows.Count).IsEqualTo(1);
+    await Assert.That(rows[0].StreamId).IsEqualTo(streamId);
+    await Assert.That(rows[0].EventId).IsEqualTo(eventId);
+    await Assert.That(rows[0].EventType).IsEqualTo("My.Type");
+    await Assert.That(rows[0].EventData).Contains("\"payload\"");
+    await Assert.That(rows[0].EventWorkId).IsEqualTo(Guid.Empty)
+      .Because("body fetch does not carry work-id; drainer pairs it from the prefetch tuples");
+  }
 }
