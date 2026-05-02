@@ -49,7 +49,8 @@ public partial class PerspectiveWorker(
   IPerspectiveCompletionChannel? perspectiveCompletionChannel = null,
   IFailureChannel? failureChannel = null,
   ILeaseRenewalChannel? leaseRenewalChannel = null,
-  IPerspectiveDrainChannel? perspectiveDrainChannel = null
+  IPerspectiveDrainChannel? perspectiveDrainChannel = null,
+  RecentlyProcessedEventCache? recentlyProcessedEventCache = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -92,6 +93,7 @@ public partial class PerspectiveWorker(
   private readonly IFailureChannel? _failureChannel = failureChannel;
   private readonly ILeaseRenewalChannel? _leaseRenewalChannel = leaseRenewalChannel;
   private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel = perspectiveDrainChannel;
+  private readonly RecentlyProcessedEventCache? _recentlyProcessedEventCache = recentlyProcessedEventCache;
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _bootstrappedThisSession = new();
@@ -1082,6 +1084,17 @@ public partial class PerspectiveWorker(
       ? _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value)
       : null;
 
+    // Phase H step 7 slice 5: cooldown short-circuit. If every event_work_id corresponding to
+    // this perspective's filtered events is in the RecentlyProcessedEventCache, we already ran
+    // apply for them within the TTL window — likely the cursor-flush race between drain finish
+    // and PerspectiveCompletionFlushWorker DELETE. Skip the apply call entirely. Don't re-enqueue
+    // completions either; the previous drain enqueued them already (the flusher will land them).
+    // The runner template's defensive idempotency guard remains as a safety net for
+    // post-restart / TTL-expiry scenarios where the cache was empty but the row was still pending.
+    if (_shouldSkipApplyDueToCooldown(filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache)) {
+      return;
+    }
+
     try {
       PerspectiveCursorCompletion result;
       if (inversionAnchor.HasValue) {
@@ -1113,6 +1126,9 @@ public partial class PerspectiveWorker(
 
       if (result.Status == PerspectiveProcessingStatus.Completed) {
         _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
+        // Mark all processed work_ids in the cooldown cache so the next drain within the TTL
+        // window (including the cursor-flush race window) short-circuits before reaching apply.
+        _markProcessedInCooldown(filteredEvents, batchContext.RawByEventId);
       }
 
       _metrics?.StreamsUpdated.Add(1);
@@ -1184,6 +1200,47 @@ public partial class PerspectiveWorker(
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Cursor inversion detected: pending event {AnchorEventId} ≤ cached cursor {CachedCursor} for stream {StreamId} / perspective {PerspectiveName}; triggering rewind")]
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
+
+  /// <summary>
+  /// Phase H step 7 slice 5: returns <c>true</c> when every event_work_id for the given filtered
+  /// events is in the cooldown cache (recently processed within TTL). Drainer skips
+  /// <c>RunWithEventsAsync</c> entirely in that case — the previous drain handled these events;
+  /// the completion flush is in flight. Returns <c>false</c> when the cache is null (cooldown
+  /// disabled), no events, or any work_id is fresh.
+  /// </summary>
+  internal static bool _shouldSkipApplyDueToCooldown(
+      IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
+      ILookup<Guid, StreamEventData> rawByEventId,
+      RecentlyProcessedEventCache? cache) {
+    if (cache is null || filteredEvents.Count == 0) {
+      return false;
+    }
+    foreach (var envelope in filteredEvents) {
+      foreach (var raw in rawByEventId[envelope.MessageId.Value]) {
+        if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// Marks every event_work_id for these envelopes as recently processed. Called after a
+  /// successful apply or rewind so subsequent drain ticks within the TTL window short-circuit.
+  /// </summary>
+  private void _markProcessedInCooldown(
+      List<MessageEnvelope<IEvent>> filteredEvents,
+      ILookup<Guid, StreamEventData> rawByEventId) {
+    if (_recentlyProcessedEventCache is null || filteredEvents.Count == 0) {
+      return;
+    }
+    foreach (var envelope in filteredEvents) {
+      foreach (var raw in rawByEventId[envelope.MessageId.Value]) {
+        _recentlyProcessedEventCache.MarkProcessed(raw.EventWorkId);
+      }
+    }
+  }
 
   /// <summary>
   /// Runs immediately after a successful RunWithEventsAsync and before the coordinator's
