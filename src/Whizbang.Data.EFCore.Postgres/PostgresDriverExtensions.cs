@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -129,6 +130,13 @@ public static class PostgresDriverExtensions {
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
         selector.Services.AddHostedService<TableStatisticsCollector>();
+
+        // TURNKEY: Register Postgres LISTEN/NOTIFY listener. Binds WhizbangNotificationOptions
+        // from "Whizbang:Notifications" so users only need to set ConnectionStringKey +
+        // SignalingMode in appsettings; the listener resolves <key>-direct → <key> at startup.
+        // SignalingMode.Polling makes the listener a no-op; SignalingMode.ListenNotify throws
+        // at startup if no connection string can be resolved.
+        selector.Services.AddWhizbangPostgresNotifications();
 
         return new WhizbangPerspectiveBuilder(selector.Services);
       }

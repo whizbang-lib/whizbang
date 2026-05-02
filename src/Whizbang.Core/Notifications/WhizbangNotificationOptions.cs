@@ -1,22 +1,76 @@
 namespace Whizbang.Core.Notifications;
 
 /// <summary>
+/// Selects how the C# claim worker is woken when new work arrives.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+public enum WorkSignalingMode {
+  /// <summary>
+  /// Default. Use LISTEN/NOTIFY when a direct connection string can be resolved (via
+  /// <see cref="WhizbangNotificationOptions.DirectConnectionString"/> or
+  /// <see cref="WhizbangNotificationOptions.ConnectionStringKey"/>); otherwise fall back to
+  /// polling-only. Safe default — never throws on misconfig.
+  /// </summary>
+  Auto,
+  /// <summary>
+  /// Force polling-only mode. The listener stays disabled regardless of connection-string
+  /// configuration. Useful when an environment doesn't permit a separate direct connection
+  /// (e.g., pgbouncer-only deployment) or for diagnostic A/B between the two modes.
+  /// </summary>
+  Polling,
+  /// <summary>
+  /// Force LISTEN/NOTIFY mode. Throws at startup if no direct connection string can be
+  /// resolved. Fail-fast in production where the operator expects burst-latency to be
+  /// ≤50ms and a misconfig would silently degrade to ≤250ms polling.
+  /// </summary>
+  ListenNotify,
+}
+
+/// <summary>
 /// Configuration for the work-signal notification listener (Phase D).
 /// </summary>
+/// <remarks>
+/// Bind from <c>Whizbang:Notifications</c> in appsettings or environment variables.
+/// Example:
+/// <code>
+/// {
+///   "Whizbang": {
+///     "Notifications": {
+///       "ConnectionStringKey": "bffservice-db",
+///       "SignalingMode": "Auto"
+///     }
+///   }
+/// }
+/// </code>
+/// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public sealed class WhizbangNotificationOptions {
   /// <summary>
-  /// Direct connection string that bypasses pgbouncer. Required to enable LISTEN-based
-  /// notifications since pgbouncer transaction-pooling drops session-state. When unset,
-  /// the system binds <see cref="NoOpWorkNotificationListener"/> and runs polling-only.
-  /// Convention: append <c>-direct</c> to the existing pooled connection string name
-  /// (e.g., <c>ConnectionStrings:bffservice-db</c> → <c>ConnectionStrings:bffservice-db-direct</c>).
+  /// Polling vs LISTEN/NOTIFY mode. Default <see cref="WorkSignalingMode.Auto"/>.
+  /// </summary>
+  public WorkSignalingMode SignalingMode { get; set; } = WorkSignalingMode.Auto;
+
+  /// <summary>
+  /// IConfiguration <c>ConnectionStrings</c> key whose value is the pooled connection used by
+  /// the service's DbContext (e.g., <c>"bffservice-db"</c>). Resolution at startup:
+  /// <list type="number">
+  ///   <item><description>If <see cref="DirectConnectionString"/> is set, use it directly.</description></item>
+  ///   <item><description>Else look up <c>ConnectionStrings:{ConnectionStringKey}-direct</c> — the dedicated direct (pgbouncer-bypass) string for LISTEN-only.</description></item>
+  ///   <item><description>Else fall back to <c>ConnectionStrings:{ConnectionStringKey}</c> — the pooled string. Works on direct-Postgres deployments without pgbouncer.</description></item>
+  /// </list>
+  /// </summary>
+  public string? ConnectionStringKey { get; set; }
+
+  /// <summary>
+  /// Explicit direct connection string. Overrides <see cref="ConnectionStringKey"/>-based lookup
+  /// when set. Mostly used for testing or programmatic overrides.
   /// </summary>
   public string? DirectConnectionString { get; set; }
 
   /// <summary>
-  /// Kill switch — forces polling-only mode even if <see cref="DirectConnectionString"/>
-  /// is configured. Useful for ops to disable notifications without redeploy.
+  /// Kill switch — forces polling-only mode even if a connection string can be resolved.
+  /// Equivalent to setting <see cref="SignalingMode"/> to <see cref="WorkSignalingMode.Polling"/>;
+  /// retained for backward compatibility.
   /// </summary>
   public bool DisableNotifications { get; set; }
 

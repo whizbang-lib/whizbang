@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -19,21 +20,24 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>fundamentals/work-coordinator/app-signals</docs>
 public sealed partial class PgAppSignalChannel(
   IOptions<WhizbangNotificationOptions> options,
+  IConfiguration configuration,
   ILogger<PgAppSignalChannel> logger
 ) : IAppSignalChannel {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ILogger<PgAppSignalChannel> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly ConcurrentDictionary<string, List<Func<string, CancellationToken, Task>>> _subscribers = new();
 
   /// <inheritdoc />
   public async Task PublishAsync(string topic, string payload, CancellationToken cancellationToken = default) {
     var channel = AppSignalTopicValidator.ToChannelName(topic);
-    if (string.IsNullOrWhiteSpace(_options.DirectConnectionString)) {
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration);
+    if (resolution.ConnectionString is null) {
       LogPublishSkippedNoConnection(_logger, channel);
       return;
     }
 
-    await using var conn = new NpgsqlConnection(_options.DirectConnectionString);
+    await using var conn = new NpgsqlConnection(resolution.ConnectionString);
     await conn.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
     cmd.Parameters.AddWithValue("channel", channel);
