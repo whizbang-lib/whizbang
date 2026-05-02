@@ -15,14 +15,14 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// Auto-invoked by <c>.WithDriver.Postgres</c>; consumers don't need to call this directly.
 /// Idempotent — calling multiple times has no additional effect.
 ///
-/// Configuration is bound from the <c>Whizbang:Notifications</c> section so consumers can
+/// Configuration is bound from the <c>Whizbang:Database</c> section so consumers can
 /// bake the convention into appsettings + environment variables and never have to think
 /// about wiring:
 ///
 /// <code>
 /// {
 ///   "Whizbang": {
-///     "Notifications": {
+///     "Database": {
 ///       "ConnectionStringKey": "appservice-db",
 ///       "SignalingMode": "Auto"
 ///     }
@@ -42,12 +42,12 @@ namespace Whizbang.Data.Postgres.Notifications;
 public static class PostgresNotificationsServiceCollectionExtensions {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>Configuration section the listener binds <see cref="WhizbangNotificationOptions"/> from.</summary>
-  public const string CONFIGURATION_SECTION = "Whizbang:Notifications";
+  public const string CONFIGURATION_SECTION = "Whizbang:Database";
 #pragma warning restore CA1707
 
   /// <summary>
   /// Registers the Postgres LISTEN/NOTIFY listener and binds
-  /// <see cref="WhizbangNotificationOptions"/> from the <c>Whizbang:Notifications</c>
+  /// <see cref="WhizbangNotificationOptions"/> from the <c>Whizbang:Database</c>
   /// configuration section. Replaces the default <see cref="NoOpWorkNotificationListener"/>
   /// from <c>AddWhizbangWorkers</c>.
   /// </summary>
@@ -76,7 +76,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
 
 /// <summary>
 /// AOT-safe <see cref="IConfigureOptions{TOptions}"/> for <see cref="WhizbangNotificationOptions"/>.
-/// Reads <c>Whizbang:Notifications</c> values from <see cref="IConfiguration"/> manually so we
+/// Reads <c>Whizbang:Database</c> values from <see cref="IConfiguration"/> manually so we
 /// don't take a dependency on the reflection-based options binder (avoids IL2026 / IL3050).
 /// </summary>
 internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(IConfiguration configuration)
