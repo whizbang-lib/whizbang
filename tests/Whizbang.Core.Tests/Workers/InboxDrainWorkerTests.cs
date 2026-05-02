@@ -38,11 +38,16 @@ public class InboxDrainWorkerTests {
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     public ConcurrentBag<InboxWork> Written { get; } = [];
     public TaskCompletionSource<int> SecondWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource<int> ReachedCount { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int TargetCount { get; set; } = 2;
     public ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
       Written.Add(work);
       if (Written.Count >= 2) {
         SecondWritten.TrySetResult(Written.Count);
+      }
+      if (Written.Count >= TargetCount) {
+        ReachedCount.TrySetResult(Written.Count);
       }
       return _channel.Writer.WriteAsync(work, ct);
     }
@@ -50,6 +55,9 @@ public class InboxDrainWorkerTests {
       Written.Add(work);
       if (Written.Count >= 2) {
         SecondWritten.TrySetResult(Written.Count);
+      }
+      if (Written.Count >= TargetCount) {
+        ReachedCount.TrySetResult(Written.Count);
       }
       return _channel.Writer.TryWrite(work);
     }
@@ -167,6 +175,76 @@ public class InboxDrainWorkerTests {
     var writtenMessageIds = inbox.Written.Select(w => w.MessageId).ToHashSet();
     await Assert.That(writtenMessageIds).Contains(msgA);
     await Assert.That(writtenMessageIds).Contains(msgB);
+  }
+
+  [Test]
+  public async Task InboxDrainWorker_MoreRowsThanMaxPerStream_LoopsUntilEmptyAsync() {
+    // Phase H step 6 slice 3: same loop-until-empty pattern as OutboxDrainWorker.
+    // The fake "consumes" returned rows on each fetch — mimics post-completion DELETE.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+
+    var coord = new ConsumingFakeWorkCoordinator();
+    coord.RowsByStream[streamId] = msgs.Select(m => _row(m, streamId)).ToList();
+
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 250 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(inbox.Written.Count).IsEqualTo(250)
+      .Because("inbox drainer must keep fetching for the same stream until pending=0");
+    await Assert.That(coord.FetchCalls).IsGreaterThanOrEqualTo(3)
+      .Because("250 rows / MaxPerStream=100 = 3 fetches minimum");
+  }
+
+  /// <summary>Fake coordinator that REMOVES returned rows from the dictionary on each fetch — mimics post-completion DELETE.</summary>
+  private sealed class ConsumingFakeWorkCoordinator : IWorkCoordinator {
+    public Dictionary<Guid, List<InboxBatchRow>> RowsByStream { get; } = [];
+    public int FetchCalls;
+    public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref FetchCalls);
+      var result = new List<InboxBatchRow>();
+      foreach (var sid in streamIds) {
+        if (RowsByStream.TryGetValue(sid, out var rows)) {
+          var taken = rows.Take(maxPerStream).ToList();
+          result.AddRange(taken);
+          rows.RemoveRange(0, taken.Count);
+        }
+      }
+      return Task.FromResult<IReadOnlyList<InboxBatchRow>>(result);
+    }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   [Test]

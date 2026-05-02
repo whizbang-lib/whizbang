@@ -196,6 +196,127 @@ public class OutboxDrainWorkerTests {
   }
 
   [Test]
+  public async Task OutboxDrainWorker_MoreRowsThanMaxPerStream_LoopsUntilEmptyAsync() {
+    // Phase H step 6 slice 3: drainer continues fetching for the same stream while there
+    // are NEW rows. Simulates 250 pending rows / MaxPerStream=100 → 3 publish iterations
+    // (100 + 100 + 50). The fake "consumes" returned rows on each fetch (mimicking what
+    // happens once completion-flush lands and complete_outbox_published deletes them).
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+
+    var coord = new ConsumingFakeWorkCoordinator();
+    coord.RowsByStream[streamId] = msgs.Select(m => _row(m, streamId)).ToList();
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 250 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(250)
+      .Because("drainer must keep fetching for the same stream until pending=0; 250 rows / MaxPerStream=100 = 3 iterations");
+    await Assert.That(coord.FetchCalls).IsGreaterThanOrEqualTo(3)
+      .Because("drainer should have fetched at least 3 times to drain 250 rows at MaxPerStream=100");
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_RefetchReturnsSameRows_ExitsWithoutDoublePublishAsync() {
+    // Race: completion-flush lags. After publishing batch 1, the next fetch returns the
+    // SAME rows (because complete_outbox_published hasn't deleted them yet). Drainer must
+    // detect via session-set and exit without re-publishing — the next claim_work tick
+    // will re-issue once the rows clear.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgs = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+
+    var coord = new FakeWorkCoordinator();  // does NOT consume rows on fetch
+    coord.RowsByStream[streamId] = msgs.Select(m => _row(m, streamId)).ToList();
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 50 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+    // Give a chance for any spurious second-pass publishes to happen.
+    await Task.Delay(200);
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(50)
+      .Because("session-set dedup must skip rows already published this drain session — no re-publish even if fetch returns the same rows");
+  }
+
+  /// <summary>Fake coordinator that REMOVES returned rows from the dictionary on each fetch — mimics post-completion DELETE.</summary>
+  private sealed class ConsumingFakeWorkCoordinator : IWorkCoordinator {
+    public Dictionary<Guid, List<OutboxBatchRow>> RowsByStream { get; } = [];
+    public int FetchCalls;
+    public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref FetchCalls);
+      var result = new List<OutboxBatchRow>();
+      foreach (var sid in streamIds) {
+        if (RowsByStream.TryGetValue(sid, out var rows)) {
+          var taken = rows.Take(maxPerStream).ToList();
+          result.AddRange(taken);
+          rows.RemoveRange(0, taken.Count);
+        }
+      }
+      return Task.FromResult<IReadOnlyList<OutboxBatchRow>>(result);
+    }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  [Test]
   public async Task OutboxDrainWorker_RepeatedStreamId_DrainerIsIdempotent_OnceCompletedAsync() {
     // The Part C invariant: claim_work emitting the same stream_id repeatedly must NOT cause
     // re-publish. The drainer fetches eligible rows; once a row is completed (production: deleted)
