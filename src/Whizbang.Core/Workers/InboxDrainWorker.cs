@@ -113,24 +113,45 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    var rows = await coordinator.FetchInboxBatchAsync(
-      [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+    // Phase H step 6 slice 3: loop-until-empty with session-local seen-set dedup.
+    // See OutboxDrainWorker._drainStreamInnerAsync for the rationale — same race shape.
+    var seen = new HashSet<Guid>();
+    var hadAnyNew = false;
+    while (!ct.IsCancellationRequested) {
+      var rows = await coordinator.FetchInboxBatchAsync(
+        [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
 
-    if (rows.Count == 0) {
-      return;
-    }
-
-    foreach (var row in rows) {
-      InboxWork work;
-      try {
-        work = _toInboxWork(row);
-      } catch (Exception ex) {
-        LogDeserializeFailed(_logger, row.MessageId, ex);
-        continue;
+      if (rows.Count == 0) {
+        if (hadAnyNew) {
+          _inboxChannelWriter.SignalNewInboxWorkAvailable();
+        }
+        return;
       }
-      await _inboxChannelWriter.WriteAsync(work, ct);
+
+      var newRows = 0;
+      foreach (var row in rows) {
+        if (!seen.Add(row.MessageId)) {
+          continue;
+        }
+        newRows++;
+        InboxWork work;
+        try {
+          work = _toInboxWork(row);
+        } catch (Exception ex) {
+          LogDeserializeFailed(_logger, row.MessageId, ex);
+          continue;
+        }
+        await _inboxChannelWriter.WriteAsync(work, ct);
+        hadAnyNew = true;
+      }
+
+      if (newRows == 0) {
+        if (hadAnyNew) {
+          _inboxChannelWriter.SignalNewInboxWorkAvailable();
+        }
+        return;
+      }
     }
-    _inboxChannelWriter.SignalNewInboxWorkAvailable();
   }
 
   private InboxWork _toInboxWork(InboxBatchRow row) {

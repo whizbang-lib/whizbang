@@ -112,54 +112,81 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    var rows = await coordinator.FetchOutboxBatchAsync(
-      [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
+    // Phase H step 6 slice 3: loop-until-empty. Drainer keeps fetching for this stream until
+    // there are no more new rows. The session-local seen-set dedups against rows whose
+    // completion is still in flight (OutboxCompletionFlushWorker coalesces ~10ms — between
+    // the drainer's publish and the row's processed_at landing in DB, fetch_outbox_batch
+    // would return the same row again because its filter is processed_at IS NULL). Without
+    // the set, we'd re-publish the row multiple times — exactly the multi-fire we eliminated.
+    // The set is bounded by drain-session size and GC'd on return.
+    var seen = new HashSet<Guid>();
+    while (!ct.IsCancellationRequested) {
+      var rows = await coordinator.FetchOutboxBatchAsync(
+        [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
 
-    if (rows.Count == 0) {
+      if (rows.Count == 0) {
+        return;
+      }
+
+      var newRows = 0;
+      foreach (var row in rows) {
+        if (!seen.Add(row.MessageId)) {
+          // Already published this session — completion flush lagging. Skip.
+          continue;
+        }
+        newRows++;
+        await _publishOneAsync(row, ct);
+      }
+
+      // If every row in this fetch was a dup of what we already published, completion flush
+      // hasn't landed — exit so the next claim_work tick can re-issue the stream once the
+      // pending rows clear.
+      if (newRows == 0) {
+        return;
+      }
+    }
+  }
+
+  private async Task _publishOneAsync(OutboxBatchRow row, CancellationToken ct) {
+    OutboxWork work;
+    try {
+      work = _toOutboxWork(row);
+    } catch (Exception ex) {
+      LogDeserializeFailed(_logger, row.MessageId, ex);
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = row.MessageId,
+        CompletedStatus = (MessageProcessingStatus)row.Status,
+        Error = ex.Message,
+        Reason = MessageFailureReason.Unknown,
+      }, ct);
       return;
     }
 
-    foreach (var row in rows) {
-      OutboxWork work;
-      try {
-        work = _toOutboxWork(row);
-      } catch (Exception ex) {
-        LogDeserializeFailed(_logger, row.MessageId, ex);
-        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-          MessageId = row.MessageId,
-          CompletedStatus = (MessageProcessingStatus)row.Status,
-          Error = ex.Message,
-          Reason = MessageFailureReason.Unknown,
-        }, ct);
-        continue;
-      }
+    MessagePublishResult result;
+    try {
+      result = await _publishStrategy!.PublishAsync(work, ct);
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      LogPublishFailed(_logger, row.MessageId, ex);
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = row.MessageId,
+        CompletedStatus = (MessageProcessingStatus)row.Status,
+        Error = ex.Message,
+        Reason = MessageFailureReason.Unknown,
+      }, ct);
+      return;
+    }
 
-      MessagePublishResult result;
-      try {
-        result = await _publishStrategy!.PublishAsync(work, ct);
-      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-        throw;
-      } catch (Exception ex) {
-        LogPublishFailed(_logger, row.MessageId, ex);
-        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-          MessageId = row.MessageId,
-          CompletedStatus = (MessageProcessingStatus)row.Status,
-          Error = ex.Message,
-          Reason = MessageFailureReason.Unknown,
-        }, ct);
-        continue;
-      }
-
-      if (result.Success) {
-        await _completionChannel.EnqueueAsync(row.MessageId, ct);
-      } else {
-        await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-          MessageId = row.MessageId,
-          CompletedStatus = result.CompletedStatus,
-          Error = result.Error ?? "publish failed",
-          Reason = result.Reason,
-        }, ct);
-      }
+    if (result.Success) {
+      await _completionChannel.EnqueueAsync(row.MessageId, ct);
+    } else {
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+        MessageId = row.MessageId,
+        CompletedStatus = result.CompletedStatus,
+        Error = result.Error ?? "publish failed",
+        Reason = result.Reason,
+      }, ct);
     }
   }
 
