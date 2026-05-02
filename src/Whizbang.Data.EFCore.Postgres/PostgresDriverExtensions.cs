@@ -132,7 +132,7 @@ public static class PostgresDriverExtensions {
         selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // TURNKEY: Register Postgres LISTEN/NOTIFY listener. Binds WhizbangNotificationOptions
-        // from "Whizbang:Notifications" so users only need to set ConnectionStringKey +
+        // from "Whizbang:Database" so users only need to set ConnectionStringKey +
         // SignalingMode in appsettings; the listener resolves <key>-direct → <key> at startup.
         // SignalingMode.Polling makes the listener a no-op; SignalingMode.ListenNotify throws
         // at startup if no connection string can be resolved.

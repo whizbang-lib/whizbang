@@ -10,7 +10,7 @@ using Whizbang.Data.Postgres.Notifications;
 namespace Whizbang.Core.Tests.Notifications;
 
 /// <summary>
-/// Verifies that <c>WhizbangNotificationOptions</c> binds from <c>Whizbang:Notifications</c>
+/// Verifies that <c>WhizbangNotificationOptions</c> binds from <c>Whizbang:Database</c>
 /// in IConfiguration. AOT-safe — uses manual <see cref="IConfigureOptions{T}"/> instead of
 /// the reflection-based binder.
 /// </summary>
@@ -29,15 +29,15 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
   [Test]
   public async Task Bind_FullSettings_AppliesAllFieldsAsync() {
     var opts = _resolveFrom(new() {
-      ["Whizbang:Notifications:SignalingMode"] = "ListenNotify",
-      ["Whizbang:Notifications:ConnectionStringKey"] = "bffservice-db",
-      ["Whizbang:Notifications:DirectConnectionString"] = "Host=explicit",
-      ["Whizbang:Notifications:DisableNotifications"] = "false",
-      ["Whizbang:Notifications:PollingFallbackInterval"] = "00:00:45",
-      ["Whizbang:Notifications:ListenKeepaliveInterval"] = "00:00:20",
-      ["Whizbang:Notifications:ListenReconnectInitialDelay"] = "00:00:02",
-      ["Whizbang:Notifications:ListenReconnectMaxDelay"] = "00:01:00",
-      ["Whizbang:Notifications:ListenReconnectBackoffMultiplier"] = "1.5",
+      ["Whizbang:Database:SignalingMode"] = "ListenNotify",
+      ["Whizbang:Database:ConnectionStringKey"] = "bffservice-db",
+      ["Whizbang:Database:DirectConnectionString"] = "Host=explicit",
+      ["Whizbang:Database:DisableNotifications"] = "false",
+      ["Whizbang:Database:PollingFallbackInterval"] = "00:00:45",
+      ["Whizbang:Database:ListenKeepaliveInterval"] = "00:00:20",
+      ["Whizbang:Database:ListenReconnectInitialDelay"] = "00:00:02",
+      ["Whizbang:Database:ListenReconnectMaxDelay"] = "00:01:00",
+      ["Whizbang:Database:ListenReconnectBackoffMultiplier"] = "1.5",
     });
 
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.ListenNotify);
@@ -54,7 +54,7 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
   [Test]
   public async Task Bind_PartialSettings_LeavesDefaultsForUnsetKeysAsync() {
     var opts = _resolveFrom(new() {
-      ["Whizbang:Notifications:ConnectionStringKey"] = "bff-db"
+      ["Whizbang:Database:ConnectionStringKey"] = "bff-db"
     });
 
     // Set value applied:
@@ -80,7 +80,7 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
   [Test]
   public async Task Bind_SignalingMode_AcceptsCaseInsensitiveValuesAsync() {
     var opts = _resolveFrom(new() {
-      ["Whizbang:Notifications:SignalingMode"] = "polling"  // lowercase
+      ["Whizbang:Database:SignalingMode"] = "polling"  // lowercase
     });
 
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.Polling);
@@ -89,7 +89,7 @@ public class ConfigureWhizbangNotificationOptionsFromConfigurationTests {
   [Test]
   public async Task Bind_SignalingMode_InvalidValue_LeavesDefaultAsync() {
     var opts = _resolveFrom(new() {
-      ["Whizbang:Notifications:SignalingMode"] = "NotAValidMode"
+      ["Whizbang:Database:SignalingMode"] = "NotAValidMode"
     });
 
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.Auto);

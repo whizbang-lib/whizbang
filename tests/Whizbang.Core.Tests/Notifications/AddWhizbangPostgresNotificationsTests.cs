@@ -82,8 +82,8 @@ public class AddWhizbangPostgresNotificationsTests {
   public async Task AddWhizbangPostgresNotifications_BindsOptionsFromConfigurationAsync() {
     var services = new ServiceCollection();
     var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-      ["Whizbang:Notifications:SignalingMode"] = "ListenNotify",
-      ["Whizbang:Notifications:ConnectionStringKey"] = "bff-db"
+      ["Whizbang:Database:SignalingMode"] = "ListenNotify",
+      ["Whizbang:Database:ConnectionStringKey"] = "bff-db"
     }).Build();
     services.AddSingleton<IConfiguration>(config);
     services.AddLogging();

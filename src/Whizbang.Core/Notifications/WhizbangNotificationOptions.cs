@@ -30,12 +30,12 @@ public enum WorkSignalingMode {
 /// Configuration for the work-signal notification listener (Phase D).
 /// </summary>
 /// <remarks>
-/// Bind from <c>Whizbang:Notifications</c> in appsettings or environment variables.
+/// Bind from <c>Whizbang:Database</c> in appsettings or environment variables.
 /// Example:
 /// <code>
 /// {
 ///   "Whizbang": {
-///     "Notifications": {
+///     "Database": {
 ///       "ConnectionStringKey": "bffservice-db",
 ///       "SignalingMode": "Auto"
 ///     }
