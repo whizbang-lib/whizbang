@@ -206,6 +206,12 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
     if (_perspectiveDrainChannel is not null) {
       foreach (var streamId in batch.PerspectiveStreamIds) {
+        // Phase H step 6 slice 5: skip stream_ids whose drain is already in flight on this
+        // instance — symmetric with outbox/inbox in-flight filter. Prevents redundant
+        // RunAsync invocations during cursor-flush lag windows.
+        if (_perspectiveDrainChannel.IsInFlight(streamId)) {
+          continue;
+        }
         await _perspectiveDrainChannel.WriteAsync(streamId, ct);
       }
     }
