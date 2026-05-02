@@ -298,6 +298,70 @@ public class ClaimWorkerTests {
     public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
   }
 
+  /// <summary>Captures perspective drain channel writes and exposes in-flight tracking.</summary>
+  private sealed class FilteringPerspectiveDrainChannel : IPerspectiveDrainChannel {
+    private readonly System.Threading.Channels.Channel<Guid> _ch = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _inFlight = new();
+    public List<Guid> Written { get; } = [];
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+      Written.Add(streamId);
+      return _ch.Writer.WriteAsync(streamId, ct);
+    }
+    public bool TryWrite(Guid streamId) {
+      Written.Add(streamId);
+      return _ch.Writer.TryWrite(streamId);
+    }
+    public bool IsInFlight(Guid streamId) => _inFlight.ContainsKey(streamId);
+    public void MarkDraining(Guid streamId) => _inFlight[streamId] = 1;
+    public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
+  }
+
+  [Test]
+  public async Task Distribute_FiltersOutInFlightStreamIds_FromPerspectiveDrainChannelAsync() {
+    // Slice 5: ClaimWorker must skip writes for stream_ids whose perspective drain is
+    // already in flight. Symmetric with the outbox / inbox in-flight filter (Part B).
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    var coord = new FakeCoordinator {
+      BatchToReturn = new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = [],
+        PerspectiveStreamIds = [streamA, streamB]
+      }
+    };
+
+    var perspectiveDrain = new FilteringPerspectiveDrainChannel();
+    perspectiveDrain.MarkDraining(streamA);  // already mid-drain; filter must skip
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      NullLogger<ClaimWorker>.Instance,
+      perspectiveDrainChannel: perspectiveDrain);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Every write should be streamB; streamA was filtered out via IsInFlight.
+    foreach (var sid in perspectiveDrain.Written) {
+      await Assert.That(sid).IsEqualTo(streamB);
+    }
+    await Assert.That(perspectiveDrain.Written.Count).IsLessThan(coord.CallCount * 2);
+  }
+
   [Test]
   public async Task Distribute_FiltersOutInFlightStreamIds_FromOutboxDrainChannelAsync() {
     // Part B defense-in-depth: a stream_id that's already being drained must not be re-queued.

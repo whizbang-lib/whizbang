@@ -976,20 +976,28 @@ public partial class PerspectiveWorker(
       List<MessageEnvelope<IEvent>> streamEvents,
       DrainBatchContext batchContext,
       CancellationToken ct) {
-    var perspectiveNames = _collectDrainModePerspectiveNames(streamEvents, batchContext.TypeNameCache);
-    _registerDrainModeLifecycleTracking(streamEvents, batchContext.TypeNameCache, streamId, batchContext.LifecycleCoordinator);
+    // Phase H step 6 slice 5: bracket the entire per-stream drain with the channel-level
+    // in-flight marker so ClaimWorker's _distributeAsync skips re-emitting this stream while
+    // we're still working on it. Symmetric with OutboxDrainWorker / InboxDrainWorker Part B.
+    _perspectiveDrainChannel?.MarkDraining(streamId);
+    try {
+      var perspectiveNames = _collectDrainModePerspectiveNames(streamEvents, batchContext.TypeNameCache);
+      _registerDrainModeLifecycleTracking(streamEvents, batchContext.TypeNameCache, streamId, batchContext.LifecycleCoordinator);
 
-    foreach (var perspectiveName in perspectiveNames) {
-      var filteredEvents = streamEvents
-          .Where(e => batchContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
-            && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
-          .ToList();
+      foreach (var perspectiveName in perspectiveNames) {
+        var filteredEvents = streamEvents
+            .Where(e => batchContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
+              && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+            .ToList();
 
-      if (filteredEvents.Count == 0) {
-        continue;
+        if (filteredEvents.Count == 0) {
+          continue;
+        }
+        await _runDrainModePerspectiveAsync(
+          streamId, perspectiveName, filteredEvents, batchContext, ct);
       }
-      await _runDrainModePerspectiveAsync(
-        streamId, perspectiveName, filteredEvents, batchContext, ct);
+    } finally {
+      _perspectiveDrainChannel?.MarkDrained(streamId);
     }
   }
 
