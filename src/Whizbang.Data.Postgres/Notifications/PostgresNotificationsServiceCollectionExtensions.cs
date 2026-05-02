@@ -1,0 +1,137 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Notifications.AppSignals;
+
+namespace Whizbang.Data.Postgres.Notifications;
+
+/// <summary>
+/// DI registration for the Postgres LISTEN/NOTIFY work-signal listener.
+/// </summary>
+/// <remarks>
+/// Auto-invoked by <c>.WithDriver.Postgres</c>; consumers don't need to call this directly.
+/// Idempotent — calling multiple times has no additional effect.
+///
+/// Configuration is bound from the <c>Whizbang:Notifications</c> section so consumers can
+/// bake the convention into appsettings + environment variables and never have to think
+/// about wiring:
+///
+/// <code>
+/// {
+///   "Whizbang": {
+///     "Notifications": {
+///       "ConnectionStringKey": "appservice-db",
+///       "SignalingMode": "Auto"
+///     }
+///   }
+/// }
+/// </code>
+///
+/// At startup, <see cref="PgWorkNotificationListener"/> resolves the connection string per
+/// the precedence in <see cref="NotificationConnectionStringResolver"/>:
+/// <list type="number">
+///   <item><description>Explicit <see cref="WhizbangNotificationOptions.DirectConnectionString"/></description></item>
+///   <item><description><c>ConnectionStrings:{ConnectionStringKey}-direct</c></description></item>
+///   <item><description><c>ConnectionStrings:{ConnectionStringKey}</c> (pooled fallback)</description></item>
+/// </list>
+/// </remarks>
+/// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+public static class PostgresNotificationsServiceCollectionExtensions {
+#pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
+  /// <summary>Configuration section the listener binds <see cref="WhizbangNotificationOptions"/> from.</summary>
+  public const string CONFIGURATION_SECTION = "Whizbang:Notifications";
+#pragma warning restore CA1707
+
+  /// <summary>
+  /// Registers the Postgres LISTEN/NOTIFY listener and binds
+  /// <see cref="WhizbangNotificationOptions"/> from the <c>Whizbang:Notifications</c>
+  /// configuration section. Replaces the default <see cref="NoOpWorkNotificationListener"/>
+  /// from <c>AddWhizbangWorkers</c>.
+  /// </summary>
+  public static IServiceCollection AddWhizbangPostgresNotifications(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+
+    // AOT-safe options binding: register an IConfigureOptions impl that reads IConfiguration
+    // values manually instead of using the reflection-based BindConfiguration<TOptions>.
+    services.AddOptions<WhizbangNotificationOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IConfigureOptions<WhizbangNotificationOptions>,
+      ConfigureWhizbangNotificationOptionsFromConfiguration>());
+
+    // Replace the NoOp listener registered by AddWhizbangWorkers with the real one.
+    services.RemoveAll<IWorkNotificationListener>();
+    services.TryAddSingleton<PgWorkNotificationListener>();
+    services.AddSingleton<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
+    services.AddHostedService(sp => sp.GetRequiredService<PgWorkNotificationListener>());
+
+    // App-signal channel (publishes pg_notify on wh_app_<topic>).
+    services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
+
+    return services;
+  }
+}
+
+/// <summary>
+/// AOT-safe <see cref="IConfigureOptions{TOptions}"/> for <see cref="WhizbangNotificationOptions"/>.
+/// Reads <c>Whizbang:Notifications</c> values from <see cref="IConfiguration"/> manually so we
+/// don't take a dependency on the reflection-based options binder (avoids IL2026 / IL3050).
+/// </summary>
+internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(IConfiguration configuration)
+  : IConfigureOptions<WhizbangNotificationOptions> {
+
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+
+  public void Configure(WhizbangNotificationOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var section = _configuration.GetSection(PostgresNotificationsServiceCollectionExtensions.CONFIGURATION_SECTION);
+    if (!section.Exists()) {
+      return;
+    }
+
+    var modeRaw = section["SignalingMode"];
+    if (!string.IsNullOrWhiteSpace(modeRaw)
+        && Enum.TryParse<WorkSignalingMode>(modeRaw, ignoreCase: true, out var mode)) {
+      options.SignalingMode = mode;
+    }
+
+    var key = section["ConnectionStringKey"];
+    if (!string.IsNullOrWhiteSpace(key)) {
+      options.ConnectionStringKey = key;
+    }
+
+    var direct = section["DirectConnectionString"];
+    if (!string.IsNullOrWhiteSpace(direct)) {
+      options.DirectConnectionString = direct;
+    }
+
+    if (bool.TryParse(section["DisableNotifications"], out var disable)) {
+      options.DisableNotifications = disable;
+    }
+
+    if (TimeSpan.TryParse(section["PollingFallbackInterval"], out var pollFallback)) {
+      options.PollingFallbackInterval = pollFallback;
+    }
+
+    if (TimeSpan.TryParse(section["ListenKeepaliveInterval"], out var keepalive)) {
+      options.ListenKeepaliveInterval = keepalive;
+    }
+
+    if (TimeSpan.TryParse(section["ListenReconnectInitialDelay"], out var initialDelay)) {
+      options.ListenReconnectInitialDelay = initialDelay;
+    }
+
+    if (TimeSpan.TryParse(section["ListenReconnectMaxDelay"], out var maxDelay)) {
+      options.ListenReconnectMaxDelay = maxDelay;
+    }
+
+    if (double.TryParse(section["ListenReconnectBackoffMultiplier"],
+        System.Globalization.NumberStyles.Float,
+        System.Globalization.CultureInfo.InvariantCulture,
+        out var multiplier)) {
+      options.ListenReconnectBackoffMultiplier = multiplier;
+    }
+  }
+}

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -16,9 +17,11 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public sealed partial class PgWorkNotificationListener(
   IOptions<WhizbangNotificationOptions> options,
+  IConfiguration configuration,
   ILogger<PgWorkNotificationListener> logger
 ) : BackgroundService, IWorkNotificationListener {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ILogger<PgWorkNotificationListener> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private bool _isHealthy;
   private DateTimeOffset? _lastSignalAt;
@@ -34,17 +37,35 @@ public sealed partial class PgWorkNotificationListener(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    if (string.IsNullOrWhiteSpace(_options.DirectConnectionString) || _options.DisableNotifications) {
-      LogDisabled(_logger);
+    // Forced polling-only path. DisableNotifications stays as the legacy synonym for
+    // SignalingMode.Polling.
+    if (_options.DisableNotifications || _options.SignalingMode == WorkSignalingMode.Polling) {
+      LogDisabledByMode(_logger);
       return;
     }
 
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration);
+    if (resolution.ConnectionString is null) {
+      if (_options.SignalingMode == WorkSignalingMode.ListenNotify) {
+        // Fail-fast: production expected NOTIFY but config didn't provide a connection.
+        throw new InvalidOperationException(
+          "WorkSignalingMode.ListenNotify is set but no direct connection string could be resolved. " +
+          "Configure WhizbangNotificationOptions.ConnectionStringKey (and provide " +
+          "ConnectionStrings:<key>-direct or ConnectionStrings:<key>) or set DirectConnectionString.");
+      }
+      // Auto mode: fall back to polling-only.
+      LogDisabledNoConnection(_logger);
+      return;
+    }
+
+    LogResolvedConnection(_logger, resolution.Source);
+    var connectionString = resolution.ConnectionString;
     LogStarted(_logger);
     var attempt = 0;
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
-        await using var conn = new NpgsqlConnection(_options.DirectConnectionString);
+        await using var conn = new NpgsqlConnection(connectionString);
         conn.Notification += _onNotification;
         await conn.OpenAsync(stoppingToken);
 
@@ -113,8 +134,8 @@ public sealed partial class PgWorkNotificationListener(
     return TimeSpan.FromMilliseconds(Math.Min(ms, _options.ListenReconnectMaxDelay.TotalMilliseconds));
   }
 
-  [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "PgWorkNotificationListener disabled: no DirectConnectionString or DisableNotifications=true")]
-  static partial void LogDisabled(ILogger logger);
+  [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "PgWorkNotificationListener disabled by SignalingMode=Polling or DisableNotifications=true — running polling-only")]
+  static partial void LogDisabledByMode(ILogger logger);
   [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "PgWorkNotificationListener started")]
   static partial void LogStarted(ILogger logger);
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PgWorkNotificationListener connected and LISTENing on wh_work")]
@@ -123,4 +144,8 @@ public sealed partial class PgWorkNotificationListener(
   static partial void LogReconnect(ILogger logger, string reason, double delaySeconds);
   [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "PgWorkNotificationListener stopped")]
   static partial void LogStopped(ILogger logger);
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "PgWorkNotificationListener disabled — no connection string resolved; running polling-only (set WhizbangNotificationOptions.ConnectionStringKey to enable)")]
+  static partial void LogDisabledNoConnection(ILogger logger);
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "PgWorkNotificationListener resolved connection string from {Source}")]
+  static partial void LogResolvedConnection(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source);
 }
