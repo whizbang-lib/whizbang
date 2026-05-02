@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 
@@ -47,6 +48,18 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxDrainWorker>();
     services.TryAddSingleton<InboxDrainWorker>();
 
+    // Phase H step 7 slice 7: cooldown cache for the perspective drainer's short-circuit gate.
+    // Singleton — PerspectiveWorker reads/writes it; the sweep worker periodically evicts.
+    services.TryAddSingleton(sp => {
+      var opts = sp.GetRequiredService<IOptions<RecentlyProcessedEventCacheOptions>>().Value;
+      var time = sp.GetRequiredService<ITimeProvider>();
+      return new RecentlyProcessedEventCache(
+        timeProvider: time,
+        ttl: TimeSpan.FromMinutes(Math.Max(1, opts.TtlMinutes)),
+        maxEntries: Math.Max(1, opts.MaxEntries));
+    });
+    services.TryAddSingleton<RecentlyProcessedEventCacheSweepWorker>();
+
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
@@ -61,6 +74,7 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService(sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxDrainWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxDrainWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<RecentlyProcessedEventCacheSweepWorker>());
 
     // Channel interfaces — singletons that delegate to the singleton worker.
     services.TryAddSingleton<IOutboxCompletionChannel>(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
@@ -104,6 +118,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<MaintenanceWorkerOptions>();
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
+    services.AddOptions<RecentlyProcessedEventCacheOptions>();
 
     return services;
   }
