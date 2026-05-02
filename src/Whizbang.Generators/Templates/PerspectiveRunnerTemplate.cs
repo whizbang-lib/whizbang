@@ -159,10 +159,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // — otherwise claim_orphaned_perspective_events keeps re-claiming the same rows
           // every safety-net interval and we get a hot loop of "Skipped already-applied".
           // The events ARE done from the perspective-events table standpoint; the runner just
-          // had no model work to do because the row already reflects them. Surface at INF
-          // because a persistent all-skipped pattern indicates a self-heal scenario worth
-          // looking at (e.g., the per-EventWorkId completion enqueue isn't happening).
-          _logger.LogInformation(
+          // had no model work to do because the row already reflects them.
+          //
+          // Logged at Debug as of Phase H step 7 slice 6: with the drainer's cooldown gate
+          // (step 7 slice 5) active, this branch only fires when a duplicate slipped past the
+          // cache (post-restart, TTL expiry, or handler-failure recovery). All steady-state
+          // duplicates are caught one layer up; reaching here is rare and self-heals via the
+          // Status=Completed return below. Promote back to Information ONLY if production
+          // shows a sustained rate, which would indicate a real anomaly worth investigating.
+          _logger.LogDebug(
               "All {Skipped} events already applied for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — returning Completed for self-heal",
               events.Count - filtered.Count,
               perspectiveName,
