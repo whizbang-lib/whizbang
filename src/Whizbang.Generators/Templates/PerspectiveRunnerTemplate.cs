@@ -153,19 +153,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         }
       }
       if (filtered.Count != events.Count) {
-        _logger.LogInformation(
-            "Skipped {Skipped} already-applied events for {PerspectiveName} stream {StreamId} (last applied {LastEventId})",
-            events.Count - filtered.Count,
-            perspectiveName,
-            streamId,
-            lastAppliedEventId);
         if (filtered.Count == 0) {
           // All events already applied. Status MUST be Completed (not None) so the
           // PerspectiveWorker enqueues each EventWorkId for deletion from wh_perspective_events
           // — otherwise claim_orphaned_perspective_events keeps re-claiming the same rows
-          // every safety-net interval and we get a hot loop of "Skipped 1 already-applied".
+          // every safety-net interval and we get a hot loop of "Skipped already-applied".
           // The events ARE done from the perspective-events table standpoint; the runner just
-          // had no model work to do because the row already reflects them.
+          // had no model work to do because the row already reflects them. Surface at INF
+          // because a persistent all-skipped pattern indicates a self-heal scenario worth
+          // looking at (e.g., the per-EventWorkId completion enqueue isn't happening).
+          _logger.LogInformation(
+              "All {Skipped} events already applied for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — returning Completed for self-heal",
+              events.Count - filtered.Count,
+              perspectiveName,
+              streamId,
+              lastAppliedEventId);
           var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
           return new PerspectiveCursorCompletion {
             StreamId = streamId,
@@ -176,6 +178,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             EventsProcessed = 0,
             ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
           };
+        } else {
+          // Partial skip: cursor-flush race within one instance — perspective row metadata
+          // advanced past some events whose cursor write hasn't landed yet (PerspectiveCompletion
+          // FlushWorker coalesces ~10 ms). Benign and self-heals on the next tick. Logged at
+          // Debug only — at high event rates this fires once per event on busy streams (8.6k/day
+          // observed on JDX BFF before this drop). See Phase H step 6 slice 6 for context.
+          _logger.LogDebug(
+              "Skipped {Skipped} already-applied events for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — cursor-flush lag, applying {Remaining} new events",
+              events.Count - filtered.Count,
+              perspectiveName,
+              streamId,
+              lastAppliedEventId,
+              filtered.Count);
         }
       }
       events = filtered;
