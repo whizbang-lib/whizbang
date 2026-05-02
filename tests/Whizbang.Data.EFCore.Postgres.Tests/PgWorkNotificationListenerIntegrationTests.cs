@@ -221,4 +221,68 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
     await listener.StopAsync(CancellationToken.None);
   }
+
+  // ----- reconnect under disconnect -----
+
+  [Test]
+  public async Task Listener_ServerTerminatesBackend_ReconnectsAndRecoversHealthAsync() {
+    // Real disconnect scenario: postgres drops the listener's session (e.g., via
+    // pg_terminate_backend, a service restart, or a transient network blip). The listener
+    // should detect, log, back off, reconnect, and resume LISTENing — verified by health
+    // toggling false → true and a fresh pg_notify still firing OnSignal.
+    var listener = _newListener(new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+      ListenReconnectInitialDelay = TimeSpan.FromMilliseconds(100),
+      ListenReconnectMaxDelay = TimeSpan.FromMilliseconds(500),
+    });
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    await listener.StartAsync(cts.Token);
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!listener.IsHealthy && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(50);
+    }
+    await Assert.That(listener.IsHealthy).IsTrue().Because("listener must establish initial LISTEN before disconnect test");
+
+    var healthDropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var healthRecovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    listener.OnHealthChanged += healthy => {
+      if (!healthy) { healthDropped.TrySetResult(); } else if (healthDropped.Task.IsCompleted) { healthRecovered.TrySetResult(); }
+    };
+
+    // Terminate the listener's backend session. Match by query text — the LISTEN session
+    // sits idle with `query` retaining 'LISTEN wh_work' in pg_stat_activity.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+    await using (var kill = conn.CreateCommand()) {
+      kill.CommandText = @"
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND query LIKE '%LISTEN%wh_work%'
+          AND pid != pg_backend_pid()";
+      _ = await kill.ExecuteScalarAsync();
+    }
+
+    // Health goes false on detection, true again after reconnect.
+    await healthDropped.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    await healthRecovered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    await Assert.That(listener.IsHealthy).IsTrue().Because("after reconnect listener should be healthy again");
+
+    // Verify the new connection is actually listening — fire pg_notify, expect OnSignal.
+    var tcs = new TaskCompletionSource<WorkSignalCategory>(TaskCreationOptions.RunContinuationsAsynchronously);
+    listener.OnSignal += cat => tcs.TrySetResult(cat);
+    await using (var notify = conn.CreateCommand()) {
+      notify.CommandText = "SELECT pg_notify('wh_work', 'outbox')";
+      _ = await notify.ExecuteScalarAsync();
+    }
+    var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    await Assert.That(category).IsEqualTo(WorkSignalCategory.Outbox)
+      .Because("after reconnect, fresh pg_notify must reach OnSignal subscribers");
+
+    await listener.StopAsync(CancellationToken.None);
+  }
 }
