@@ -702,6 +702,27 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<InboxBatchRow>>(Array.Empty<InboxBatchRow>());
 
   /// <summary>
+  /// Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 2). Returns
+  /// (event_work_id, event_id) tuples for unprocessed <c>wh_perspective_events</c> rows leased
+  /// to the caller, scoped to a single (stream_id, perspective_name), ordered by event_id ASC.
+  /// The drainer uses this BEFORE pulling event bodies so it can filter against the in-memory
+  /// cooldown cache and the cached cursor without paying the body-fetch + JSON-deserialize cost
+  /// when no actual apply work is needed.
+  /// </summary>
+  /// <param name="streamId">Stream id to scope to.</param>
+  /// <param name="perspectiveName">Perspective name to scope to.</param>
+  /// <param name="instanceId">Calling instance id — only its leased rows are returned.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Pending event rows in event_id ASC order.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<PendingPerspectiveEvent>> FetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
   /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
   /// </summary>
@@ -1419,6 +1440,16 @@ public record PerspectiveEventCompletion {
   /// </summary>
   public int StatusFlags { get; init; } = (int)PerspectiveProcessingStatus.Completed;
 }
+
+/// <summary>
+/// One pending perspective-event row returned from
+/// <see cref="IWorkCoordinator.FetchPendingPerspectiveEventsAsync"/>. Carries only the IDs needed
+/// for the drainer's cheap-first pipeline: cooldown filter, cursor-inversion check, and
+/// scoped body fetch. Never carries event bodies — those are fetched separately for the subset
+/// of rows that survive filtering.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId);
 
 /// <summary>
 /// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.

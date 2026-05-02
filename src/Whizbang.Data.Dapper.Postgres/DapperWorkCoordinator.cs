@@ -431,6 +431,24 @@ public partial class DapperWorkCoordinator(
     })];
   }
 
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<PendingPerspectiveEvent>> FetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id)",
+      new { p_stream_id = streamId, p_perspective_name = perspectiveName, p_instance_id = instanceId });
+
+    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id))];
+  }
+
 #pragma warning disable CA1707, IDE1006, S1144 // Dapper DTO with snake_case to match SQL function output columns.
   private sealed class OutboxBatchRowDto {
     public Guid message_id { get; set; }
@@ -459,6 +477,11 @@ public partial class DapperWorkCoordinator(
     public int attempts { get; set; }
     public int? partition_number { get; set; }
     public bool is_event { get; set; }
+  }
+
+  private sealed class PendingPerspectiveEventDto {
+    public Guid out_event_work_id { get; set; }
+    public Guid out_event_id { get; set; }
   }
 #pragma warning restore CA1707, IDE1006, S1144
 
