@@ -1138,17 +1138,28 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Cursor-inversion detector. Returns the earliest event_id in <paramref name="events"/>
-  /// that is at-or-below <paramref name="cachedCursor"/>, or <c>null</c> if no inversion exists.
-  /// UUIDv7 is lexicographic-and-time-ordered, so the canonical "D" string compare matches the
-  /// time order — same comparison the runner template uses for its idempotency filter.
+  /// that is strictly less than <paramref name="cachedCursor"/>, or <c>null</c> if no inversion
+  /// exists. UUIDv7 is lexicographic-and-time-ordered, so the canonical "D" string compare
+  /// matches the time order — same comparison the runner template uses for its idempotency filter.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Slice 4 — Phase H step 6. Inversion means a pending event's event_id is older than where
   /// the cursor is — the perspective row's metadata advanced past an event that's still in the
   /// pending queue. The strict invariant model (decision (a) in the design) treats this as
   /// "model state is wrong, replay from before the violator". The earliest violator is the
   /// rewind anchor — picking any later one risks a snapshot already past one of the
   /// violating events.
+  /// </para>
+  /// <para>
+  /// <strong>Equal cursor is NOT inversion.</strong> When <c>event_id == cachedCursor</c>, the
+  /// runner just applied that event (cursor advanced synchronously) but the
+  /// <c>wh_perspective_events</c> row's <c>processed_at</c> hasn't landed yet (the completion
+  /// flusher coalesces ~10 ms before writing). That's the expected state during the
+  /// cursor-flush window — the runner's idempotency filter inside RunWithEventsAsync skips
+  /// the duplicate. Triggering rewind here was a slice 4 over-trigger that produced hot-loop
+  /// full replays in a consumer BFF on hot session streams (observed 2026-05-02 ~09:43).
+  /// </para>
   /// </remarks>
   internal static Guid? _findCursorInversionAnchor(
       IReadOnlyList<MessageEnvelope<IEvent>> events,
@@ -1160,7 +1171,7 @@ public partial class PerspectiveWorker(
     Guid? earliest = null;
     foreach (var envelope in events) {
       var msgId = envelope.MessageId.Value;
-      if (string.Compare(msgId.ToString("D"), cursorStr, StringComparison.Ordinal) <= 0) {
+      if (string.Compare(msgId.ToString("D"), cursorStr, StringComparison.Ordinal) < 0) {
         if (earliest is null
             || string.Compare(msgId.ToString("D"), earliest.Value.ToString("D"), StringComparison.Ordinal) < 0) {
           earliest = msgId;

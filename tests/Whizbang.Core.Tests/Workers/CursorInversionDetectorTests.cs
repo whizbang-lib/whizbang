@@ -86,14 +86,32 @@ public class CursorInversionDetectorTests {
   }
 
   [Test]
-  public async Task FindCursorInversionAnchor_EventEqualsCursor_TreatedAsInversionAsync() {
-    // Boundary case: pending event_id == cursor. Strict invariant model treats this as
-    // "the cursor says this event was applied, but it's still pending" — inversion.
+  public async Task FindCursorInversionAnchor_EventEqualsCursor_NotInversionAsync() {
+    // Boundary case revised after a consumer BFF over-trigger incident (2026-05-02 ~09:43):
+    // pending event_id == cursor is the EXPECTED state during the cursor-flush window.
+    // The runner just applied this event, advancing the cursor synchronously, but the
+    // wh_perspective_events row's completion (DELETE in prod / processed_at in debug)
+    // is async via the completion flusher (~10ms coalesce). The runner's idempotency
+    // filter inside RunWithEventsAsync handles the duplicate cleanly. Triggering rewind
+    // here caused a hot loop of full replays on busy streams.
     var cursor = _uuidv7();
     var events = new List<MessageEnvelope<IEvent>> { _envelope(cursor) };
     var anchor = PerspectiveWorker._findCursorInversionAnchor(events, cursor);
-    await Assert.That(anchor).IsEqualTo(cursor)
-      .Because("event_id == cursor is the boundary case — strict invariant treats <= as inversion");
+    await Assert.That(anchor).IsNull()
+      .Because("event_id == cursor is normal cursor-flush lag, not inversion");
+  }
+
+  [Test]
+  public async Task FindCursorInversionAnchor_OneEqualOneOlder_AnchorsOnTheStrictlyOlderAsync() {
+    // Mixed case: the equal one is benign cursor-lag; the strictly-older one IS a real
+    // inversion. Anchor must be the strictly-older event, not the equal one.
+    var older = _uuidv7();
+    await Task.Delay(2);
+    var cursor = _uuidv7();
+
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(cursor), _envelope(older) };
+    var anchor = PerspectiveWorker._findCursorInversionAnchor(events, cursor);
+    await Assert.That(anchor).IsEqualTo(older);
   }
 
   [Test]
