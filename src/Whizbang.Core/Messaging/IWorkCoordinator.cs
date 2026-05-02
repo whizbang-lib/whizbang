@@ -723,6 +723,22 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
 
   /// <summary>
+  /// Scoped event-body fetch from <c>wh_event_store</c> by event_id list (Phase H step 7 slice 4).
+  /// Used by the perspective drainer AFTER its prefetch + filter pipeline narrows pending tuples
+  /// to only those needing apply. Drainer pairs the result back to its prefetched
+  /// <see cref="PendingPerspectiveEvent"/> tuples by event_id in C#, so the returned
+  /// <see cref="StreamEventData.EventWorkId"/> is always <see cref="Guid.Empty"/>.
+  /// </summary>
+  /// <param name="eventIds">Event ids to fetch.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Matching event-store rows ordered by event_id ASC. Missing ids are silently dropped.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
+    IReadOnlyList<Guid> eventIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<StreamEventData>>(Array.Empty<StreamEventData>());
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
   /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
   /// </summary>

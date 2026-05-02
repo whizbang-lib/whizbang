@@ -1517,6 +1517,47 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
+    IReadOnlyList<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return Array.Empty<StreamEventData>();
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "fetch_events_by_ids");
+
+    var idArr = eventIds is Guid[] arr ? arr : [.. eventIds];
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+
+    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_event_ids)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArr });
+
+    var results = new List<StreamEventData>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new StreamEventData {
+        StreamId = reader.GetGuid(0),
+        EventId = reader.GetGuid(1),
+        EventType = reader.GetString(2),
+        EventData = reader.GetString(3),
+        Metadata = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(4),
+        Scope = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(5),
+        EventWorkId = Guid.Empty
+      });
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
