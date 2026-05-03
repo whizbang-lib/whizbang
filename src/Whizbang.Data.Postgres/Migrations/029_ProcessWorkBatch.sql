@@ -334,6 +334,10 @@ BEGIN
   -- "out of wall-clock order" (e.g., one took longer to land) would receive versions that
   -- disagree with their UUIDv7 ordering — perspective cursors advance by version, then later
   -- see an "earlier" event_id and trip the cursor-inversion detector + full replay.
+  -- Phase H step 10 slice 3: version is computed via a correlated subquery rather than a
+  -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
+  -- the per-row form is defensive — if a future refactor weakens or bypasses the lock, the
+  -- per-row MAX read still picks up any concurrent commits.
   WITH outbox_events AS (
     SELECT
       o.message_id,
@@ -349,39 +353,26 @@ BEGIN
       AND o.is_event = true
       AND o.stream_id IS NOT NULL
   ),
-  outbox_stream_versions AS (
-    SELECT es.stream_id, MAX(es.version) AS max_version
-    FROM __SCHEMA__.wh_event_store es
-    WHERE es.stream_id IN (SELECT DISTINCT stream_id FROM outbox_events)
-    GROUP BY es.stream_id
-  ),
-  outbox_base_versions AS (
-    SELECT
-      oe.*,
-      COALESCE(sv.max_version, 0) AS base_version
-    FROM outbox_events oe
-    LEFT JOIN outbox_stream_versions sv ON sv.stream_id = oe.stream_id
-  ),
   stored_events AS (
     INSERT INTO __SCHEMA__.wh_event_store (
       event_id, stream_id, aggregate_id, aggregate_type, event_type,
       event_data, metadata, scope, version, created_at
     )
     SELECT
-      bv.message_id,
-      bv.stream_id,
-      bv.stream_id,
-      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1),
-      __SCHEMA__.normalize_event_type(bv.message_type),
-      COALESCE(bv.event_data::jsonb -> 'p', bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload'),
+      oe.message_id,
+      oe.stream_id,
+      oe.stream_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(oe.message_type), ',', 1),
+      __SCHEMA__.normalize_event_type(oe.message_type),
+      COALESCE(oe.event_data::jsonb -> 'p', oe.event_data::jsonb -> 'Payload', oe.event_data::jsonb -> 'payload'),
       jsonb_build_object(
-        c_field_message_id, COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> c_field_message_id, bv.event_data::jsonb -> 'messageId'),
-        c_field_hops, COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> c_field_hops, bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+        c_field_message_id, COALESCE(oe.event_data::jsonb -> 'id', oe.event_data::jsonb -> c_field_message_id, oe.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(oe.event_data::jsonb -> 'h', oe.event_data::jsonb -> c_field_hops, oe.event_data::jsonb -> 'hops', '[]'::jsonb)
       ),
-      bv.scope,
-      bv.base_version + bv.row_num,
+      oe.scope,
+      COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = oe.stream_id), 0) + oe.row_num,
       p_now
-    FROM outbox_base_versions bv
+    FROM outbox_events oe
     ON CONFLICT (event_id) DO NOTHING
     RETURNING event_id
   )
@@ -508,39 +499,29 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
       )
   ),
-  inbox_stream_versions AS (
-    SELECT es.stream_id, MAX(es.version) AS max_version
-    FROM __SCHEMA__.wh_event_store es
-    WHERE es.stream_id IN (SELECT DISTINCT stream_id FROM inbox_events)
-    GROUP BY es.stream_id
-  ),
-  inbox_base_versions AS (
-    SELECT
-      ie.*,
-      COALESCE(sv.max_version, 0) AS base_version
-    FROM inbox_events ie
-    LEFT JOIN inbox_stream_versions sv ON sv.stream_id = ie.stream_id
-  ),
+  -- Phase H step 10 slice 3: version computed via correlated subquery rather than a
+  -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
+  -- the per-row form is defensive — see _emit_event_store_chain above for the rationale.
   stored_events AS (
     INSERT INTO __SCHEMA__.wh_event_store (
       event_id, stream_id, aggregate_id, aggregate_type, event_type,
       event_data, metadata, scope, version, created_at
     )
     SELECT
-      bv.message_id,
-      bv.stream_id,
-      bv.stream_id,
-      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1),
-      __SCHEMA__.normalize_event_type(bv.message_type),
-      COALESCE(bv.event_data::jsonb -> 'p', bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload'),
+      ie.message_id,
+      ie.stream_id,
+      ie.stream_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(ie.message_type), ',', 1),
+      __SCHEMA__.normalize_event_type(ie.message_type),
+      COALESCE(ie.event_data::jsonb -> 'p', ie.event_data::jsonb -> 'Payload', ie.event_data::jsonb -> 'payload'),
       jsonb_build_object(
-        c_field_message_id, COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> c_field_message_id, bv.event_data::jsonb -> 'messageId'),
-        c_field_hops, COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> c_field_hops, bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+        c_field_message_id, COALESCE(ie.event_data::jsonb -> 'id', ie.event_data::jsonb -> c_field_message_id, ie.event_data::jsonb -> 'messageId'),
+        c_field_hops, COALESCE(ie.event_data::jsonb -> 'h', ie.event_data::jsonb -> c_field_hops, ie.event_data::jsonb -> 'hops', '[]'::jsonb)
       ),
-      bv.scope,
-      bv.base_version + bv.row_num,
+      ie.scope,
+      COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = ie.stream_id), 0) + ie.row_num,
       p_now
-    FROM inbox_base_versions bv
+    FROM inbox_events ie
     ON CONFLICT (event_id) DO NOTHING
     RETURNING event_id
   )
