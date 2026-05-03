@@ -329,6 +329,11 @@ BEGIN
   ) AS streams_to_lock;
 
   -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
+  -- Phase H step 10 slice 1: ORDER BY o.message_id (UUIDv7 = chronological at the source)
+  -- so version assignment matches canonical event_id ordering. Without this, two events stored
+  -- "out of wall-clock order" (e.g., one took longer to land) would receive versions that
+  -- disagree with their UUIDv7 ordering — perspective cursors advance by version, then later
+  -- see an "earlier" event_id and trip the cursor-inversion detector + full replay.
   WITH outbox_events AS (
     SELECT
       o.message_id,
@@ -338,7 +343,7 @@ BEGIN
       o.metadata,
       o.scope,
       o.created_at,
-      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) AS row_num
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.message_id) AS row_num
     FROM __SCHEMA__.wh_outbox o
     WHERE o.message_id = ANY(p_outbox_message_ids)
       AND o.is_event = true
@@ -457,6 +462,9 @@ BEGIN
   --   • have a stream_id
   --   • aren't yet in wh_event_store (idempotent — ON CONFLICT swallows duplicates)
   -- Bounded by lease ownership so we don't scan the whole inbox every tick.
+  -- Phase H step 10 slice 1: ORDER BY i.message_id (UUIDv7 = chronological at the source) so
+  -- version assignment matches canonical event_id order. See _emit_event_store_chain above
+  -- for the rationale — same fix applies to the inbox backfill path.
   WITH inbox_events AS (
     SELECT
       i.message_id,
@@ -466,7 +474,7 @@ BEGIN
       i.metadata,
       i.scope,
       i.received_at,
-      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) AS row_num
+      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.message_id) AS row_num
     FROM __SCHEMA__.wh_inbox i
     WHERE i.instance_id = p_instance_id
       AND i.lease_expiry > p_now
