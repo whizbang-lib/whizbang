@@ -24,7 +24,17 @@ BEGIN
   RETURN QUERY
   UPDATE wh_inbox i
   SET instance_id = p_instance_id,
-      lease_expiry = p_lease_expiry
+      lease_expiry = p_lease_expiry,
+      -- Phase H step 8 slice A: bump attempts on every re-claim. A claim from a row that
+      -- previously had an instance (lease expired, instance died, or self-restart) is the
+      -- second-or-later attempt — surface that to operators. A first claim from
+      -- instance_id IS NULL is the first attempt; attempts stays at its prior value (0 for
+      -- new rows). Without this, hung handlers looked identical to fresh messages on JDNext
+      -- production, masking a 36-hour stuck-message backlog (audit 2026-05-02).
+      attempts = CASE
+        WHEN i.instance_id IS NULL THEN i.attempts
+        ELSE i.attempts + 1
+      END
   WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
     AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
     AND i.processed_at IS NULL
