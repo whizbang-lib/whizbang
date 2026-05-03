@@ -26,6 +26,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly AsbReceiveDecisionMaker _decisionMaker = new();
+  private readonly Whizbang.Core.Messaging.IReceptorRegistry? _receptorRegistry;
+  private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -45,7 +47,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     JsonSerializerOptions jsonOptions,
     AzureServiceBusOptions? options = null,
     ILogger<AzureServiceBusTransport>? logger = null,
-    IServiceBusAdminClient? adminClient = null
+    IServiceBusAdminClient? adminClient = null,
+    Whizbang.Core.Messaging.IReceptorRegistry? receptorRegistry = null,
+    Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -63,6 +67,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
+    _receptorRegistry = receptorRegistry;
+    _perspectiveRegistry = perspectiveRegistry;
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -81,6 +87,41 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <inheritdoc />
   public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
     _recoveryHandler = onRecovered;
+  }
+
+  /// <summary>
+  /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
+  /// message type at any lifecycle stage, OR any local perspective Apply's it. Returns false
+  /// (drop this message) when neither registry was injected — that signals a legacy / test
+  /// configuration that should not exercise the filter.
+  /// </summary>
+  /// <remarks>
+  /// Returns null when no registries are wired so the decision-maker treats the predicate as
+  /// "filter disabled" and falls through to legacy behavior. Once registries are present, the
+  /// closure is built once and reused across receives.
+  /// </remarks>
+  private Func<Type, bool>? _buildIsHandledLocally() {
+    if (_receptorRegistry is null && _perspectiveRegistry is null) {
+      return null;
+    }
+
+    return type => {
+      if (_receptorRegistry != null) {
+        foreach (var stage in Enum.GetValues<Whizbang.Core.Messaging.LifecycleStage>()) {
+          if (_receptorRegistry.GetReceptorsFor(type, stage).Count > 0) {
+            return true;
+          }
+        }
+      }
+      if (_perspectiveRegistry != null) {
+        foreach (var et in _perspectiveRegistry.GetEventTypes()) {
+          if (et == type) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
   }
 
   /// <summary>
@@ -879,7 +920,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       args.Message.ApplicationProperties,
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
-      _jsonOptions);
+      _jsonOptions,
+      _buildIsHandledLocally());
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
@@ -947,7 +989,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       args.Message.ApplicationProperties,
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
-      _jsonOptions);
+      _jsonOptions,
+      _buildIsHandledLocally());
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 

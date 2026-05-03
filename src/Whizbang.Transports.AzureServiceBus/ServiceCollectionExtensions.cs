@@ -82,7 +82,16 @@ public static class ServiceCollectionExtensions {
       // Get admin client if available (for auto-provisioning)
       var adminClient = sp.GetService<IServiceBusAdminClient>();
 
-      var transport = new AzureServiceBusTransport(client, jsonOptions, options, logger, adminClient);
+      // Slice 2 — receptor + perspective registries enable receive-time drop of messages
+      // this service has no consumer for. Both optional so non-Whizbang-host scenarios
+      // (test fakes, custom bootstraps) keep working without the filter.
+      var receptorRegistry = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistry>();
+      var perspectiveRegistry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
+
+      var transport = new AzureServiceBusTransport(
+        client, jsonOptions, options, logger, adminClient,
+        receptorRegistry: receptorRegistry,
+        perspectiveRegistry: perspectiveRegistry);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
