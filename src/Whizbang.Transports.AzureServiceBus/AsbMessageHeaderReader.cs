@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Whizbang.Core.Messaging;
@@ -55,9 +56,9 @@ public sealed class AsbMessageHeaderReader {
       return null;
     }
 
-    var bodyBytes = message.Body.ToMemory();
+    var payloadJson = message.Body.ToString();
 
-    if (!_tryGetMessageId(message, bodyBytes.Span, out var messageIdGuid)) {
+    if (!_tryGetMessageId(message, payloadJson, out var messageIdGuid)) {
       return null;
     }
 
@@ -73,11 +74,11 @@ public sealed class AsbMessageHeaderReader {
       StreamId = streamId,
       CorrelationId = correlationId,
       CausationId = causationId,
-      PayloadBytes = bodyBytes,
+      PayloadJson = payloadJson,
     };
   }
 
-  private static bool _tryGetMessageId(ServiceBusReceivedMessage message, ReadOnlySpan<byte> bodyBytes, out Guid messageId) {
+  private static bool _tryGetMessageId(ServiceBusReceivedMessage message, string payloadJson, out Guid messageId) {
     // Fast path — publisher lifted MessageId to ApplicationProperty.
     if (message.ApplicationProperties.TryGetValue(MESSAGE_ID_PROPERTY_KEY, out var idObj)
         && idObj is string idStr
@@ -89,6 +90,7 @@ public sealed class AsbMessageHeaderReader {
     // binding the typed payload. Survives older publishers that didn't lift MessageId to a
     // header. Utf8JsonReader is allocation-light and bails as soon as it finds the property.
     try {
+      var bodyBytes = Encoding.UTF8.GetBytes(payloadJson);
       var reader = new Utf8JsonReader(bodyBytes);
       while (reader.Read()) {
         if (reader.TokenType != JsonTokenType.PropertyName) {
