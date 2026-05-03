@@ -48,6 +48,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxDispatchWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
+  private readonly LeaseHandleOptions _leaseHandleOptions;
+  private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions;
+  private readonly LeaseRegistry? _leaseRegistry;
+  private readonly TimeProvider _timeProvider;
   private readonly ILogger<InboxDispatchWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
 
@@ -62,7 +66,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IOptions<InboxDispatchWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<InboxDispatchWorker> logger,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null) {
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
+    IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
+    LeaseRegistry? leaseRegistry = null,
+    TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -71,6 +79,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
+    _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
+    _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
+    _leaseRegistry = leaseRegistry;
+    _timeProvider = timeProvider ?? TimeProvider.System;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   }
@@ -116,7 +128,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     LogStopped(_logger);
   }
 
-  private async Task _processOneAsync(InboxWork work, CancellationToken ct) {
+  private async Task _processOneAsync(InboxWork work, CancellationToken stoppingToken) {
     var maxAttempts = _options.MaxInboxAttempts;
     // Phase H step 8 slice D: attempts is one-based after the slice D refactor — the row
     // arrives here with attempts=1 on the first attempt, attempts=N on the Nth. Use strict
@@ -125,42 +137,58 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (maxAttempts.HasValue && work.Attempts > maxAttempts.Value) {
       LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-      await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
+      await _handlerCommitChannel.EnqueueAsync(terminalRequest, stoppingToken);
       return;
     }
 
-    // Lifecycle stages: scope-once, fire Pre + Post + (optional) PostAllPerspectives/PostLifecycle.
-    // The lifecycle invocation no-ops cleanly when ILifecycleMessageDeserializer or IReceptorInvoker
-    // is absent — same as the legacy publisher's _invokeInboxLifecycleStagesAsync.
-    await using var scope = _scopeFactory.CreateAsyncScope();
-    await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
-    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    // Phase H step 9 slice 3: wrap dispatch in a LeaseHandle so a hung handler can't park the
+    // dispatch pump forever. Deadline = now + LeaseSeconds - GraceSeconds. LeaseRenewalWorker
+    // (slice 6) extends the deadline whenever it renews the SQL lease, up to MaxRenewalsPerWork.
+    var deadline = _timeProvider.GetUtcNow()
+      + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+    using var lease = new LeaseHandle(
+      workId: work.MessageId,
+      category: WorkCategory.Inbox,
+      deadline: deadline,
+      maxRenewals: _leaseHandleOptions.MaxRenewalsPerWork,
+      timeProvider: _timeProvider,
+      linkedTokens: [stoppingToken]);
+    _leaseRegistry?.Register(lease);
 
-    await _invokeInboxLifecycleStageAsync(
-      work, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
-      "PreInbox", useLongRunningForDetached: false, ct);
+    await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async ct => {
+      // Lifecycle stages: scope-once, fire Pre + Post + (optional) PostAllPerspectives/PostLifecycle.
+      // The lifecycle invocation no-ops cleanly when ILifecycleMessageDeserializer or IReceptorInvoker
+      // is absent — same as the legacy publisher's _invokeInboxLifecycleStagesAsync.
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+      var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
-    // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
-    // calls commit_handler_batch.
-    var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
-    await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
-
-    // PostInbox lands AFTER event storage. Use LongRunning for the Detached stage so it can't be
-    // starved by PerspectiveWorker drain churn.
-    await _invokeInboxLifecycleStageAsync(
-      work, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
-      "PostInbox", useLongRunningForDetached: true, ct);
-
-    // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
-    // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
-    if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
       await _invokeInboxLifecycleStageAsync(
-        work, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
-        "PostAllPerspectives", useLongRunningForDetached: false, ct);
+        work, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+        "PreInbox", useLongRunningForDetached: false, ct);
+
+      // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
+      // calls commit_handler_batch.
+      var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
+      await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+
+      // PostInbox lands AFTER event storage. Use LongRunning for the Detached stage so it can't be
+      // starved by PerspectiveWorker drain churn.
       await _invokeInboxLifecycleStageAsync(
-        work, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
-        "PostLifecycle", useLongRunningForDetached: false, ct);
-    }
+        work, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+        "PostInbox", useLongRunningForDetached: true, ct);
+
+      // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
+      // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
+      if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
+        await _invokeInboxLifecycleStageAsync(
+          work, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
+          "PostAllPerspectives", useLongRunningForDetached: false, ct);
+        await _invokeInboxLifecycleStageAsync(
+          work, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
+          "PostLifecycle", useLongRunningForDetached: false, ct);
+      }
+    });
   }
 
   private HandlerCommitRequest _buildCommitRequest(InboxWork work, int status)
