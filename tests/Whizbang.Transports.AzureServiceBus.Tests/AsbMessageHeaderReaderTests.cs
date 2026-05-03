@@ -75,7 +75,7 @@ public class AsbMessageHeaderReaderTests {
     await Assert.That(headers.StreamId).IsEqualTo(streamId);
     await Assert.That(headers.CorrelationId).IsEqualTo("trace-abc");
     await Assert.That(headers.CausationId).IsEqualTo("11111111-1111-1111-1111-111111111111");
-    await Assert.That(Encoding.UTF8.GetString(headers.PayloadBytes.Span)).IsEqualTo(body);
+    await Assert.That(headers.PayloadJson).IsEqualTo(body);
   }
 
   [Test]
@@ -109,7 +109,7 @@ public class AsbMessageHeaderReaderTests {
 
     await Assert.That(headers).IsNotNull();
     await Assert.That(headers!.MessageId).IsEqualTo(MessageId.From(msgId));
-    await Assert.That(Encoding.UTF8.GetString(headers.PayloadBytes.Span)).IsEqualTo(garbage);
+    await Assert.That(headers.PayloadJson).IsEqualTo(garbage);
   }
 
   [Test]
