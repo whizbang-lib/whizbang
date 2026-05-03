@@ -7,7 +7,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Minimal no-op IWorkCoordinator stub for tests that only need IWorkCoordinatorStrategy
 /// but where TransportConsumerWorker resolves IWorkCoordinator from DI.
 /// </summary>
-internal sealed class NoOpWorkCoordinator : IWorkCoordinator {
+internal class NoOpWorkCoordinator : IWorkCoordinator {
   /// <summary>Number of inbox messages stored via StoreInboxMessagesAsync.</summary>
   public int StoredInboxCount { get; private set; }
 
