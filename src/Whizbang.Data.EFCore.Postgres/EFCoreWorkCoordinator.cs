@@ -1584,6 +1584,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     return results;
   }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<PurgedOrphanInboxRow>> PurgeOrphanInboxAsync(
+      IReadOnlyList<string> handledTypeNames,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(handledTypeNames);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(InboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA, _logger);
+
+    var connection = _dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await _dbContext.Database.OpenConnectionAsync(cancellationToken);
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"SELECT * FROM \"{schema}\".purge_orphan_inbox(@handled_types)";
+    command.CommandTimeout = 30;
+    var param = (Npgsql.NpgsqlParameter)command.CreateParameter();
+    param.ParameterName = "handled_types";
+    param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
+    param.Value = handledTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(handledTypeNames);
+    command.Parameters.Add(param);
+
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    var rows = new List<PurgedOrphanInboxRow>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      rows.Add(new PurgedOrphanInboxRow(
+        reader.GetGuid(0),
+        reader.GetString(1),
+        reader.GetString(2)
+      ));
+    }
+    return rows;
+  }
 }
 
 /// <summary>
