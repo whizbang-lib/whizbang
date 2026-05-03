@@ -264,6 +264,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Process all events in order
       foreach (var envelope in events) {
 
+        // Phase H step 9 slice 4: cooperative cancellation between events. Apply itself is a
+        // pure synchronous function and can't be cancelled mid-call, but we check the lease
+        // token between events so a hot stream with N pending events doesn't run past the
+        // deadline. The dispatch worker's LeaseHandle (constructed at drain start) is what
+        // drives this token; without the check the apply loop would ignore the deadline and
+        // a runaway perspective could park the drain pump for many minutes.
+        cancellationToken.ThrowIfCancellationRequested();
+
         // Extract event from envelope
         var @event = envelope.Payload;
         var eventTypeName = @event.GetType().Name;

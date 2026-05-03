@@ -50,7 +50,9 @@ public partial class PerspectiveWorker(
   IFailureChannel? failureChannel = null,
   ILeaseRenewalChannel? leaseRenewalChannel = null,
   IPerspectiveDrainChannel? perspectiveDrainChannel = null,
-  RecentlyProcessedEventCache? recentlyProcessedEventCache = null
+  RecentlyProcessedEventCache? recentlyProcessedEventCache = null,
+  IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
+  IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -94,6 +96,9 @@ public partial class PerspectiveWorker(
   private readonly ILeaseRenewalChannel? _leaseRenewalChannel = leaseRenewalChannel;
   private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel = perspectiveDrainChannel;
   private readonly RecentlyProcessedEventCache? _recentlyProcessedEventCache = recentlyProcessedEventCache;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
+  private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _bootstrappedThisSession = new();
@@ -1095,46 +1100,78 @@ public partial class PerspectiveWorker(
       return;
     }
 
+    // Phase H step 9 slice 4: lease-tied cancellation. Wrap the apply + post-apply housekeeping
+    // in a LeaseHandle whose token cancels at lease_expiry - LeaseGraceSeconds. The runner
+    // template's apply loop now also calls ThrowIfCancellationRequested between events so a
+    // hot stream with many pending events can be cancelled mid-batch. The DispatchExecutor
+    // abandons hung receptors that ignore the CT.
+    var leaseDeadline = _timeProvider.GetUtcNow()
+      + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+    using var lease = new LeaseHandle(
+      workId: streamId,
+      category: WorkCategory.PerspectiveEvent,
+      deadline: leaseDeadline,
+      maxRenewals: _leaseHandleOptions.MaxRenewalsPerWork,
+      timeProvider: _timeProvider,
+      linkedTokens: [ct]);
+
     try {
-      PerspectiveCursorCompletion result;
-      if (inversionAnchor.HasValue) {
-        // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
-        _cursorCache.Invalidate(streamId, perspectiveName);
-        LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId!.Value);
-        result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, ct);
-      } else {
-        result = await runner.RunWithEventsAsync(
-          streamId, perspectiveName, lastProcessedEventId, filteredEvents, ct);
-      }
+      await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
+        PerspectiveCursorCompletion result;
+        if (inversionAnchor.HasValue) {
+          // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
+          _cursorCache.Invalidate(streamId, perspectiveName);
+          LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId!.Value);
+          result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, leaseCt);
+        } else {
+          result = await runner.RunWithEventsAsync(
+            streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
+        }
 
-      if (result.Status == PerspectiveProcessingStatus.Completed) {
-        var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
-        await _applyDrainModePerspectiveCompletionAsync(
-          streamCtx, filteredEvents, result, batchContext, ct);
-      }
+        if (result.Status == PerspectiveProcessingStatus.Completed) {
+          var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+          await _applyDrainModePerspectiveCompletionAsync(
+            streamCtx, filteredEvents, result, batchContext, leaseCt);
+        }
 
-      await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, ct);
+        await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, leaseCt);
 
-      if (filteredEvents.Count > 0 && _syncEventTracker is not null) {
-        var processedEventIds = filteredEvents.Select(e => e.MessageId.Value).ToList();
-        _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
-      }
+        if (filteredEvents.Count > 0 && _syncEventTracker is not null) {
+          var processedEventIds = filteredEvents.Select(e => e.MessageId.Value).ToList();
+          _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+        }
 
-      if (result.PerspectiveType is not null) {
-        _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
-      }
+        if (result.PerspectiveType is not null) {
+          _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
+        }
 
-      if (result.Status == PerspectiveProcessingStatus.Completed) {
-        _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
-        // Mark all processed work_ids in the cooldown cache so the next drain within the TTL
-        // window (including the cursor-flush race window) short-circuits before reaching apply.
-        _markProcessedInCooldown(filteredEvents, batchContext.RawByEventId);
-      }
+        if (result.Status == PerspectiveProcessingStatus.Completed) {
+          _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
+          // Mark all processed work_ids in the cooldown cache so the next drain within the TTL
+          // window (including the cursor-flush race window) short-circuits before reaching apply.
+          _markProcessedInCooldown(filteredEvents, batchContext.RawByEventId);
+        }
 
-      _metrics?.StreamsUpdated.Add(1);
-      if (filteredEvents.Count > 0) {
-        _metrics?.EventsProcessed.Add(filteredEvents.Count);
-      }
+        _metrics?.StreamsUpdated.Add(1);
+        if (filteredEvents.Count > 0) {
+          _metrics?.EventsProcessed.Add(filteredEvents.Count);
+        }
+      });
+    } catch (OperationCanceledException) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
+      // Lease deadline fired (not worker shutdown). Route to failure path same as any other
+      // exception so the row's lease releases and claim_orphaned re-issues with bumped attempts.
+#pragma warning disable CA1848
+      _logger.LogWarning("Drain mode: lease deadline exceeded for {Perspective} stream {StreamId} — routing to failure", perspectiveName, streamId);
+#pragma warning restore CA1848
+      _metrics?.Errors.Add(1);
+      var failure = new PerspectiveCursorFailure {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.Empty,
+        Status = PerspectiveProcessingStatus.Failed,
+        Error = "Lease deadline exceeded — handler did not complete within the configured lease window."
+      };
+      await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
 #pragma warning disable CA1848
       _logger.LogError(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);

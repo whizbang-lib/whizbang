@@ -48,6 +48,26 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task ApplyLoop_CallsThrowIfCancellationRequestedBetweenEventsAsync() {
+    // Phase H step 9 slice 4 regression lock: the apply loop must check the lease CT between
+    // events. Apply is pure synchronous so can't be cancelled mid-call, but per-event CT checks
+    // let a hot stream with many pending events stop respecting the deadline.
+    var template = _loadTemplate();
+
+    await Assert.That(template).Contains("foreach (var envelope in events)")
+      .Because("the apply loop is the anchor for the CT check");
+    await Assert.That(template).Contains("cancellationToken.ThrowIfCancellationRequested()")
+      .Because("the apply loop must call ThrowIfCancellationRequested at the top of each iteration");
+
+    // Ensure the CT check appears INSIDE the events foreach (not just somewhere in the file).
+    var foreachIdx = template.IndexOf("foreach (var envelope in events)", StringComparison.Ordinal);
+    var ctCheckIdx = template.IndexOf("cancellationToken.ThrowIfCancellationRequested()", foreachIdx, StringComparison.Ordinal);
+    await Assert.That(ctCheckIdx).IsGreaterThan(foreachIdx)
+      .Because("the CT check must appear inside the foreach body, not before it");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task PartialSkipBranch_StaysAtDebugLevelAsync() {
     // The partial-skip branch was already at Debug per step 6 slice 6. Lock it so a future
     // refactor can't quietly bump it back to Information.
