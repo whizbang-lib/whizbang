@@ -334,4 +334,116 @@ public class InboxDispatchWorkerTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  // ============================================================
+  // Phase H step 9 slice 3 — lease-tied cancellation
+  // ============================================================
+
+  /// <summary>
+  /// HandlerCommit channel that ignores its CT — simulates a misbehaving downstream that doesn't
+  /// honor cancellation. Used to verify the lease executor's abandonment path.
+  /// </summary>
+  private sealed class HungHandlerCommitChannel : IInboxHandlerCommitChannel {
+    private readonly TaskCompletionSource _block = new();
+    public Task Started => _entered.Task;
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public async ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+      _entered.TrySetResult();
+      // Deliberately ignore ct — simulates a hung downstream/handler.
+      await _block.Task.ConfigureAwait(false);
+    }
+    public void Unblock() => _block.TrySetResult();
+  }
+
+  [Test]
+  public async Task HungInsideLeaseExecutor_CancelsAtDeadline_RoutesToFailureChannelAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var hungChannel = new HungHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var fakeTime = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero));
+    var registry = new LeaseRegistry();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, hungChannel, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: null,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+      leaseRegistry: registry,
+      timeProvider: fakeTime);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    // Wait until the dispatch enters the hung EnqueueAsync (so we know the lease has been
+    // registered and the executor is awaiting the dispatch task).
+    await hungChannel.Started.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Advance fake clock past deadline (60 - 30 = 30 s grace, deadline at +30 s).
+    fakeTime.Advance(TimeSpan.FromSeconds(31));
+
+    // The lease executor should abandon the hung dispatch and route to the failure channel
+    // via the existing catch in ExecuteAsync.
+    var fail = await failure.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(fail.MessageId).IsEqualTo(work.MessageId);
+
+    // The hung downstream is still parked — abandon-not-cancel.
+    hungChannel.Unblock();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task SuccessfulDispatch_DisposesLeaseAndRemovesFromRegistryAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var registry = new LeaseRegistry();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: null,
+      leaseHandleOptions: null,
+      leaseRenewalOptions: null,
+      leaseRegistry: registry,
+      timeProvider: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Allow dispatch to fully complete + lease.Dispose continuation to run.
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (registry.Count > 0 && sw.Elapsed < TimeSpan.FromSeconds(2)) {
+      await Task.Yield();
+    }
+
+    await Assert.That(registry.Count).IsEqualTo(0)
+      .Because("happy-path dispatch must dispose the lease (auto-removes from registry)");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
 }
