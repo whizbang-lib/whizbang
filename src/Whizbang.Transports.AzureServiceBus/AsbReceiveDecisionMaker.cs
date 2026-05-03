@@ -47,7 +47,8 @@ internal sealed class AsbReceiveDecisionMaker {
       Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
       JsonSerializerOptions jsonOptions,
       Func<Type, bool>? isHandledLocally = null,
-      IRawReceptorRegistry? rawReceptorRegistry = null) {
+      IRawReceptorRegistry? rawReceptorRegistry = null,
+      IMessageTypeBinder? typeBinder = null) {
     ArgumentNullException.ThrowIfNull(applicationProperties);
     ArgumentNullException.ThrowIfNull(getTypeInfoByName);
 
@@ -62,6 +63,18 @@ internal sealed class AsbReceiveDecisionMaker {
     }
 
     var typeInfo = getTypeInfoByName(envelopeTypeName, jsonOptions);
+
+    // Slice 4 — when the JsonContextRegistry lookup misses, fall back to the multi-pass
+    // type binder. If it resolves the envelope type, ask jsonOptions for a JsonTypeInfo —
+    // STJ default resolver can produce one for any type that's loadable, even if no
+    // [ModuleInitializer] registered it explicitly.
+    if (typeInfo == null && typeBinder != null) {
+      var bound = typeBinder.Bind(envelopeTypeName);
+      if (bound != null) {
+        typeInfo = jsonOptions.GetTypeInfo(bound);
+      }
+    }
+
     if (typeInfo == null) {
       // Slice 5 — try raw receptor before giving up on this message.
       var rawDecision = _tryRawReceptor(envelopeTypeName, bodyJson, rawReceptorRegistry);
