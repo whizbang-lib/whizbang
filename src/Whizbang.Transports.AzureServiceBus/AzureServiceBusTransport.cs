@@ -941,85 +941,55 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ProcessSessionMessageEventArgs args,
     TransportDestination destination
   ) {
-    if (!args.Message.ApplicationProperties.TryGetValue(ENVELOPE_TYPE_PROPERTY, out var envelopeTypeObj) ||
-        envelopeTypeObj is not string envelopeTypeName) {
-      await _deadLetterSessionMessageAsync(args, destination, "MissingEnvelopeType",
-        "Message does not contain EnvelopeType metadata",
-        "DEAD-LETTER reason: Missing EnvelopeType metadata for session message {MessageId} from {TopicName}/{SubscriptionName}",
-        args.Message.MessageId, destination.Address, destination.RoutingKey ?? _options.DefaultSubscriptionName);
-      return (null, null);
-    }
-
     var json = args.Message.Body.ToString();
 
-    try {
-      var type = Type.GetType(envelopeTypeName);
-      if (type is null) {
-        await _deadLetterSessionMessageAsync(args, destination, "UnresolvableType",
-          $"Cannot resolve type: {envelopeTypeName}",
-          "DEAD-LETTER reason: Cannot resolve type {EnvelopeTypeName} for session message {MessageId}",
-          envelopeTypeName, args.Message.MessageId);
-        return (null, null);
-      }
+    var decision = _decisionMaker.Decide(
+      args.Message.ApplicationProperties,
+      json,
+      Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
+      _jsonOptions);
 
-      var typeInfo = _jsonOptions.GetTypeInfo(type);
-      if (typeInfo is null) {
-        await _deadLetterSessionMessageAsync(args, destination, "MissingJsonTypeInfo",
-          $"No JsonTypeInfo for {type.Name}",
-          "DEAD-LETTER reason: No JsonTypeInfo for {TypeName} for session message {MessageId}",
-          type.Name, args.Message.MessageId);
-        return (null, null);
-      }
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
-      var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
-      if (envelope is null) {
-        await _deadLetterSessionMessageAsync(args, destination, "DeserializationFailed",
-          "Deserialized object is not IMessageEnvelope",
-          "DEAD-LETTER reason: Failed to deserialize session message {MessageId} as IMessageEnvelope",
-          args.Message.MessageId);
-        return (null, null);
-      }
+    switch (decision.Action) {
+      case AsbReceiveAction.Process:
+        return (decision.Envelope, decision.EnvelopeTypeName);
 
-      return (envelope, envelopeTypeName);
-    } catch (Exception ex) {
-      if (_logger.IsEnabled(LogLevel.Warning)) {
-        _logger.LogWarning(ex,
-          "DEAD-LETTER reason: Deserialization exception for session message {MessageId}",
-          args.Message.MessageId);
-      }
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "DeserializationException",
-        ex.Message,
-        cancellationToken: args.CancellationToken
-      );
-      return (null, null);
+      case AsbReceiveAction.AckAndDrop:
+        // Slice 1 hotfix: ack + drop instead of broker DLQ on type-resolution failures.
+        _logger.LogWarning(
+          "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
+          decision.Reason,
+          decision.EnvelopeTypeName,
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          subscription,
+          decision.Description
+        );
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.DeadLetter:
+        _logger.LogWarning(
+          "DEAD-LETTER reason: {Reason} for session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+          decision.Reason,
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          subscription
+        );
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          decision.Reason,
+          decision.Description,
+          cancellationToken: args.CancellationToken
+        );
+        return (null, decision.EnvelopeTypeName);
+
+      default:
+        throw new InvalidOperationException($"Unknown AsbReceiveAction: {decision.Action}");
     }
-  }
-
-  /// <summary>
-  /// Paired Warning log + DeadLetterMessageAsync call used by the session deserialisation
-  /// guards. Keeps the IsEnabled check consistent and the log/dead-letter arguments aligned —
-  /// the per-call arguments are threaded in via params for the log template placeholders.
-  /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2254:Template should be a static expression", Justification = "Varying template is the whole point of this helper — each dead-letter reason logs with its own placeholder shape, and the callers still pass constant templates.")]
-  private async Task _deadLetterSessionMessageAsync(
-      ProcessSessionMessageEventArgs args,
-      TransportDestination destination,
-      string deadLetterReason,
-      string deadLetterDescription,
-      string logTemplate,
-      params object?[] logArgs) {
-    _ = destination; // reserved for future use; passed through so signatures stay consistent.
-    if (_logger.IsEnabled(LogLevel.Warning)) {
-      _logger.LogWarning(logTemplate, logArgs);
-    }
-    await args.DeadLetterMessageAsync(
-      args.Message,
-      deadLetterReason,
-      deadLetterDescription,
-      cancellationToken: args.CancellationToken
-    );
   }
 
   private async Task _handleSessionMessageProcessingErrorAsync(
