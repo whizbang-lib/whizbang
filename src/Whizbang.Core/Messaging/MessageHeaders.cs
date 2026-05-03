@@ -66,11 +66,11 @@ public sealed record MessageHeaders {
   public string? CausationId { get; init; }
 
   /// <summary>
-  /// Raw envelope payload bytes as delivered by the transport. The dispatcher deserializes
-  /// these at handler-invoke time, not at receive time. May be UTF-8 JSON today; treat as
-  /// opaque to allow future binary transports without re-shaping this contract.
+  /// Raw envelope payload as delivered by the transport — opaque at this layer, deserialized
+  /// at handler-invoke time. JSON today; if a binary transport ever lands, add a sibling field
+  /// rather than re-shaping this one.
   /// </summary>
-  public required ReadOnlyMemory<byte> PayloadBytes { get; init; }
+  public required string PayloadJson { get; init; }
 
   /// <summary>
   /// Custom metadata propagated from the publisher's <c>TransportDestination.Metadata</c>.
