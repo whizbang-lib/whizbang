@@ -67,6 +67,13 @@ public static class ServiceRegistrationCallbacks {
   public static Action<IServiceCollection>? MessageTypeCatalog { get; set; }
 
   /// <summary>
+  /// Callback for registering discovered <see cref="Whizbang.Core.Messaging.IRawReceptor"/>
+  /// implementations and the <see cref="Whizbang.Core.Messaging.IRawReceptorRegistry"/>.
+  /// Set by the RawReceptorDiscoveryGenerator's module initializer in the consumer assembly.
+  /// </summary>
+  public static Action<IServiceCollection>? RawReceptors { get; set; }
+
+  /// <summary>
   /// Invokes all registered service callbacks with the provided options.
   /// Called by <see cref="ServiceCollectionExtensions.AddWhizbang"/> to auto-register services.
   /// </summary>
@@ -77,6 +84,7 @@ public static class ServiceRegistrationCallbacks {
       LensServices?.Invoke(services, options);
       PerspectiveServices?.Invoke(services, options);
       Dispatcher?.Invoke(services);
+      RawReceptors?.Invoke(services);
       PinnedIdRegistry?.Invoke(services);
       MessageTypeCatalog?.Invoke(services);
     }
@@ -89,6 +97,7 @@ public static class ServiceRegistrationCallbacks {
     lock (_lock) {
       LensServices = null;
       PerspectiveServices = null;
+      RawReceptors = null;
       Dispatcher = null;
       PinnedIdRegistry = null;
       MessageTypeCatalog = null;
