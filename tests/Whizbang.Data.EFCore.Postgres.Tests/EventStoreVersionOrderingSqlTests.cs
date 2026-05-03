@@ -112,6 +112,38 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   }
 
   // ============================================================================
+  // SLICE 4: ON CONFLICT DO NOTHING tolerates (stream_id, version) collision
+  // ============================================================================
+
+  [Test]
+  public async Task EmitEventStoreChain_SourceUses_OnConflictDoNothing_NoConstraintAsync() {
+    // Phase H step 10 slice 4 regression lock: pre-fix, the INSERT was
+    // `ON CONFLICT (event_id) DO NOTHING` which only handled event_id duplicates. A
+    // (stream_id, version) conflict (concurrent insert race) bubbled up as PG 23505 and
+    // failed the whole claim_work tick — observed on JDX BFF 2026-05-03. The fix is
+    // `ON CONFLICT DO NOTHING` with NO constraint specifier so PG handles both unique
+    // constraints gracefully. With slices 2+3 in place we shouldn't hit the version conflict
+    // in practice, but this is the third defensive layer.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var outboxSrc = await _readFunctionSourceAsync(conn, "_emit_event_store_chain");
+    var inboxSrc = await _readFunctionSourceAsync(conn, "_emit_event_store_chain_for_inbox");
+
+    // Both functions must use the constraint-less form. A specific-constraint form
+    // (`ON CONFLICT (event_id)` or `ON CONFLICT ON CONSTRAINT ...`) only catches that one
+    // constraint and lets others bubble up — which is exactly the bug we fixed.
+    await Assert.That(outboxSrc).Contains("ON CONFLICT DO NOTHING");
+    await Assert.That(outboxSrc).DoesNotContain("ON CONFLICT (event_id) DO NOTHING")
+      .Because("the constraint-specific form fails on idx_event_store_stream conflicts");
+    await Assert.That(inboxSrc).Contains("ON CONFLICT DO NOTHING");
+    await Assert.That(inboxSrc).DoesNotContain("ON CONFLICT (event_id) DO NOTHING");
+  }
+
+  // ============================================================================
   // INVARIANT: advisory locks present in both backfill paths (slice 2)
   // ============================================================================
 
