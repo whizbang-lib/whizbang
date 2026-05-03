@@ -29,6 +29,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly Whizbang.Core.Messaging.IReceptorRegistry? _receptorRegistry;
   private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
+  private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -51,7 +52,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     IServiceBusAdminClient? adminClient = null,
     Whizbang.Core.Messaging.IReceptorRegistry? receptorRegistry = null,
     Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null,
-    Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null
+    Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null,
+    Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -72,6 +74,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     _receptorRegistry = receptorRegistry;
     _perspectiveRegistry = perspectiveRegistry;
     _rawReceptorRegistry = rawReceptorRegistry;
+    // Slice 4 — default to the multi-pass binder so the registry-miss → binder-cascade
+    // fallback works without explicit DI configuration. Tests can inject a fake.
+    _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -925,7 +930,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
       _jsonOptions,
       _buildIsHandledLocally(),
-      _rawReceptorRegistry);
+      _rawReceptorRegistry,
+      _typeBinder);
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
@@ -1009,7 +1015,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
       _jsonOptions,
       _buildIsHandledLocally(),
-      _rawReceptorRegistry);
+      _rawReceptorRegistry,
+      _typeBinder);
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
