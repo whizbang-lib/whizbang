@@ -38,16 +38,24 @@ public static class LeaseDispatchExecutor {
     var ct = lease.Token;
     var dispatchTask = dispatch(ct);
 
-    // Race signal: completes (with OCE) when the lease token cancels. We swallow the OCE in a
-    // continuation so this signal-task itself doesn't faulted-bubble before WhenAny observes it.
-    var cancellationSignal = Task.Delay(Timeout.InfiniteTimeSpan, ct)
-      .ContinueWith(static _ => { }, TaskScheduler.Default);
+    // Race signal: a TCS that completes (no exception) when the lease token cancels. We use
+    // CancellationToken.UnsafeRegister instead of Task.Delay(Infinite, ct) because Task.Delay's
+    // Canceled-state transition is silent on the success path but the registration disposal
+    // contention adds noise. The TCS completes synchronously without throwing, and the
+    // `await using` registration disposes BEFORE the lease handle disposes (when the executor
+    // method returns), preventing a late callback fire.
+    var cancellationSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var registration = ct.UnsafeRegister(static (state, _) => {
+      ((TaskCompletionSource)state!).TrySetResult();
+    }, cancellationSignal);
 
-    var winner = await Task.WhenAny(dispatchTask, cancellationSignal).ConfigureAwait(false);
+    var winner = await Task.WhenAny(dispatchTask, cancellationSignal.Task).ConfigureAwait(false);
 
     if (winner == dispatchTask) {
       // Dispatch finished first (success / exception / honored-CT-and-threw-OCE).
-      // Surface its result/exception to the caller.
+      // Surface its result/exception to the caller. The registration disposes when this method
+      // exits (the await using above), preventing a late callback-fire when the lease handle
+      // disposes and cancels the CT — that's what was causing the first-chance OCE storm.
       await dispatchTask.ConfigureAwait(false);
       return;
     }

@@ -136,6 +136,44 @@ public class LeaseDispatchExecutorTests {
   }
 
   [Test]
+  public async Task SuccessfulDispatch_DoesNotThrowFirstChanceOceOnLeaseDisposeAsync() {
+    // Phase H step 9 regression lock (2026-05-03): the original implementation used
+    // Task.Delay(Timeout.InfiniteTimeSpan, ct) as the cancellation race signal. When the lease
+    // disposed (which cancels the CT), Task.Delay's internal cancellation registration fired
+    // and threw TaskCanceledException — caught downstream but FIRST-CHANCE thrown per dispatch.
+    // JDX BFF observed thousands of first-chance OCEs per second under load. The fix: use a
+    // TaskCompletionSource + ct.UnsafeRegister, and dispose the registration BEFORE the lease
+    // disposes (via `await using` inside the executor). Registration disposal stops the
+    // callback-fire on subsequent CT cancellation.
+    var fcOces = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+    EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs> handler = (_, e) => {
+      // The bug surfaces as TaskCanceledException thrown from Task.Delay's internal
+      // cancellation handling. That throw originates in BCL code (Task.Delay / DelayPromise),
+      // not in user code, so we can't filter by the executor's frame. Count all
+      // TaskCanceledException first-chances during the test — there's no other legitimate
+      // source in this isolated dispatch loop.
+      if (e.Exception is TaskCanceledException) {
+        fcOces.Add(e.Exception);
+      }
+    };
+    AppDomain.CurrentDomain.FirstChanceException += handler;
+    try {
+      // Run 50 successful dispatches in sequence. Each disposes its lease at end-of-scope.
+      // Old impl: 50 OCEs (one Task.Delay throw per dispatch). New impl: 0 OCEs.
+      for (var i = 0; i < 50; i++) {
+        var time = _provider();
+        using var lease = _newLease(time);
+        await LeaseDispatchExecutor.RunWithLeaseAsync(lease, _ => Task.CompletedTask);
+      }
+    } finally {
+      AppDomain.CurrentDomain.FirstChanceException -= handler;
+    }
+
+    await Assert.That(fcOces).IsEmpty()
+      .Because("successful dispatches must not throw first-chance OperationCanceledException — see commit message for the original Task.Delay-based pattern that did");
+  }
+
+  [Test]
   public async Task NullArgs_ThrowAsync() {
     var time = _provider();
     using var lease = _newLease(time);
