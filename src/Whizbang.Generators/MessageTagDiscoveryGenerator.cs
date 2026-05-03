@@ -7,6 +7,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -108,6 +109,20 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       // routing as User-scope when declared Tenant).
       var extraInitializers = _extractExtraNamedInitializers(tagAttribute);
 
+      // Capture POSITIONAL constructor arguments past index 0 (which is always `Tag` and
+      // already emitted directly). Map ctor parameter names to property names via the
+      // attribute's [AttributeArgNaming] convention (default PascalCase). Without this,
+      // attribute classes like NotificationTagAttribute that store positional args in
+      // init-only properties (TagValue, PropertyName) lose those values when the generator
+      // falls back to the parameterless ctor — and downstream hooks emit null tag values.
+      var positionalInitializers = _extractPositionalArgInitializers(tagAttribute);
+      if (positionalInitializers.Length > 0) {
+        var combined = new string[extraInitializers.Length + positionalInitializers.Length];
+        extraInitializers.CopyTo(combined, 0);
+        positionalInitializers.CopyTo(combined, extraInitializers.Length);
+        extraInitializers = combined;
+      }
+
       yield return new MessageTagInfo(
           TypeFullName: typeFullName,
           TypeName: typeSymbol.Name,
@@ -149,6 +164,67 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       result.Add($"{kvp.Key} = {literal}");
     }
 
+    return result.ToArray();
+  }
+
+  /// <summary>
+  /// Reads the <c>[AttributeArgNaming]</c> attribute on <paramref name="attributeClass"/>
+  /// (or its base classes) to determine the constructor-parameter → property naming
+  /// convention. Defaults to <see cref="AttributeArgNamingConvention.PascalCase"/> when
+  /// no attribute is present — covers the common C# convention where parameter
+  /// <c>tagValue</c> initializes property <c>TagValue</c>.
+  /// </summary>
+  private static AttributeArgNamingConvention _resolveNamingConvention(INamedTypeSymbol? attributeClass) {
+    var current = attributeClass;
+    while (current is not null) {
+      var conventionAttr = current.GetAttributes().FirstOrDefault(a =>
+          a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+              == "global::Whizbang.Core.Attributes.AttributeArgNamingAttribute");
+      if (conventionAttr is not null && conventionAttr.ConstructorArguments.Length > 0) {
+        var rawValue = conventionAttr.ConstructorArguments[0].Value;
+        if (rawValue is int intValue) {
+          return (AttributeArgNamingConvention)intValue;
+        }
+      }
+      current = current.BaseType;
+    }
+    return AttributeArgNamingConvention.PascalCase;
+  }
+
+  /// <summary>
+  /// Walks the positional constructor arguments on <paramref name="attributeData"/> past
+  /// index 0 (which is always <c>Tag</c> and emitted separately). For each, maps the ctor
+  /// parameter name to a property initializer using the attribute's declared naming
+  /// convention. Returns an array of <c>"PropertyName = literal"</c> strings ready to be
+  /// concatenated into the AttributeFactory's object initializer.
+  /// </summary>
+  private static string[] _extractPositionalArgInitializers(AttributeData attributeData) {
+    if (attributeData.ConstructorArguments.IsDefaultOrEmpty || attributeData.AttributeConstructor is null) {
+      return [];
+    }
+
+    var ctorParams = attributeData.AttributeConstructor.Parameters;
+    if (ctorParams.IsDefaultOrEmpty || ctorParams.Length <= 1) {
+      return [];
+    }
+
+    var convention = _resolveNamingConvention(attributeData.AttributeClass);
+    var ctorArgs = attributeData.ConstructorArguments;
+    var paramCount = System.Math.Min(ctorArgs.Length, ctorParams.Length);
+    var result = new List<string>(paramCount - 1);
+
+    for (var i = 1; i < paramCount; i++) {
+      var paramName = ctorParams[i].Name;
+      if (string.IsNullOrEmpty(paramName)) {
+        continue;
+      }
+      var propertyName = AttributeArgNamingHelper.Convert(paramName, convention);
+      var literal = _typedConstantToCSharpLiteral(ctorArgs[i]);
+      if (literal is null) {
+        continue; // Skip unsupported kinds rather than emit invalid C#.
+      }
+      result.Add($"{propertyName} = {literal}");
+    }
     return result.ToArray();
   }
 
