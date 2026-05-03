@@ -112,6 +112,56 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   }
 
   // ============================================================================
+  // INVARIANT: advisory locks present in both backfill paths (slice 2)
+  // ============================================================================
+
+  [Test]
+  public async Task EmitEventStoreChain_SourceContains_AdvisoryLockPerStreamAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var src = await _readFunctionSourceAsync(conn, "_emit_event_store_chain");
+
+    await Assert.That(src).Contains("pg_advisory_xact_lock(hashtext('wh_event_store:'")
+      .Because("the outbox backfill must take a per-stream advisory lock before reading MAX(version) — without it concurrent transactions race on version assignment");
+  }
+
+  [Test]
+  public async Task EmitEventStoreChainForInbox_SourceContains_AdvisoryLockPerStreamAsync() {
+    // Phase H step 10 slice 2 regression lock: the inbox backfill (in
+    // _emit_event_store_chain_for_inbox, called by claim_work after claim_orphaned_inbox) used
+    // to skip the lock — that's the bug observed on a consumer BFF as PG 23505 on
+    // idx_event_store_stream during job creation.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var src = await _readFunctionSourceAsync(conn, "_emit_event_store_chain_for_inbox");
+
+    await Assert.That(src).Contains("pg_advisory_xact_lock(hashtext('wh_event_store:'")
+      .Because("_emit_event_store_chain_for_inbox must take a per-stream advisory lock before the backfill INSERT");
+    await Assert.That(src).Contains("WITH inbox_events AS")
+      .Because("anchor — the lock must precede the backfill CTE");
+    var lockIdx = src.IndexOf("pg_advisory_xact_lock(hashtext('wh_event_store:'", StringComparison.Ordinal);
+    var inboxBackfillIdx = src.IndexOf("WITH inbox_events AS", StringComparison.Ordinal);
+    await Assert.That(lockIdx).IsLessThan(inboxBackfillIdx)
+      .Because("the lock must be acquired BEFORE the backfill INSERT runs, otherwise it doesn't serialize the version computation");
+  }
+
+  private static async Task<string> _readFunctionSourceAsync(NpgsqlConnection conn, string functionName) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = @n LIMIT 1";
+    cmd.Parameters.AddWithValue("n", functionName);
+    var result = await cmd.ExecuteScalarAsync();
+    return result?.ToString() ?? string.Empty;
+  }
+
+  // ============================================================================
   // helpers
   // ============================================================================
 
