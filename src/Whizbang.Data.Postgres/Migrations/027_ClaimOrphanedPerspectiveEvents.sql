@@ -80,12 +80,9 @@ BEGIN
   UPDATE wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
-      -- Phase H step 8 slice C: bump attempts on every re-claim. See claim_orphaned_inbox
-      -- (mig 025) for the rationale — symmetric semantics across all three work tables.
-      attempts = CASE
-        WHEN pe.instance_id IS NULL THEN pe.attempts
-        ELSE pe.attempts + 1
-      END
+      -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
+      -- attempt counting; first claim → 1, every re-claim bumps; failures don't bump.
+      attempts = pe.attempts + 1
   FROM claimable_events ce
   INNER JOIN selected_streams ss ON ce.stream_id = ss.stream_id
   WHERE pe.event_work_id = ce.event_work_id

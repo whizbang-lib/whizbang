@@ -118,7 +118,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   private async Task _processOneAsync(InboxWork work, CancellationToken ct) {
     var maxAttempts = _options.MaxInboxAttempts;
-    if (maxAttempts.HasValue && work.Attempts >= maxAttempts.Value) {
+    // Phase H step 8 slice D: attempts is one-based after the slice D refactor — the row
+    // arrives here with attempts=1 on the first attempt, attempts=N on the Nth. Use strict
+    // greater-than so MaxInboxAttempts = 5 means "5 total attempts allowed", matching the
+    // pre-refactor count (the check used to be >= when attempts was zero-based).
+    if (maxAttempts.HasValue && work.Attempts > maxAttempts.Value) {
       LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
@@ -270,7 +274,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "InboxDispatchWorker dispatch failed for message {MessageId}; routing to failure channel")]
   static partial void LogDispatchError(ILogger logger, Guid messageId, Exception ex);
 
-  [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} >= max={MaxAttempts}")]
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
   static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
@@ -286,9 +290,12 @@ public sealed class InboxDispatchWorkerOptions {
   public bool Enabled { get; set; } = true;
 
   /// <summary>
-  /// Dead-letter threshold. When set, work whose <see cref="InboxWork.Attempts"/> meets or
-  /// exceeds this value is committed with a terminal status (no further retries) instead of
-  /// being re-processed. Null disables. Default <c>null</c>.
+  /// Dead-letter threshold. Total number of attempts permitted before terminal commit. When set,
+  /// work whose <see cref="InboxWork.Attempts"/> exceeds this value (i.e., we're entering the
+  /// (N+1)<sup>th</sup> attempt where N = MaxInboxAttempts) is committed with a terminal status
+  /// instead of being re-processed. Attempts are one-based: <c>Attempts == 1</c> on the first
+  /// attempt, <c>Attempts == N</c> on the Nth. So <c>MaxInboxAttempts = 3</c> permits 3 attempts
+  /// total; the 4th claim's dispatch dead-letters. Null disables. Default <c>null</c>.
   /// </summary>
   public int? MaxInboxAttempts { get; set; }
 
