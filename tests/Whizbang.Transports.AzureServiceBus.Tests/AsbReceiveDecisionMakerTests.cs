@@ -107,4 +107,81 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   private static JsonTypeInfo? _resolveAlwaysNull(string typeName, JsonSerializerOptions options) => null;
+
+  // ============================================================
+  // Slice 2 — receptor-registry filter at receive
+  //
+  // Even when the envelope deserializes successfully (typed inner CLR type IS registered),
+  // some services receive events they have NO handler for (no IReceptor + no perspective Apply).
+  // BFF observation 2026-05-03: 2,165 stuck inbox rows for ConnectionUpdatedEventHandler — a
+  // handler that lives in a consumer.UserService, not BFF. The dispatcher silently no-op'd; rows
+  // accumulated forever. With this filter, those messages drop at receive instead of storing.
+  // ============================================================
+
+  [Test]
+  public async Task Decide_PayloadHasNoLocalConsumer_ReturnsAckAndDropWithReasonNoLocalConsumerAsync() {
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var envelope = _makeEnvelope();
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    // Local registry says: no local consumer for THIS payload type.
+    bool _isHandledLocally(Type t) => false;
+
+    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("NoLocalConsumer");
+  }
+
+  [Test]
+  public async Task Decide_PayloadHasLocalConsumer_ReturnsProcessAsync() {
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var envelope = _makeEnvelope();
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    bool _isHandledLocally(Type t) => true;
+
+    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+    await Assert.That(decision.Reason).IsEqualTo("Ok");
+  }
+
+  [Test]
+  public async Task Decide_NoLocalRegistryProvided_KeepsLegacyBehavior_ProcessAsync() {
+    // Backward compat: when isHandledLocally is null, the filter is bypassed so existing
+    // call sites that don't yet wire a registry behave as before slice 2.
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var envelope = _makeEnvelope();
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, isHandledLocally: null);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+  }
+
+  private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
+    MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+    Payload = JsonDocument.Parse("{}").RootElement,
+    Hops = [new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        InstanceId = (Guid)TrackedGuid.NewMedo(),
+        ServiceName = "test",
+        HostName = "test-host",
+        ProcessId = 1,
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+    }],
+    DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
+  };
 }
