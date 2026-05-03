@@ -1253,10 +1253,21 @@ public partial class PerspectiveWorker(
       return false;
     }
     foreach (var envelope in filteredEvents) {
-      foreach (var raw in rawByEventId[envelope.MessageId.Value]) {
+      var rawRows = rawByEventId[envelope.MessageId.Value];
+      var rawSeen = false;
+      foreach (var raw in rawRows) {
+        rawSeen = true;
         if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
           return false;
         }
+      }
+      // ILookup returns an empty enumerable for missing keys. If we never saw any raw row
+      // for this envelope, we cannot prove every event_work_id is cooled — default to
+      // running the apply. Otherwise a mapping mismatch silently strands the event and
+      // prevents PostAllPerspectives from firing (saga events on a consumer application, repro'd by
+      // CooldownGateDecisionTests.ShouldSkip_EnvelopeMessageIdNotInRawLookup_ReturnsFalse).
+      if (!rawSeen) {
+        return false;
       }
     }
     return true;

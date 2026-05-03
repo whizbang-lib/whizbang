@@ -135,4 +135,54 @@ public class CooldownGateDecisionTests {
 
     await Assert.That(skip).IsFalse();
   }
+
+  [Test]
+  public async Task ShouldSkip_EnvelopeMessageIdNotInRawLookup_ReturnsFalseAsync() {
+    // Reproduces the production bug: when filteredEvents contains an envelope whose
+    // MessageId.Value isn't a key in rawByEventId, the inner foreach loops zero times.
+    // The pre-fix implementation falls through to `return true` — incorrectly telling the
+    // drainer to skip a never-applied event. This is what masked drain-mode dispatch in
+    // a consumer (saga events) and what made DrainModeAndStandardMode_DoNotBothFireForSameStream
+    // fail: drain returns early without populating batchProcessedEvents, the standard-mode
+    // guard doesn't fire, and neither path applies the event.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var unrelatedEventId = (Guid)TrackedGuid.NewMedo();
+    var unrelatedWorkId = (Guid)TrackedGuid.NewMedo();
+    cache.MarkProcessed(unrelatedWorkId);
+
+    // Lookup contains an UNRELATED entry — the envelope's MessageId is NOT a key.
+    var raw = new[] { _raw(unrelatedEventId, unrelatedWorkId) }.ToLookup(r => r.EventId);
+
+    var orphanEventId = (Guid)TrackedGuid.NewMedo();
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(orphanEventId) };
+
+    var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache);
+
+    await Assert.That(skip).IsFalse()
+      .Because("If we cannot determine the event's work_id mapping, we MUST default to applying — silent skip strands the event forever and prevents PostAllPerspectives from firing.");
+  }
+
+  [Test]
+  public async Task ShouldSkip_OneEnvelopeMappedAndOneNotInLookup_ReturnsFalseAsync() {
+    // Mixed case: one envelope has its raw row in the lookup (cooled), another envelope
+    // has no entries at all. Pre-fix: the second envelope contributes nothing to the
+    // decision (zero inner-loop iterations) and the first one's "cooled" state alone
+    // returns true. Post-fix: the missing-mapping envelope MUST default to false.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var mappedEventId = (Guid)TrackedGuid.NewMedo();
+    var mappedWorkId = (Guid)TrackedGuid.NewMedo();
+    cache.MarkProcessed(mappedWorkId);
+
+    var raw = new[] { _raw(mappedEventId, mappedWorkId) }.ToLookup(r => r.EventId);
+    var orphanEventId = (Guid)TrackedGuid.NewMedo();
+    var events = new List<MessageEnvelope<IEvent>> {
+      _envelope(mappedEventId),   // mapped + cooled
+      _envelope(orphanEventId),   // not in lookup — pre-fix bug treats this as "skip OK"
+    };
+
+    var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache);
+
+    await Assert.That(skip).IsFalse()
+      .Because("Any envelope whose raw mapping is unknown must force the apply path, even if other envelopes appear cooled.");
+  }
 }
