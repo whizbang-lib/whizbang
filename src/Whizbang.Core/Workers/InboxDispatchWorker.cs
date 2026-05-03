@@ -159,13 +159,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // Lifecycle stages: scope-once, fire Pre + Post + (optional) PostAllPerspectives/PostLifecycle.
       // The lifecycle invocation no-ops cleanly when ILifecycleMessageDeserializer or IReceptorInvoker
       // is absent — same as the legacy publisher's _invokeInboxLifecycleStagesAsync.
+      // Pass `ct` (lease token) for inline awaits + `stoppingToken` for fire-and-forget detached
+      // stages so the latter aren't cancelled when the lease disposes on dispatch return.
       await using var scope = _scopeFactory.CreateAsyncScope();
       await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
       await _invokeInboxLifecycleStageAsync(
         work, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
-        "PreInbox", useLongRunningForDetached: false, ct);
+        "PreInbox", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
 
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
@@ -176,17 +178,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // starved by PerspectiveWorker drain churn.
       await _invokeInboxLifecycleStageAsync(
         work, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
-        "PostInbox", useLongRunningForDetached: true, ct);
+        "PostInbox", useLongRunningForDetached: true, ct, detachedCancellationToken: stoppingToken);
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
       if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await _invokeInboxLifecycleStageAsync(
           work, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
-          "PostAllPerspectives", useLongRunningForDetached: false, ct);
+          "PostAllPerspectives", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
         await _invokeInboxLifecycleStageAsync(
           work, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
-          "PostLifecycle", useLongRunningForDetached: false, ct);
+          "PostLifecycle", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
       }
     });
   }
@@ -217,7 +219,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LifecycleStage inlineStage,
       string stageName,
       bool useLongRunningForDetached,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      CancellationToken detachedCancellationToken = default) {
+    // Phase H step 9: detached lifecycle stages run fire-and-forget on a separate scheduler
+    // and outlive the dispatch. They MUST NOT use the lease token — when the lease disposes
+    // on dispatch completion, the still-running detached tasks would throw a first-chance OCE
+    // each (production observed thousands of OCEs/sec on a consumer BFF). Callers pass the worker's
+    // stoppingToken (or CancellationToken.None) here so detached stages run until shutdown.
+    // If left default, falls back to <paramref name="cancellationToken"/> for backward-compat.
+    var detachedCt = detachedCancellationToken == default ? cancellationToken : detachedCancellationToken;
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
       return;
     }
@@ -243,21 +253,21 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       _ = scheduler(async () => {
         try {
           await using var detachedScope = _scopeFactory.CreateAsyncScope();
-          await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, cancellationToken);
+          await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, detachedCt);
           var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
           if (detachedInvoker is null) {
             return;
           }
           var ctx = lifecycleContext with { CurrentStage = detachedStage };
-          await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, cancellationToken);
+          await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, detachedCt);
           await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-            ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+        } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
           // graceful shutdown
         } catch (Exception ex) {
           LogLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
         }
-      }, cancellationToken);
+      }, detachedCt);
 
       // Inline: blocks until complete
       lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
