@@ -34,11 +34,18 @@ internal sealed class AsbReceiveDecisionMaker {
   /// <see cref="JsonTypeInfo"/> from the local <c>JsonContextRegistry</c>. Returns null when
   /// the type isn't registered in this service.</param>
   /// <param name="jsonOptions">Options to thread through to the JsonTypeInfo resolver.</param>
+  /// <param name="isHandledLocally">Optional predicate (slice 2) — given the deserialized
+  /// envelope's payload runtime type, returns true if this service has a receptor or
+  /// perspective that consumes it. When non-null and returns false, the message is
+  /// <see cref="AsbReceiveAction.AckAndDrop"/>'d with reason
+  /// <see cref="AsbReceiveReason.NoLocalConsumer"/>. When null, no filtering happens
+  /// (legacy / pre-slice-2 callers).</param>
   public AsbReceiveDecision Decide(
       IReadOnlyDictionary<string, object> applicationProperties,
       string bodyJson,
       Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
-      JsonSerializerOptions jsonOptions) {
+      JsonSerializerOptions jsonOptions,
+      Func<Type, bool>? isHandledLocally = null) {
     ArgumentNullException.ThrowIfNull(applicationProperties);
     ArgumentNullException.ThrowIfNull(getTypeInfoByName);
 
@@ -47,7 +54,7 @@ internal sealed class AsbReceiveDecisionMaker {
         || string.IsNullOrEmpty(envelopeTypeName)) {
       return new AsbReceiveDecision {
         Action = AsbReceiveAction.DeadLetter,
-        Reason = "MissingEnvelopeType",
+        Reason = AsbReceiveReason.MISSING_ENVELOPE_TYPE,
         Description = "Message does not contain EnvelopeType metadata",
       };
     }
@@ -57,7 +64,7 @@ internal sealed class AsbReceiveDecisionMaker {
       return new AsbReceiveDecision {
         Action = AsbReceiveAction.AckAndDrop,
         EnvelopeTypeName = envelopeTypeName,
-        Reason = "MissingJsonTypeInfo",
+        Reason = AsbReceiveReason.MISSING_JSON_TYPE_INFO,
         Description = $"No JsonTypeInfo registered locally for envelope type '{envelopeTypeName}' — broker ack + drop",
       };
     }
@@ -73,8 +80,21 @@ internal sealed class AsbReceiveDecisionMaker {
       return new AsbReceiveDecision {
         Action = AsbReceiveAction.AckAndDrop,
         EnvelopeTypeName = envelopeTypeName,
-        Reason = "DeserializationFailed",
+        Reason = AsbReceiveReason.DESERIALIZATION_FAILED,
         Description = $"Could not deserialize envelope as '{envelopeTypeName}' — broker ack + drop",
+      };
+    }
+
+    // Slice 2 — receptor-registry filter at receive. If this service has no consumer
+    // for the payload type, drop the message instead of storing it in the inbox.
+    var payloadType = envelope.Payload?.GetType();
+    if (isHandledLocally != null && payloadType != null && !isHandledLocally(payloadType)) {
+      return new AsbReceiveDecision {
+        Action = AsbReceiveAction.AckAndDrop,
+        Envelope = envelope,
+        EnvelopeTypeName = envelopeTypeName,
+        Reason = AsbReceiveReason.NO_LOCAL_CONSUMER,
+        Description = $"No local receptor or perspective consumes payload type '{payloadType.FullName}' — broker ack + drop",
       };
     }
 
@@ -82,7 +102,7 @@ internal sealed class AsbReceiveDecisionMaker {
       Action = AsbReceiveAction.Process,
       Envelope = envelope,
       EnvelopeTypeName = envelopeTypeName,
-      Reason = "Ok",
+      Reason = AsbReceiveReason.OK,
       Description = "Envelope deserialized; ready for handler dispatch",
     };
   }
