@@ -165,6 +165,77 @@ public class InboxDispatchWorkerTests {
   }
 
   [Test]
+  public async Task MaxInboxAttempts_AttemptsEqualToMax_StillProcessesAsync() {
+    // Phase H step 8 slice D regression lock: with one-based attempts (first attempt = 1)
+    // and N total attempts allowed, the dead-letter check must use strict greater-than.
+    // attempts=3, MaxInboxAttempts=3 → run the 3rd attempt (don't dead-letter early).
+    // Pre-refactor used >= with zero-based attempts which gave the same total-attempts count.
+    // Flipping the operator preserves "MaxInboxAttempts = N → N attempts allowed".
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork(attempts: 3, status: MessageProcessingStatus.Stored);
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Should be normal EventStored, NOT terminal Published — dead-letter only fires when
+    // attempts > max, not when equal.
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored)
+      .Because("attempts == MaxInboxAttempts means we're on the last allowed attempt, not over the limit");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task MaxInboxAttempts_AttemptsOneOverMax_DeadLettersAsync() {
+    // Counterpart to the boundary test: attempts > max strictly triggers dead-letter.
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork(attempts: 4, status: MessageProcessingStatus.Stored);
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var expectedStatus = (int)(work.Status | MessageProcessingStatus.Published);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo(expectedStatus)
+      .Because("attempts > MaxInboxAttempts dead-letters with terminal Published status");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task Disabled_NoMessagesConsumedAsync() {
     var instance = new FakeInstanceProvider();
     var inbox = new FakeInboxChannelWriter();

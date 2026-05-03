@@ -25,16 +25,15 @@ BEGIN
   UPDATE wh_inbox i
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
-      -- Phase H step 8 slice A: bump attempts on every re-claim. A claim from a row that
-      -- previously had an instance (lease expired, instance died, or self-restart) is the
-      -- second-or-later attempt — surface that to operators. A first claim from
-      -- instance_id IS NULL is the first attempt; attempts stays at its prior value (0 for
-      -- new rows). Without this, hung handlers looked identical to fresh messages on JDNext
-      -- production, masking a 36-hour stuck-message backlog (audit 2026-05-02).
-      attempts = CASE
-        WHEN i.instance_id IS NULL THEN i.attempts
-        ELSE i.attempts + 1
-      END
+      -- Phase H step 8 slice D: claim_orphaned is the SOLE source of attempt counting.
+      -- Bumps unconditionally on every claim (fresh or re-claim) so attempts = 1 means
+      -- "first attempt has started" (one-based). process_inbox_failures records error and
+      -- releases the lease but does NOT bump — the next claim's bump captures attempt N+1.
+      -- Single-source removes the double-counting that two bumps per failed cycle would cause.
+      -- Without this, hung handlers (no exception thrown, lease eventually expires) looked
+      -- identical to fresh messages on JDNext production — 36 h stuck-message backlog with
+      -- attempts=0 across 4023 rows (audit 2026-05-02).
+      attempts = i.attempts + 1
   WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
     AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
     AND i.processed_at IS NULL
