@@ -170,6 +170,65 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   // ============================================================
+  // Slice 4 — multi-pass type binder fallback when JsonContextRegistry misses
+  //
+  // JsonContextRegistry only knows types whose source-generated JsonTypeInfo was registered
+  // via [ModuleInitializer]. When that misses but the type IS resolvable in the loaded
+  // assemblies (e.g., assembly-rename case the registry can't follow), the binder cascade
+  // resolves it and the decision maker re-attempts JsonTypeInfo via options.GetTypeInfo.
+  // ============================================================
+
+  [Test]
+  public async Task Decide_RegistryMisses_BinderResolves_ReturnsProcessAsync() {
+    // Force the registry-side lookup to miss; binder resolves via a permissive impl that
+    // returns the MessageEnvelope<JsonElement> type directly. options.GetTypeInfo(type)
+    // produces a typeInfo that successfully deserializes the body.
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = _makeEnvelope();
+    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]], Whizbang.Core";
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    var decider = new AsbReceiveDecisionMaker();
+    var binder = new FakeBinder(typeof(MessageEnvelope<JsonElement>));
+    var props = _withEnvelopeType(envelopeType);
+
+    var decision = decider.Decide(
+      props, body,
+      _resolveAlwaysNull,  // registry says no
+      combinedOptions,
+      isHandledLocally: null,
+      rawReceptorRegistry: null,
+      typeBinder: binder);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+    await Assert.That(decision.Reason).IsEqualTo("Ok");
+    await Assert.That(decision.Envelope).IsNotNull();
+  }
+
+  [Test]
+  public async Task Decide_RegistryMisses_BinderAlsoMisses_FallsThroughToAckAndDropAsync() {
+    var decider = new AsbReceiveDecisionMaker();
+    var binder = new FakeBinder(null);  // binder also misses
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown]]");
+
+    var decision = decider.Decide(
+      props, """{"p":{}}""",
+      _resolveAlwaysNull, _jsonOptions,
+      isHandledLocally: null, rawReceptorRegistry: null,
+      typeBinder: binder);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
+  }
+
+  private sealed class FakeBinder(Type? returnType) : IMessageTypeBinder {
+    public Type? Bind(string assemblyQualifiedName) => returnType;
+    public (Type? Type, MessageTypeBinderPass Pass) BindWithDiagnostics(string assemblyQualifiedName) =>
+      (returnType, returnType is null ? MessageTypeBinderPass.Miss : MessageTypeBinderPass.TypeFullNameAcrossAssemblies);
+  }
+
+  // ============================================================
   // Slice 5 — opt-in raw JSON receptor wire-up
   //
   // When the typed JsonTypeInfo lookup misses but a raw receptor is registered for the
