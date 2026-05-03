@@ -42,6 +42,10 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
   private readonly ILogger<OutboxPublishWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly LeaseHandleOptions _leaseHandleOptions;
+  private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions;
+  private readonly LeaseRegistry? _leaseRegistry;
+  private readonly TimeProvider _timeProvider;
 
   /// <summary>
   /// Constructor. <paramref name="publishStrategy"/> is optional so this worker can be
@@ -60,7 +64,11 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
     ILogger<OutboxPublishWorker> logger,
     IMessagePublishStrategy? publishStrategy = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null) {
+    IOptionsMonitor<TracingOptions>? tracingOptions = null,
+    IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
+    IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
+    LeaseRegistry? leaseRegistry = null,
+    TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _publishStrategy = publishStrategy;
     _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
@@ -72,6 +80,10 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
+    _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
+    _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
+    _leaseRegistry = leaseRegistry;
+    _timeProvider = timeProvider ?? TimeProvider.System;
   }
 
   /// <summary>
@@ -146,21 +158,38 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
           continue;
         }
 
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, stoppingToken);
-        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-        var traceContext = _extractTraceContext(work);
-        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+        // Phase H step 9 slice 5: lease-tied cancellation. Wrap the publish + lifecycle stages
+        // in a LeaseHandle whose token cancels at lease_expiry - LeaseGraceSeconds. A hung
+        // PublishAsync that ignores its CT (e.g., transport library blocking on a TCP read
+        // without timeout) gets abandoned by the executor; failure-channel routing runs.
+        var leaseDeadline = _timeProvider.GetUtcNow()
+          + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+        using var lease = new LeaseHandle(
+          workId: work.MessageId,
+          category: WorkCategory.Outbox,
+          deadline: leaseDeadline,
+          maxRenewals: _leaseHandleOptions.MaxRenewalsPerWork,
+          timeProvider: _timeProvider,
+          linkedTokens: [stoppingToken]);
+        _leaseRegistry?.Register(lease);
 
-        var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
-          work, scope, receptorInvoker, traceContext, enableLifecycleSpans, stoppingToken);
+        await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
+          await using var scope = _scopeFactory.CreateAsyncScope();
+          await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, leaseCt);
+          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+          var traceContext = _extractTraceContext(work);
+          var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
 
-        var result = await _publishStrategy!.PublishAsync(work, stoppingToken);
+          var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
+            work, scope, receptorInvoker, traceContext, enableLifecycleSpans, leaseCt);
 
-        await _invokePostOutboxLifecycleAsync(
-          work, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans, stoppingToken);
+          var result = await _publishStrategy!.PublishAsync(work, leaseCt);
 
-        await _routeResultAsync(work, result, stoppingToken);
+          await _invokePostOutboxLifecycleAsync(
+            work, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans, leaseCt);
+
+          await _routeResultAsync(work, result, leaseCt);
+        });
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
@@ -197,39 +226,57 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
           continue;
         }
 
-        // Per-item scope + Pre lifecycle prep BEFORE bulk publish
-        var contexts = new List<BulkBatchContext>(batch.Count);
-        foreach (var w in batch) {
-          var scope = _scopeFactory.CreateAsyncScope();
-          await SecurityContextHelper.EstablishFullContextAsync(w.Envelope, scope.ServiceProvider, stoppingToken);
-          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-          var traceContext = _extractTraceContext(w);
-          var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-          var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
-            w, scope, receptorInvoker, traceContext, enableLifecycleSpans, stoppingToken);
-          contexts.Add(new BulkBatchContext(w, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans));
-        }
+        // Phase H step 9 slice 5: bulk lease. One LeaseHandle for the whole batch keyed off the
+        // first message; deadline = now + LeaseSeconds - GraceSeconds. The whole batch shares a
+        // CT, so a hung PublishBatchAsync gets abandoned and ALL items in the batch route to the
+        // failure channel via the existing catch. Per-row deadlines on the bulk path are out of
+        // scope (see Phase H step 9 § "Out of scope").
+        var leaseDeadline = _timeProvider.GetUtcNow()
+          + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
+        using var lease = new LeaseHandle(
+          workId: firstWork.MessageId,
+          category: WorkCategory.Outbox,
+          deadline: leaseDeadline,
+          maxRenewals: _leaseHandleOptions.MaxRenewalsPerWork,
+          timeProvider: _timeProvider,
+          linkedTokens: [stoppingToken]);
+        _leaseRegistry?.Register(lease);
 
-        var results = await _publishStrategy!.PublishBatchAsync(batch, stoppingToken);
-
-        // Per-item Post lifecycle + result routing
-        foreach (var ctx in contexts) {
-          var r = results.FirstOrDefault(x => x.MessageId == ctx.Work.MessageId)
-            ?? new MessagePublishResult {
-              MessageId = ctx.Work.MessageId,
-              Success = false,
-              CompletedStatus = ctx.Work.Status,
-              Error = "No result returned from batch publish",
-              Reason = MessageFailureReason.Unknown
-            };
-          try {
-            await _invokePostOutboxLifecycleAsync(
-              ctx.Work, ctx.Scope, ctx.Tracking, ctx.TypedEnvelope, ctx.TraceContext, ctx.EnableLifecycleSpans, stoppingToken);
-            await _routeResultAsync(ctx.Work, r, stoppingToken);
-          } finally {
-            await ctx.Scope.DisposeAsync();
+        await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
+          // Per-item scope + Pre lifecycle prep BEFORE bulk publish
+          var contexts = new List<BulkBatchContext>(batch.Count);
+          foreach (var w in batch) {
+            var scope = _scopeFactory.CreateAsyncScope();
+            await SecurityContextHelper.EstablishFullContextAsync(w.Envelope, scope.ServiceProvider, leaseCt);
+            var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+            var traceContext = _extractTraceContext(w);
+            var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+            var (tracking, typedEnvelope) = await _invokePreOutboxLifecycleAsync(
+              w, scope, receptorInvoker, traceContext, enableLifecycleSpans, leaseCt);
+            contexts.Add(new BulkBatchContext(w, scope, tracking, typedEnvelope, traceContext, enableLifecycleSpans));
           }
-        }
+
+          var results = await _publishStrategy!.PublishBatchAsync(batch, leaseCt);
+
+          // Per-item Post lifecycle + result routing
+          foreach (var ctx in contexts) {
+            var r = results.FirstOrDefault(x => x.MessageId == ctx.Work.MessageId)
+              ?? new MessagePublishResult {
+                MessageId = ctx.Work.MessageId,
+                Success = false,
+                CompletedStatus = ctx.Work.Status,
+                Error = "No result returned from batch publish",
+                Reason = MessageFailureReason.Unknown
+              };
+            try {
+              await _invokePostOutboxLifecycleAsync(
+                ctx.Work, ctx.Scope, ctx.Tracking, ctx.TypedEnvelope, ctx.TraceContext, ctx.EnableLifecycleSpans, leaseCt);
+              await _routeResultAsync(ctx.Work, r, leaseCt);
+            } finally {
+              await ctx.Scope.DisposeAsync();
+            }
+          }
+        });
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
