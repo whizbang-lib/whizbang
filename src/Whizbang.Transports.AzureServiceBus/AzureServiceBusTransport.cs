@@ -25,6 +25,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly SemaphoreSlim _senderLock = new(1, 1);
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
+  private readonly AsbReceiveDecisionMaker _decisionMaker = new();
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -863,24 +864,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ProcessMessageEventArgs args,
     TransportDestination destination
   ) {
-    // Get envelope type from message metadata
-    if (!args.Message.ApplicationProperties.TryGetValue(ENVELOPE_TYPE_PROPERTY, out var envelopeTypeObj) ||
-        envelopeTypeObj is not string envelopeTypeName) {
-      _logger.LogWarning(
-        "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
-        args.Message.MessageId,
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MissingEnvelopeType",
-        "Message does not contain EnvelopeType metadata",
-        cancellationToken: args.CancellationToken
-      );
-      return (null, null);
-    }
-
     var json = args.Message.Body.ToString();
 
     if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -892,49 +875,59 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       );
     }
 
-    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
-    if (typeInfo == null) {
-      _logger.LogWarning(
-        "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
-        envelopeTypeName,
-        args.Message.MessageId,
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MissingJsonTypeInfo",
-        $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
-        cancellationToken: args.CancellationToken
-      );
-      return (null, envelopeTypeName);
-    }
+    var decision = _decisionMaker.Decide(
+      args.Message.ApplicationProperties,
+      json,
+      Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
+      _jsonOptions);
 
-    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-      _logger.LogWarning(
-        "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
-        args.Message.MessageId,
-        envelopeTypeName,
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "DeserializationFailed",
-        "Could not deserialize message envelope",
-        cancellationToken: args.CancellationToken
-      );
-      return (null, envelopeTypeName);
-    }
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
-    if (_logger.IsEnabled(LogLevel.Debug)) {
-      _logger.LogDebug(
-        "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
-        envelope.MessageId.Value
-      );
-    }
+    switch (decision.Action) {
+      case AsbReceiveAction.Process:
+        if (_logger.IsEnabled(LogLevel.Debug) && decision.Envelope != null) {
+          _logger.LogDebug(
+            "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
+            decision.Envelope.MessageId.Value
+          );
+        }
+        return (decision.Envelope, decision.EnvelopeTypeName);
 
-    return (envelope, envelopeTypeName);
+      case AsbReceiveAction.AckAndDrop:
+        // Slice 1 hotfix: do NOT dead-letter on type-resolution failures. Ack the broker so
+        // the message exits the topic; structured warning + metric so operators see the drop
+        // rate without ASB DLQ accumulation.
+        _logger.LogWarning(
+          "ASB receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
+          decision.Reason,
+          decision.EnvelopeTypeName,
+          args.Message.MessageId,
+          destination.Address,
+          subscription,
+          decision.Description
+        );
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.DeadLetter:
+        _logger.LogWarning(
+          "DEAD-LETTER reason: {Reason} for message {MessageId} from {TopicName}/{SubscriptionName}",
+          decision.Reason,
+          args.Message.MessageId,
+          destination.Address,
+          subscription
+        );
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          decision.Reason,
+          decision.Description,
+          cancellationToken: args.CancellationToken
+        );
+        return (null, decision.EnvelopeTypeName);
+
+      default:
+        throw new InvalidOperationException($"Unknown AsbReceiveAction: {decision.Action}");
+    }
   }
 
   // ========================================
