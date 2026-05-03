@@ -88,10 +88,15 @@ public static class ServiceCollectionExtensions {
       var receptorRegistry = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistry>();
       var perspectiveRegistry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
 
+      // Slice 5 — opt-in raw receptor registry. When typed binder misses but a raw receptor
+      // is registered for the inner message type, dispatch routes there instead of dropping.
+      var rawReceptorRegistry = sp.GetService<Whizbang.Core.Messaging.IRawReceptorRegistry>();
+
       var transport = new AzureServiceBusTransport(
         client, jsonOptions, options, logger, adminClient,
         receptorRegistry: receptorRegistry,
-        perspectiveRegistry: perspectiveRegistry);
+        perspectiveRegistry: perspectiveRegistry,
+        rawReceptorRegistry: rawReceptorRegistry);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
