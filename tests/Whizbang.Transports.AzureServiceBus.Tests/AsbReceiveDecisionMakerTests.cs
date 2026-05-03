@@ -169,6 +169,74 @@ public class AsbReceiveDecisionMakerTests {
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
   }
 
+  // ============================================================
+  // Slice 5 — opt-in raw JSON receptor wire-up
+  //
+  // When the typed JsonTypeInfo lookup misses but a raw receptor is registered for the
+  // envelope's inner message type, the decision routes to InvokeRawReceptor instead of
+  // AckAndDrop. Transport invokes the raw receptor with the envelope's "p" payload as a
+  // JsonElement, then acks the broker.
+  // ============================================================
+
+  private sealed class FakeRawReceptor(string targetName) : Whizbang.Core.Messaging.IRawReceptor {
+    public string TargetMessageTypeName { get; } = targetName;
+    public Task HandleAsync(JsonElement payload, System.Threading.CancellationToken cancellationToken) => Task.CompletedTask;
+  }
+
+  [Test]
+  public async Task Decide_TypeInfoMisses_RawReceptorRegistered_ReturnsInvokeRawReceptorAsync() {
+    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
+    var receptor = new FakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
+    var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([receptor]);
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType(envelopeType);
+
+    var decision = decider.Decide(
+      props,
+      """{"p":{"someField":42},"id":"01234567-89ab-7def-0123-456789abcdef"}""",
+      _resolveAlwaysNull,  // forces JsonTypeInfo miss
+      _jsonOptions,
+      isHandledLocally: null,
+      rawReceptorRegistry: rawRegistry);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.InvokeRawReceptor);
+    await Assert.That(decision.Reason).IsEqualTo("RawReceptorMatch");
+    await Assert.That(decision.RawReceptor).IsSameReferenceAs(receptor);
+    await Assert.That(decision.RawPayload).IsNotNull();
+  }
+
+  [Test]
+  public async Task Decide_TypeInfoMisses_NoRawReceptor_FallsThroughToAckAndDropAsync() {
+    var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([]);
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown.Type, UnknownAsm]]");
+
+    var decision = decider.Decide(
+      props, """{"p":{}}""", _resolveAlwaysNull, _jsonOptions,
+      isHandledLocally: null,
+      rawReceptorRegistry: rawRegistry);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
+  }
+
+  [Test]
+  public async Task Decide_TypeInfoMisses_RawReceptorButMalformedBody_FallsThroughToAckAndDropAsync() {
+    var receptor = new FakeRawReceptor("MyApp.Foo, MyApp");
+    var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([receptor]);
+    var decider = new AsbReceiveDecisionMaker();
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Foo, MyApp]]");
+
+    var decision = decider.Decide(
+      props, "not valid json{{{", _resolveAlwaysNull, _jsonOptions,
+      isHandledLocally: null,
+      rawReceptorRegistry: rawRegistry);
+
+    // Can't extract payload → fall through, don't fabricate an InvokeRawReceptor.
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
+  }
+
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
     Payload = JsonDocument.Parse("{}").RootElement,
