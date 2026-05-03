@@ -60,6 +60,13 @@ public static class WorkerPipelineExtensions {
     });
     services.TryAddSingleton<RecentlyProcessedEventCacheSweepWorker>();
 
+    // Phase H step 9 slice 7: lease-tied cancellation infrastructure. LeaseRegistry is the
+    // singleton handle store; dispatch workers Register at claim, LeaseRenewalWorker looks up
+    // by (category, work_id) when extending DB leases so the in-process CT deadline tracks the
+    // SQL lease until the MaxRenewalsPerWork cap is hit.
+    services.TryAddSingleton<LeaseRegistry>();
+    services.TryAddSingleton(TimeProvider.System);
+
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
@@ -119,6 +126,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
     services.AddOptions<RecentlyProcessedEventCacheOptions>();
+    services.AddOptions<LeaseHandleOptions>();
 
     return services;
   }
