@@ -373,7 +373,15 @@ BEGIN
       COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = oe.stream_id), 0) + oe.row_num,
       p_now
     FROM outbox_events oe
-    ON CONFLICT (event_id) DO NOTHING
+    -- Phase H step 10 slice 4: DO NOTHING with NO constraint specifier so PG handles BOTH the
+    -- event_id PK conflict (idempotent re-store) AND the idx_event_store_stream
+    -- (stream_id, version) UNIQUE conflict gracefully. Without this, a (stream_id, version)
+    -- conflict would bubble up as PG 23505 and fail the whole claim_work tick. With the
+    -- advisory lock from slice 2 in place, we shouldn't hit (stream_id, version) conflicts in
+    -- practice — but this is the third defensive layer per "all 3 options" guidance. Rows that
+    -- conflict are silently skipped; the next claim_work cycle re-attempts them with a fresh
+    -- MAX(version) snapshot.
+    ON CONFLICT DO NOTHING
     RETURNING event_id
   )
   SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
@@ -522,7 +530,15 @@ BEGIN
       COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = ie.stream_id), 0) + ie.row_num,
       p_now
     FROM inbox_events ie
-    ON CONFLICT (event_id) DO NOTHING
+    -- Phase H step 10 slice 4: DO NOTHING with NO constraint specifier so PG handles BOTH the
+    -- event_id PK conflict (idempotent re-store) AND the idx_event_store_stream
+    -- (stream_id, version) UNIQUE conflict gracefully. Without this, a (stream_id, version)
+    -- conflict would bubble up as PG 23505 and fail the whole claim_work tick. With the
+    -- advisory lock from slice 2 in place, we shouldn't hit (stream_id, version) conflicts in
+    -- practice — but this is the third defensive layer per "all 3 options" guidance. Rows that
+    -- conflict are silently skipped; the next claim_work cycle re-attempts them with a fresh
+    -- MAX(version) snapshot.
+    ON CONFLICT DO NOTHING
     RETURNING event_id
   )
   SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
