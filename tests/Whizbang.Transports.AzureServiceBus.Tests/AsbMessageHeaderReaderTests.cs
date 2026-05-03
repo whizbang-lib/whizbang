@@ -117,7 +117,7 @@ public class AsbMessageHeaderReaderTests {
     // Backward compat with publishers that haven't been updated to lift MessageId to a header.
     // Reader extracts the envelope's "id" property via Utf8JsonReader without binding the typed
     // payload — important because the publisher's contracts assembly may not be loadable here.
-    var envelopeId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    var envelopeId = (Guid)TrackedGuid.NewMedo();
     var body = $$"""{"v":2,"id":"{{envelopeId}}","p":{"unknownField":"value"},"h":[]}""";
     var message = _build(
       envelopeJson: body,
