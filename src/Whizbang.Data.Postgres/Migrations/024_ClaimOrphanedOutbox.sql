@@ -24,7 +24,13 @@ BEGIN
   RETURN QUERY
   UPDATE wh_outbox o
   SET instance_id = p_instance_id,
-      lease_expiry = p_lease_expiry
+      lease_expiry = p_lease_expiry,
+      -- Phase H step 8 slice B: bump attempts on every re-claim. See claim_orphaned_inbox
+      -- (mig 025) for the rationale — symmetric semantics across all three work tables.
+      attempts = CASE
+        WHEN o.instance_id IS NULL THEN o.attempts
+        ELSE o.attempts + 1
+      END
   WHERE (o.instance_id IS NULL OR o.lease_expiry < p_now)
     AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
     AND o.processed_at IS NULL
