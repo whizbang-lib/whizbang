@@ -748,7 +748,33 @@ public interface IWorkCoordinator {
   Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
+
+  /// <summary>
+  /// Deletes <c>wh_inbox</c> rows whose <c>message_type</c> is NOT in the provided list of
+  /// locally-handled types. Slice 3 of the resilient-transport plan — companion to slice 2's
+  /// receptor-registry filter at receive. Slice 2 prevents new orphans from landing; this
+  /// purges rows that accumulated before deploy or after a service stops consuming a type.
+  /// </summary>
+  /// <remarks>
+  /// Pass the union of locally-handled assembly-qualified CLR type names (from receptor +
+  /// perspective registries). Empty list = no-op (safe). Skips leased rows to avoid stomping
+  /// on actively-dispatching work. Default impl returns empty list so non-Postgres backends
+  /// and test fakes don't need to override.
+  /// </remarks>
+  /// <param name="handledTypeNames">Assembly-qualified type names handled locally.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Tuples of <c>(MessageId, MessageType, HandlerName)</c> that were deleted, for logging.</returns>
+  Task<IReadOnlyList<PurgedOrphanInboxRow>> PurgeOrphanInboxAsync(
+    IReadOnlyList<string> handledTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
 }
+
+/// <summary>
+/// One inbox row deleted by <see cref="IWorkCoordinator.PurgeOrphanInboxAsync"/>. Returned for
+/// structured logging and metrics — operators want to see which type names dominated a purge.
+/// </summary>
+public sealed record PurgedOrphanInboxRow(Guid MessageId, string MessageType, string HandlerName);
 
 /// <summary>
 /// Result of a single maintenance task executed by <see cref="IWorkCoordinator.PerformMaintenanceAsync"/>.
