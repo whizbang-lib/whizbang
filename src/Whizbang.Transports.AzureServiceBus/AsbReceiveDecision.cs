@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Transports.AzureServiceBus;
@@ -29,7 +31,16 @@ internal enum AsbReceiveAction {
   /// message has no metadata to route on, so dead-lettering at the broker is correct —
   /// these aren't expected to ever appear in steady-state production traffic.
   /// </summary>
-  DeadLetter
+  DeadLetter,
+
+  /// <summary>
+  /// Slice 5 — the typed CLR envelope can't bind locally, but an opt-in
+  /// <see cref="Whizbang.Core.Messaging.IRawReceptor"/> is registered for the inner
+  /// message type. The transport invokes the raw receptor with the envelope's
+  /// <c>"p"</c> payload as a <see cref="System.Text.Json.JsonElement"/>, then acks the
+  /// broker. The decision carries the matched receptor and the extracted payload.
+  /// </summary>
+  InvokeRawReceptor,
 }
 
 /// <summary>
@@ -51,6 +62,19 @@ internal sealed record AsbReceiveDecision {
 
   /// <summary>Human-readable description for DLQ payloads or warning logs.</summary>
   public required string Description { get; init; }
+
+  /// <summary>
+  /// When <see cref="Action"/> is <see cref="AsbReceiveAction.InvokeRawReceptor"/>, the
+  /// matched raw receptor that should handle the message; null for other actions.
+  /// </summary>
+  public IRawReceptor? RawReceptor { get; init; }
+
+  /// <summary>
+  /// When <see cref="Action"/> is <see cref="AsbReceiveAction.InvokeRawReceptor"/>, the
+  /// envelope's payload as an unparsed <see cref="JsonElement"/> for the receptor; null
+  /// otherwise.
+  /// </summary>
+  public JsonElement? RawPayload { get; init; }
 }
 
 /// <summary>
@@ -64,4 +88,5 @@ internal static class AsbReceiveReason {
   internal const string MISSING_JSON_TYPE_INFO = "MissingJsonTypeInfo";
   internal const string DESERIALIZATION_FAILED = "DeserializationFailed";
   internal const string NO_LOCAL_CONSUMER = "NoLocalConsumer";
+  internal const string RAW_RECEPTOR_MATCH = "RawReceptorMatch";
 }

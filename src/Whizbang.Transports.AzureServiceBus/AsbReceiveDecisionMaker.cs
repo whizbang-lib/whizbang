@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Transports.AzureServiceBus;
@@ -45,7 +46,8 @@ internal sealed class AsbReceiveDecisionMaker {
       string bodyJson,
       Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
       JsonSerializerOptions jsonOptions,
-      Func<Type, bool>? isHandledLocally = null) {
+      Func<Type, bool>? isHandledLocally = null,
+      IRawReceptorRegistry? rawReceptorRegistry = null) {
     ArgumentNullException.ThrowIfNull(applicationProperties);
     ArgumentNullException.ThrowIfNull(getTypeInfoByName);
 
@@ -61,6 +63,11 @@ internal sealed class AsbReceiveDecisionMaker {
 
     var typeInfo = getTypeInfoByName(envelopeTypeName, jsonOptions);
     if (typeInfo == null) {
+      // Slice 5 — try raw receptor before giving up on this message.
+      var rawDecision = _tryRawReceptor(envelopeTypeName, bodyJson, rawReceptorRegistry);
+      if (rawDecision != null) {
+        return rawDecision;
+      }
       return new AsbReceiveDecision {
         Action = AsbReceiveAction.AckAndDrop,
         EnvelopeTypeName = envelopeTypeName,
@@ -104,6 +111,56 @@ internal sealed class AsbReceiveDecisionMaker {
       EnvelopeTypeName = envelopeTypeName,
       Reason = AsbReceiveReason.OK,
       Description = "Envelope deserialized; ready for handler dispatch",
+    };
+  }
+
+  /// <summary>
+  /// Slice 5 — when the typed JsonTypeInfo lookup misses, look for an
+  /// <see cref="IRawReceptor"/> registered for the envelope's inner message type. If found,
+  /// extract the envelope's <c>"p"</c> payload as a JsonElement and return an
+  /// <see cref="AsbReceiveAction.InvokeRawReceptor"/> decision. Returns null when no raw
+  /// receptor matches (caller falls through to the standard AckAndDrop path).
+  /// </summary>
+  private static AsbReceiveDecision? _tryRawReceptor(
+      string envelopeTypeName,
+      string bodyJson,
+      IRawReceptorRegistry? rawReceptorRegistry) {
+    if (rawReceptorRegistry is null) {
+      return null;
+    }
+
+    var innerTypeName = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName);
+    if (string.IsNullOrEmpty(innerTypeName)) {
+      return null;
+    }
+
+    var receptor = rawReceptorRegistry.FindByTypeName(innerTypeName);
+    if (receptor is null) {
+      return null;
+    }
+
+    JsonElement? payload = null;
+    try {
+      using var doc = JsonDocument.Parse(bodyJson);
+      if (doc.RootElement.TryGetProperty("p", out var p)) {
+        payload = p.Clone();
+      }
+    } catch (JsonException) {
+      // Malformed envelope JSON — can't extract payload; fall through to AckAndDrop.
+      return null;
+    }
+
+    if (payload is null) {
+      return null;
+    }
+
+    return new AsbReceiveDecision {
+      Action = AsbReceiveAction.InvokeRawReceptor,
+      EnvelopeTypeName = envelopeTypeName,
+      Reason = AsbReceiveReason.RAW_RECEPTOR_MATCH,
+      Description = $"Inner type '{innerTypeName}' matched IRawReceptor '{receptor.GetType().FullName}'",
+      RawReceptor = receptor,
+      RawPayload = payload,
     };
   }
 }

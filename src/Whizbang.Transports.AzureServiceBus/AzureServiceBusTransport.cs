@@ -28,6 +28,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly AsbReceiveDecisionMaker _decisionMaker = new();
   private readonly Whizbang.Core.Messaging.IReceptorRegistry? _receptorRegistry;
   private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
+  private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -49,7 +50,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ILogger<AzureServiceBusTransport>? logger = null,
     IServiceBusAdminClient? adminClient = null,
     Whizbang.Core.Messaging.IReceptorRegistry? receptorRegistry = null,
-    Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null
+    Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null,
+    Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -69,6 +71,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     _options = options ?? new AzureServiceBusOptions();
     _receptorRegistry = receptorRegistry;
     _perspectiveRegistry = perspectiveRegistry;
+    _rawReceptorRegistry = rawReceptorRegistry;
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -921,7 +924,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
       _jsonOptions,
-      _buildIsHandledLocally());
+      _buildIsHandledLocally(),
+      _rawReceptorRegistry);
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
@@ -948,6 +952,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subscription,
           decision.Description
         );
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.InvokeRawReceptor:
+        // Slice 5 — typed binder couldn't resolve, but a raw receptor opted in for this
+        // message type. Dispatch with the raw JsonElement payload, then ack.
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation(
+            "ASB receive raw-receptor. EnvelopeType={EnvelopeType} MessageId={MessageId} Detail={Description}",
+            decision.EnvelopeTypeName, args.Message.MessageId, decision.Description);
+        }
+        if (decision.RawReceptor != null && decision.RawPayload.HasValue) {
+          await decision.RawReceptor.HandleAsync(decision.RawPayload.Value, args.CancellationToken);
+        }
         await args.CompleteMessageAsync(args.Message, args.CancellationToken);
         return (null, decision.EnvelopeTypeName);
 
@@ -990,7 +1008,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
       _jsonOptions,
-      _buildIsHandledLocally());
+      _buildIsHandledLocally(),
+      _rawReceptorRegistry);
 
     var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
@@ -1010,6 +1029,19 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subscription,
           decision.Description
         );
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.InvokeRawReceptor:
+        // Slice 5 — raw receptor wants this message even though the typed binder missed.
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation(
+            "ASB session-receive raw-receptor. EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Detail={Description}",
+            decision.EnvelopeTypeName, args.Message.MessageId, args.SessionId, decision.Description);
+        }
+        if (decision.RawReceptor != null && decision.RawPayload.HasValue) {
+          await decision.RawReceptor.HandleAsync(decision.RawPayload.Value, args.CancellationToken);
+        }
         await args.CompleteMessageAsync(args.Message, args.CancellationToken);
         return (null, decision.EnvelopeTypeName);
 
