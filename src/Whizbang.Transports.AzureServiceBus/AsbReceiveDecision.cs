@@ -14,17 +14,13 @@ internal enum AsbReceiveAction {
 
   /// <summary>
   /// Envelope cannot be bound to a CLR type in this service (unknown JsonTypeInfo or shape
-  /// rejection). Ack the broker — do NOT dead-letter — so the message exits the topic without
-  /// accumulating in ASB DLQ. The message is dropped from this consumer; an upstream
-  /// republish or a contracts-aligned consumer is responsible for any re-processing.
+  /// rejection), OR the deserialized payload has no local consumer (slice 2). Ack the broker
+  /// — do NOT dead-letter — so the message exits the topic without accumulating in ASB DLQ
+  /// or the inbox table.
   /// </summary>
   /// <remarks>
-  /// This is the slice 1 hotfix's core behavior change. Today these cases dead-letter at the
-  /// broker; that produced unbounded ASB DLQ accumulation on JDX services that received
-  /// events from contracts assemblies they didn't reference. The full plan stores opaque
-  /// payload bytes in <c>wh_inbox</c> for forensic preservation; the hotfix scope drops them
-  /// silently with a warning log + metric, matching the slice-2 receptor-registry-filter
-  /// behavior on receive (no local handler → ack + drop).
+  /// Slice 1 hotfix triggers this on type-resolution failures. Slice 2 extends it to
+  /// payloads that deserialize fine but match no local receptor / perspective Apply target.
   /// </remarks>
   AckAndDrop,
 
@@ -47,12 +43,25 @@ internal sealed record AsbReceiveDecision {
   /// <summary>The deserialized envelope when <see cref="Action"/> is Process; null otherwise.</summary>
   public IMessageEnvelope? Envelope { get; init; }
 
-  /// <summary>The envelope's CLR type name when known (Process or AckAndDrop after a JsonTypeInfo miss); null otherwise.</summary>
+  /// <summary>The envelope's CLR type name when known; null otherwise.</summary>
   public string? EnvelopeTypeName { get; init; }
 
-  /// <summary>Short reason code for logs/metrics ("MissingJsonTypeInfo", "DeserializationFailed", "MissingEnvelopeType", "Ok").</summary>
+  /// <summary>Short reason code for logs/metrics. See <see cref="AsbReceiveReason"/> constants.</summary>
   public required string Reason { get; init; }
 
   /// <summary>Human-readable description for DLQ payloads or warning logs.</summary>
   public required string Description { get; init; }
+}
+
+/// <summary>
+/// Standard reason codes attached to <see cref="AsbReceiveDecision.Reason"/>. String constants
+/// rather than an enum so structured logs and metrics can use them as tag values without
+/// extra mapping.
+/// </summary>
+internal static class AsbReceiveReason {
+  internal const string OK = "Ok";
+  internal const string MISSING_ENVELOPE_TYPE = "MissingEnvelopeType";
+  internal const string MISSING_JSON_TYPE_INFO = "MissingJsonTypeInfo";
+  internal const string DESERIALIZATION_FAILED = "DeserializationFailed";
+  internal const string NO_LOCAL_CONSUMER = "NoLocalConsumer";
 }
