@@ -204,36 +204,31 @@ public sealed partial class ClaimWorker : BackgroundService {
         await _perspectiveChannel.WriteAsync(pw, ct);
       }
     }
+    // Per-stream-drain emit: signal the drainer workers with stream_ids. The coordinator
+    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us;
+    // we just forward every stream_id every poll. We deliberately do NOT consult IsInFlight
+    // here — Phase H step 6 slice 5 / Part B introduced an IsInFlight write-time filter that
+    // turned out to be unrecoverable in production: a drain task that hung past its try/finally
+    // (or crashed before MarkDrained ran, or got cancelled mid-`_drainStreamInnerAsync`) left
+    // the in-memory flag stuck forever, and ClaimWorker silently discarded every subsequent
+    // claim_work emit for that stream. Observed on JDX BFF — 3,545 inbox rows leased to a
+    // healthy instance with zero drain progress; only restart unstuck them. The reconciliation
+    // belt is in the SQL: claim_work's eligible_* CTEs filter `instance_id = me AND lease_expiry > NOW()
+    // AND processed_at IS NULL`, so they re-emit every leased row on every poll. The drainer's
+    // session-local seen-set + idempotent fetch_*_batch (filters processed_at IS NULL) make
+    // duplicate writes harmless — a second drain returns zero rows and exits.
     if (_perspectiveDrainChannel is not null) {
       foreach (var streamId in batch.PerspectiveStreamIds) {
-        // Phase H step 6 slice 5: skip stream_ids whose drain is already in flight on this
-        // instance — symmetric with outbox/inbox in-flight filter. Prevents redundant
-        // RunAsync invocations during cursor-flush lag windows.
-        if (_perspectiveDrainChannel.IsInFlight(streamId)) {
-          continue;
-        }
         await _perspectiveDrainChannel.WriteAsync(streamId, ct);
       }
     }
-    // Per-stream-drain emit: signal the drainer workers with stream_ids. The coordinator
-    // populates WorkBatch.OutboxStreamIds / InboxStreamIds for us; we just forward.
-    // Part B defense-in-depth: skip stream_ids that are already being drained (channel-based
-    // tracking). Without this, claim_work fires every ~250ms can flood the drain channel
-    // with redundant copies of the same stream_id while the drainer is mid-batch — fetch
-    // returns 0 rows on the redundant calls (idempotent) but each is still a SQL round-trip.
     if (_outboxDrainChannel is not null) {
       foreach (var sid in batch.OutboxStreamIds) {
-        if (_outboxDrainChannel.IsInFlight(sid)) {
-          continue;
-        }
         await _outboxDrainChannel.WriteAsync(sid, ct);
       }
     }
     if (_inboxDrainChannel is not null) {
       foreach (var sid in batch.InboxStreamIds) {
-        if (_inboxDrainChannel.IsInFlight(sid)) {
-          continue;
-        }
         await _inboxDrainChannel.WriteAsync(sid, ct);
       }
     }

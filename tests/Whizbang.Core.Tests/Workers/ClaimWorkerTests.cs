@@ -317,10 +317,38 @@ public class ClaimWorkerTests {
     public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
   }
 
+  /// <summary>Captures inbox drain channel writes and exposes in-flight tracking.</summary>
+  private sealed class FilteringInboxDrainChannel : IInboxDrainChannel {
+    private readonly System.Threading.Channels.Channel<Guid> _ch = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _inFlight = new();
+    public List<Guid> Written { get; } = [];
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+      Written.Add(streamId);
+      return _ch.Writer.WriteAsync(streamId, ct);
+    }
+    public bool TryWrite(Guid streamId) {
+      Written.Add(streamId);
+      return _ch.Writer.TryWrite(streamId);
+    }
+    public bool IsInFlight(Guid streamId) => _inFlight.ContainsKey(streamId);
+    public void MarkDraining(Guid streamId) => _inFlight[streamId] = 1;
+    public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
+  }
+
   [Test]
-  public async Task Distribute_FiltersOutInFlightStreamIds_FromPerspectiveDrainChannelAsync() {
-    // Slice 5: ClaimWorker must skip writes for stream_ids whose perspective drain is
-    // already in flight. Symmetric with the outbox / inbox in-flight filter (Part B).
+  public async Task Distribute_PerspectiveDrainChannel_WritesStreamIds_EvenWhenIsInFlightTrueAsync() {
+    // Regression lock: ClaimWorker MUST NOT skip writes based on IsInFlight. The previous
+    // filter (Phase H step 6 slice 5) silently dropped writes when a drain task's MarkDraining
+    // flag stuck — e.g., a hung handler that never returned from `_drainStreamInnerAsync`'s
+    // try/finally. Once stuck, every subsequent claim_work emit was discarded for that stream,
+    // forever, even though `claim_work` SQL kept reporting the row as eligible. Observed in
+    // production on JDX BFF (3,545 unprocessed inbox rows leased to a healthy instance with
+    // zero drain progress; only restart unstuck them).
+    //
+    // The new contract: writes always happen. The drainer's idempotent fetch_*_batch (filters
+    // processed_at IS NULL) + sequential channel reads make duplicate emissions harmless —
+    // a second drain for the same stream just reads 0 rows from SQL.
     var streamA = (Guid)TrackedGuid.NewMedo();
     var streamB = (Guid)TrackedGuid.NewMedo();
     var coord = new FakeCoordinator {
@@ -333,7 +361,7 @@ public class ClaimWorkerTests {
     };
 
     var perspectiveDrain = new FilteringPerspectiveDrainChannel();
-    perspectiveDrain.MarkDraining(streamA);  // already mid-drain; filter must skip
+    perspectiveDrain.MarkDraining(streamA);  // simulate stuck flag from a hung prior drain
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -355,19 +383,17 @@ public class ClaimWorkerTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    // Every write should be streamB; streamA was filtered out via IsInFlight.
-    foreach (var sid in perspectiveDrain.Written) {
-      await Assert.That(sid).IsEqualTo(streamB);
-    }
-    await Assert.That(perspectiveDrain.Written.Count).IsLessThan(coord.CallCount * 2);
+    // streamA must appear in Written despite IsInFlight=true. Both stream_ids written every poll.
+    await Assert.That(perspectiveDrain.Written).Contains(streamA)
+      .Because("stuck IsInFlight flag must not block re-emission — drainer dedups via idempotent SQL");
+    await Assert.That(perspectiveDrain.Written).Contains(streamB);
+    await Assert.That(perspectiveDrain.Written.Count).IsGreaterThanOrEqualTo(coord.CallCount * 2)
+      .Because("each poll emits both stream_ids; if the filter is back, count would be < callCount * 2");
   }
 
   [Test]
-  public async Task Distribute_FiltersOutInFlightStreamIds_FromOutboxDrainChannelAsync() {
-    // Part B defense-in-depth: a stream_id that's already being drained must not be re-queued.
-    // Without this filter, claim_work's fast polling cadence floods the drain channel with
-    // redundant stream_ids while the drainer is mid-batch. Each redundant entry costs one
-    // fetch_outbox_batch round-trip (idempotent — returns 0 rows, but still a SQL call).
+  public async Task Distribute_OutboxDrainChannel_WritesStreamIds_EvenWhenIsInFlightTrueAsync() {
+    // Regression lock — see PerspectiveDrainChannel test for the rationale.
     var streamA = (Guid)TrackedGuid.NewMedo();
     var streamB = (Guid)TrackedGuid.NewMedo();
     var coord = new FakeCoordinator {
@@ -380,7 +406,7 @@ public class ClaimWorkerTests {
     };
 
     var drain = new FilteringDrainChannel();
-    drain.MarkDraining(streamA);  // streamA already mid-drain; filter must skip it.
+    drain.MarkDraining(streamA);  // stuck flag from a hypothetical hung prior drain
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -398,18 +424,60 @@ public class ClaimWorkerTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    // Wait for several poll cycles to exercise the filter on each one. Without the filter,
-    // every cycle would write both stream_ids and `Written.Count` would balloon past 2.
     await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    // streamA filtered out on every cycle (marked in-flight); only streamB written each poll.
-    // We've seen ≥3 polls; if the filter were broken, Written.Count would be ≥6 (2 per poll).
-    foreach (var sid in drain.Written) {
-      await Assert.That(sid).IsEqualTo(streamB);
-    }
-    await Assert.That(drain.Written.Count).IsLessThan(coord.CallCount * 2);
+    await Assert.That(drain.Written).Contains(streamA)
+      .Because("stuck IsInFlight flag must not block re-emission");
+    await Assert.That(drain.Written).Contains(streamB);
+    await Assert.That(drain.Written.Count).IsGreaterThanOrEqualTo(coord.CallCount * 2);
+  }
+
+  [Test]
+  public async Task Distribute_InboxDrainChannel_WritesStreamIds_EvenWhenIsInFlightTrueAsync() {
+    // Regression lock for the inbox path — completes the symmetry across all three drain
+    // channels. JDX production observed this exact failure mode on BFF: 3,545 inbox rows
+    // leased to the healthy instance, claim_work emitting them on every poll, ClaimWorker
+    // silently filtering them via IsInFlight, drain pipeline idle for hours.
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    var coord = new FakeCoordinator {
+      BatchToReturn = new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = [],
+        InboxStreamIds = [streamA, streamB]
+      }
+    };
+
+    var drain = new FilteringInboxDrainChannel();
+    drain.MarkDraining(streamA);  // stuck flag from a hypothetical hung prior drain
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      NullLogger<ClaimWorker>.Instance,
+      inboxDrainChannel: drain);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(drain.Written).Contains(streamA)
+      .Because("stuck IsInFlight flag must not block re-emission — inbox drain symmetry with perspective + outbox");
+    await Assert.That(drain.Written).Contains(streamB);
+    await Assert.That(drain.Written.Count).IsGreaterThanOrEqualTo(coord.CallCount * 2);
   }
 
   [Test]
