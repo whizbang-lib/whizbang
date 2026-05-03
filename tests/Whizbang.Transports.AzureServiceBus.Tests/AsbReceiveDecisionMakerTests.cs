@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -73,13 +74,32 @@ public class AsbReceiveDecisionMakerTests {
 
   [Test]
   public async Task Decide_ResolverHitsAndDeserializeSucceeds_ReturnsProcessAsync() {
+    // Round-trip a real envelope so we don't depend on hand-crafted JSON matching the
+    // current envelope shape — the test is about the decision policy, not the envelope's
+    // wire format. JsonContextRegistry's options are used so Vogen converters are wired.
     var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Foo]]");
-    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var msgId = (Guid)TrackedGuid.NewMedo();
-    var body = $$"""{"v":2,"id":"{{msgId}}","p":{},"h":[{"t":1,"si":{"i":"{{Guid.NewGuid()}}","sn":"x","hn":"x","pid":1},"ts":"2026-01-01T00:00:00Z"}]}""";
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
+    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
 
-    var decision = decider.Decide(props, body, (_, _) => typeInfo, _jsonOptions);
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.From((Guid)TrackedGuid.NewMedo()),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      Hops = [new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = new ServiceInstanceInfo {
+          InstanceId = (Guid)TrackedGuid.NewMedo(),
+          ServiceName = "test",
+          HostName = "test-host",
+          ProcessId = 1,
+        },
+        Timestamp = DateTimeOffset.UtcNow,
+      }],
+      DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
+    };
+    var body = JsonSerializer.Serialize(envelope, typeInfo);
+
+    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions);
 
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
     await Assert.That(decision.Reason).IsEqualTo("Ok");
