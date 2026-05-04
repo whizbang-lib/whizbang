@@ -20,7 +20,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   out_event_data TEXT,
   out_metadata TEXT,
   out_scope TEXT,
-  out_event_work_id UUID
+  out_event_work_id UUID,
+  out_perspective_name VARCHAR(200)
 ) AS $$
 BEGIN
   RETURN QUERY
@@ -31,7 +32,8 @@ BEGIN
     es.event_data::TEXT,
     es.metadata::TEXT,
     es.scope::TEXT,
-    pe.event_work_id
+    pe.event_work_id,
+    pe.perspective_name
   FROM wh_perspective_events pe
   INNER JOIN wh_event_store es
     ON pe.stream_id = es.stream_id

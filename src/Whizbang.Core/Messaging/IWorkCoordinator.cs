@@ -1465,6 +1465,14 @@ public record StreamEventData {
 
   /// <summary>Work ID from wh_perspective_events. Used for completion reporting via CompletePerspectiveEventsAsync.</summary>
   public required Guid EventWorkId { get; init; }
+
+  /// <summary>
+  /// Perspective name from wh_perspective_events.perspective_name. Required for the cooldown
+  /// gate's per-perspective filter — without it, marking ANY perspective's work_id as
+  /// recently-processed under the same event_id would prevent OTHER perspectives' Apply from
+  /// running on subsequent drains for the same event (JDX 2026-05-04 silent-skip bug).
+  /// </summary>
+  public string? PerspectiveName { get; init; }
 }
 
 /// <summary>

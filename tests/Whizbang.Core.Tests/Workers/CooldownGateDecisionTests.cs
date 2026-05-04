@@ -34,14 +34,15 @@ public class CooldownGateDecisionTests {
     Payload = new TestEvent()
   };
 
-  private static StreamEventData _raw(Guid eventId, Guid workId) => new() {
+  private static StreamEventData _raw(Guid eventId, Guid workId, string? perspectiveName = null) => new() {
     StreamId = (Guid)TrackedGuid.NewMedo(),
     EventId = eventId,
     EventType = "TestEvent",
     EventData = "{}",
     EventWorkId = workId,
     Metadata = null,
-    Scope = null
+    Scope = null,
+    PerspectiveName = perspectiveName
   };
 
   private static SystemTimeProvider _provider() =>
@@ -137,6 +138,143 @@ public class CooldownGateDecisionTests {
     var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache);
 
     await Assert.That(skip).IsFalse();
+  }
+
+  // ======================================================================
+  // PER-PERSPECTIVE COOLDOWN ISOLATION (JDX 2026-05-04 silent-skip bug)
+  // ======================================================================
+  // Bug: when an event_id has multiple wh_perspective_events rows (one per registered
+  // perspective), `rawByEventId[eventId]` returns ALL of them. Marking any one perspective's
+  // work_id as cooled would also short-circuit OTHER perspectives' Apply on subsequent drains
+  // — because the existing logic iterated the entire raw collection regardless of which
+  // perspective was being asked. Production symptom: UberDraftJob got data, DraftJobSkills /
+  // DraftJobWorkExperience / DraftJobCompetency / etc. all stayed empty after job creation.
+  //
+  // Fix: pass `perspectiveName` to the cooldown helpers; filter `rawByEventId[eventId]` to
+  // only entries whose `PerspectiveName` matches the current perspective.
+  //
+  // RED-first: these tests fail against the pre-fix code that treated all raw rows uniformly.
+
+  private const string PERSP_A = "MyApp.Domain.PerspectiveA+Projection";
+  private const string PERSP_B = "MyApp.Domain.PerspectiveB+Projection";
+
+  [Test]
+  public async Task ShouldSkip_PerspectiveAOnlyCooled_DraftingPerspectiveB_ReturnsFalseAsync() {
+    // Reproduction of the JDX 2026-05-04 multi-perspective fanout silent-skip.
+    // Setup: ONE event_id, TWO perspectives (A + B). A's work_id is cooled; B's isn't.
+    // Expected (post-fix): drain for B returns false (apply must run for B).
+    // Pre-fix: returns true because the loop sees A's work_id cooled and the bug treats it
+    // as proof that "every work_id for this event is cooled" — incorrectly skipping B.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workForA = (Guid)TrackedGuid.NewMedo();
+    var workForB = (Guid)TrackedGuid.NewMedo();
+    cache.MarkProcessed(workForA);  // only A's work is cooled
+
+    var raw = new[] {
+      _raw(eventId, workForA, PERSP_A),
+      _raw(eventId, workForB, PERSP_B),
+    }.ToLookup(r => r.EventId);
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(eventId) };
+
+    var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache, PERSP_B);
+
+    await Assert.That(skip).IsFalse()
+      .Because("B's work_id is fresh — A's cooled state is irrelevant to B's drain decision. The pre-fix code sees A's cooled work and incorrectly returns true, which is the JDX silent-skip bug.");
+  }
+
+  [Test]
+  public async Task ShouldSkip_PerspectiveBCooled_DraftingPerspectiveB_ReturnsTrueAsync() {
+    // Symmetry check: when B's own work IS cooled, drain for B correctly skips.
+    // This guards against an over-zealous fix that would always return false.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workForA = (Guid)TrackedGuid.NewMedo();
+    var workForB = (Guid)TrackedGuid.NewMedo();
+    cache.MarkProcessed(workForB);  // B is cooled
+
+    var raw = new[] {
+      _raw(eventId, workForA, PERSP_A),
+      _raw(eventId, workForB, PERSP_B),
+    }.ToLookup(r => r.EventId);
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(eventId) };
+
+    var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache, PERSP_B);
+
+    await Assert.That(skip).IsTrue()
+      .Because("B's own work is cooled, so its apply path should short-circuit.");
+  }
+
+  [Test]
+  public async Task MarkProcessed_PerspectiveA_DoesNotMarkPerspectiveBsWorkIdAsync() {
+    // Reproduction of the cooldown-cache poisoning. After A's apply succeeds and we mark
+    // its work as processed, B's work_id (under the same event_id but different perspective)
+    // MUST NOT be marked. Pre-fix: both A's and B's work_ids end up in the cache, and the
+    // next drain for B incorrectly skips Apply.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workForA = (Guid)TrackedGuid.NewMedo();
+    var workForB = (Guid)TrackedGuid.NewMedo();
+
+    var raw = new[] {
+      _raw(eventId, workForA, PERSP_A),
+      _raw(eventId, workForB, PERSP_B),
+    }.ToLookup(r => r.EventId);
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(eventId) };
+
+    PerspectiveWorker._markProcessedInCooldown(cache, events, raw, PERSP_A);
+
+    await Assert.That(cache.WasRecentlyProcessed(workForA)).IsTrue()
+      .Because("A's own work must be marked when A finishes apply.");
+    await Assert.That(cache.WasRecentlyProcessed(workForB)).IsFalse()
+      .Because("B's work must NOT be marked when A finishes apply — that would cause B's next drain to incorrectly skip Apply (JDX 2026-05-04 silent-skip bug).");
+  }
+
+  [Test]
+  public async Task MarkProcessed_NoPerspectiveSupplied_RetainsLegacyAllRowsBehaviorAsync() {
+    // Back-compat: when callers don't supply a perspective name, every raw row under the
+    // event_id is marked. This preserves the pre-fix behavior for legacy/test paths.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workA = (Guid)TrackedGuid.NewMedo();
+    var workB = (Guid)TrackedGuid.NewMedo();
+
+    var raw = new[] {
+      _raw(eventId, workA, perspectiveName: null),
+      _raw(eventId, workB, perspectiveName: null),
+    }.ToLookup(r => r.EventId);
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(eventId) };
+
+    PerspectiveWorker._markProcessedInCooldown(cache, events, raw, perspectiveName: null);
+
+    await Assert.That(cache.WasRecentlyProcessed(workA)).IsTrue();
+    await Assert.That(cache.WasRecentlyProcessed(workB)).IsTrue();
+  }
+
+  [Test]
+  public async Task ShouldSkip_AllPerspectivesShareEventId_OnlyMyPerspectiveCooled_ReturnsTrueAsync() {
+    // The full JDX scenario: 3 perspectives subscribe to one event_id. My perspective (B)'s
+    // own work IS cooled. The other two perspectives' work_ids are also in the cache (from
+    // their own apply success). Drain for B should skip — its OWN work is cooled.
+    var cache = new RecentlyProcessedEventCache(_provider());
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workA = (Guid)TrackedGuid.NewMedo();
+    var workB = (Guid)TrackedGuid.NewMedo();
+    var workC = (Guid)TrackedGuid.NewMedo();
+    cache.MarkProcessed(workA);
+    cache.MarkProcessed(workB);
+    cache.MarkProcessed(workC);
+
+    var raw = new[] {
+      _raw(eventId, workA, PERSP_A),
+      _raw(eventId, workB, PERSP_B),
+      _raw(eventId, workC, "MyApp.PerspectiveC+Projection"),
+    }.ToLookup(r => r.EventId);
+    var events = new List<MessageEnvelope<IEvent>> { _envelope(eventId) };
+
+    var skip = PerspectiveWorker._shouldSkipApplyDueToCooldown(events, raw, cache, PERSP_B);
+
+    await Assert.That(skip).IsTrue();
   }
 
   [Test]
