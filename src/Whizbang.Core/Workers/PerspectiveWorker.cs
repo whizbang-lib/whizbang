@@ -1097,6 +1097,18 @@ public partial class PerspectiveWorker(
     // The runner template's defensive idempotency guard remains as a safety net for
     // post-restart / TTL-expiry scenarios where the cache was empty but the row was still pending.
     if (_shouldSkipApplyDueToCooldown(filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache)) {
+      // Cooldown means a previous drain already ran apply for these events successfully and
+      // signaled SignalPerspectiveComplete in THAT batch's coordinator. The current batch has
+      // its own DrainBatchContext (BatchProcessedEvents is per-batch), so without re-asserting
+      // the completion in this batch the foreach in PerspectiveProcessTickAsync can't fire
+      // PostAllPerspectives — events skipped via cooldown never enter BatchProcessedEvents and
+      // never satisfy AreAllPerspectivesComplete in this batch. a consumer 2026-05-03: SagaCompleted
+      // never emitted because [FireAt(PostAllPerspectivesInline)] handlers (Saga completion
+      // dispatchers) never ran. SignalPerspectiveComplete is idempotent (HashSet-style) so
+      // re-signaling is safe; BatchProcessedEvents.TryAdd is idempotent on key collision.
+      _signalCooldownSkippedEvents(
+        filteredEvents, perspectiveName, streamId,
+        batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
       return;
     }
 
@@ -1245,6 +1257,34 @@ public partial class PerspectiveWorker(
   /// the completion flush is in flight. Returns <c>false</c> when the cache is null (cooldown
   /// disabled), no events, or any work_id is fresh.
   /// </summary>
+  /// <summary>
+  /// When the cooldown gate skips apply (because a prior drain already applied these events
+  /// within the cache TTL), this helper still asserts the lifecycle bookkeeping the apply
+  /// success path normally would: it adds each filtered event to the current batch's
+  /// <c>BatchProcessedEvents</c> dictionary and re-signals perspective completion on the
+  /// lifecycle coordinator. Without this, cooldown-skipped events never satisfy
+  /// <c>AreAllPerspectivesComplete</c> in the current batch, so the foreach in
+  /// <c>_processBatchFinalizationAsync</c> never fires <c>PostAllPerspectivesInline</c> /
+  /// <c>PostLifecycleInline</c> — and any <c>[FireAt(PostAllPerspectivesInline)]</c> receptor
+  /// (e.g., saga completion dispatchers) never runs.
+  /// </summary>
+  /// <remarks>
+  /// Both operations are idempotent under repeated calls: TryAdd no-ops on existing keys, and
+  /// LifecycleCoordinator.SignalPerspectiveComplete uses a HashSet-style state per perspective
+  /// name. Safe to call across batches or within the same batch.
+  /// </remarks>
+  internal static void _signalCooldownSkippedEvents(
+      IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
+      string perspectiveName,
+      Guid streamId,
+      ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
+      ILifecycleCoordinator? lifecycleCoordinator) {
+    foreach (var envelope in filteredEvents) {
+      batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
+      lifecycleCoordinator?.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
+    }
+  }
+
   internal static bool _shouldSkipApplyDueToCooldown(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
       ILookup<Guid, StreamEventData> rawByEventId,
