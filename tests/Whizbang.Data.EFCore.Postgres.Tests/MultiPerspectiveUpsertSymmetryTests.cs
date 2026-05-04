@@ -16,10 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///
 /// <para>
 /// These tests use InMemoryDatabase. They cover the multi-perspective DbContext-sharing
-/// invariant. They deliberately do NOT cover list-property models (OrderWorkingConditions
-/// has <c>List&lt;WorkingConditionRow&gt;</c>) because EF Core's InMemory provider handles
-/// owned-collection types differently than Postgres JSONB. A real-Postgres integration test
-/// for the list-property case is documented as a follow-up gap.
+/// invariant for scalar models. Real-Postgres tests with list-property models live in
+/// <see cref="MultiPerspectivePostgresUpsertSymmetryTests"/>.
 /// </para>
 /// </summary>
 public class MultiPerspectiveUpsertSymmetryTests {
