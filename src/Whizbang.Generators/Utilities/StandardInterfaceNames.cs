@@ -24,6 +24,9 @@ internal static class StandardInterfaceNames {
   public const string I_RECEPTOR = "global::Whizbang.Core.IReceptor";
   public const string I_SYNC_RECEPTOR = "global::Whizbang.Core.ISyncReceptor";
 
+  /// <summary>Slice 5 opt-in raw JSON receptor — handles unparsed JsonElement payloads.</summary>
+  public const string I_RAW_RECEPTOR = "global::Whizbang.Core.Messaging.IRawReceptor";
+
   // Generic receptor interface original definitions
   public const string I_RECEPTOR_GENERIC_DEFINITION = "global::Whizbang.Core.IReceptor<TMessage>";
   public const string I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION = "global::Whizbang.Core.IReceptor<TMessage, TResponse>";

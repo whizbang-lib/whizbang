@@ -1189,4 +1189,82 @@ public class MessageTagDiscoveryGeneratorTests {
     // Should use direct type comparisons with typeof()
     await Assert.That(dispatcherCode).Contains("typeof(");
   }
+
+  /// <summary>
+  /// Regression test for the bug that drops positional constructor args from tag attributes.
+  /// When a tag attribute has a constructor like <c>(string tag, string tagValue)</c>, the
+  /// generator must emit the second arg as a property initializer in the AttributeFactory
+  /// — otherwise the reconstructed attribute has a null TagValue / PropertyName, and
+  /// downstream hooks can't substitute the template (e.g., notifications lose the entity
+  /// id and frontend subscribers don't match).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PositionalCtorArg_EmittedAsPascalCasePropertyInitializerAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core.Attributes;
+
+      namespace TestApp;
+
+      [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+      public class MyTagAttribute : MessageTagAttribute {
+        public string? TagValue { get; init; }
+        public MyTagAttribute() { Tag = string.Empty; TagValue = null; }
+        public MyTagAttribute(string tag, string tagValue) {
+          Tag = tag;
+          TagValue = tagValue;
+        }
+      }
+
+      [MyTag("user-tabs", "{UserID}")]
+      public class TabUpdatedEvent { public Guid UserID { get; set; } }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    // Both Tag and TagValue must appear in the AttributeFactory initializer; without
+    // the fix, only Tag is emitted and TagValue silently becomes null at runtime.
+    await Assert.That(code!).Contains("Tag = \"user-tabs\"");
+    await Assert.That(code!).Contains("TagValue = \"{UserID}\"");
+  }
+
+  /// <summary>
+  /// Verifies the convention selector — when a tag attribute declares
+  /// <c>[AttributeArgNaming(Identity)]</c>, parameter names are emitted verbatim
+  /// (no PascalCase transform).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_PositionalCtorArg_RespectsIdentityConventionAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core.Attributes;
+
+      namespace TestApp;
+
+      [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+      [AttributeArgNaming(AttributeArgNamingConvention.Identity)]
+      public class IdTagAttribute : MessageTagAttribute {
+        public string? PropertyName { get; init; }
+        public IdTagAttribute() { Tag = string.Empty; }
+        public IdTagAttribute(string tag, string PropertyName) {
+          Tag = tag;
+          this.PropertyName = PropertyName;
+        }
+      }
+
+      [IdTag("session-tabs", "PropertyName")]
+      public class SessionEvent { }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    // Identity preserves the parameter name — note "PropertyName" is already PascalCase here.
+    await Assert.That(code!).Contains("PropertyName = \"PropertyName\"");
+  }
 }
