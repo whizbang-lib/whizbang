@@ -25,6 +25,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly SemaphoreSlim _senderLock = new(1, 1);
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
+  private readonly AsbReceiveDecisionMaker _decisionMaker = new();
+  private readonly Whizbang.Core.Messaging.IReceptorRegistry? _receptorRegistry;
+  private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
+  private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
+  private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -44,7 +49,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     JsonSerializerOptions jsonOptions,
     AzureServiceBusOptions? options = null,
     ILogger<AzureServiceBusTransport>? logger = null,
-    IServiceBusAdminClient? adminClient = null
+    IServiceBusAdminClient? adminClient = null,
+    Whizbang.Core.Messaging.IReceptorRegistry? receptorRegistry = null,
+    Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null,
+    Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null,
+    Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -62,6 +71,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
+    _receptorRegistry = receptorRegistry;
+    _perspectiveRegistry = perspectiveRegistry;
+    _rawReceptorRegistry = rawReceptorRegistry;
+    // Slice 4 — default to the multi-pass binder so the registry-miss → binder-cascade
+    // fallback works without explicit DI configuration. Tests can inject a fake.
+    _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -80,6 +95,41 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <inheritdoc />
   public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
     _recoveryHandler = onRecovered;
+  }
+
+  /// <summary>
+  /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
+  /// message type at any lifecycle stage, OR any local perspective Apply's it. Returns false
+  /// (drop this message) when neither registry was injected — that signals a legacy / test
+  /// configuration that should not exercise the filter.
+  /// </summary>
+  /// <remarks>
+  /// Returns null when no registries are wired so the decision-maker treats the predicate as
+  /// "filter disabled" and falls through to legacy behavior. Once registries are present, the
+  /// closure is built once and reused across receives.
+  /// </remarks>
+  private Func<Type, bool>? _buildIsHandledLocally() {
+    if (_receptorRegistry is null && _perspectiveRegistry is null) {
+      return null;
+    }
+
+    return type => {
+      if (_receptorRegistry != null) {
+        foreach (var stage in Enum.GetValues<Whizbang.Core.Messaging.LifecycleStage>()) {
+          if (_receptorRegistry.GetReceptorsFor(type, stage).Count > 0) {
+            return true;
+          }
+        }
+      }
+      if (_perspectiveRegistry != null) {
+        foreach (var et in _perspectiveRegistry.GetEventTypes()) {
+          if (et == type) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
   }
 
   /// <summary>
@@ -863,24 +913,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ProcessMessageEventArgs args,
     TransportDestination destination
   ) {
-    // Get envelope type from message metadata
-    if (!args.Message.ApplicationProperties.TryGetValue(ENVELOPE_TYPE_PROPERTY, out var envelopeTypeObj) ||
-        envelopeTypeObj is not string envelopeTypeName) {
-      _logger.LogWarning(
-        "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
-        args.Message.MessageId,
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MissingEnvelopeType",
-        "Message does not contain EnvelopeType metadata",
-        cancellationToken: args.CancellationToken
-      );
-      return (null, null);
-    }
-
     var json = args.Message.Body.ToString();
 
     if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -892,49 +924,76 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       );
     }
 
-    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
-    if (typeInfo == null) {
-      _logger.LogWarning(
-        "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
-        envelopeTypeName,
-        args.Message.MessageId,
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MissingJsonTypeInfo",
-        $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
-        cancellationToken: args.CancellationToken
-      );
-      return (null, envelopeTypeName);
-    }
+    var decision = _decisionMaker.Decide(
+      args.Message.ApplicationProperties,
+      json,
+      Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
+      _jsonOptions,
+      _buildIsHandledLocally(),
+      _rawReceptorRegistry,
+      _typeBinder);
 
-    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-      _logger.LogWarning(
-        "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
-        args.Message.MessageId,
-        envelopeTypeName,
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "DeserializationFailed",
-        "Could not deserialize message envelope",
-        cancellationToken: args.CancellationToken
-      );
-      return (null, envelopeTypeName);
-    }
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
-    if (_logger.IsEnabled(LogLevel.Debug)) {
-      _logger.LogDebug(
-        "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
-        envelope.MessageId.Value
-      );
-    }
+    switch (decision.Action) {
+      case AsbReceiveAction.Process:
+        if (_logger.IsEnabled(LogLevel.Debug) && decision.Envelope != null) {
+          _logger.LogDebug(
+            "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
+            decision.Envelope.MessageId.Value
+          );
+        }
+        return (decision.Envelope, decision.EnvelopeTypeName);
 
-    return (envelope, envelopeTypeName);
+      case AsbReceiveAction.AckAndDrop:
+        // Slice 1 hotfix: do NOT dead-letter on type-resolution failures. Ack the broker so
+        // the message exits the topic; structured warning + metric so operators see the drop
+        // rate without ASB DLQ accumulation.
+        _logger.LogWarning(
+          "ASB receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
+          decision.Reason,
+          decision.EnvelopeTypeName,
+          args.Message.MessageId,
+          destination.Address,
+          subscription,
+          decision.Description
+        );
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.InvokeRawReceptor:
+        // Slice 5 — typed binder couldn't resolve, but a raw receptor opted in for this
+        // message type. Dispatch with the raw JsonElement payload, then ack.
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation(
+            "ASB receive raw-receptor. EnvelopeType={EnvelopeType} MessageId={MessageId} Detail={Description}",
+            decision.EnvelopeTypeName, args.Message.MessageId, decision.Description);
+        }
+        if (decision.RawReceptor != null && decision.RawPayload.HasValue) {
+          await decision.RawReceptor.HandleAsync(decision.RawPayload.Value, args.CancellationToken);
+        }
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.DeadLetter:
+        _logger.LogWarning(
+          "DEAD-LETTER reason: {Reason} for message {MessageId} from {TopicName}/{SubscriptionName}",
+          decision.Reason,
+          args.Message.MessageId,
+          destination.Address,
+          subscription
+        );
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          decision.Reason,
+          decision.Description,
+          cancellationToken: args.CancellationToken
+        );
+        return (null, decision.EnvelopeTypeName);
+
+      default:
+        throw new InvalidOperationException($"Unknown AsbReceiveAction: {decision.Action}");
+    }
   }
 
   // ========================================
@@ -948,85 +1007,71 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ProcessSessionMessageEventArgs args,
     TransportDestination destination
   ) {
-    if (!args.Message.ApplicationProperties.TryGetValue(ENVELOPE_TYPE_PROPERTY, out var envelopeTypeObj) ||
-        envelopeTypeObj is not string envelopeTypeName) {
-      await _deadLetterSessionMessageAsync(args, destination, "MissingEnvelopeType",
-        "Message does not contain EnvelopeType metadata",
-        "DEAD-LETTER reason: Missing EnvelopeType metadata for session message {MessageId} from {TopicName}/{SubscriptionName}",
-        args.Message.MessageId, destination.Address, destination.RoutingKey ?? _options.DefaultSubscriptionName);
-      return (null, null);
-    }
-
     var json = args.Message.Body.ToString();
 
-    try {
-      var type = Type.GetType(envelopeTypeName);
-      if (type is null) {
-        await _deadLetterSessionMessageAsync(args, destination, "UnresolvableType",
-          $"Cannot resolve type: {envelopeTypeName}",
-          "DEAD-LETTER reason: Cannot resolve type {EnvelopeTypeName} for session message {MessageId}",
-          envelopeTypeName, args.Message.MessageId);
-        return (null, null);
-      }
+    var decision = _decisionMaker.Decide(
+      args.Message.ApplicationProperties,
+      json,
+      Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
+      _jsonOptions,
+      _buildIsHandledLocally(),
+      _rawReceptorRegistry,
+      _typeBinder);
 
-      var typeInfo = _jsonOptions.GetTypeInfo(type);
-      if (typeInfo is null) {
-        await _deadLetterSessionMessageAsync(args, destination, "MissingJsonTypeInfo",
-          $"No JsonTypeInfo for {type.Name}",
-          "DEAD-LETTER reason: No JsonTypeInfo for {TypeName} for session message {MessageId}",
-          type.Name, args.Message.MessageId);
-        return (null, null);
-      }
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
-      var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
-      if (envelope is null) {
-        await _deadLetterSessionMessageAsync(args, destination, "DeserializationFailed",
-          "Deserialized object is not IMessageEnvelope",
-          "DEAD-LETTER reason: Failed to deserialize session message {MessageId} as IMessageEnvelope",
-          args.Message.MessageId);
-        return (null, null);
-      }
+    switch (decision.Action) {
+      case AsbReceiveAction.Process:
+        return (decision.Envelope, decision.EnvelopeTypeName);
 
-      return (envelope, envelopeTypeName);
-    } catch (Exception ex) {
-      if (_logger.IsEnabled(LogLevel.Warning)) {
-        _logger.LogWarning(ex,
-          "DEAD-LETTER reason: Deserialization exception for session message {MessageId}",
-          args.Message.MessageId);
-      }
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "DeserializationException",
-        ex.Message,
-        cancellationToken: args.CancellationToken
-      );
-      return (null, null);
+      case AsbReceiveAction.AckAndDrop:
+        // Slice 1 hotfix: ack + drop instead of broker DLQ on type-resolution failures.
+        _logger.LogWarning(
+          "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
+          decision.Reason,
+          decision.EnvelopeTypeName,
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          subscription,
+          decision.Description
+        );
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.InvokeRawReceptor:
+        // Slice 5 — raw receptor wants this message even though the typed binder missed.
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation(
+            "ASB session-receive raw-receptor. EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Detail={Description}",
+            decision.EnvelopeTypeName, args.Message.MessageId, args.SessionId, decision.Description);
+        }
+        if (decision.RawReceptor != null && decision.RawPayload.HasValue) {
+          await decision.RawReceptor.HandleAsync(decision.RawPayload.Value, args.CancellationToken);
+        }
+        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
+        return (null, decision.EnvelopeTypeName);
+
+      case AsbReceiveAction.DeadLetter:
+        _logger.LogWarning(
+          "DEAD-LETTER reason: {Reason} for session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
+          decision.Reason,
+          args.Message.MessageId,
+          args.SessionId,
+          destination.Address,
+          subscription
+        );
+        await args.DeadLetterMessageAsync(
+          args.Message,
+          decision.Reason,
+          decision.Description,
+          cancellationToken: args.CancellationToken
+        );
+        return (null, decision.EnvelopeTypeName);
+
+      default:
+        throw new InvalidOperationException($"Unknown AsbReceiveAction: {decision.Action}");
     }
-  }
-
-  /// <summary>
-  /// Paired Warning log + DeadLetterMessageAsync call used by the session deserialisation
-  /// guards. Keeps the IsEnabled check consistent and the log/dead-letter arguments aligned —
-  /// the per-call arguments are threaded in via params for the log template placeholders.
-  /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2254:Template should be a static expression", Justification = "Varying template is the whole point of this helper — each dead-letter reason logs with its own placeholder shape, and the callers still pass constant templates.")]
-  private async Task _deadLetterSessionMessageAsync(
-      ProcessSessionMessageEventArgs args,
-      TransportDestination destination,
-      string deadLetterReason,
-      string deadLetterDescription,
-      string logTemplate,
-      params object?[] logArgs) {
-    _ = destination; // reserved for future use; passed through so signatures stay consistent.
-    if (_logger.IsEnabled(LogLevel.Warning)) {
-      _logger.LogWarning(logTemplate, logArgs);
-    }
-    await args.DeadLetterMessageAsync(
-      args.Message,
-      deadLetterReason,
-      deadLetterDescription,
-      cancellationToken: args.CancellationToken
-    );
   }
 
   private async Task _handleSessionMessageProcessingErrorAsync(
