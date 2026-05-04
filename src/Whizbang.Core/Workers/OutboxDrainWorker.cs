@@ -82,14 +82,21 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       return;
     }
 
+    var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
     try {
-      await foreach (var streamId in _drainChannel.Reader.ReadAllAsync(stoppingToken)) {
-        try {
-          await _drainStreamAsync(streamId, stoppingToken);
-        } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-          throw;
-        } catch (Exception ex) {
-          LogDrainError(_logger, streamId, ex);
+      await foreach (var batch in batcher.ReadBatchesAsync(stoppingToken)) {
+        // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
+        // one window (rapid heartbeats during burst load). Each unique stream is drained once;
+        // FetchOutboxBatchAsync returns all pending rows for it in stream-FIFO order.
+        var distinctStreams = new HashSet<Guid>(batch);
+        foreach (var streamId in distinctStreams) {
+          try {
+            await _drainStreamAsync(streamId, stoppingToken);
+          } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+            throw;
+          } catch (Exception ex) {
+            LogDrainError(_logger, streamId, ex);
+          }
         }
       }
     } catch (OperationCanceledException) {
@@ -252,4 +259,14 @@ public sealed class OutboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Sliding-window batching policy for stream_id signals from <see cref="IOutboxDrainChannel"/>.
+  /// When the channel emits a stream_id, the drainer waits up to <see cref="SlidingWindowBatcherOptions.SlidingWindow"/>
+  /// for additional signals before processing — letting more outbox messages accumulate before
+  /// the fetch. Bounded by <see cref="SlidingWindowBatcherOptions.MaxWait"/> and
+  /// <see cref="SlidingWindowBatcherOptions.MaxSize"/>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain#sliding-window</docs>
+  public SlidingWindowBatcherOptions Batcher { get; set; } = new();
 }

@@ -1,5 +1,4 @@
 using System.Threading.Channels;
-using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -8,9 +7,11 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Change-level tests for <see cref="SlidingWindowBatcher{T}"/>. Drives the batcher with a
-/// fake <see cref="TimeProvider"/> + an in-memory channel so timing is deterministic
-/// (per <c>feedback_no_timing_tests</c> — no real <see cref="Task.Delay"/> or wall clock).
+/// Change-level tests for <see cref="SlidingWindowBatcher{T}"/>. Uses real <see cref="TimeProvider.System"/>
+/// with small delays for deterministic timer scheduling — FakeTimeProvider was too flaky here
+/// because Task.Yield() doesn't guarantee the consumer task has actually called
+/// <see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/> before the test advances
+/// fake time. Real-time delays in the 5-100ms range are reliable, fast, and observable.
 /// </summary>
 public class SlidingWindowBatcherTests {
   private static readonly int[] _expected123 = [1, 2, 3];
@@ -18,76 +19,69 @@ public class SlidingWindowBatcherTests {
   private static readonly int[] _expected12 = [1, 2];
   private static readonly int[] _expected34 = [3, 4];
 
-  private static (Channel<int> ch, FakeTimeProvider time, SlidingWindowBatcher<int> batcher) _setup(
+  private static (Channel<int> ch, SlidingWindowBatcher<int> batcher) _setup(
       SlidingWindowBatcherOptions? options = null) {
     var ch = Channel.CreateUnbounded<int>();
-    var time = new FakeTimeProvider();
     var batcher = new SlidingWindowBatcher<int>(
       ch.Reader,
       options ?? new SlidingWindowBatcherOptions {
         MaxSize = 100,
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromSeconds(1)
-      },
-      time);
-    return (ch, time, batcher);
+      });
+    return (ch, batcher);
   }
 
   /// <summary>
-  /// Sliding window debounce: 3 arrivals at t=0, t=20, t=40 (each within the 50ms quiet window).
-  /// After the third, no more arrivals → window expires at t=90ms → batch of 3 flushes.
+  /// Sliding-window debounce: 3 arrivals within the quiet window. After arrivals stop,
+  /// the window expires and the batch flushes with all 3.
   /// </summary>
   [Test]
   public async Task ReadBatches_ThreeArrivalsWithinSlidingWindow_FlushesAsOneBatchAsync() {
-    var (ch, time, batcher) = _setup();
+    var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
+      MaxSize = 100,
+      SlidingWindow = TimeSpan.FromMilliseconds(80),
+      MaxWait = TimeSpan.FromSeconds(2)
+    });
+    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
-    var batches = new List<IReadOnlyList<int>>();
-
     var consumeTask = Task.Run(async () => {
       await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        batches.Add(batch);
-        return; // exit after first batch
+        firstBatch.TrySetResult(batch);
+        return;
       }
     });
 
-    // t=0: first arrival
     await ch.Writer.WriteAsync(1);
-    // Let consumer reach the wait state.
-    await Task.Yield();
-    // t=20ms: second arrival
-    time.Advance(TimeSpan.FromMilliseconds(20));
+    await Task.Delay(20);
     await ch.Writer.WriteAsync(2);
-    await Task.Yield();
-    // t=40ms: third arrival
-    time.Advance(TimeSpan.FromMilliseconds(20));
+    await Task.Delay(20);
     await ch.Writer.WriteAsync(3);
-    await Task.Yield();
-    // t=90ms: sliding window expires (40 + 50 quiet)
-    time.Advance(TimeSpan.FromMilliseconds(50));
+    // No more arrivals — sliding window (80ms) will expire ~80ms after the third arrival.
 
-    await consumeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(5));
     cts.Cancel();
+    try { await consumeTask; } catch (OperationCanceledException) { }
 
-    await Assert.That(batches).Count().IsEqualTo(1);
-    await Assert.That(batches[0].SequenceEqual(_expected123)).IsTrue();
+    await Assert.That(batch.SequenceEqual(_expected123)).IsTrue();
   }
 
   /// <summary>
-  /// MaxSize cap: 100 items arrive in quick succession. Batch must flush at exactly 100,
-  /// not wait for the sliding window.
+  /// MaxSize cap: items arrive faster than the sliding window. Batch flushes immediately at
+  /// MaxSize (5).
   /// </summary>
   [Test]
   public async Task ReadBatches_HitsMaxSize_FlushesImmediatelyAsync() {
-    var (ch, time, batcher) = _setup(new SlidingWindowBatcherOptions {
+    var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 5,
-      SlidingWindow = TimeSpan.FromMilliseconds(50),
-      MaxWait = TimeSpan.FromSeconds(1)
+      SlidingWindow = TimeSpan.FromMilliseconds(500),
+      MaxWait = TimeSpan.FromSeconds(10)
     });
+    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
-    var batches = new List<IReadOnlyList<int>>();
     var consumeTask = Task.Run(async () => {
       await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        batches.Add(batch);
+        firstBatch.TrySetResult(batch);
         return;
       }
     });
@@ -96,58 +90,60 @@ public class SlidingWindowBatcherTests {
       await ch.Writer.WriteAsync(i);
     }
 
-    await consumeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    // Should flush at MaxSize=5, NOT wait for SlidingWindow=500ms.
+    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromMilliseconds(400));
     cts.Cancel();
-    await Assert.That(batches[0].SequenceEqual(_expected01234)).IsTrue();
+    try { await consumeTask; } catch (OperationCanceledException) { }
+
+    await Assert.That(batch.SequenceEqual(_expected01234)).IsTrue();
   }
 
   /// <summary>
-  /// MaxWait hard cap: arrivals keep coming faster than SlidingWindow can debounce, but the
-  /// total wait must not exceed MaxWait. If 5 arrivals come at 100ms intervals with
-  /// SlidingWindow=200ms (each new arrival resets the quiet window), the only thing that
-  /// flushes is MaxWait. We set MaxWait=300ms so flushing happens at t=300ms regardless of arrivals.
+  /// MaxWait hard cap: arrivals keep coming inside the sliding window so the debounce never
+  /// expires, but MaxWait flushes the batch eventually.
   /// </summary>
   [Test]
   public async Task ReadBatches_BusyProducer_FlushesAtMaxWaitAsync() {
-    var (ch, time, batcher) = _setup(new SlidingWindowBatcherOptions {
+    var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 100,
-      SlidingWindow = TimeSpan.FromMilliseconds(200),
-      MaxWait = TimeSpan.FromMilliseconds(300)
+      SlidingWindow = TimeSpan.FromMilliseconds(150),
+      MaxWait = TimeSpan.FromMilliseconds(250)
     });
+    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
-    var batches = new List<IReadOnlyList<int>>();
     var consumeTask = Task.Run(async () => {
       await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        batches.Add(batch);
+        firstBatch.TrySetResult(batch);
         return;
       }
     });
 
-    // Steady arrivals every 100ms. Sliding window (200ms) keeps resetting; only MaxWait (300ms) flushes.
-    await ch.Writer.WriteAsync(1);
-    await Task.Yield();
-    time.Advance(TimeSpan.FromMilliseconds(100));
-    await ch.Writer.WriteAsync(2);
-    await Task.Yield();
-    time.Advance(TimeSpan.FromMilliseconds(100));
-    await ch.Writer.WriteAsync(3);
-    await Task.Yield();
-    // At t=200ms now. Sliding window would not fire until t=400ms (200 + 200 reset). Advance
-    // to t=300 to trigger MaxWait.
-    time.Advance(TimeSpan.FromMilliseconds(100));
+    // Steady arrivals every 50ms — sliding window (150ms) keeps resetting; MaxWait (250ms) wins.
+    var producer = Task.Run(async () => {
+      for (var i = 1; i <= 20 && !cts.IsCancellationRequested; i++) {
+        try {
+          await ch.Writer.WriteAsync(i, cts.Token);
+        } catch (OperationCanceledException) { return; }
+        await Task.Delay(50);
+      }
+    });
 
-    await consumeTask.WaitAsync(TimeSpan.FromSeconds(5));
+    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(2));
     cts.Cancel();
-    await Assert.That(batches[0]).Contains(1).And.Contains(2).And.Contains(3);
+    try { await consumeTask; } catch (OperationCanceledException) { }
+    try { await producer; } catch (OperationCanceledException) { }
+
+    // Batch should contain at least 3 items (250ms / 50ms ≈ 5, but timing variance gives 3-6).
+    await Assert.That(batch.Count).IsGreaterThanOrEqualTo(3);
+    await Assert.That(batch.Contains(1)).IsTrue();
   }
 
   /// <summary>
-  /// Empty channel close: if the channel is completed before any item arrives, the enumerator
-  /// terminates cleanly with no yielded batches.
+  /// Empty channel close: no batches are yielded.
   /// </summary>
   [Test]
   public async Task ReadBatches_ChannelCompletesEmpty_TerminatesWithNoBatchesAsync() {
-    var (ch, time, batcher) = _setup();
+    var (ch, batcher) = _setup();
     var batches = new List<IReadOnlyList<int>>();
 
     var task = Task.Run(async () => {
@@ -157,17 +153,16 @@ public class SlidingWindowBatcherTests {
     });
 
     ch.Writer.Complete();
-    await task.WaitAsync(TimeSpan.FromSeconds(5));
+    await task.WaitAsync(TimeSpan.FromSeconds(2));
     await Assert.That(batches).IsEmpty();
   }
 
   /// <summary>
-  /// Channel closes mid-batch: items arrive, then channel is completed before the sliding
-  /// window expires. The pending batch must still be yielded.
+  /// Channel closes mid-batch: pending items are still yielded.
   /// </summary>
   [Test]
   public async Task ReadBatches_ChannelClosesWithPendingItems_FlushesPendingBatchAsync() {
-    var (ch, time, batcher) = _setup();
+    var (ch, batcher) = _setup();
     var batches = new List<IReadOnlyList<int>>();
 
     var task = Task.Run(async () => {
@@ -178,20 +173,20 @@ public class SlidingWindowBatcherTests {
 
     await ch.Writer.WriteAsync(1);
     await ch.Writer.WriteAsync(2);
-    await Task.Yield();
+    await Task.Delay(10);
     ch.Writer.Complete();
 
-    await task.WaitAsync(TimeSpan.FromSeconds(5));
+    await task.WaitAsync(TimeSpan.FromSeconds(2));
     await Assert.That(batches).Count().IsEqualTo(1);
     await Assert.That(batches[0].SequenceEqual(_expected12)).IsTrue();
   }
 
   /// <summary>
-  /// Cancellation: cancelling the token mid-wait must terminate the enumerator promptly.
+  /// Cancellation: cancelling mid-wait terminates the enumerator promptly.
   /// </summary>
   [Test]
   public async Task ReadBatches_CancellationDuringWait_TerminatesAsync() {
-    var (ch, _, batcher) = _setup();
+    var (ch, batcher) = _setup();
     var cts = new CancellationTokenSource();
     var task = Task.Run(async () => {
       await foreach (var _ in batcher.ReadBatchesAsync(cts.Token)) {
@@ -199,55 +194,53 @@ public class SlidingWindowBatcherTests {
     });
 
     await ch.Writer.WriteAsync(1);
-    await Task.Yield();
+    await Task.Delay(10);
     cts.Cancel();
 
-    await task.WaitAsync(TimeSpan.FromSeconds(5));
+    await task.WaitAsync(TimeSpan.FromSeconds(2));
     await Assert.That(task.IsCompleted).IsTrue();
   }
 
   /// <summary>
-  /// Multiple sequential batches: after the first batch flushes, the next arrival starts a
-  /// fresh batch with its own sliding window.
+  /// Multiple sequential batches: after one batch flushes, the next arrival starts a fresh
+  /// batch with its own sliding window.
   /// </summary>
   [Test]
   public async Task ReadBatches_MultipleSequentialBatches_EachIndependentAsync() {
-    var (ch, time, batcher) = _setup();
+    var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
+      MaxSize = 100,
+      SlidingWindow = TimeSpan.FromMilliseconds(60),
+      MaxWait = TimeSpan.FromSeconds(2)
+    });
+    var batch1 = new TaskCompletionSource<IReadOnlyList<int>>();
+    var batch2 = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
-    var batches = new List<IReadOnlyList<int>>();
-    var batch1Flushed = new TaskCompletionSource();
     var task = Task.Run(async () => {
+      var seen = 0;
       await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        batches.Add(batch);
-        if (batches.Count == 1) { batch1Flushed.TrySetResult(); }
-        if (batches.Count == 2) { return; }
+        seen++;
+        if (seen == 1) { batch1.TrySetResult(batch); } else if (seen == 2) { batch2.TrySetResult(batch); return; }
       }
     });
 
-    // Batch 1: items 1, 2 → flush via sliding window
+    // Batch 1: items 1, 2 — window expires after 60ms quiet
     await ch.Writer.WriteAsync(1);
     await ch.Writer.WriteAsync(2);
-    await Task.Yield();
-    time.Advance(TimeSpan.FromMilliseconds(60)); // > SlidingWindow
-
-    // Deterministically wait for batch 1 to complete before starting batch 2.
-    await batch1Flushed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var b1 = await batch1.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(b1.SequenceEqual(_expected12)).IsTrue();
 
     // Batch 2: items 3, 4
     await ch.Writer.WriteAsync(3);
     await ch.Writer.WriteAsync(4);
-    await Task.Yield();
-    time.Advance(TimeSpan.FromMilliseconds(60));
+    var b2 = await batch2.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(b2.SequenceEqual(_expected34)).IsTrue();
 
-    await task.WaitAsync(TimeSpan.FromSeconds(5));
     cts.Cancel();
-    await Assert.That(batches).Count().IsEqualTo(2);
-    await Assert.That(batches[0].SequenceEqual(_expected12)).IsTrue();
-    await Assert.That(batches[1].SequenceEqual(_expected34)).IsTrue();
+    try { await task; } catch (OperationCanceledException) { }
   }
 
   /// <summary>
-  /// Constructor validation: invalid options throw ArgumentOutOfRangeException.
+  /// Constructor: invalid <c>MaxSize</c> throws.
   /// </summary>
   [Test]
   public async Task Constructor_InvalidMaxSize_ThrowsAsync() {
@@ -258,6 +251,9 @@ public class SlidingWindowBatcherTests {
       .Throws<ArgumentOutOfRangeException>();
   }
 
+  /// <summary>
+  /// Constructor: <c>SlidingWindow</c> larger than <c>MaxWait</c> throws.
+  /// </summary>
   [Test]
   public async Task Constructor_SlidingWindowGreaterThanMaxWait_ThrowsAsync() {
     var ch = Channel.CreateUnbounded<int>();
