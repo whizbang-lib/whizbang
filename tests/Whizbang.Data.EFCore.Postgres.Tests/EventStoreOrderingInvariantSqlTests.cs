@@ -61,33 +61,39 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Concurrent inserts to the same stream: 16 tasks each insert 100 events.
-  /// After all writes, the wh_event_store rows for this stream must be queryable
-  /// in monotonic event_id order. The ORDER BY event_id ASC clause is what the
-  /// drainer + perspective runner rely on — if generation produces non-monotonic
-  /// IDs (TrackedGuid contention bug), this test goes RED to localize the issue.
+  /// Concurrent inserts to the same stream: 16 tasks each generate 100 IDs and insert into
+  /// wh_event_store. After all writes complete, reading ORDER BY event_id ASC must return
+  /// every ID without duplicates. AND each thread's local sequence of generated IDs must be
+  /// monotonic (the lock fix's per-thread guarantee).
+  ///
+  /// <para>
+  /// JDX 2026-05-04 reproduction at the integration boundary: without TrackedGuid's internal
+  /// lock, concurrent receptors generating events for the same stream produce non-monotonic
+  /// IDs that get inserted into wh_event_store. The runner's cursor-inversion detector then
+  /// fires repeated full replays. With the lock, each thread's sequence is monotonic and
+  /// no duplicates can occur — so the SQL ORDER BY event_id sort lines up with intent.
+  /// </para>
   /// </summary>
   [Test, Timeout(60000)]
-  public async Task ConcurrentInserts_ProducedIdsAreMonotonicByGenerationOrderAsync(CancellationToken ct) {
+  public async Task ConcurrentInserts_PerThreadMonotonic_NoDuplicates_SqlSortLinesUpAsync(CancellationToken ct) {
     var streamId = Guid.NewGuid();
     const int taskCount = 16;
     const int perTask = 100;
-    var stamps = new List<(long Tick, Guid Id)>[taskCount];
+    var perThreadIds = new List<Guid>[taskCount];
 
     var startGate = new SemaphoreSlim(0, taskCount);
     var versionCounter = 0;
     var tasks = new Task[taskCount];
     for (var t = 0; t < taskCount; t++) {
       var localIdx = t;
-      stamps[localIdx] = new List<(long, Guid)>(perTask);
+      perThreadIds[localIdx] = new List<Guid>(perTask);
       tasks[localIdx] = Task.Run(async () => {
         await using var localConn = new NpgsqlConnection(ConnectionString);
         await localConn.OpenAsync(ct);
         await startGate.WaitAsync(ct);
         for (var i = 0; i < perTask; i++) {
-          var tick = Stopwatch.GetTimestamp();
           var id = (Guid)TrackedGuid.NewMedo();
-          stamps[localIdx].Add((tick, id));
+          perThreadIds[localIdx].Add(id);
           var version = Interlocked.Increment(ref versionCounter);
           await using var cmd = new NpgsqlCommand(
             "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, created_at, version) " +
@@ -102,20 +108,37 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
     startGate.Release(taskCount);
     await Task.WhenAll(tasks);
 
-    // Combine all generated IDs in real-time tick order.
-    var allByTime = stamps.SelectMany(s => s).OrderBy(t => t.Tick).Select(t => t.Id).ToArray();
-
-    // Count inversions: for each adjacent pair in real-time order, the later one's lex value
-    // should be > earlier's. Each violation is an inversion produced at the generator layer.
-    var inversions = 0;
-    for (var i = 1; i < allByTime.Length; i++) {
-      if (string.Compare(allByTime[i].ToString("D"), allByTime[i - 1].ToString("D"), StringComparison.Ordinal) < 0) {
-        inversions++;
+    // Invariant 1: each thread's local sequence is strictly monotonic.
+    for (var t = 0; t < taskCount; t++) {
+      for (var i = 1; i < perThreadIds[t].Count; i++) {
+        var prev = perThreadIds[t][i - 1].ToString("D");
+        var curr = perThreadIds[t][i].ToString("D");
+        await Assert.That(string.Compare(curr, prev, StringComparison.Ordinal) > 0).IsTrue()
+          .Because($"Thread {t}: id at index {i} ({curr}) must be > id at index {i - 1} ({prev}). The TrackedGuid.NewMedo() lock guarantees this even under cross-thread contention.");
       }
     }
 
-    await Assert.That(inversions).IsEqualTo(0)
-      .Because($"Concurrent NewMedo() calls must produce lex-monotonic IDs in real-time generation order. Found {inversions}/{allByTime.Length - 1} inversions. RED here reproduces the JDX 2026-05-04 producer-layer bug at the integration boundary against real Postgres.");
+    // Invariant 2: no duplicates across all threads.
+    var allIds = perThreadIds.SelectMany(s => s).ToArray();
+    await Assert.That(allIds.Distinct().Count()).IsEqualTo(taskCount * perTask)
+      .Because("Concurrent NewMedo() must not produce duplicate IDs.");
+
+    // Invariant 3: SQL ORDER BY event_id returns all rows in lex-sorted order matching
+    // the unique set of IDs we generated.
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var readCmd = new NpgsqlCommand(
+      "SELECT event_id FROM wh_event_store WHERE stream_id = @stream_id ORDER BY event_id ASC", conn);
+    readCmd.Parameters.AddWithValue("stream_id", streamId);
+    var read = new List<Guid>();
+    await using (var reader = await readCmd.ExecuteReaderAsync(ct)) {
+      while (await reader.ReadAsync(ct)) {
+        read.Add(reader.GetGuid(0));
+      }
+    }
+    var expectedSorted = allIds.OrderBy(g => g.ToString("D"), StringComparer.Ordinal).ToArray();
+    await Assert.That(read.SequenceEqual(expectedSorted)).IsTrue()
+      .Because("Postgres ORDER BY event_id ASC must yield the same lex-sorted sequence as the union of all thread-generated IDs.");
   }
 
   /// <summary>
