@@ -338,4 +338,179 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
     await Assert.That(saved.Data.Rows[0].Label).IsEqualTo("added");
     await Assert.That(saved.Data.Name).IsEqualTo("filled");
   }
+
+  // ===========================================================================
+  // METADATA ISOLATION + IDEMPOTENCY-GUARD CROSS-TALK TESTS
+  //
+  // The runner template's idempotency guard reads the previous EventId via
+  // GetMetadataByStreamIdAsync to filter out already-applied events. If the
+  // metadata stored on perspective A's row leaks into perspective B's metadata
+  // read (or vice versa), perspective B's events would be filtered out and
+  // never applied — matching the JDX symptom (one perspective row missing).
+  // ===========================================================================
+
+  /// <summary>
+  /// Per-perspective metadata isolation: ScalarModel and ListModel both upsert
+  /// for the same stream with DIFFERENT EventIds. GetMetadataByStreamIdAsync on
+  /// each store must return its OWN perspective's EventId, not the sibling's.
+  /// If the stores cross-pollute on metadata reads, the runner's idempotency
+  /// guard would silently drop events and the row would appear "missing".
+  /// </summary>
+  [Test, Timeout(60000)]
+  public async Task PerPerspectiveMetadata_IsolatedReads_DoNotCrossPolluteAsync(CancellationToken ct) {
+    await using var context = new TwoPerspectivesDbContext(_options);
+    var strategy = new PostgresUpsertStrategy();
+    var scalarStore = new EFCorePostgresPerspectiveStore<ScalarModel>(context, "wh_per_scalar", strategy);
+    var listStore = new EFCorePostgresPerspectiveStore<ListModel>(context, "wh_per_list", strategy);
+    var streamId = _newGuid();
+    var scalarEventId = _newGuid();
+    var listEventId = _newGuid();
+
+    var scalarMeta = new PerspectiveMetadata {
+      EventId = scalarEventId.ToString("D"),
+      EventType = "ScalarApplied",
+      Timestamp = DateTime.UtcNow
+    };
+    var listMeta = new PerspectiveMetadata {
+      EventId = listEventId.ToString("D"),
+      EventType = "ListApplied",
+      Timestamp = DateTime.UtcNow
+    };
+
+    await scalarStore.UpsertAsync(streamId, new ScalarModel { Id = streamId, FieldA = "s" }, new PerspectiveScope(), false, scalarMeta, ct);
+    await listStore.UpsertAsync(streamId, new ListModel { Id = streamId, Name = "l", Rows = [new() { Label = "r", Value = 1 }] }, new PerspectiveScope(), false, listMeta, ct);
+
+    var scalarReadBack = await scalarStore.GetMetadataByStreamIdAsync(streamId, ct);
+    var listReadBack = await listStore.GetMetadataByStreamIdAsync(streamId, ct);
+
+    await Assert.That(scalarReadBack).IsNotNull();
+    await Assert.That(scalarReadBack!.EventId).IsEqualTo(scalarEventId.ToString("D"))
+      .Because("Scalar perspective's metadata read must return scalar's own EventId.");
+    await Assert.That(listReadBack).IsNotNull();
+    await Assert.That(listReadBack!.EventId).IsEqualTo(listEventId.ToString("D"))
+      .Because("List perspective's metadata read must return list's own EventId, NOT the scalar's. If these cross, the runner's idempotency guard silently drops events and the JDX symptom appears.");
+  }
+
+  /// <summary>
+  /// Idempotency-guard cross-talk: scalar perspective applies an UUIDv7 EventId
+  /// that is LATER than the list perspective's pending event. If the list
+  /// perspective's runner accidentally read scalar's metadata, the
+  /// string-compare-greater filter would drop ALL of list's events because
+  /// "list event id &lt; scalar last applied" — exactly the JDX symptom.
+  /// </summary>
+  [Test, Timeout(60000)]
+  public async Task IdempotencyFilter_DoesNotApplyAcrossPerspectives_WhenScalarAdvancedFurtherAsync(CancellationToken ct) {
+    await using var context = new TwoPerspectivesDbContext(_options);
+    var strategy = new PostgresUpsertStrategy();
+    var scalarStore = new EFCorePostgresPerspectiveStore<ScalarModel>(context, "wh_per_scalar", strategy);
+    var listStore = new EFCorePostgresPerspectiveStore<ListModel>(context, "wh_per_list", strategy);
+    var streamId = _newGuid();
+
+    // Scalar is at a LATE event id (UUIDv7 = chronologically late).
+    var scalarLateMeta = new PerspectiveMetadata {
+      EventId = _newGuid().ToString("D"),
+      EventType = "ScalarLate",
+      Timestamp = DateTime.UtcNow
+    };
+    await scalarStore.UpsertAsync(streamId, new ScalarModel { Id = streamId, FieldA = "scalar-applied-late" }, new PerspectiveScope(), false, scalarLateMeta, ct);
+
+    // List perspective applies its FIRST event for this stream (no prior metadata).
+    // Its event id can be earlier or later than scalar's — the comparison must
+    // happen against LIST's own metadata (none yet) NOT scalar's.
+    var listFirstMeta = new PerspectiveMetadata {
+      EventId = _newGuid().ToString("D"),
+      EventType = "ListFirst",
+      Timestamp = DateTime.UtcNow
+    };
+    await listStore.UpsertAsync(streamId, new ListModel { Id = streamId, Name = "first", Rows = [new() { Label = "r1", Value = 1 }] }, new PerspectiveScope(), false, listFirstMeta, ct);
+
+    var listMeta = await listStore.GetMetadataByStreamIdAsync(streamId, ct);
+    var savedList = await context.Set<PerspectiveRow<ListModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
+
+    await Assert.That(savedList).IsNotNull()
+      .Because("List perspective row must persist regardless of scalar perspective's metadata state.");
+    await Assert.That(listMeta).IsNotNull();
+    await Assert.That(listMeta!.EventId).IsEqualTo(listFirstMeta.EventId)
+      .Because("List metadata must reflect list's own apply, not be affected by scalar's prior late upsert.");
+    await Assert.That(savedList!.Data.Name).IsEqualTo("first");
+  }
+
+  // ===========================================================================
+  // SCOPE-FILTER SYMMETRY TESTS
+  //
+  // The runner applies lastScope?.FilterByFields(_inheritScopeOnCreate) before
+  // upserting. Perspectives with different [InheritScope] settings get different
+  // ScopeFields constants. If the filter produces a problematic value (e.g.,
+  // empty scope when DB has NOT NULL constraint, or a scope that fails
+  // some downstream filter), one perspective could fail to save while the other
+  // succeeds — matching the JDX symptom.
+  // ===========================================================================
+
+  /// <summary>
+  /// Symmetry across [InheritScope] settings: scalar perspective gets ScopeFields.None
+  /// (empty scope) and list perspective gets ScopeFields.All (full scope). Both must
+  /// upsert successfully. JSONB NOT NULL constraint vs an empty scope object is one
+  /// path where this could fail.
+  /// </summary>
+  [Test, Timeout(60000)]
+  public async Task SymmetricUpsert_WhenScalarGetsEmptyScope_AndListGetsFullScope_BothPersistAsync(CancellationToken ct) {
+    await using var context = new TwoPerspectivesDbContext(_options);
+    var strategy = new PostgresUpsertStrategy();
+    var scalarStore = new EFCorePostgresPerspectiveStore<ScalarModel>(context, "wh_per_scalar", strategy);
+    var listStore = new EFCorePostgresPerspectiveStore<ListModel>(context, "wh_per_list", strategy);
+    var streamId = _newGuid();
+
+    // Scalar gets the result of FilterByFields(ScopeFields.None) — empty scope (all defaults)
+    var scalarEmptyScope = new PerspectiveScope().FilterByFields(global::Whizbang.Core.Lenses.ScopeFields.None);
+    // List gets the result of FilterByFields with ALL fields — full scope
+    var listFullScope = new PerspectiveScope {
+      TenantId = _newGuid().ToString(),
+      CustomerId = _newGuid().ToString(),
+      UserId = _newGuid().ToString(),
+      OrganizationId = _newGuid().ToString()
+    }.FilterByFields(
+      global::Whizbang.Core.Lenses.ScopeFields.Tenant |
+      global::Whizbang.Core.Lenses.ScopeFields.Customer |
+      global::Whizbang.Core.Lenses.ScopeFields.User |
+      global::Whizbang.Core.Lenses.ScopeFields.Organization);
+
+    await scalarStore.UpsertAsync(streamId, new ScalarModel { Id = streamId, FieldA = "no-scope" }, scalarEmptyScope, false, ct);
+    await listStore.UpsertAsync(streamId, new ListModel { Id = streamId, Name = "with-scope", Rows = [new() { Label = "r", Value = 1 }] }, listFullScope, false, ct);
+
+    var savedScalar = await context.Set<PerspectiveRow<ScalarModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
+    var savedList = await context.Set<PerspectiveRow<ListModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
+
+    await Assert.That(savedScalar).IsNotNull()
+      .Because("Scalar perspective with empty scope must save (JSONB column accepts {}).");
+    await Assert.That(savedList).IsNotNull()
+      .Because("List perspective with full scope must save (JSONB column accepts populated object). Asymmetry here = JDX symptom.");
+    await Assert.That(savedList!.Data.Rows.Count).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Re-application with scope mismatch: list perspective's first apply uses scope X,
+  /// the second apply for the same stream uses scope Y. The default behavior is
+  /// "scope is INSERT-only" (line 130-134 of BaseUpsertStrategy uses forceUpdateScope
+  /// to gate scope writes). The row must still persist; only its data should update.
+  /// </summary>
+  [Test, Timeout(60000)]
+  public async Task ListPerspective_SecondUpsertWithDifferentScope_ScopeNotUpdated_RowStillPersistsAsync(CancellationToken ct) {
+    await using var context = new TwoPerspectivesDbContext(_options);
+    var strategy = new PostgresUpsertStrategy();
+    var listStore = new EFCorePostgresPerspectiveStore<ListModel>(context, "wh_per_list", strategy);
+    var streamId = _newGuid();
+
+    var initialScope = new PerspectiveScope { TenantId = "tenant-A" };
+    var changedScope = new PerspectiveScope { TenantId = "tenant-B" };
+
+    await listStore.UpsertAsync(streamId, new ListModel { Id = streamId, Name = "v1", Rows = [new() { Label = "v1", Value = 1 }] }, initialScope, false, ct);
+    await listStore.UpsertAsync(streamId, new ListModel { Id = streamId, Name = "v2", Rows = [new() { Label = "v2", Value = 2 }] }, changedScope, false, ct);
+
+    var saved = await context.Set<PerspectiveRow<ListModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId, ct);
+    await Assert.That(saved).IsNotNull();
+    await Assert.That(saved!.Data.Name).IsEqualTo("v2");
+    await Assert.That(saved.Data.Rows[0].Label).IsEqualTo("v2");
+    await Assert.That(saved.Scope.TenantId).IsEqualTo("tenant-A")
+      .Because("Scope is INSERT-only by default (forceUpdateScope=false); update should NOT change tenant.");
+  }
 }
