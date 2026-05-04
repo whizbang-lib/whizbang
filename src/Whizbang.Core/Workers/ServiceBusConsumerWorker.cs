@@ -530,7 +530,6 @@ public partial class ServiceBusConsumerWorker(
       MessageType = messageTypeName
     };
 
-    // DIAGNOSTIC: Log detailed inbox message info for ServiceBus debugging
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
       inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);
 
@@ -772,32 +771,31 @@ public partial class ServiceBusConsumerWorker(
   )]
   static partial void LogWorkerStoppingGracefully(ILogger logger);
 
-  // Diagnostic logging
   [LoggerMessage(
     EventId = 20,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] Before FlushAsync: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus before FlushAsync: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}"
   )]
   static partial void LogBeforeFlush(ILogger logger, Guid messageId, bool isEvent, Guid? streamId);
 
   [LoggerMessage(
     EventId = 21,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] After FlushAsync: TotalInboxWork={InboxWorkCount}, TotalOutboxWork={OutboxWorkCount}, TotalPerspectiveWork={PerspectiveWorkCount}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus after FlushAsync: TotalInboxWork={InboxWorkCount}, TotalOutboxWork={OutboxWorkCount}, TotalPerspectiveWork={PerspectiveWorkCount}"
   )]
   static partial void LogAfterFlush(ILogger logger, int inboxWorkCount, int outboxWorkCount, int perspectiveWorkCount);
 
   [LoggerMessage(
     EventId = 22,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] Work returned for MessageId={MessageId}: InboxWork={InboxCount}, IsEvent={IsEvent}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus work returned for MessageId={MessageId}: InboxWork={InboxCount}, IsEvent={IsEvent}"
   )]
   static partial void LogWorkReturned(ILogger logger, Guid messageId, int inboxCount, bool isEvent);
 
   [LoggerMessage(
     EventId = 23,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] Created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
   )]
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
 
