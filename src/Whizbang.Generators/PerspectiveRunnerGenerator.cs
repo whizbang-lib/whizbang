@@ -161,6 +161,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Check if perspective implements IPerspectiveScopeFor<TModel> for IScopeEvent handling
     var hasScopeInterface = _hasScopeForInterface(classSymbol);
 
+    // Extract [InheritScope].OnCreate flags from the model. Default 63 = ScopeFields.All
+    // when the attribute is absent (preserves legacy copy-everything behavior). Adding
+    // [InheritScope] opts the perspective into the safer per-field default.
+    var inheritScopeOnCreate = _extractInheritScopeOnCreate(modelType);
+
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
             ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -176,10 +181,36 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
-            HasScopeInterface: hasScopeInterface
+            HasScopeInterface: hasScopeInterface,
+            InheritScopeOnCreate: inheritScopeOnCreate
         ),
         Warning: null
     );
+  }
+
+  /// <summary>
+  /// Reads <c>[InheritScope].OnCreate</c> from the supplied model type. Returns the
+  /// flag value as an int. Falls back to <c>(int)ScopeFields.All</c> (63) when the
+  /// attribute is absent — that preserves the legacy "copy every scope field on INSERT"
+  /// behavior so existing perspectives keep working without modification.
+  /// </summary>
+  private static int _extractInheritScopeOnCreate(ITypeSymbol modelType) {
+    const int defaultAll = 63;
+    foreach (var attr in modelType.GetAttributes()) {
+      var name = attr.AttributeClass?.Name;
+      if (name != "InheritScopeAttribute" && name != "InheritScope") {
+        continue;
+      }
+      foreach (var named in attr.NamedArguments) {
+        if (named.Key == "OnCreate" && named.Value.Value is { } v) {
+          return System.Convert.ToInt32(v, System.Globalization.CultureInfo.InvariantCulture);
+        }
+      }
+      // Attribute present without OnCreate override → InheritScopeAttribute's own default.
+      // That default is ScopeFields.Tenant (1) per the attribute declaration.
+      return 1;
+    }
+    return defaultAll;
   }
 
   /// <summary>
@@ -349,6 +380,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
     result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
+    result = TemplateUtilities.ReplaceRegion(
+        result,
+        "INHERIT_SCOPE_ON_CREATE",
+        $"private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate};");
 
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);

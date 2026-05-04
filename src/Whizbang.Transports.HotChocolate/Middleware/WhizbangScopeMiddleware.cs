@@ -54,10 +54,10 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   }
 
   private PerspectiveScope _buildScope(HttpContext context) {
-    var tenantId = _extractValue(context, _options.TenantIdClaimType, _options.TenantIdHeaderName);
+    var tenantId = _extractValueWithFallback(context, _options.TenantIdClaimTypes, _options.TenantIdHeaderName);
     var userId = _extractValueWithFallback(context, _options.UserIdClaimTypes, _options.UserIdHeaderName);
-    var orgId = _extractValue(context, _options.OrganizationIdClaimType, _options.OrganizationIdHeaderName);
-    var customerId = _extractValue(context, _options.CustomerIdClaimType, _options.CustomerIdHeaderName);
+    var orgId = _extractValueWithFallback(context, _options.OrganizationIdClaimTypes, _options.OrganizationIdHeaderName);
+    var customerId = _extractValueWithFallback(context, _options.CustomerIdClaimTypes, _options.CustomerIdHeaderName);
 
     var extensions = new List<ScopeExtension>();
     foreach (var (claimType, extensionKey) in _options.ExtensionClaimMappings) {
@@ -129,13 +129,48 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
       .ToHashSet() ?? [];
   }
 
-  private HashSet<Permission> _extractPermissions(HttpContext context) {
-    var permClaims = context.User?.FindAll(_options.PermissionsClaimType);
-    return permClaims?
-      .Select(claim => claim.Value)
-      .Where(value => !string.IsNullOrEmpty(value))
-      .Select(value => new Permission(value))
-      .ToHashSet() ?? [];
+  private HashSet<Permission> _extractPermissions(HttpContext context) =>
+    [.. _extractMultiValuedClaim(
+      context, _options.PermissionsClaimTypes, _options.PermissionsAggregation)
+        .Select(value => new Permission(value))];
+
+  /// <summary>
+  /// Extracts a multi-valued claim across one or more configured claim names. Honors the
+  /// configured <see cref="ClaimAggregation"/> strategy: <c>FirstMatch</c> (first claim
+  /// name that yields any values wins), or <c>Aggregate</c> (union across all configured
+  /// claim names, deduplicated).
+  /// </summary>
+  private static IEnumerable<string> _extractMultiValuedClaim(
+      HttpContext context, List<string> claimTypes, ClaimAggregation aggregation) {
+    if (context.User is null || claimTypes.Count == 0) {
+      yield break;
+    }
+
+    if (aggregation == ClaimAggregation.FirstMatch) {
+      foreach (var claimType in claimTypes) {
+        var values = context.User.FindAll(claimType)
+          .Select(c => c.Value)
+          .Where(v => !string.IsNullOrEmpty(v))
+          .ToList();
+        if (values.Count > 0) {
+          foreach (var v in values) {
+            yield return v;
+          }
+          yield break;
+        }
+      }
+      yield break;
+    }
+
+    // Aggregate: union across all claim types, deduplicated.
+    var seen = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var claimType in claimTypes) {
+      foreach (var claim in context.User.FindAll(claimType)) {
+        if (!string.IsNullOrEmpty(claim.Value) && seen.Add(claim.Value)) {
+          yield return claim.Value;
+        }
+      }
+    }
   }
 
   private HashSet<SecurityPrincipalId> _extractPrincipals(HttpContext context) {
@@ -154,12 +189,10 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
       principals.Add(SecurityPrincipalId.User(userId));
     }
 
-    // Add group principals
-    var groupClaims = context.User?.FindAll(_options.GroupsClaimType);
-    if (groupClaims != null) {
-      foreach (var value in groupClaims.Select(claim => claim.Value).Where(v => !string.IsNullOrEmpty(v))) {
-        principals.Add(SecurityPrincipalId.Group(value));
-      }
+    // Add group principals (multi-valued, honors GroupsAggregation)
+    foreach (var value in _extractMultiValuedClaim(
+        context, _options.GroupsClaimTypes, _options.GroupsAggregation)) {
+      principals.Add(SecurityPrincipalId.Group(value));
     }
 
     return principals;
@@ -193,9 +226,21 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
 /// </example>
 public class WhizbangScopeOptions {
   /// <summary>
-  /// Claim type for tenant ID. Default: "tenant_id".
+  /// Primary claim type for tenant ID. Default: "tenant_id". Backwards-compatible
+  /// shim over <see cref="TenantIdClaimTypes"/> — getting reads the first entry,
+  /// setting replaces the list with a single value.
   /// </summary>
-  public string TenantIdClaimType { get; set; } = "tenant_id";
+  public string TenantIdClaimType {
+    get => TenantIdClaimTypes.FirstOrDefault() ?? "tenant_id";
+    set => TenantIdClaimTypes = [value];
+  }
+
+  /// <summary>
+  /// Claim types for tenant ID, tried in order until a non-empty value is found.
+  /// Default: ["tenant_id"]. Use this to support multiple identity providers that
+  /// emit the same logical claim under different names.
+  /// </summary>
+  public List<string> TenantIdClaimTypes { get; set; } = ["tenant_id"];
 
   /// <summary>
   /// Header name for tenant ID. Default: "X-Tenant-Id".
@@ -230,9 +275,18 @@ public class WhizbangScopeOptions {
   public string UserIdHeaderName { get; set; } = "X-User-Id";
 
   /// <summary>
-  /// Claim type for organization ID. Default: "org_id".
+  /// Primary claim type for organization ID. Default: "org_id". Backwards-compatible
+  /// shim over <see cref="OrganizationIdClaimTypes"/>.
   /// </summary>
-  public string OrganizationIdClaimType { get; set; } = "org_id";
+  public string OrganizationIdClaimType {
+    get => OrganizationIdClaimTypes.FirstOrDefault() ?? "org_id";
+    set => OrganizationIdClaimTypes = [value];
+  }
+
+  /// <summary>
+  /// Claim types for organization ID, tried in order until a non-empty value is found.
+  /// </summary>
+  public List<string> OrganizationIdClaimTypes { get; set; } = ["org_id"];
 
   /// <summary>
   /// Header name for organization ID. Default: "X-Organization-Id".
@@ -240,9 +294,18 @@ public class WhizbangScopeOptions {
   public string OrganizationIdHeaderName { get; set; } = "X-Organization-Id";
 
   /// <summary>
-  /// Claim type for customer ID. Default: "customer_id".
+  /// Primary claim type for customer ID. Default: "customer_id". Backwards-compatible
+  /// shim over <see cref="CustomerIdClaimTypes"/>.
   /// </summary>
-  public string CustomerIdClaimType { get; set; } = "customer_id";
+  public string CustomerIdClaimType {
+    get => CustomerIdClaimTypes.FirstOrDefault() ?? "customer_id";
+    set => CustomerIdClaimTypes = [value];
+  }
+
+  /// <summary>
+  /// Claim types for customer ID, tried in order until a non-empty value is found.
+  /// </summary>
+  public List<string> CustomerIdClaimTypes { get; set; } = ["customer_id"];
 
   /// <summary>
   /// Header name for customer ID. Default: "X-Customer-Id".
@@ -255,14 +318,46 @@ public class WhizbangScopeOptions {
   public string RolesClaimType { get; set; } = ClaimTypes.Role;
 
   /// <summary>
-  /// Claim type for permissions. Default: "permissions".
+  /// Primary claim type for permissions. Default: "permissions". Backwards-compatible
+  /// shim over <see cref="PermissionsClaimTypes"/>.
   /// </summary>
-  public string PermissionsClaimType { get; set; } = "permissions";
+  public string PermissionsClaimType {
+    get => PermissionsClaimTypes.FirstOrDefault() ?? "permissions";
+    set => PermissionsClaimTypes = [value];
+  }
 
   /// <summary>
-  /// Claim type for groups. Default: "groups".
+  /// Claim types for permissions. Behavior when multiple are configured is governed by
+  /// <see cref="PermissionsAggregation"/> — first-match (default) or aggregate.
   /// </summary>
-  public string GroupsClaimType { get; set; } = "groups";
+  public List<string> PermissionsClaimTypes { get; set; } = ["permissions"];
+
+  /// <summary>
+  /// Aggregation strategy across <see cref="PermissionsClaimTypes"/>.
+  /// Default: <see cref="ClaimAggregation.FirstMatch"/> (matches legacy single-source behavior).
+  /// </summary>
+  public ClaimAggregation PermissionsAggregation { get; set; } = ClaimAggregation.FirstMatch;
+
+  /// <summary>
+  /// Primary claim type for groups. Default: "groups". Backwards-compatible shim over
+  /// <see cref="GroupsClaimTypes"/>.
+  /// </summary>
+  public string GroupsClaimType {
+    get => GroupsClaimTypes.FirstOrDefault() ?? "groups";
+    set => GroupsClaimTypes = [value];
+  }
+
+  /// <summary>
+  /// Claim types for groups. Behavior when multiple are configured is governed by
+  /// <see cref="GroupsAggregation"/>.
+  /// </summary>
+  public List<string> GroupsClaimTypes { get; set; } = ["groups"];
+
+  /// <summary>
+  /// Aggregation strategy across <see cref="GroupsClaimTypes"/>.
+  /// Default: <see cref="ClaimAggregation.FirstMatch"/>.
+  /// </summary>
+  public ClaimAggregation GroupsAggregation { get; set; } = ClaimAggregation.FirstMatch;
 
   /// <summary>
   /// Custom claim type to extension key mappings.
