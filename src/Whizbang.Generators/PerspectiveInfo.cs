@@ -15,6 +15,7 @@ namespace Whizbang.Generators;
 /// <param name="EventStreamIds">Map of event type name to its StreamId property name</param>
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
 /// <param name="MustExistEventTypes">Array of event type names (fully qualified) whose Apply methods have [MustExist] attribute</param>
+/// <param name="InheritScopeOnCreate">ScopeFields flag set declared via [InheritScope(OnCreate = ...)] on the perspective model. Default 63 = ScopeFields.All preserves legacy copy-everything behavior when the attribute is absent.</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs</tests>
@@ -34,7 +35,8 @@ internal sealed record PerspectiveInfo(
     bool IsWithActionsInterface = false,
     int StorageMode = 0,
     bool IsModelRecord = false,
-    bool HasScopeInterface = false
+    bool HasScopeInterface = false,
+    int InheritScopeOnCreate = 63
 );
 
 /// <summary>
