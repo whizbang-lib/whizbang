@@ -1159,7 +1159,7 @@ public partial class PerspectiveWorker(
     // completions either; the previous drain enqueued them already (the flusher will land them).
     // The runner template's defensive idempotency guard remains as a safety net for
     // post-restart / TTL-expiry scenarios where the cache was empty but the row was still pending.
-    if (_shouldSkipApplyDueToCooldown(filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache)) {
+    if (_shouldSkipApplyDueToCooldown(filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache, perspectiveName)) {
       // Cooldown means a previous drain already ran apply for these events successfully and
       // signaled SignalPerspectiveComplete in THAT batch's coordinator. The current batch has
       // its own DrainBatchContext (BatchProcessedEvents is per-batch), so without re-asserting
@@ -1224,7 +1224,7 @@ public partial class PerspectiveWorker(
           _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
           // Mark all processed work_ids in the cooldown cache so the next drain within the TTL
           // window (including the cursor-flush race window) short-circuits before reaching apply.
-          _markProcessedInCooldown(filteredEvents, batchContext.RawByEventId);
+          _markProcessedInCooldown(_recentlyProcessedEventCache, filteredEvents, batchContext.RawByEventId, perspectiveName);
         }
 
         _metrics?.StreamsUpdated.Add(1);
@@ -1348,10 +1348,22 @@ public partial class PerspectiveWorker(
     }
   }
 
+  /// <summary>
+  /// Returns true when EVERY event_work_id for the current perspective in the filtered batch
+  /// is in the cooldown cache — meaning a previous drain already applied them and we should
+  /// skip Apply.
+  /// </summary>
+  /// <param name="perspectiveName">The current perspective being drained. The decision MUST
+  /// only consider work_ids belonging to THIS perspective. a consumer 2026-05-04 silent-skip bug:
+  /// without filtering, marking Order's work_id as cooled would also stop OrderSkills'
+  /// Apply from running (since both perspectives share the same EventId in <paramref name="rawByEventId"/>
+  /// but have distinct work_ids). When <paramref name="perspectiveName"/> is null (legacy
+  /// callers), all entries for the EventId are considered — back-compat mode.</param>
   internal static bool _shouldSkipApplyDueToCooldown(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
       ILookup<Guid, StreamEventData> rawByEventId,
-      RecentlyProcessedEventCache? cache) {
+      RecentlyProcessedEventCache? cache,
+      string? perspectiveName = null) {
     if (cache is null || filteredEvents.Count == 0) {
       return false;
     }
@@ -1359,15 +1371,24 @@ public partial class PerspectiveWorker(
       var rawRows = rawByEventId[envelope.MessageId.Value];
       var rawSeen = false;
       foreach (var raw in rawRows) {
+        // Per-perspective filter: when perspectiveName is supplied, only consider raw rows
+        // whose PerspectiveName matches. Rows for OTHER perspectives' work_ids are irrelevant
+        // to the current perspective's cooldown decision. See a consumer 2026-05-04 multi-perspective
+        // fanout silent-skip bug.
+        if (perspectiveName is not null
+            && raw.PerspectiveName is not null
+            && !string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal)) {
+          continue;
+        }
         rawSeen = true;
         if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
           return false;
         }
       }
       // ILookup returns an empty enumerable for missing keys. If we never saw any raw row
-      // for this envelope, we cannot prove every event_work_id is cooled — default to
-      // running the apply. Otherwise a mapping mismatch silently strands the event and
-      // prevents PostAllPerspectives from firing (saga events on a consumer application, repro'd by
+      // for this envelope (after filtering), we cannot prove every event_work_id is cooled —
+      // default to running the apply. Otherwise a mapping mismatch silently strands the event
+      // and prevents PostAllPerspectives from firing (saga events on a consumer application, repro'd by
       // CooldownGateDecisionTests.ShouldSkip_EnvelopeMessageIdNotInRawLookup_ReturnsFalse).
       if (!rawSeen) {
         return false;
@@ -1377,18 +1398,32 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Marks every event_work_id for these envelopes as recently processed. Called after a
-  /// successful apply or rewind so subsequent drain ticks within the TTL window short-circuit.
+  /// Marks every event_work_id for these envelopes (filtered by <paramref name="perspectiveName"/>
+  /// when populated) as recently processed. Called after a successful apply or rewind so
+  /// subsequent drain ticks within the TTL window short-circuit.
   /// </summary>
-  private void _markProcessedInCooldown(
+  /// <remarks>
+  /// a consumer 2026-05-04 silent-skip bug: marking ALL raw rows under an EventId — not just the
+  /// current perspective's — would put OTHER perspectives' work_ids into the cooldown cache.
+  /// On the next drain those perspectives would short-circuit before Apply, never updating
+  /// their model. The per-perspective filter scopes the mark to the current perspective only.
+  /// </remarks>
+  internal static void _markProcessedInCooldown(
+      RecentlyProcessedEventCache? cache,
       List<MessageEnvelope<IEvent>> filteredEvents,
-      ILookup<Guid, StreamEventData> rawByEventId) {
-    if (_recentlyProcessedEventCache is null || filteredEvents.Count == 0) {
+      ILookup<Guid, StreamEventData> rawByEventId,
+      string? perspectiveName = null) {
+    if (cache is null || filteredEvents.Count == 0) {
       return;
     }
     foreach (var envelope in filteredEvents) {
       foreach (var raw in rawByEventId[envelope.MessageId.Value]) {
-        _recentlyProcessedEventCache.MarkProcessed(raw.EventWorkId);
+        if (perspectiveName is not null
+            && raw.PerspectiveName is not null
+            && !string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal)) {
+          continue;
+        }
+        cache.MarkProcessed(raw.EventWorkId);
       }
     }
   }

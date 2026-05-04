@@ -1364,6 +1364,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var results = new List<StreamEventData>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    var hasPerspectiveColumn = false;
+    var perspectiveOrdinal = -1;
+    try {
+      perspectiveOrdinal = reader.GetOrdinal("out_perspective_name");
+      hasPerspectiveColumn = true;
+    } catch (IndexOutOfRangeException) {
+      // Older SQL function without out_perspective_name column. Field stays null; cooldown
+      // gate falls back to legacy "all-rows-under-eventid" semantics.
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
@@ -1375,7 +1384,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventData = reader.GetString(reader.GetOrdinal("out_event_data")),
         Metadata = await reader.IsDBNullAsync(metadataOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(metadataOrdinal),
         Scope = await reader.IsDBNullAsync(scopeOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(scopeOrdinal),
-        EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id"))
+        EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id")),
+        PerspectiveName = hasPerspectiveColumn && !await reader.IsDBNullAsync(perspectiveOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetString(perspectiveOrdinal)
+          : null
       });
     }
 
