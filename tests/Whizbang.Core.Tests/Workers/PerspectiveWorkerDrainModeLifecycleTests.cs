@@ -809,6 +809,167 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     await Assert.That(worker.PendingPostLifecycle is null).IsTrue()
       .Because("Shutdown drain clears _pendingPostLifecycle via Interlocked.Exchange");
   }
+
+  // ========================================
+  // MULTI-PERSPECTIVE SAVE SYMMETRY TESTS
+  // ========================================
+  // These target the JDX 2026-05-03 symptom: when an event has TWO perspectives registered,
+  // ONE perspective's wh_per_* row was created (UberDraftJob) but the OTHER (DraftJobWorkingConditions)
+  // was not, despite the SQL chain inserting perspective_events for both. The runtime
+  // apply/save asymmetry caused empty fields on the canvas.
+  //
+  // The in-memory runner harness here doesn't exercise EFCore's UpsertAsync — these tests
+  // verify the framework-level contract that BOTH perspectives are equally invoked, both
+  // get their RunWithEventsAsync call, both signal completion, and both contribute to the
+  // PostAllPerspectives gate. If THIS layer regresses, neither perspective could save in
+  // production. If this passes but production still fails for one perspective, the bug is
+  // narrowed to the EFCore upsert path or the SQL chain — a useful localization.
+
+  [Test]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_BothCalledExactlyOnceAsync() {
+    // Symmetry contract: both perspectives must receive the SAME event in their
+    // RunWithEventsAsync call — exactly once, with the same event ID.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+      new("PerspectiveBeta", "global::Test.PerspectiveBeta", "global::Test.ModelBeta",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+    };
+
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(streamId, eventId, typeof(AlphaEvent), """{"Data":"x"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(eventId, new AlphaEvent("x"))
+    };
+
+    var (worker, coordinator, registry, _, _, _, harness) =
+      _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId]);
+
+    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+
+    var alphaEventList = registry.GetEventsForPerspective("PerspectiveAlpha");
+    var betaEventList = registry.GetEventsForPerspective("PerspectiveBeta");
+
+    await Assert.That(alphaEventList.Count).IsEqualTo(1)
+      .Because("PerspectiveAlpha must receive the event exactly once");
+    await Assert.That(betaEventList.Count).IsEqualTo(1)
+      .Because("PerspectiveBeta must receive the SAME event exactly once — symmetry with PerspectiveAlpha");
+    await Assert.That(alphaEventList[0]).IsEqualTo(eventId);
+    await Assert.That(betaEventList[0]).IsEqualTo(eventId);
+    await Assert.That(registry.RunWithEventsCallCount).IsEqualTo(2)
+      .Because("Two perspectives × one event = exactly two RunWithEventsAsync invocations.");
+  }
+
+  [Test]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_BothSignalCompletionToCoordinatorAsync() {
+    // Both perspectives' SignalPerspectiveComplete must reach the LifecycleCoordinator.
+    // This is the gate that drives PostAllPerspectives — if even one perspective doesn't
+    // signal, AreAllPerspectivesComplete returns false forever and the tag never fires.
+    // Assert via the coordinator's WhenAll resolution rather than a specific channel:
+    // multiple completion strategies route through different channels (Instant via
+    // coordinator.ReportPerspective*; coalesced via PerspectiveCompletionFlushWorker), but
+    // the LifecycleCoordinator state is the canonical signal source for the gate.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+      new("PerspectiveBeta", "global::Test.PerspectiveBeta", "global::Test.ModelBeta",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+    };
+
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(streamId, eventId, typeof(AlphaEvent), """{"Data":"x"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(eventId, new AlphaEvent("x"))
+    };
+
+    var (worker, coordinator, _, _, _, lc, harness) =
+      _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId]);
+
+    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+
+    await Assert.That(lc.AreAllPerspectivesComplete(eventId)).IsTrue()
+      .Because("Both perspectives must have called SignalPerspectiveComplete on the LifecycleCoordinator. If only one signals, the gate stays closed forever and PostAllPerspectives never fires — the JDX 2026-05-03 saga-loader-stuck symptom.");
+  }
+
+  [Test]
+  public async Task DrainMode_TwoPerspectivesForSameEvent_PostAllPerspectivesFiresExactlyOnceAsync() {
+    // The lifecycle gate must wait for BOTH perspectives' SignalPerspectiveComplete before
+    // firing PostAllPerspectivesInline. Tag hooks attach at this stage in JDX's BFF — if it
+    // fires after only ONE perspective, the tag pushes BEFORE the second perspective's row
+    // commits, and the frontend's HTTP refetch returns blank data for that perspective's
+    // slice of the model. Lock: PostAllPerspectivesInline count == 1 per event, after BOTH.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+      new("PerspectiveBeta", "global::Test.PerspectiveBeta", "global::Test.ModelBeta",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+    };
+
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(streamId, eventId, typeof(AlphaEvent), """{"Data":"x"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(eventId, new AlphaEvent("x"))
+    };
+
+    var (worker, coordinator, _, _, invoker, lc, harness) =
+      _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [streamId]);
+
+    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+
+    await Assert.That(lc.AreAllPerspectivesComplete(eventId)).IsTrue()
+      .Because("Both perspectives signaled — WhenAll resolves.");
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostAllPerspectivesInline)).IsEqualTo(1)
+      .Because("Exactly once — never zero (gate stuck) and never twice (gate fires per-perspective instead of per-event).");
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task DrainMode_TwoStreamsTwoPerspectivesEach_EachStreamFiresPostAllPerspectivesOnceAsync() {
+    // Multi-stream extension: per-event WhenAll must scope to that event — firing
+    // PostAllPerspectives once per (stream, event) tuple. Catches a regression where the
+    // gate state leaks across streams.
+    var stream1 = (Guid)TrackedGuid.NewMedo();
+    var stream2 = (Guid)TrackedGuid.NewMedo();
+    var event1 = (Guid)TrackedGuid.NewMedo();
+    var event2 = (Guid)TrackedGuid.NewMedo();
+
+    var registrations = new List<PerspectiveRegistrationInfo> {
+      new("PerspectiveAlpha", "global::Test.PerspectiveAlpha", "global::Test.ModelAlpha",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+      new("PerspectiveBeta", "global::Test.PerspectiveBeta", "global::Test.ModelBeta",
+        [TypeNameFormatter.Format(typeof(AlphaEvent))]),
+    };
+
+    var rawEvents = new List<StreamEventData> {
+      _createRawEvent(stream1, event1, typeof(AlphaEvent), """{"Data":"a"}"""),
+      _createRawEvent(stream2, event2, typeof(AlphaEvent), """{"Data":"b"}""")
+    };
+    var typedEvents = new List<MessageEnvelope<IEvent>> {
+      _createEnvelope(event1, new AlphaEvent("a")),
+      _createEnvelope(event2, new AlphaEvent("b")),
+    };
+
+    var (worker, coordinator, _, _, invoker, _, harness) =
+      _createWorkerWithLifecycle(registrations, rawEvents, typedEvents, [stream1, stream2]);
+
+    await _runWorkerOneBatchAsync(worker, coordinator, harness);
+
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostAllPerspectivesInline)).IsEqualTo(2)
+      .Because("Two events × one fire each = exactly two PostAllPerspectivesInline invocations.");
+    await Assert.That(invoker.CountForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(2);
+  }
 }
 
 // ========================================
