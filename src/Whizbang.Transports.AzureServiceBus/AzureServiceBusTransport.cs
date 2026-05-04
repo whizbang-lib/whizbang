@@ -147,6 +147,85 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <summary>
+  /// Returns true when an exception thrown from
+  /// <c>CompleteMessageAsync</c>/<c>AbandonMessageAsync</c>/<c>DeadLetterMessageAsync</c>
+  /// represents a lost lock or shutdown — meaning the operation cannot succeed and the
+  /// broker will redeliver the message naturally (or it has already been settled).
+  /// Swallowing these in the consumer event handler prevents the unhandled exception from
+  /// surfacing as noise on the processor's <c>ProcessErrorAsync</c> path.
+  /// </summary>
+  private static bool _isSettlementShouldSwallow(Exception ex) {
+    if (ex is ObjectDisposedException) {
+      return true;
+    }
+    if (ex is ServiceBusException sbEx) {
+      return sbEx.Reason is
+        ServiceBusFailureReason.MessageLockLost or
+        ServiceBusFailureReason.SessionLockLost or
+        ServiceBusFailureReason.MessageNotFound;
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Wraps <see cref="ProcessMessageEventArgs.AbandonMessageAsync(ServiceBusReceivedMessage,
+  /// IDictionary{string, object}, CancellationToken)"/> with a swallow on lock-lost / disposed
+  /// shutdown — same rationale as the bulk-batch helpers and the RabbitMQ NACK helpers.
+  /// </summary>
+  private async Task _safeAbandonAsync(ProcessMessageEventArgs args) {
+    try {
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+      _logger.LogWarning(ex,
+        "ASB Abandon swallowed for message {MessageId} — lock lost or processor disposed; broker will redeliver",
+        args.Message.MessageId);
+    }
+  }
+
+  /// <summary>
+  /// Wraps <see cref="ProcessSessionMessageEventArgs.AbandonMessageAsync"/> with the same
+  /// swallow policy as <see cref="_safeAbandonAsync(ProcessMessageEventArgs)"/>.
+  /// </summary>
+  private async Task _safeAbandonAsync(ProcessSessionMessageEventArgs args) {
+    try {
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+      _logger.LogWarning(ex,
+        "ASB Abandon swallowed for session message {MessageId} (session {SessionId}) — lock lost or processor disposed; broker will redeliver",
+        args.Message.MessageId, args.SessionId);
+    }
+  }
+
+  /// <summary>
+  /// Wraps <see cref="ProcessMessageEventArgs.DeadLetterMessageAsync"/> with the same
+  /// swallow policy. If lock is lost the message returns to the queue for redelivery; on
+  /// next attempt the same DLQ decision will be made.
+  /// </summary>
+  private async Task _safeDeadLetterAsync(ProcessMessageEventArgs args, string reason, string description) {
+    try {
+      await args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken: args.CancellationToken);
+    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+      _logger.LogWarning(ex,
+        "ASB DeadLetter swallowed for message {MessageId} — lock lost or processor disposed; broker will redeliver",
+        args.Message.MessageId);
+    }
+  }
+
+  /// <summary>
+  /// Wraps <see cref="ProcessSessionMessageEventArgs.DeadLetterMessageAsync"/> with the
+  /// same swallow policy.
+  /// </summary>
+  private async Task _safeDeadLetterAsync(ProcessSessionMessageEventArgs args, string reason, string description) {
+    try {
+      await args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken: args.CancellationToken);
+    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+      _logger.LogWarning(ex,
+        "ASB DeadLetter swallowed for session message {MessageId} (session {SessionId}) — lock lost or processor disposed; broker will redeliver",
+        args.Message.MessageId, args.SessionId);
+    }
+  }
+
+  /// <summary>
   /// Invokes the recovery handler if set and appropriate.
   /// </summary>
   private async Task _invokeRecoveryHandlerAsync() {
@@ -617,7 +696,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     AzureServiceBusSubscription subscription
   ) {
     if (!subscription.IsActive) {
-      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      await _safeAbandonAsync(args);
       return;
     }
 
@@ -780,7 +859,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               destination.Address,
               destination.RoutingKey ?? _options.DefaultSubscriptionName
             );
-            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            await _safeAbandonAsync(args);
             return;
           }
 
@@ -815,7 +894,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               destination.Address,
               destination.RoutingKey ?? _options.DefaultSubscriptionName
             );
-            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+            await _safeAbandonAsync(args);
             return;
           }
 
@@ -983,12 +1062,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.Address,
           subscription
         );
-        await args.DeadLetterMessageAsync(
-          args.Message,
-          decision.Reason,
-          decision.Description,
-          cancellationToken: args.CancellationToken
-        );
+        await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
         return (null, decision.EnvelopeTypeName);
 
       default:
@@ -1061,12 +1135,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.Address,
           subscription
         );
-        await args.DeadLetterMessageAsync(
-          args.Message,
-          decision.Reason,
-          decision.Description,
-          cancellationToken: args.CancellationToken
-        );
+        await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
         return (null, decision.EnvelopeTypeName);
 
       default:
@@ -1090,14 +1159,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     var deliveryCount = args.Message.DeliveryCount;
     if (deliveryCount >= _options.MaxDeliveryAttempts) {
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MaxDeliveryAttemptsExceeded",
-        ex.Message,
-        cancellationToken: args.CancellationToken
-      );
+      await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
     } else {
-      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      await _safeAbandonAsync(args);
     }
   }
 
@@ -1126,12 +1190,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ex.GetType().Name,
         ex.Message
       );
-      await args.DeadLetterMessageAsync(
-        args.Message,
-        "MaxDeliveryAttemptsExceeded",
-        ex.Message,
-        cancellationToken: args.CancellationToken
-      );
+      await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
     } else {
       _logger.LogWarning(
         "ABANDON reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
@@ -1143,7 +1202,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ex.GetType().Name,
         ex.Message
       );
-      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+      await _safeAbandonAsync(args);
     }
   }
 
