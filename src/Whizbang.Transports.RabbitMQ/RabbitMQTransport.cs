@@ -763,6 +763,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
   /// <summary>
   /// Nacks a message when the subscription is paused, requeueing for later delivery.
+  /// Channel-closed / unknown-delivery-tag exceptions are swallowed because the broker
+  /// will redeliver the unacked message automatically after auto-recovery, and a stale
+  /// delivery tag (PRECONDITION_FAILED 406) cannot be acted on either way. Without this
+  /// guard, the unhandled exception escapes <c>AsyncEventingBasicConsumer.ReceivedAsync</c>
+  /// and crashes the consumer dispatch thread.
   /// </summary>
   private async Task _nackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
@@ -770,7 +775,13 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
-    await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
+    try {
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(ex,
+        "RabbitMQ channel closed/disposed while NACKing paused message {MessageId} from queue {QueueName} - broker will redeliver",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, queueName);
+    }
   }
 
   /// <summary>
@@ -807,6 +818,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
   /// <summary>
   /// Nacks a message that failed deserialization, sending it to the dead letter queue.
+  /// Channel-closed exceptions are swallowed for the same reason as
+  /// <see cref="_nackPausedMessageAsync"/> — broker auto-recovery will redeliver.
   /// </summary>
   private async Task _nackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
@@ -814,7 +827,13 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
-    await channel.BasicNackAsync(args.DeliveryTag, false, false);
+    try {
+      await channel.BasicNackAsync(args.DeliveryTag, false, false);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(ex,
+        "RabbitMQ channel closed/disposed while NACKing deserialization-failed message {MessageId} from queue {QueueName} - broker will redeliver",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, queueName);
+    }
   }
 
   /// <summary>
