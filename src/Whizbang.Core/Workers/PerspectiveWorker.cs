@@ -293,6 +293,7 @@ public partial class PerspectiveWorker(
   private async Task _runChannelConsumerLoopAsync(CancellationToken stoppingToken) {
     var workReader = _perspectiveChannelWriter!.Reader;
     var drainReader = _perspectiveDrainChannel?.Reader;
+    var drainBatcherOpts = _options.DrainBatcher;
 
     while (!stoppingToken.IsCancellationRequested) {
       // Block until either channel has work. WaitToReadAsync returns true when an item is
@@ -324,7 +325,7 @@ public partial class PerspectiveWorker(
         workBatch.Add(item);
       }
       if (drainReader is not null) {
-        while (drainStreamIds.Count < _options.MaxStreamsPerBatch && drainReader.TryRead(out var streamId)) {
+        while (drainStreamIds.Count < drainBatcherOpts.MaxSize && drainReader.TryRead(out var streamId)) {
           drainStreamIds.Add(streamId);
         }
       }
@@ -341,6 +342,19 @@ public partial class PerspectiveWorker(
         continue;
       }
 
+      // Sliding-window batching on the DRAIN channel only. After collecting the initial
+      // drain items, wait up to SlidingWindow for additional stream_id signals to arrive,
+      // bounded by MaxWait. This eliminates the a consumer 2026-05-04 cursor-inversion symptom:
+      // events arriving at the BFF inbox in two clumps milliseconds apart now accumulate
+      // into one drain batch so the per-stream fetch returns events in monotonic order.
+      // The work channel is NOT batched here — its dedup semantics depend on per-cycle
+      // processing of PerspectiveWork items.
+      if (drainReader is not null && drainStreamIds.Count > 0
+          && drainStreamIds.Count < drainBatcherOpts.MaxSize) {
+        await _accumulateDrainSignalsWithinWindowAsync(
+          drainReader, drainStreamIds, drainBatcherOpts, stoppingToken).ConfigureAwait(false);
+      }
+
       try {
         await ProcessChannelBatchAsync(workBatch, drainStreamIds, stoppingToken).ConfigureAwait(false);
         _periodicStaleTrackingCleanup();
@@ -350,6 +364,55 @@ public partial class PerspectiveWorker(
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingCheckpoints(_logger, ex);
         throw;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Sliding-window accumulator for drain channel stream_id signals. After the initial drain
+  /// has captured at least one stream_id, this method waits up to <c>SlidingWindow</c> for
+  /// more signals (resetting on each new arrival) so the resulting batch represents a
+  /// coherent set of streams whose events landed in <c>wh_perspective_events</c> close in
+  /// time. Bounded by <c>MaxWait</c> from the first arrival and <c>MaxSize</c> on count.
+  /// </summary>
+  private static async Task _accumulateDrainSignalsWithinWindowAsync(
+      System.Threading.Channels.ChannelReader<Guid> drainReader,
+      List<Guid> drainStreamIds,
+      SlidingWindowBatcherOptions opts,
+      CancellationToken stoppingToken) {
+    var firstArrival = TimeProvider.System.GetTimestamp();
+    var lastArrival = firstArrival;
+
+    while (drainStreamIds.Count < opts.MaxSize) {
+      var elapsedSinceLast = TimeProvider.System.GetElapsedTime(lastArrival);
+      var elapsedSinceFirst = TimeProvider.System.GetElapsedTime(firstArrival);
+      var slidingRemaining = opts.SlidingWindow - elapsedSinceLast;
+      var maxWaitRemaining = opts.MaxWait - elapsedSinceFirst;
+      var waitFor = slidingRemaining < maxWaitRemaining ? slidingRemaining : maxWaitRemaining;
+      if (waitFor <= TimeSpan.Zero) {
+        return;
+      }
+
+      using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+      var arrivalTask = drainReader.WaitToReadAsync(waitCts.Token).AsTask();
+      var timerTask = Task.Delay(waitFor, waitCts.Token);
+      var completed = await Task.WhenAny(arrivalTask, timerTask).ConfigureAwait(false);
+      await waitCts.CancelAsync();
+
+      if (stoppingToken.IsCancellationRequested) {
+        return;
+      }
+      if (completed == timerTask) {
+        return;
+      }
+
+      var moreDrained = false;
+      while (drainStreamIds.Count < opts.MaxSize && drainReader.TryRead(out var streamId)) {
+        drainStreamIds.Add(streamId);
+        moreDrained = true;
+      }
+      if (moreDrained) {
+        lastArrival = TimeProvider.System.GetTimestamp();
       }
     }
   }
@@ -3125,6 +3188,20 @@ public class PerspectiveWorkerOptions {
   /// Default: 300
   /// </summary>
   public int MaxStreamsPerBatch { get; set; } = 300;
+
+  /// <summary>
+  /// Sliding-window batching policy for stream_id signals from the perspective drain
+  /// channel. After the first signal arrives, the worker waits up to
+  /// <see cref="SlidingWindowBatcherOptions.SlidingWindow"/> for additional signals
+  /// before fetching events — letting more arrivals accumulate so the per-stream
+  /// fetch returns a coherent in-order chunk. Bounded by
+  /// <see cref="SlidingWindowBatcherOptions.MaxWait"/> and
+  /// <see cref="SlidingWindowBatcherOptions.MaxSize"/>. The work channel (legacy
+  /// <see cref="PerspectiveWork"/> items) is read in the same WhenAny loop but is
+  /// NOT batched — the dedup tests assert per-cycle work-item processing semantics.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode#sliding-window</docs>
+  public SlidingWindowBatcherOptions DrainBatcher { get; set; } = new();
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
