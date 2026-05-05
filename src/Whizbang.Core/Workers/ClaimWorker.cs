@@ -189,13 +189,16 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private async Task _distributeAsync(WorkBatch batch, CancellationToken ct) {
+    // Ordering invariant: write each category in MessageId order so downstream channel readers
+    // (which preserve enqueue order) receive same-stream items chronologically. See
+    // plans/ordered-stream-invariant.md.
     if (_outboxChannel is not null) {
-      foreach (var ow in batch.OutboxWork) {
+      foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
         await _outboxChannel.WriteAsync(ow, ct);
       }
     }
     if (_inboxChannel is not null) {
-      foreach (var iw in batch.InboxWork) {
+      foreach (var iw in batch.InboxWork.OrderByMessageId()) {
         await _inboxChannel.WriteAsync(iw, ct);
       }
     }
