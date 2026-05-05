@@ -125,15 +125,20 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     var seen = new HashSet<Guid>();
     var hadAnyNew = false;
     while (!ct.IsCancellationRequested) {
-      var rows = await coordinator.FetchInboxBatchAsync(
+      var rowsRaw = await coordinator.FetchInboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
 
-      if (rows.Count == 0) {
+      if (rowsRaw.Count == 0) {
         if (hadAnyNew) {
           _inboxChannelWriter.SignalNewInboxWorkAvailable();
         }
         return;
       }
+
+      // Ordering invariant: defensive sort by message_id. SQL fetch_inbox_batch already
+      // orders by (stream_id, message_id), but the apply boundary trusts only message_id.
+      // See plans/ordered-stream-invariant.md.
+      var rows = rowsRaw.OrderByMessageId().ToList();
 
       var newRows = 0;
       foreach (var row in rows) {

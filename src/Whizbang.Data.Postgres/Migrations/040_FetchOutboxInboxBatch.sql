@@ -33,11 +33,14 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Ordering invariant: sort by (stream_id, message_id). UUIDv7 message_ids ARE chronological;
+  -- created_at is wall-clock at insert and may diverge under concurrent producers. Within a
+  -- stream, message_id is the canonical time order. See plans/ordered-stream-invariant.md.
   RETURN QUERY
   WITH ranked AS (
     SELECT
       o.*,
-      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at, o.message_id) AS rank_in_stream
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.message_id) AS rank_in_stream
     FROM __SCHEMA__.wh_outbox o
     WHERE o.stream_id = ANY(p_stream_ids)
       AND o.instance_id = p_instance_id
@@ -61,7 +64,7 @@ BEGIN
     r.is_event
   FROM ranked r
   WHERE r.rank_in_stream <= p_max_per_stream
-  ORDER BY r.stream_id, r.created_at, r.message_id;
+  ORDER BY r.stream_id, r.message_id;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -92,11 +95,14 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Ordering invariant: sort by (stream_id, message_id). UUIDv7 message_ids ARE chronological;
+  -- received_at is wall-clock at insert and may diverge under parallel transport delivery.
+  -- See plans/ordered-stream-invariant.md.
   RETURN QUERY
   WITH ranked AS (
     SELECT
       i.*,
-      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at, i.message_id) AS rank_in_stream
+      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.message_id) AS rank_in_stream
     FROM __SCHEMA__.wh_inbox i
     WHERE i.stream_id = ANY(p_stream_ids)
       AND i.instance_id = p_instance_id
@@ -118,7 +124,7 @@ BEGIN
     r.is_event
   FROM ranked r
   WHERE r.rank_in_stream <= p_max_per_stream
-  ORDER BY r.stream_id, r.received_at, r.message_id;
+  ORDER BY r.stream_id, r.message_id;
 END;
 $$ LANGUAGE plpgsql;
 

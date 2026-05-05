@@ -39,4 +39,16 @@ public static class MessageOrderingExtensions {
   /// </summary>
   public static IOrderedEnumerable<InboxWork> OrderByMessageId(this IEnumerable<InboxWork> source)
     => source.OrderBy(static x => x.MessageId);
+
+  /// <summary>
+  /// Sorts a sequence of <see cref="OutboxBatchRow"/> by <see cref="OutboxBatchRow.MessageId"/> ascending.
+  /// </summary>
+  public static IOrderedEnumerable<OutboxBatchRow> OrderByMessageId(this IEnumerable<OutboxBatchRow> source)
+    => source.OrderBy(static x => x.MessageId);
+
+  /// <summary>
+  /// Sorts a sequence of <see cref="InboxBatchRow"/> by <see cref="InboxBatchRow.MessageId"/> ascending.
+  /// </summary>
+  public static IOrderedEnumerable<InboxBatchRow> OrderByMessageId(this IEnumerable<InboxBatchRow> source)
+    => source.OrderBy(static x => x.MessageId);
 }

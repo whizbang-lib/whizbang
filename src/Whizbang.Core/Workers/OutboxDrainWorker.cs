@@ -128,12 +128,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // The set is bounded by drain-session size and GC'd on return.
     var seen = new HashSet<Guid>();
     while (!ct.IsCancellationRequested) {
-      var rows = await coordinator.FetchOutboxBatchAsync(
+      var rowsRaw = await coordinator.FetchOutboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
 
-      if (rows.Count == 0) {
+      if (rowsRaw.Count == 0) {
         return;
       }
+
+      // Ordering invariant: defensive sort by message_id. SQL fetch_outbox_batch already
+      // orders by (stream_id, message_id), but the apply boundary trusts only message_id.
+      // See plans/ordered-stream-invariant.md.
+      var rows = rowsRaw.OrderByMessageId().ToList();
 
       var newRows = 0;
       foreach (var row in rows) {
