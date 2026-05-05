@@ -1010,12 +1010,14 @@ public partial class PerspectiveWorker(
   /// before any Apply dispatch or lifecycle-coordinator tracking. Raw rows are preserved in
   /// rawByEventId so every queued EventWorkId still receives its own completion write.
   /// </summary>
-  private static Dictionary<Guid, List<MessageEnvelope<IEvent>>> _groupAndDedupeDrainModeEventsByStream(
+  internal static Dictionary<Guid, List<MessageEnvelope<IEvent>>> _groupAndDedupeDrainModeEventsByStream(
       List<MessageEnvelope<IEvent>> typedEvents,
       ILookup<Guid, StreamEventData> rawByEventId) {
     return typedEvents
       .GroupBy(e => rawByEventId[e.MessageId.Value].First().StreamId)
-      .ToDictionary(g => g.Key, g => g.DistinctBy(e => e.MessageId.Value).ToList());
+      .ToDictionary(
+        g => g.Key,
+        g => g.DistinctBy(e => e.MessageId.Value).OrderByMessageId().ToList());
   }
 
   /// <summary>Batch-fetches cursors for any streams not already in the local cache.</summary>
@@ -1058,6 +1060,7 @@ public partial class PerspectiveWorker(
         var filteredEvents = streamEvents
             .Where(e => batchContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
               && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+            .OrderByMessageId()
             .ToList();
 
         if (filteredEvents.Count == 0) {
