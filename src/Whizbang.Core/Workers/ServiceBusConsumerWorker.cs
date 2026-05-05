@@ -120,16 +120,29 @@ public partial class ServiceBusConsumerWorker(
 
         var subscription = await _transport.SubscribeBatchAsync(
           async (batch, ct) => {
-            // Stream-affinity routing: each message goes through _streamSerializer keyed by
-            // _extractStreamId(envelope). Same-stream messages execute serially through one
-            // per-stream worker; different streams parallelize. We await per-message so
-            // transport ack/nack semantics are preserved (handler completion fires the TCS,
-            // any exception propagates back to the ASB callback for redelivery).
+            // Stream-affinity routing: enqueue all batch messages to _streamSerializer first
+            // (keyed by _extractStreamId), then await all completions concurrently. This
+            // preserves cross-stream parallelism — if message #1 goes to stream A and message
+            // #2 goes to stream B, B's worker starts immediately even if A's hangs.
+            //
+            // Earlier code did `await _streamSerializer.EnqueueAsync; await done.Task` per
+            // message in a foreach, which serialized the entire batch by accident: a hung A
+            // message blocked B from even entering the serializer (JDX 2026-05-05 incident —
+            // 368 inbox messages stuck because one stream's processing stalled).
+            //
+            // Per-message TaskCompletionSource preserves transport ack/nack semantics: handler
+            // success → SetResult; exception → SetException → propagates to the ASB callback
+            // for redelivery via WhenAll. WhenAll surfaces the first exception once all tasks
+            // complete (success or fault), matching the previous foreach-await semantics.
+            var pending = new List<Task>(batch.Count);
             foreach (var msg in batch) {
               var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
               await _streamSerializer.EnqueueAsync(
                 new AsbReceivedItem(msg.Envelope, msg.EnvelopeType, _handleMessageAsync, done), ct);
-              await done.Task.WaitAsync(ct);
+              pending.Add(done.Task);
+            }
+            if (pending.Count > 0) {
+              await Task.WhenAll(pending).WaitAsync(ct);
             }
           },
           destination,
