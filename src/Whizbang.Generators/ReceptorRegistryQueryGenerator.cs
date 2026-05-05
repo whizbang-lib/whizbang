@@ -1,0 +1,320 @@
+using System.Collections.Immutable;
+using System.Linq;
+using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace Whizbang.Generators;
+
+/// <summary>
+/// Emits a static class <c>WhizbangReceptorRegistryQuery</c> that the receive boundary uses to
+/// decide whether a message has any consumer registered in the compilation, and which lifecycle
+/// stages have receptors. Compile-time-known via source generation. Zero runtime reflection in
+/// the consumer code — the generated class is HashSet lookups against fully-qualified type-name strings.
+/// </summary>
+/// <remarks>
+/// <para>Slice 1 of plans/pump-then-process.md. Independent of the existing
+/// <see cref="ReceptorDiscoveryGenerator"/> + <see cref="PerspectiveDiscoveryGenerator"/> per the
+/// "Multiple Independent Generators" pattern (cache isolation).</para>
+///
+/// <para>Three discovery pipelines feed into the generated lookup:</para>
+/// <list type="bullet">
+///   <item>Receptors with their lifecycle stages (from <c>[FireAt(LifecycleStage.X)]</c>) — gives both per-stage lookup and the inbox-handler set</item>
+///   <item>Perspectives — gives event types that are consumed by projections even when no receptor is registered</item>
+///   <item>Notification-tag attributes (<c>[NotificationTag]</c> / <c>[NotificationIdTag]</c>) — gives event types that drive UI tag notifications</item>
+/// </list>
+///
+/// <para>The receive boundary uses <c>HasAnyConsumer(messageType)</c> to drop unsubscribed
+/// messages immediately (no INSERT, no deserialize) and <c>HasReceptors(stage, messageType)</c>
+/// to skip lifecycle deserialize when no receptors are registered for that stage+type.</para>
+/// </remarks>
+[Generator]
+public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
+
+  private const string IRECEPTOR_PREFIX = "global::Whizbang.Core.IReceptor";
+  private const string ISYNCRECEPTOR_PREFIX = "global::Whizbang.Core.ISyncReceptor";
+  private const string IPERSPECTIVE_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
+  private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
+  private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
+
+  /// <summary>The lifecycle stages we expose lookups for. Mirror of <c>Whizbang.Core.Messaging.LifecycleStage</c> values
+  /// that the receive boundary cares about (PreInbox + PostInbox).</summary>
+  private static readonly string[] _exposedStages = [
+    "PreInboxDetached",
+    "PreInboxInline",
+    "PostInboxDetached",
+    "PostInboxInline",
+  ];
+
+  /// <inheritdoc/>
+  public void Initialize(IncrementalGeneratorInitializationContext context) {
+    var receptors = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractReceptorEntry(ctx, ct)
+    ).Where(static info => info is not null);
+
+    var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractPerspectiveEntry(ctx, ct)
+    ).Where(static info => info is not null);
+
+    var taggedTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) =>
+          (node is ClassDeclarationSyntax c && c.AttributeLists.Count > 0)
+          || (node is RecordDeclarationSyntax r && r.AttributeLists.Count > 0),
+        transform: static (ctx, ct) => _extractTaggedMessageEntry(ctx, ct)
+    ).Where(static name => name is not null);
+
+    var combined = receptors.Collect()
+      .Combine(perspectives.Collect())
+      .Combine(taggedTypes.Collect());
+
+    context.RegisterSourceOutput(combined, static (ctx, data) => {
+      var receptorEntries = data.Left.Left;
+      var perspectiveEntries = data.Left.Right;
+      var taggedEntries = data.Right;
+      _emitRegistryQuery(ctx, receptorEntries, perspectiveEntries, taggedEntries);
+    });
+  }
+
+  // ===== Discovery: receptors =====
+
+  /// <summary>
+  /// One entry per (receptor class × stage) — so a receptor with two FireAt attributes produces
+  /// two entries. Receptors with no FireAt fall back to ImmediateDetached (which we don't expose
+  /// in the gate; it's not Pre/PostInbox), but we still record them as inbox handlers.
+  /// </summary>
+  private sealed record ReceptorRegistryEntry(
+      string MessageType,
+      ImmutableArray<string> Stages,
+      bool IsInboxHandler
+  );
+
+  private static ReceptorRegistryEntry? _extractReceptorEntry(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken ct) {
+    var classDeclaration = (ClassDeclarationSyntax)context.Node;
+    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
+    if (classSymbol is null || classSymbol.IsAbstract) {
+      return null;
+    }
+
+    var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i => {
+      var s = i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      return s.StartsWith(IRECEPTOR_PREFIX, System.StringComparison.Ordinal)
+          || s.StartsWith(ISYNCRECEPTOR_PREFIX, System.StringComparison.Ordinal);
+    });
+    if (receptorInterface is null || receptorInterface.TypeArguments.Length == 0) {
+      return null;
+    }
+
+    var messageType = receptorInterface.TypeArguments[0]
+      .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+      .Replace("global::", "");
+
+    var stages = ImmutableArray.CreateBuilder<string>();
+    foreach (var attr in classSymbol.GetAttributes()) {
+      if (attr.AttributeClass?.ToDisplayString() != FIREAT_ATTRIBUTE) {
+        continue;
+      }
+      if (attr.ConstructorArguments.Length == 0) {
+        continue;
+      }
+      var arg = attr.ConstructorArguments[0];
+      if (arg.Type is INamedTypeSymbol enumType
+          && enumType.Name == "LifecycleStage"
+          && arg.Value is int v) {
+        var member = enumType.GetMembers().OfType<IFieldSymbol>()
+          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
+        if (member is not null) {
+          stages.Add(member.Name);
+        }
+      }
+    }
+
+    // A receptor with no [FireAt] is a direct inbox handler (defaults to ImmediateDetached
+    // post-storage). One with [FireAt(PreInboxInline)] is a lifecycle receptor at that stage.
+    // Receptors at PreInbox/PostInbox stages are NOT inbox handlers — they're lifecycle hooks.
+    // Receptors with no stages OR with stages unrelated to PreInbox/PostInbox count as inbox handlers.
+    var hasOnlyLifecycleStages = stages.Count > 0
+      && stages.All(s => s.StartsWith("PreInbox", System.StringComparison.Ordinal)
+                      || s.StartsWith("PostInbox", System.StringComparison.Ordinal)
+                      || s.StartsWith("PrePerspective", System.StringComparison.Ordinal)
+                      || s.StartsWith("PostPerspective", System.StringComparison.Ordinal)
+                      || s.StartsWith("PostAllPerspectives", System.StringComparison.Ordinal)
+                      || s.StartsWith("PostLifecycle", System.StringComparison.Ordinal));
+    var isInboxHandler = !hasOnlyLifecycleStages;
+
+    return new ReceptorRegistryEntry(messageType, stages.ToImmutable(), isInboxHandler);
+  }
+
+  // ===== Discovery: perspectives =====
+
+  /// <summary>One entry per (perspective × event type). Perspectives consume events even when
+  /// no receptor is registered for that type.</summary>
+  private sealed record PerspectiveRegistryEntry(string EventType);
+
+  private static PerspectiveRegistryEntry[]? _extractPerspectiveEntry(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken ct) {
+    var classDeclaration = (ClassDeclarationSyntax)context.Node;
+    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
+    if (classSymbol is null || classSymbol.IsAbstract) {
+      return null;
+    }
+
+    var entries = ImmutableArray.CreateBuilder<PerspectiveRegistryEntry>();
+    foreach (var iface in classSymbol.AllInterfaces) {
+      var prefix = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      if (!prefix.StartsWith(IPERSPECTIVE_PREFIX, System.StringComparison.Ordinal)) {
+        continue;
+      }
+      // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> — first type arg is the model, rest are events
+      for (var i = 1; i < iface.TypeArguments.Length; i++) {
+        var eventType = iface.TypeArguments[i]
+          .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+          .Replace("global::", "");
+        entries.Add(new PerspectiveRegistryEntry(eventType));
+      }
+    }
+    return entries.Count == 0 ? null : entries.ToArray();
+  }
+
+  // ===== Discovery: tagged messages =====
+
+  /// <summary>
+  /// Type names of message types decorated with [NotificationTag] or [NotificationIdTag].
+  /// These have a downstream consumer (the SignalR tagged-notification dispatcher) even without
+  /// a receptor or perspective.
+  /// </summary>
+  private static string? _extractTaggedMessageEntry(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken ct) {
+    var typeDecl = context.Node;
+    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) as INamedTypeSymbol;
+    if (symbol is null || symbol.IsAbstract) {
+      return null;
+    }
+    var hasTag = symbol.GetAttributes().Any(a => {
+      var name = a.AttributeClass?.ToDisplayString();
+      return name == NOTIFICATION_TAG_ATTRIBUTE || name == NOTIFICATION_ID_TAG_ATTRIBUTE;
+    });
+    if (!hasTag) {
+      return null;
+    }
+    return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+  }
+
+  // ===== Emission =====
+
+  private static void _emitRegistryQuery(
+      SourceProductionContext context,
+      ImmutableArray<ReceptorRegistryEntry?> receptors,
+      ImmutableArray<PerspectiveRegistryEntry[]?> perspectives,
+      ImmutableArray<string?> taggedTypes) {
+
+    // Per-stage type sets (Pre/PostInbox only — those are what the receive boundary gates on)
+    var stageTypes = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>(System.StringComparer.Ordinal);
+    foreach (var stage in _exposedStages) {
+      stageTypes[stage] = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+    }
+
+    var inboxHandlerTypes = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+
+    foreach (var entry in receptors) {
+      if (entry is null) {
+        continue;
+      }
+      foreach (var stage in entry.Stages) {
+        if (stageTypes.TryGetValue(stage, out var set)) {
+          set.Add(entry.MessageType);
+        }
+      }
+      if (entry.IsInboxHandler) {
+        inboxHandlerTypes.Add(entry.MessageType);
+      }
+    }
+
+    var anyConsumerTypes = new System.Collections.Generic.HashSet<string>(inboxHandlerTypes, System.StringComparer.Ordinal);
+    foreach (var set in stageTypes.Values) {
+      anyConsumerTypes.UnionWith(set);
+    }
+    foreach (var perspectiveEntries in perspectives) {
+      if (perspectiveEntries is null) {
+        continue;
+      }
+      foreach (var p in perspectiveEntries) {
+        anyConsumerTypes.Add(p.EventType);
+      }
+    }
+    foreach (var taggedType in taggedTypes) {
+      if (taggedType is not null) {
+        anyConsumerTypes.Add(taggedType);
+      }
+    }
+
+    var sb = new StringBuilder();
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine("// Generated by Whizbang.Generators.ReceptorRegistryQueryGenerator");
+    sb.AppendLine("// DO NOT EDIT - regenerated each build.");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+    sb.AppendLine("using System.Collections.Generic;");
+    sb.AppendLine("using Whizbang.Core.Messaging;");
+    sb.AppendLine();
+    sb.AppendLine("namespace Whizbang.Core.Generated;");
+    sb.AppendLine();
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Compile-time-known consumer registry for the receive boundary's gate filter.");
+    sb.AppendLine("/// See plans/pump-then-process.md slice 1.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("public static class WhizbangReceptorRegistryQuery {");
+    sb.AppendLine();
+
+    foreach (var stage in _exposedStages) {
+      sb.AppendLine($"  private static readonly HashSet<string> _typesWith_{stage} = new(System.StringComparer.Ordinal) {{");
+      foreach (var type in stageTypes[stage].OrderBy(s => s, System.StringComparer.Ordinal)) {
+        sb.AppendLine($"    \"{type}\",");
+      }
+      sb.AppendLine("  };");
+      sb.AppendLine();
+    }
+
+    sb.AppendLine("  private static readonly HashSet<string> _typesWithInboxHandler = new(System.StringComparer.Ordinal) {");
+    foreach (var type in inboxHandlerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
+      sb.AppendLine($"    \"{type}\",");
+    }
+    sb.AppendLine("  };");
+    sb.AppendLine();
+
+    sb.AppendLine("  private static readonly HashSet<string> _typesWithAnyConsumer = new(System.StringComparer.Ordinal) {");
+    foreach (var type in anyConsumerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
+      sb.AppendLine($"    \"{type}\",");
+    }
+    sb.AppendLine("  };");
+    sb.AppendLine();
+
+    // Methods
+    sb.AppendLine("  /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>");
+    sb.AppendLine("  public static bool HasReceptors(LifecycleStage stage, string messageType) {");
+    sb.AppendLine("    return stage switch {");
+    foreach (var stage in _exposedStages) {
+      sb.AppendLine($"      LifecycleStage.{stage} => _typesWith_{stage}.Contains(messageType),");
+    }
+    sb.AppendLine("      _ => false,");
+    sb.AppendLine("    };");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>True if any inbox handler (IReceptor without lifecycle FireAt) is registered for the type.</summary>");
+    sb.AppendLine("  public static bool HasInboxHandler(string messageType) =>");
+    sb.AppendLine("    _typesWithInboxHandler.Contains(messageType);");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>True if any consumer (handler / lifecycle receptor / perspective / tag-attribute) cares about this message type.</summary>");
+    sb.AppendLine("  public static bool HasAnyConsumer(string messageType) =>");
+    sb.AppendLine("    _typesWithAnyConsumer.Contains(messageType);");
+    sb.AppendLine("}");
+
+    context.AddSource("WhizbangReceptorRegistryQuery.g.cs", sb.ToString());
+  }
+}
