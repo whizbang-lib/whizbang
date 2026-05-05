@@ -51,6 +51,29 @@ public partial class ServiceBusConsumerWorker(
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
+  // Stream-affinity per-stream serializer — slice 2 of plans/stream-affinity-everywhere.md.
+  // Routes received messages by stream_id so same-stream items process serially under one
+  // worker even when the transport delivers them across many parallel consumer threads.
+  // Different streams continue to run in parallel via independent per-stream workers.
+  private readonly PerStreamSerializer<AsbReceivedItem> _streamSerializer = new(
+    streamIdSelector: static item => _extractStreamId(item.Envelope),
+    processor: static (item, ct) => item.HandleAsync(ct));
+
+  private sealed record AsbReceivedItem(
+    IMessageEnvelope Envelope,
+    string? EnvelopeType,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> Handler,
+    TaskCompletionSource Done) {
+    public async Task HandleAsync(CancellationToken ct) {
+      try {
+        await Handler(Envelope, EnvelopeType, ct).ConfigureAwait(false);
+        Done.TrySetResult();
+      } catch (Exception ex) {
+        Done.TrySetException(ex);
+      }
+    }
+  }
+
   /// <summary>
   /// Pauses all subscriptions to temporarily stop receiving messages.
   /// Useful for test cleanup scenarios where draining is needed without competing consumers.
@@ -97,8 +120,16 @@ public partial class ServiceBusConsumerWorker(
 
         var subscription = await _transport.SubscribeBatchAsync(
           async (batch, ct) => {
+            // Stream-affinity routing: each message goes through _streamSerializer keyed by
+            // _extractStreamId(envelope). Same-stream messages execute serially through one
+            // per-stream worker; different streams parallelize. We await per-message so
+            // transport ack/nack semantics are preserved (handler completion fires the TCS,
+            // any exception propagates back to the ASB callback for redelivery).
             foreach (var msg in batch) {
-              await _handleMessageAsync(msg.Envelope, msg.EnvelopeType, ct);
+              var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+              await _streamSerializer.EnqueueAsync(
+                new AsbReceivedItem(msg.Envelope, msg.EnvelopeType, _handleMessageAsync, done), ct);
+              await done.Task.WaitAsync(ct);
             }
           },
           destination,
@@ -619,10 +650,13 @@ public partial class ServiceBusConsumerWorker(
   public override async Task StopAsync(CancellationToken cancellationToken) {
     LogWorkerStoppingGracefully(_logger);
 
-    // Dispose all subscriptions
+    // Dispose all subscriptions first so no new messages enter the serializer.
     foreach (var subscription in _subscriptions) {
       subscription.Dispose();
     }
+
+    // Drain in-flight per-stream work before exiting.
+    await _streamSerializer.FlushAndStopAsync(cancellationToken).ConfigureAwait(false);
 
     await base.StopAsync(cancellationToken);
   }
