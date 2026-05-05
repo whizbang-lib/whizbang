@@ -99,6 +99,56 @@ public class MessageOrderingExtensionsTests {
     await Assert.That(result).IsEmpty();
   }
 
+  // ===== OutboxBatchRow / InboxBatchRow overloads =====
+
+  [Test]
+  public async Task OrderByMessageId_OnOutboxBatchRow_ShuffledInput_ReturnsByMessageIdAscAsync() {
+    var streamId = _idProvider.NewGuid();
+    var r1 = _outboxBatchRow(streamId);
+    var r2 = _outboxBatchRow(streamId);
+    var r3 = _outboxBatchRow(streamId);
+    var shuffled = new[] { r3, r1, r2 };
+
+    var ordered = shuffled.OrderByMessageId().ToList();
+
+    await Assert.That(ordered[0].MessageId).IsEqualTo(r1.MessageId);
+    await Assert.That(ordered[1].MessageId).IsEqualTo(r2.MessageId);
+    await Assert.That(ordered[2].MessageId).IsEqualTo(r3.MessageId);
+  }
+
+  [Test]
+  public async Task OrderByMessageId_OnInboxBatchRow_ShuffledInput_ReturnsByMessageIdAscAsync() {
+    var streamId = _idProvider.NewGuid();
+    var r1 = _inboxBatchRow(streamId);
+    var r2 = _inboxBatchRow(streamId);
+    var r3 = _inboxBatchRow(streamId);
+    var shuffled = new[] { r2, r3, r1 };
+
+    var ordered = shuffled.OrderByMessageId().ToList();
+
+    await Assert.That(ordered[0].MessageId).IsEqualTo(r1.MessageId);
+    await Assert.That(ordered[1].MessageId).IsEqualTo(r2.MessageId);
+    await Assert.That(ordered[2].MessageId).IsEqualTo(r3.MessageId);
+  }
+
+  private OutboxBatchRow _outboxBatchRow(Guid streamId) => new() {
+    MessageId = _idProvider.NewGuid(),
+    StreamId = streamId,
+    Destination = "test-topic",
+    MessageType = "TestMessage",
+    EventData = "{}",
+    Metadata = "{}",
+  };
+
+  private InboxBatchRow _inboxBatchRow(Guid streamId) => new() {
+    MessageId = _idProvider.NewGuid(),
+    StreamId = streamId,
+    HandlerName = "TestHandler",
+    MessageType = "TestMessage",
+    EventData = "{}",
+    Metadata = "{}",
+  };
+
   // ===== Helpers =====
 
   private static MessageEnvelope<JsonElement> _envelope(Guid messageId) =>
