@@ -113,6 +113,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       CancellationToken cancellationToken = default) {
 
+    // Ordering invariant: sort by MessageId (UUIDv7 = chronological) before any processing.
+    // Defensive — callers should already pass sorted, but this is the apply boundary.
+    // See plans/ordered-stream-invariant.md.
+    if (events.Count > 1) {
+      events = events.OrderByMessageId().ToList();
+    }
+
     // Load current model or create new one
     var currentModel = await _perspectiveStore.GetByStreamIdAsync(
         streamId,
@@ -744,6 +751,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         eventTypes,
         cancellationToken)) {
       events.Add(envelope);
+    }
+
+    // Ordering invariant: sort by MessageId before applying. Event-store reads should be
+    // sorted at the source, but this is defensive — replays must be strictly time-ordered.
+    if (events.Count > 1) {
+      events = events.OrderByMessageId().ToList();
     }
 
     // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
