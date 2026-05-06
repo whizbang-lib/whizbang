@@ -270,60 +270,61 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     sb.AppendLine("#nullable enable");
     sb.AppendLine();
     sb.AppendLine("using System.Collections.Generic;");
+    sb.AppendLine("using System.Runtime.CompilerServices;");
     sb.AppendLine("using Whizbang.Core.Messaging;");
+    sb.AppendLine("using Whizbang.Core.Registry;");
     sb.AppendLine();
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
     sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Compile-time-known consumer registry for the receive boundary's gate filter.");
-    sb.AppendLine("/// See plans/pump-then-process.md slice 1.");
+    sb.AppendLine("/// Per-assembly registration of receptor / lifecycle-stage / handler / consumer info");
+    sb.AppendLine("/// into the shared <see cref=\"AssemblyRegistry{T}\"/> of");
+    sb.AppendLine("/// <see cref=\"ReceptorRegistryContribution\"/>. Runs at assembly load time via");
+    sb.AppendLine("/// <see cref=\"ModuleInitializerAttribute\"/>. The aggregating");
+    sb.AppendLine("/// <see cref=\"WhizbangReceptorRegistryQuery\"/> static reads the merged set across");
+    sb.AppendLine("/// every loaded assembly.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("public static class WhizbangReceptorRegistryQuery {");
+    sb.AppendLine("/// <remarks>");
+    sb.AppendLine("/// Originally the generator emitted a duplicate <c>WhizbangReceptorRegistryQuery</c>");
+    sb.AppendLine("/// static class with HashSets baked into every consuming assembly. Whizbang.Core's");
+    sb.AppendLine("/// in-Core adapter bound at compile time to Whizbang.Core's empty copy — silently");
+    sb.AppendLine("/// dropped every message at the receive-boundary drop-gate in production. Now uses");
+    sb.AppendLine("/// the same <c>AssemblyRegistry&lt;T&gt;</c> primitive as <c>AutoPopulatePopulatorRegistry</c>,");
+    sb.AppendLine("/// <c>JsonContextRegistry</c>, and <c>WhizbangIdProviderRegistry</c>.");
+    sb.AppendLine("/// </remarks>");
+    sb.AppendLine("internal static class WhizbangReceptorRegistryQueryRegistration {");
+    sb.AppendLine("#pragma warning disable CA2255");
+    sb.AppendLine("  [ModuleInitializer]");
+    sb.AppendLine("#pragma warning restore CA2255");
+    sb.AppendLine("  internal static void Register() {");
     sb.AppendLine();
-
+    sb.AppendLine("    var stageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>();");
     foreach (var stage in _exposedStages) {
-      sb.AppendLine($"  private static readonly HashSet<string> _typesWith_{stage} = new(System.StringComparer.Ordinal) {{");
+      sb.AppendLine($"    stageTypes[LifecycleStage.{stage}] = new string[] {{");
       foreach (var type in stageTypes[stage].OrderBy(s => s, System.StringComparer.Ordinal)) {
-        sb.AppendLine($"    \"{type}\",");
+        sb.AppendLine($"      \"{type}\",");
       }
-      sb.AppendLine("  };");
-      sb.AppendLine();
+      sb.AppendLine("    };");
     }
-
-    sb.AppendLine("  private static readonly HashSet<string> _typesWithInboxHandler = new(System.StringComparer.Ordinal) {");
-    foreach (var type in inboxHandlerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
-      sb.AppendLine($"    \"{type}\",");
-    }
-    sb.AppendLine("  };");
     sb.AppendLine();
-
-    sb.AppendLine("  private static readonly HashSet<string> _typesWithAnyConsumer = new(System.StringComparer.Ordinal) {");
+    sb.AppendLine("    var contribution = new ReceptorRegistryContribution {");
+    sb.AppendLine("      AnyConsumerTypes = new string[] {");
     foreach (var type in anyConsumerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
-      sb.AppendLine($"    \"{type}\",");
+      sb.AppendLine($"        \"{type}\",");
     }
-    sb.AppendLine("  };");
-    sb.AppendLine();
-
-    // Methods
-    sb.AppendLine("  /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>");
-    sb.AppendLine("  public static bool HasReceptors(LifecycleStage stage, string messageType) {");
-    sb.AppendLine("    return stage switch {");
-    foreach (var stage in _exposedStages) {
-      sb.AppendLine($"      LifecycleStage.{stage} => _typesWith_{stage}.Contains(messageType),");
+    sb.AppendLine("      },");
+    sb.AppendLine("      InboxHandlerTypes = new string[] {");
+    foreach (var type in inboxHandlerTypes.OrderBy(s => s, System.StringComparer.Ordinal)) {
+      sb.AppendLine($"        \"{type}\",");
     }
-    sb.AppendLine("      _ => false,");
+    sb.AppendLine("      },");
+    sb.AppendLine("      StageTypes = stageTypes,");
     sb.AppendLine("    };");
+    sb.AppendLine();
+    sb.AppendLine("    AssemblyRegistry<ReceptorRegistryContribution>.Register(contribution);");
     sb.AppendLine("  }");
-    sb.AppendLine();
-    sb.AppendLine("  /// <summary>True if any inbox handler (IReceptor without lifecycle FireAt) is registered for the type.</summary>");
-    sb.AppendLine("  public static bool HasInboxHandler(string messageType) =>");
-    sb.AppendLine("    _typesWithInboxHandler.Contains(messageType);");
-    sb.AppendLine();
-    sb.AppendLine("  /// <summary>True if any consumer (handler / lifecycle receptor / perspective / tag-attribute) cares about this message type.</summary>");
-    sb.AppendLine("  public static bool HasAnyConsumer(string messageType) =>");
-    sb.AppendLine("    _typesWithAnyConsumer.Contains(messageType);");
     sb.AppendLine("}");
 
-    context.AddSource("WhizbangReceptorRegistryQuery.g.cs", sb.ToString());
+    context.AddSource("WhizbangReceptorRegistryQueryRegistration.g.cs", sb.ToString());
   }
 }
