@@ -76,6 +76,18 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     public bool HasAnyConsumer(string messageType) => true;
   }
 
+  /// <summary>Wraps an <see cref="IServiceScopeFactory"/> and counts scope creations.
+  /// Test doubles can't observe DI scope creation directly; the counter is the only way
+  /// to lock the "one scope per batch" invariant against a future refactor that
+  /// accidentally moves scope creation inside the per-message foreach.</summary>
+  private sealed class CountingScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory {
+    public int CreateScopeCallCount { get; private set; }
+    public IServiceScope CreateScope() {
+      CreateScopeCallCount++;
+      return inner.CreateScope();
+    }
+  }
+
   /// <summary>Registry where ONLY a specific type is consumed — used for the drop-then-bulk-insert test.</summary>
   private sealed class SelectiveRegistry(string consumedInnerType) : IReceptorRegistryQuery {
     public bool HasReceptors(LifecycleStage stage, string messageType) => false;
@@ -221,6 +233,58 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
         .Because("All-dropped batch must skip the bulk-insert call entirely.");
       await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0);
     }
+  }
+
+  [Test]
+  public async Task BatchProcessing_CreatesExactlyOneScopePerBatchAsync() {
+    // Slice 6 plan calls for "Per-message scope created only when PreInbox is registered" —
+    // gated by slice 3's bulk-buffer-append refactor (deferred). The current
+    // TransportConsumerWorker behavior is BETTER than the plan goal: one scope per BATCH
+    // regardless of message count or PreInbox registration. Lock that invariant so a
+    // future refactor that accidentally moves CreateAsyncScope() inside the per-message
+    // foreach (returning to per-message scope semantics) fails this test.
+    var registry = new AlwaysConsumedRegistry();
+    var transport = new CapturingBatchTransport();
+    var coordinator = new NoOpWorkCoordinator();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    await using var sp = services.BuildServiceProvider();
+    var countingFactory = new CountingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
+
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var worker = new TransportConsumerWorker(
+      transport, options, new SubscriptionResilienceOptions(),
+      countingFactory,
+      new JsonSerializerOptions(),
+      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null, metrics: null,
+      NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: registry);
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(150);
+
+    // StartAsync spins one scope for transport-readiness + infrastructure provisioning.
+    // That scope is one-shot (not per-batch), so capture the count after startup settles
+    // and measure the delta on the per-batch path.
+    var preBatchScopeCount = countingFactory.CreateScopeCallCount;
+
+    // 25-message batch — if scope was per-message, the delta would be 25.
+    var batch = new TransportMessage[25];
+    for (var i = 0; i < 25; i++) {
+      batch[i] = new TransportMessage(_makeEnvelope(), CONSUMED_ENVELOPE_TYPE);
+    }
+    await transport.SimulateBatchReceivedAsync(batch);
+
+    cts.Cancel();
+
+    var perBatchDelta = countingFactory.CreateScopeCallCount - preBatchScopeCount;
+    await Assert.That(perBatchDelta).IsEqualTo(1)
+      .Because("TransportConsumerWorker creates exactly ONE scope per batch — not one per message. The scope is shared across all 25 message-builds and the bulk StoreInboxMessagesAsync call.");
   }
 
   [Test]
