@@ -54,6 +54,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly TimeProvider _timeProvider;
   private readonly ILogger<InboxDispatchWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IReceptorRegistryQuery? _receptorRegistry;
 
   /// <summary>Constructor.</summary>
   public InboxDispatchWorker(
@@ -70,7 +71,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
     IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
     LeaseRegistry? leaseRegistry = null,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null,
+    IReceptorRegistryQuery? receptorRegistry = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -85,6 +87,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _timeProvider = timeProvider ?? TimeProvider.System;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _receptorRegistry = receptorRegistry;
   }
 
   /// <inheritdoc />
@@ -229,6 +232,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // If left default, falls back to <paramref name="cancellationToken"/> for backward-compat.
     var detachedCt = detachedCancellationToken == default ? cancellationToken : detachedCancellationToken;
     if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
+    // Slice 4 of pump-then-process.md: gate by source-generated receptor registry. When the
+    // service has no receptor registered for either the detached or inline form of this stage,
+    // skip deserialize entirely. Saves wasted JSON parsing for cross-service event types in
+    // BFF-style services where many inbox events flow through with no local handler. Null
+    // registry → legacy behavior (fire unconditionally) for back-compat in test harnesses.
+    if (_receptorRegistry is not null
+        && !_receptorRegistry.HasReceptors(detachedStage, work.MessageType)
+        && !_receptorRegistry.HasReceptors(inlineStage, work.MessageType)) {
       return;
     }
 
