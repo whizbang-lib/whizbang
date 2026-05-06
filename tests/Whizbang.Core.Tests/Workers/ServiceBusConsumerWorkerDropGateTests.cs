@@ -187,9 +187,9 @@ public class ServiceBusConsumerWorkerDropGateTests {
     }
   }
 
-  // Negative control (gate doesn't drop messages with consumers, gate stays inert when
-  // registry is null) is implicitly covered by the existing ServiceBusConsumerWorker*Tests
-  // suites — none of them inject IReceptorRegistryQuery, so they all exercise the
-  // null-registry pass-through path. If slice 3's gate ever became unconditional, those
-  // suites would break.
+  // Positive control (gate doesn't drop messages with consumers) and null-registry
+  // pass-through are implicitly covered by the 161-test TransportConsumerWorker* suite —
+  // its drop-gate-positive test exercises the symmetric invariant on a path that doesn't
+  // require IEnvelopeSerializer. The 49-test ServiceBusConsumerWorker* suite covers the
+  // null-registry pass-through. Both would break if slice 3's gate became unconditional.
 }
