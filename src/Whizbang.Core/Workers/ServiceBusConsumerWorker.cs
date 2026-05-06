@@ -35,7 +35,8 @@ public partial class ServiceBusConsumerWorker(
   ServiceBusConsumerOptions? options = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null,
-  MessageProcessingOptions? messageProcessingOptions = null
+  MessageProcessingOptions? messageProcessingOptions = null,
+  IReceptorRegistryQuery? receptorRegistry = null
   ) : BackgroundService {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -46,6 +47,7 @@ public partial class ServiceBusConsumerWorker(
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
+  private readonly IReceptorRegistryQuery? _receptorRegistry = receptorRegistry;
   private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
     ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
@@ -186,6 +188,30 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
+    // Slice 3 of pump-then-process.md (Half A): drop messages whose type has NO consumer
+    // anywhere on this service — no inbox handler, no lifecycle receptor, no perspective,
+    // no tag-attribute. They cannot do useful work, so the inbox row + dispatch path are
+    // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the a consumer BFF
+    // pattern where many cross-service events flow through with no local consumer.
+    // Null registry → legacy behavior (always store) for back-compat in test harnesses.
+    // The transport delivers the wrapper envelope type (e.g.
+    // "MessageEnvelope`1[[MyApp.SomeEvent, MyApp]], Whizbang.Core"); the registry stores
+    // inner message types, so we extract first. If extraction fails (unexpected format),
+    // skip the gate and let the legacy serialization path surface the error — never drop
+    // a message because of a registry-side classification miss.
+    if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)) {
+      string? innerMessageType = null;
+      try {
+        innerMessageType = _extractMessageTypeFromEnvelopeType(envelopeType);
+      } catch (InvalidOperationException) {
+        // Unwrapped format — fall through to the legacy storage path.
+      }
+      if (innerMessageType is not null && !_receptorRegistry.HasAnyConsumer(innerMessageType)) {
+        LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
+        return;
+      }
+    }
+
     var inboxActivity = _startInboxActivity(envelope, envelopeType);
 
     // Global concurrency gate — limits total concurrent handlers across all subscriptions
@@ -855,6 +881,13 @@ public partial class ServiceBusConsumerWorker(
     Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
+
+  [LoggerMessage(
+    EventId = 25,
+    Level = LogLevel.Debug,
+    Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
+  )]
+  static partial void LogDroppedUnsubscribedType(ILogger logger, Guid messageId, string envelopeType);
 }
 
 /// <summary>
