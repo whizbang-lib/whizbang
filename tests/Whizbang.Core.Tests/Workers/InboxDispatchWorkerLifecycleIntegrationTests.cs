@@ -224,8 +224,12 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     var work = _makeWork("Some.Cross.Service.Event, Some.Contracts");
     await inbox.WriteAsync(work, cts.Token);
 
-    // Wait for PostAllPerspectivesInline to fire — TaskCompletionSource avoids polling.
-    await invoker.PostAllPerspectivesInlineFired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Wait for BOTH inline and detached PostAllPerspectives TCSs — detached schedules on a
+    // background thread and may not have run by the time inline completes, so awaiting only
+    // the inline signal races with the detached assertion (per feedback_no_timing_tests).
+    await Task.WhenAll(
+      invoker.PostAllPerspectivesInlineFired.Task.WaitAsync(TimeSpan.FromSeconds(5)),
+      invoker.PostAllPerspectivesDetachedFired.Task.WaitAsync(TimeSpan.FromSeconds(5)));
 
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
       .Because("Inbox events with no local perspective MUST still fire PostAllPerspectivesInline so tag hooks can emit notifications.");

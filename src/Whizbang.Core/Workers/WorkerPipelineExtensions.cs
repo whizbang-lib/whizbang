@@ -68,6 +68,12 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<LeaseRegistry>();
     services.TryAddSingleton(TimeProvider.System);
 
+    // Slice 4 of pump-then-process.md: source-generated receptor registry adapter. The
+    // InboxDispatchWorker uses this to skip lifecycle deserialize for cross-service events
+    // that the local service has no receptor for. Registered as a singleton — adapter is
+    // stateless and just forwards to the static generated lookup.
+    services.TryAddSingleton<IReceptorRegistryQuery, WhizbangReceptorRegistryQueryAdapter>();
+
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
