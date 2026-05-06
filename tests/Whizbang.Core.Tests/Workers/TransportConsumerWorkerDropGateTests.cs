@@ -1,0 +1,134 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Resilience;
+using Whizbang.Core.Security;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+
+namespace Whizbang.Core.Tests.Workers;
+
+/// <summary>
+/// Slice 3 of plans/pump-then-process.md (Half A) — locks the drop-unsubscribed-types
+/// invariant in <see cref="TransportConsumerWorker"/>. Mirror of the gate added to
+/// <see cref="ServiceBusConsumerWorker"/>; both consumer paths must drop messages whose
+/// inner type has no consumer registered on this service before serializing them into
+/// inbox storage.
+/// </summary>
+[NotInParallel("WhizbangBackgroundServiceTests")]
+public class TransportConsumerWorkerDropGateTests {
+
+  /// <summary>Captures the batch handler so the test can deliver simulated batches.</summary>
+  private sealed class CapturingBatchTransport : ITransport {
+    private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+    public bool IsInitialized => true;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
+        string? envelopeType = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<ISubscription> SubscribeAsync(
+        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+        TransportDestination destination, CancellationToken cancellationToken = default)
+      => Task.FromResult<ISubscription>(new _NopSubscription());
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination, TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      _batchHandler = batchHandler;
+      return Task.FromResult<ISubscription>(new _NopSubscription());
+    }
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+        TransportDestination destination, CancellationToken cancellationToken = default)
+        where TRequest : notnull where TResponse : notnull
+      => throw new NotImplementedException();
+    public void Dispose() { }
+
+    public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
+      if (_batchHandler is null) {
+        throw new InvalidOperationException("SubscribeBatchAsync was never called by the worker — handler not captured.");
+      }
+      await _batchHandler(batch, CancellationToken.None);
+    }
+
+    private sealed class _NopSubscription : ISubscription {
+      public bool IsActive { get; private set; } = true;
+#pragma warning disable CS0067
+      public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
+      public Task PauseAsync() { IsActive = false; return Task.CompletedTask; }
+      public Task ResumeAsync() { IsActive = true; return Task.CompletedTask; }
+      public void Dispose() { IsActive = false; }
+    }
+  }
+
+  private sealed class FakeReceptorRegistry(bool hasAnyConsumer) : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => hasAnyConsumer;
+    public bool HasAnyConsumer(string messageType) => hasAnyConsumer;
+  }
+
+  private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
+    MessageId = MessageId.New(),
+    Payload = JsonDocument.Parse("{}").RootElement,
+    Hops = [
+      new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+      }
+    ],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+  };
+
+  // Wrapper envelope-type format the worker expects + the inner type the registry sees.
+  private const string WRAPPER_ENVELOPE_TYPE =
+    "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.UnsubscribedEvent, TestApp]], Whizbang.Core";
+
+  [Test]
+  public async Task BatchHandler_RegistrySaysNoConsumer_DropsBeforeStoringInboxAsync() {
+    // The slice 3 invariant for TransportConsumerWorker: a message whose inner type has no
+    // consumer must never reach StoreInboxMessagesAsync. This locks the drop-gate's "no inbox
+    // row created" guarantee for the production-registered consumer worker.
+    var transport = new CapturingBatchTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var coordinator = new NoOpWorkCoordinator();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    await using var sp = services.BuildServiceProvider();
+
+    var registry = new FakeReceptorRegistry(hasAnyConsumer: false);
+    var worker = new TransportConsumerWorker(
+      transport, options, new SubscriptionResilienceOptions(),
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new JsonSerializerOptions(),
+      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null, metrics: null,
+      NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: registry);
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(150);
+
+    await transport.SimulateBatchReceivedAsync([
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+    ]);
+
+    cts.Cancel();
+
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("Drop gate must skip storage entirely for messages with no local consumer.");
+  }
+}
