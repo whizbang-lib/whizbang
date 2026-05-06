@@ -56,6 +56,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
+  private readonly IReceptorRegistryQuery? _receptorRegistry;
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
@@ -105,7 +106,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
     IWorkChannelWriter? workChannelWriter = null,
-    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null
+    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
+    IReceptorRegistryQuery? receptorRegistry = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -127,6 +129,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
+    _receptorRegistry = receptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
     _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
@@ -369,6 +372,24 @@ public partial class TransportConsumerWorker : BackgroundService {
     // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
     var inboxMessages = new List<InboxMessage>(messages.Count);
     foreach (var msg in messages) {
+      // Slice 3 of pump-then-process.md (Half A): drop messages whose inner type has NO
+      // consumer on this service BEFORE serialization runs. Mirror of the gate added to
+      // ServiceBusConsumerWorker. The post-build _filterInboxMessagesByKnownEventTypes
+      // stays as defense-in-depth — broader registry coverage here catches lifecycle
+      // receptors and tag-attribute consumers the IEventTypeProvider list misses.
+      if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)) {
+        string? innerMessageType = null;
+        try {
+          innerMessageType = _extractMessageTypeFromEnvelopeType(msg.EnvelopeType);
+        } catch (InvalidOperationException) {
+          // Unwrapped format — fall through to legacy serialization path.
+        }
+        if (innerMessageType is not null && !_receptorRegistry.HasAnyConsumer(innerMessageType)) {
+          _metrics?.InboxMessagesDeduplicated.Add(1);
+          continue;
+        }
+      }
+
       var inboxMessage = _tryBuildInboxMessageFromTransport(msg, scope.ServiceProvider);
       if (inboxMessage is not null) {
         inboxMessages.Add(inboxMessage);
