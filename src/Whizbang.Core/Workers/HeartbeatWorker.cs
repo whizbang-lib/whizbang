@@ -31,6 +31,14 @@ public partial class HeartbeatWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.IntervalSeconds, _instanceProvider.InstanceId);
 
+    // Diagnostic: dump the receptor-registry snapshot at startup so operators can verify
+    // the multi-assembly [ModuleInitializer] pattern populated correctly. If the
+    // contribution count or receptor-type count is zero, the receive-boundary drop-gate
+    // will silently drop every message and chat / cascades will not work.
+    var snap = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetDiagnosticSnapshot();
+    LogReceptorRegistrySnapshot(_logger,
+      snap.Contributions, snap.AnyConsumerTypes, snap.InboxHandlerTypes, snap.StageTypeCount);
+
     if (!_options.Enabled) {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
@@ -87,6 +95,10 @@ public partial class HeartbeatWorker(
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "HeartbeatWorker disabled via options — heartbeat skipped")]
   static partial void LogDisabled(ILogger logger);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Information,
+    Message = "Whizbang receptor registry: {Contributions} assembly contribution(s), {AnyConsumerTypes} any-consumer type(s), {InboxHandlerTypes} inbox-handler type(s), {StageTypeCount} lifecycle-stage receptor type(s) across all stages. Zero values mean the multi-assembly [ModuleInitializer] pattern did not populate — every message will be dropped at the receive boundary.")]
+  static partial void LogReceptorRegistrySnapshot(ILogger logger, int contributions, int anyConsumerTypes, int inboxHandlerTypes, int stageTypeCount);
 }
 
 /// <summary>

@@ -140,4 +140,26 @@ public static class WhizbangReceptorRegistryQuery {
       _cachedContributionCount = -1;
     }
   }
+
+  /// <summary>
+  /// Diagnostic snapshot — for operator inspection that the multi-assembly registry
+  /// pattern populated correctly. The receive-boundary drop-gate silently breaks if
+  /// this returns zero in production: nothing is registered, every message gets dropped.
+  /// </summary>
+  /// <returns>Tuple of (contribution count, distinct any-consumer types, distinct inbox-handler types,
+  /// distinct lifecycle-stage receptor types across all stages).</returns>
+  public static (int Contributions, int AnyConsumerTypes, int InboxHandlerTypes, int StageTypeCount) GetDiagnosticSnapshot() {
+    var any = _ensureAnyConsumerCached();
+    var inbox = _ensureInboxHandlerCached();
+    var stages = _ensureStageTypesCached();
+    var stageCount = 0;
+    foreach (var (_, set) in stages) {
+      stageCount += set.Count;
+    }
+    return (
+      Contributions: AssemblyRegistry<ReceptorRegistryContribution>.Count,
+      AnyConsumerTypes: any.Count,
+      InboxHandlerTypes: inbox.Count,
+      StageTypeCount: stageCount);
+  }
 }
