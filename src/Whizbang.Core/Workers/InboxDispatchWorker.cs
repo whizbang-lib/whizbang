@@ -240,7 +240,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // skip deserialize entirely. Saves wasted JSON parsing for cross-service event types in
     // BFF-style services where many inbox events flow through with no local handler. Null
     // registry → legacy behavior (fire unconditionally) for back-compat in test harnesses.
-    if (_receptorRegistry is not null
+    //
+    // CRITICAL: only gate stages the source generator actually populates — Pre/Post Inbox.
+    // The static WhizbangReceptorRegistryQuery.HasReceptors returns false for unknown stages,
+    // so a generic gate would silently SKIP PostAllPerspectives + PostLifecycle in production
+    // (registry is injected by AddWhizbangWorkers). Tag-notification hooks would never fire
+    // for cross-service events. Future generator extension can broaden this gate; for now
+    // _isGatedStage explicitly enumerates the safe set.
+    if (_receptorRegistry is not null && _isGatedStage(detachedStage)
         && !_receptorRegistry.HasReceptors(detachedStage, work.MessageType)
         && !_receptorRegistry.HasReceptors(inlineStage, work.MessageType)) {
       return;
@@ -292,6 +299,18 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogLifecycleError(_logger, work.MessageId, stageName, ex);
     }
   }
+
+  /// <summary>
+  /// True when the lifecycle stage is one the source-generated WhizbangReceptorRegistryQuery
+  /// actually emits entries for. Stages outside this set return false unconditionally from
+  /// HasReceptors, so the gate must NOT consult the registry for them — see the gate site
+  /// in <see cref="_invokeInboxLifecycleStageAsync"/> for the failure mode.
+  /// </summary>
+  private static bool _isGatedStage(LifecycleStage stage) =>
+    stage is LifecycleStage.PreInboxDetached
+          or LifecycleStage.PreInboxInline
+          or LifecycleStage.PostInboxDetached
+          or LifecycleStage.PostInboxInline;
 
   private static bool _hasNoPerspectives(string messageType, IServiceProvider serviceProvider) {
     var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();

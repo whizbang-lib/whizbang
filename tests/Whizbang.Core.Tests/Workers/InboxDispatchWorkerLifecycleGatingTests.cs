@@ -197,10 +197,15 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   // ---------- TESTS ----------
 
   [Test]
-  public async Task Process_NoLifecycleReceptors_SkipsDeserializeAndDoesNotInvokeAsync() {
-    // Registry says NOTHING is registered for this message type. Worker must skip deserialize
-    // for both PreInbox and PostInbox stages — saves wasted JSON parsing on cross-service
-    // events the local service doesn't subscribe to.
+  public async Task Process_NoLifecycleReceptors_SkipsPreAndPostInboxOnlyAsync() {
+    // Registry returns false for every Pre/Post Inbox query. The gate must skip deserialize
+    // for THOSE stages — saves wasted JSON parsing on cross-service events the local service
+    // doesn't subscribe to. PostAllPerspectives + PostLifecycle are NOT gated by the
+    // registry (the static WhizbangReceptorRegistryQuery doesn't emit entries for those
+    // stages, so a generic gate would silently break them); they still fire when the
+    // worker observes no local perspectives. See the
+    // _RegistryReturnsFalseForUnknownStages_PostAllPerspectivesStillFires regression test
+    // below for the failure mode this guards against.
     var registry = new FakeReceptorRegistry(hasReceptors: (_, _) => false);
     await using var harness = _buildWorker(registry);
 
@@ -214,13 +219,9 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxInline)).IsFalse()
-      .Because("PreInboxInline must not fire when registry reports no receptors for that stage.");
+      .Because("PreInboxInline must not fire when registry reports no receptors for that gated stage.");
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostInboxInline)).IsFalse()
-      .Because("PostInboxInline must not fire when registry reports no receptors for that stage.");
-    await Assert.That(harness.Deserializer.CallCount).IsEqualTo(0)
-      .Because("Lifecycle deserialize must be skipped entirely when no stage has receptors.");
-
-    await cts.CancelAsync();
+      .Because("PostInboxInline must not fire when registry reports no receptors for that gated stage.");
   }
 
   [Test]
@@ -304,6 +305,42 @@ public class InboxDispatchWorkerLifecycleGatingTests {
 
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxInline)).IsTrue();
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostInboxInline)).IsTrue();
+
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task Process_RegistryReturnsFalseForUnknownStages_PostAllPerspectivesStillFiresAsync() {
+    // Critical regression lock: the source-generated WhizbangReceptorRegistryQuery only
+    // emits Pre/Post Inbox stages — PostAllPerspectives and PostLifecycle return false from
+    // HasReceptors. A generic "gate when both detached + inline are false" would silently
+    // skip those stages in production (registry IS injected by AddWhizbangWorkers).
+    // Cross-service events with no local perspective would lose tag notifications because
+    // PostAllPerspectivesDetached / ConsumerNotificationTagHook would never fire.
+    //
+    // The gate must scope itself to stages the registry actually knows about. This test
+    // injects a registry that returns false for every query (mimicking the unknown-stage
+    // behavior of the static class) and asserts PostAllPerspectives still fires when there
+    // are no local perspectives — proving the gate scopes correctly.
+    var registry = new FakeReceptorRegistry(hasReceptors: (_, _) => false);
+    await using var harness = _buildWorker(registry);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+
+    var work = _makeWork("Cross.Service.Event.NoLocalPerspective, Test");
+    await harness.Inbox.WriteAsync(work, cts.Token);
+
+    await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+    while (!harness.Invoker.HasStage(LifecycleStage.PostAllPerspectivesInline) && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
+
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue()
+      .Because("PostAllPerspectives MUST fire even when the registry reports false for it — the registry doesn't track that stage. A generic gate would silently break tag notifications for cross-service events.");
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue()
+      .Because("PostLifecycle MUST fire for the same reason.");
 
     await cts.CancelAsync();
   }
