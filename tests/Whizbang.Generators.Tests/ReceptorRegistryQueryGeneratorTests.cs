@@ -44,12 +44,15 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    // Generator records the type in its inbox-handler set
-    await Assert.That(generated!).Contains("MyApp.CreateOrder");
-    // Method is generated
-    await Assert.That(generated).Contains("public static bool HasInboxHandler");
+    // The registration must list the inbox handler type in the contribution it
+    // registers with AssemblyRegistry<ReceptorRegistryContribution>.
+    var inboxHandlersRegion = _extractRegion(generated!, "InboxHandlerTypes");
+    await Assert.That(inboxHandlersRegion).Contains("MyApp.CreateOrder");
+    // The registration class is the new shape (post-2026-05-06 redesign)
+    await Assert.That(generated!).Contains("WhizbangReceptorRegistryQueryRegistration");
+    await Assert.That(generated).Contains("AssemblyRegistry<ReceptorRegistryContribution>.Register");
   }
 
   [Test]
@@ -66,12 +69,10 @@ public record OrphanCommand : ICommand { public string Id { get; init; } = strin
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    // The orphan type must NOT be in the inbox-handler set. We assert by checking that the
-    // inbox-handler set initializer does not contain "MyApp.OrphanCommand".
-    var handlerSetRegion = _extractRegion(generated!, "_typesWithInboxHandler");
-    await Assert.That(handlerSetRegion).DoesNotContain("OrphanCommand");
+    // The orphan type must NOT appear in any of the contribution's lists.
+    await Assert.That(generated!).DoesNotContain("OrphanCommand");
   }
 
   // ===== HasReceptors (lifecycle stages) =====
@@ -97,13 +98,11 @@ public class PreInboxAuditReceptor : IReceptor<CreateOrder> {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("public static bool HasReceptors");
-    // The compiled lookup must include CreateOrder under PreInboxInline.
-    // We assert the generated code mentions both the type and the stage.
+    // Per-stage StageTypes dictionary populated for PreInboxInline with CreateOrder.
+    await Assert.That(generated!).Contains("LifecycleStage.PreInboxInline");
     await Assert.That(generated).Contains("MyApp.CreateOrder");
-    await Assert.That(generated).Contains("PreInboxInline");
   }
 
   [Test]
@@ -126,12 +125,14 @@ public class OrderReceptor : IReceptor<CreateOrder> {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    // The PreInboxInline lookup region should not contain CreateOrder for this case
-    // (the receptor is a direct handler, not a PreInbox lifecycle receptor).
-    var preInboxRegion = _extractStageRegion(generated!, "PreInboxInline");
-    await Assert.That(preInboxRegion).DoesNotContain("CreateOrder");
+    // The PreInboxInline stage's array should NOT contain CreateOrder for this case
+    // (the receptor is a direct handler, not a PreInbox lifecycle receptor). We check by
+    // extracting the slice of the source between LifecycleStage.PreInboxInline and the
+    // following stage marker (or the end of the StageTypes block).
+    var preInboxSlice = _extractStageArrayLiteral(generated!, "PreInboxInline");
+    await Assert.That(preInboxSlice).DoesNotContain("CreateOrder");
   }
 
   // ===== HasAnyConsumer — covers handler / perspective / tag-attribute =====
@@ -155,11 +156,12 @@ public class OrderProjection : IPerspectiveFor<OrderModel, OrderCreated> {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("public static bool HasAnyConsumer");
-    // OrderCreated is consumed by a perspective even with no receptor
-    await Assert.That(generated).Contains("MyApp.OrderCreated");
+    // OrderCreated is consumed by a perspective even with no receptor — the contribution's
+    // AnyConsumerTypes array must include it.
+    var anyConsumerRegion = _extractRegion(generated!, "AnyConsumerTypes");
+    await Assert.That(anyConsumerRegion).Contains("MyApp.OrderCreated");
   }
 
   [Test]
@@ -191,11 +193,11 @@ public class TagNotificationHook : IReceptor<OrderUpdated> {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    var consumerRegion = _extractRegion(generated!, "_typesWithAnyConsumer");
+    var consumerRegion = _extractRegion(generated!, "AnyConsumerTypes");
     await Assert.That(consumerRegion).Contains("MyApp.OrderUpdated")
-      .Because("A receptor at any lifecycle stage — including stages outside _exposedStages — must register its message type into _typesWithAnyConsumer. Otherwise the drop-gate silently loses messages.");
+      .Because("A receptor at any lifecycle stage — including stages outside _exposedStages — must register its message type into the contribution's AnyConsumerTypes. Otherwise the drop-gate silently loses messages.");
   }
 
   [Test]
@@ -211,11 +213,10 @@ public record OrphanEvent : IEvent { public string Id { get; init; } = string.Em
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    // No handler, no perspective, no tag attribute → must not be in any consumer set.
-    var consumerRegion = _extractRegion(generated!, "_typesWithAnyConsumer");
-    await Assert.That(consumerRegion).DoesNotContain("OrphanEvent");
+    // No handler, no perspective, no tag attribute → must not appear anywhere.
+    await Assert.That(generated!).DoesNotContain("OrphanEvent");
   }
 
   // ===== Generated file structure =====
@@ -232,19 +233,22 @@ public class Empty {}
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("public static class WhizbangReceptorRegistryQuery");
-    await Assert.That(generated).Contains("HasReceptors");
-    await Assert.That(generated).Contains("HasInboxHandler");
-    await Assert.That(generated).Contains("HasAnyConsumer");
+    // The generator MUST always emit the registration class so that consuming assemblies
+    // contribute (even an empty contribution) to the AssemblyRegistry. Without this, an
+    // assembly with no receptors would skip its module-init step and miss any future
+    // contribution registration symmetry.
+    await Assert.That(generated!).Contains("WhizbangReceptorRegistryQueryRegistration");
+    await Assert.That(generated).Contains("[ModuleInitializer]");
+    await Assert.That(generated).Contains("AssemblyRegistry<ReceptorRegistryContribution>.Register");
   }
 
   // ===== Helpers =====
 
   /// <summary>
-  /// Extracts the body of a named static collection initializer for content assertions.
-  /// Looks for "_typesWithInboxHandler" / "_typesWithAnyConsumer" / etc.
+  /// Extracts the body of a named property initializer for content assertions.
+  /// Looks for "AnyConsumerTypes" / "InboxHandlerTypes" / etc.
   /// </summary>
   private static string _extractRegion(string source, string fieldName) {
     var fieldStart = source.IndexOf(fieldName, StringComparison.Ordinal);
@@ -270,10 +274,24 @@ public class Empty {}
   }
 
   /// <summary>
-  /// Extracts the lookup region for a specific lifecycle stage. The generator emits one
-  /// per-stage HashSet&lt;string&gt; named e.g. "_typesWith_PreInboxInline".
+  /// Extracts the array literal between <c>stageTypes[LifecycleStage.&lt;name&gt;]</c> and
+  /// the next <c>}</c>. The generator emits per-stage entries like:
+  /// <code>stageTypes[LifecycleStage.PreInboxInline] = new string[] { "...", };</code>
   /// </summary>
-  private static string _extractStageRegion(string source, string stageName) {
-    return _extractRegion(source, $"_typesWith_{stageName}");
+  private static string _extractStageArrayLiteral(string source, string stageName) {
+    var marker = $"LifecycleStage.{stageName}";
+    var idx = source.IndexOf(marker, StringComparison.Ordinal);
+    if (idx < 0) {
+      return string.Empty;
+    }
+    var braceStart = source.IndexOf('{', idx);
+    if (braceStart < 0) {
+      return string.Empty;
+    }
+    var braceEnd = source.IndexOf('}', braceStart);
+    if (braceEnd < 0) {
+      return source[braceStart..];
+    }
+    return source[braceStart..(braceEnd + 1)];
   }
 }
