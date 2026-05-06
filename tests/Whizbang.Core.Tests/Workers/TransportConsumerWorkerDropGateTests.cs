@@ -131,4 +131,45 @@ public class TransportConsumerWorkerDropGateTests {
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
       .Because("Drop gate must skip storage entirely for messages with no local consumer.");
   }
+
+  [Test]
+  public async Task BatchHandler_RegistrySaysHasConsumer_StoresInboxNormallyAsync() {
+    // Symmetric positive control: when the registry reports a consumer, the gate must NOT
+    // drop. Locks against a regression where the gate's logic flips (e.g. accidentally
+    // negating the HasAnyConsumer check) and silently drops every message instead.
+    var transport = new CapturingBatchTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var coordinator = new NoOpWorkCoordinator();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    await using var sp = services.BuildServiceProvider();
+
+    var registry = new FakeReceptorRegistry(hasAnyConsumer: true);
+    var worker = new TransportConsumerWorker(
+      transport, options, new SubscriptionResilienceOptions(),
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new JsonSerializerOptions(),
+      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null, metrics: null,
+      NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: registry);
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(150);
+
+    await transport.SimulateBatchReceivedAsync([
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+    ]);
+
+    cts.Cancel();
+
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
+      .Because("All 3 messages must reach StoreInboxMessagesAsync when the registry reports a consumer.");
+  }
 }
