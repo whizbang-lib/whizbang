@@ -135,6 +135,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<RecentlyProcessedEventCacheOptions>();
     services.AddOptions<LeaseHandleOptions>();
     services.AddOptions<SlidingWindowOutboxOptions>();
+    services.AddOptions<SlidingWindowInboxOptions>();
 
     // Producer-side stream-affinity batcher (Half B of pump-then-process). Singleton; the
     // flush callback resolves IWorkCoordinator from a fresh DI scope per batch so the
@@ -150,6 +151,21 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
+
+    // Receive-boundary inbox batcher (Half A of pump-then-process). Mirror of the outbox
+    // registration above — flush callback resolves IWorkCoordinator from a fresh DI scope
+    // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher;
+    // override via AddWhizbangInboxStrategy<TStrategy>() for the immediate passthrough or a
+    // custom implementation.
+    services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
+    services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
+      flush: sp.GetRequiredService<InboxBulkFlushCallback>(),
+      options: sp.GetRequiredService<IOptions<SlidingWindowInboxOptions>>().Value,
+      timeProvider: sp.GetService<TimeProvider>(),
+      logger: sp.GetService<ILogger<SlidingWindowInboxBatchStrategy>>()));
+    services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
+      flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
+    services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
 
     return services;
   }
@@ -173,6 +189,25 @@ public static class WorkerPipelineExtensions {
     return services;
   }
 
+  /// <summary>
+  /// Replace the registered <see cref="IInboxBatchStrategy"/> with the given type. Mirror of
+  /// <see cref="AddWhizbangOutboxStrategy{TStrategy}"/> — used to opt into
+  /// <see cref="ImmediateInboxBatchStrategy"/> or a custom implementation.
+  /// </summary>
+  /// <typeparam name="TStrategy">Strategy type. Must be DI-resolvable as a singleton.</typeparam>
+  /// <param name="services">DI service collection.</param>
+  /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
+  public static IServiceCollection AddWhizbangInboxStrategy<TStrategy>(this IServiceCollection services)
+      where TStrategy : class, IInboxBatchStrategy {
+    ArgumentNullException.ThrowIfNull(services);
+    var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IInboxBatchStrategy));
+    if (existing is not null) {
+      services.Remove(existing);
+    }
+    services.AddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<TStrategy>());
+    return services;
+  }
+
   private static OutboxBulkFlushCallback _buildOutboxFlushCallback(IServiceProvider sp) {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
@@ -182,6 +217,18 @@ public static class WorkerPipelineExtensions {
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+    };
+  }
+
+  private static InboxBulkFlushCallback _buildInboxFlushCallback(IServiceProvider sp) {
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
+    var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    return async (messages, ct) => {
+      await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
     };
   }
 }
