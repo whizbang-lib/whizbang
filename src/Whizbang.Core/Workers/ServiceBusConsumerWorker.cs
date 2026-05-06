@@ -298,6 +298,14 @@ public partial class ServiceBusConsumerWorker(
     }
 
     foreach (var work in myWork) {
+      // Slice 4-symmetry gate: skip PreInbox deserialize when neither stage has receptors
+      // for this type. Same shape as InboxDispatchWorker; null registry preserves legacy
+      // behavior for back-compat in test harnesses.
+      if (_receptorRegistry is not null
+          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
+          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)) {
+        continue;
+      }
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
