@@ -58,6 +58,25 @@ public class InboxBatchStrategyRegistrationTests {
   }
 
   [Test]
+  public async Task AddWhizbangWorkers_ResolvesIReceptorRegistryQueryToAdapterAsync() {
+    // Slice 4 / slice 3 / slice 6 all depend on the receptor registry being injected via
+    // production DI. If AddWhizbangWorkers' registration is dropped, the gates silently
+    // fall back to legacy "always store / always deserialize" behavior. The slice 4
+    // production-bug fix (commit 338f6ac7) demonstrated how easy it is for the registry
+    // to be wrong in production while tests pass; this lock catches the upstream
+    // registration regression.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangWorkers();
+
+    await using var sp = services.BuildServiceProvider();
+    var resolved = sp.GetRequiredService<IReceptorRegistryQuery>();
+
+    await Assert.That(resolved).IsTypeOf<WhizbangReceptorRegistryQueryAdapter>()
+      .Because("AddWhizbangWorkers must register the source-gen-backed adapter as the default IReceptorRegistryQuery — gates depend on it.");
+  }
+
+  [Test]
   public async Task SlidingWindowInboxOptions_OverrideViaConfiguration_ReadsCorrectValuesAsync() {
     var configValues = new Dictionary<string, string?> {
       ["Whizbang:Inbox:SlidingWindow"] = "00:00:00.250",
