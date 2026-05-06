@@ -8,8 +8,16 @@ namespace Whizbang.Core.Tests.Workers;
 /// but where TransportConsumerWorker resolves IWorkCoordinator from DI.
 /// </summary>
 internal class NoOpWorkCoordinator : IWorkCoordinator {
-  /// <summary>Number of inbox messages stored via StoreInboxMessagesAsync.</summary>
+  /// <summary>Number of inbox messages stored via StoreInboxMessagesAsync (cumulative across calls).</summary>
   public int StoredInboxCount { get; private set; }
+
+  /// <summary>Number of times StoreInboxMessagesAsync was invoked. Distinguishes one-call-with-N-items
+  /// (bulk insert) from N-calls-with-one-item (per-message inserts) — load-bearing for slice 6.</summary>
+  public int StoreInboxCallCount { get; private set; }
+
+  /// <summary>Per-call batch sizes for StoreInboxMessagesAsync. Tests assert exact shapes
+  /// (e.g. one call of size 100, not 10 calls of size 10).</summary>
+  public List<int> StoreInboxBatchSizes { get; } = [];
 
   /// <summary>All inbox messages stored via StoreInboxMessagesAsync, for test inspection.</summary>
   public List<InboxMessage> StoredMessages { get; } = [];
@@ -23,6 +31,8 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
     });
 
   public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    StoreInboxCallCount++;
+    StoreInboxBatchSizes.Add(messages.Length);
     StoredInboxCount += messages.Length;
     StoredMessages.AddRange(messages);
     return Task.CompletedTask;
