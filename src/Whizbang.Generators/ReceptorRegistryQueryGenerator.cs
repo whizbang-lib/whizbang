@@ -222,10 +222,18 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var inboxHandlerTypes = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
+    // Every receptor message type goes here regardless of which stage(s) it fires at.
+    // Critical for HasAnyConsumer correctness: a receptor [FireAt(PostAllPerspectivesDetached)]
+    // would otherwise be missed by anyConsumerTypes (since PostAllPerspectives is NOT an
+    // exposed stage AND a FireAt receptor is not an inbox handler), causing the slice 3
+    // drop-gate to silently drop messages whose only consumer is at that stage.
+    var allReceptorMessageTypes = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+
     foreach (var entry in receptors) {
       if (entry is null) {
         continue;
       }
+      allReceptorMessageTypes.Add(entry.MessageType);
       foreach (var stage in entry.Stages) {
         if (stageTypes.TryGetValue(stage, out var set)) {
           set.Add(entry.MessageType);
@@ -237,6 +245,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
 
     var anyConsumerTypes = new System.Collections.Generic.HashSet<string>(inboxHandlerTypes, System.StringComparer.Ordinal);
+    anyConsumerTypes.UnionWith(allReceptorMessageTypes);
     foreach (var set in stageTypes.Values) {
       anyConsumerTypes.UnionWith(set);
     }

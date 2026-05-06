@@ -164,6 +164,42 @@ public class OrderProjection : IPerspectiveFor<OrderModel, OrderCreated> {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorAtPostAllPerspectives_HasAnyConsumerReturnsTrueAsync() {
+    // Regression lock: a receptor at a stage outside _exposedStages (e.g.
+    // PostAllPerspectivesDetached — used by JdxNotificationTagHook) MUST still register the
+    // message type as a consumer. Without this, the slice 3 drop-gate at the receive boundary
+    // would silently drop messages whose only consumer is at PostAllPerspectives or
+    // PostLifecycle — losing tag notifications for cross-service events. The bug existed
+    // pre-fix because anyConsumerTypes was built only from inboxHandlers + the 4 exposed
+    // stage HashSets; receptors at non-exposed stages slipped through.
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+
+namespace MyApp;
+
+public record DraftJobUpdated : IEvent { public string DraftJobId { get; init; } = string.Empty; }
+
+[FireAt(LifecycleStage.PostAllPerspectivesDetached)]
+public class TagNotificationHook : IReceptor<DraftJobUpdated> {
+  public ValueTask HandleAsync(DraftJobUpdated message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQuery.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var consumerRegion = _extractRegion(generated!, "_typesWithAnyConsumer");
+    await Assert.That(consumerRegion).Contains("MyApp.DraftJobUpdated")
+      .Because("A receptor at any lifecycle stage — including stages outside _exposedStages — must register its message type into _typesWithAnyConsumer. Otherwise the drop-gate silently loses messages.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_OrphanType_HasAnyConsumerReturnsFalseAsync() {
     const string source = @"
 using Whizbang.Core;
