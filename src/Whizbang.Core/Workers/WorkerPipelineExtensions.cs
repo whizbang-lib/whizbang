@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
@@ -127,8 +128,54 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxDrainWorkerOptions>();
     services.AddOptions<RecentlyProcessedEventCacheOptions>();
     services.AddOptions<LeaseHandleOptions>();
+    services.AddOptions<SlidingWindowOutboxOptions>();
+
+    // Producer-side stream-affinity batcher (Half B of pump-then-process). Singleton; the
+    // flush callback resolves IWorkCoordinator from a fresh DI scope per batch so the
+    // strategy itself can outlive any one request scope. Default = sliding-window batcher;
+    // override via AddWhizbangOutboxStrategy<TStrategy>() — see ImmediateOutboxBatchStrategy
+    // for the no-batching alternative.
+    services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
+    services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
+      flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
+      options: sp.GetRequiredService<IOptions<SlidingWindowOutboxOptions>>().Value,
+      timeProvider: sp.GetService<TimeProvider>(),
+      logger: sp.GetService<ILogger<SlidingWindowOutboxBatchStrategy>>()));
+    services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
+      flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
+    services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
 
     return services;
   }
 
+  /// <summary>
+  /// Replace the registered <see cref="IOutboxBatchStrategy"/> with the given type. Used for
+  /// low-throughput tenants who opt to <see cref="ImmediateOutboxBatchStrategy"/> for
+  /// strict-ordering / no-batching semantics, or for users plugging in a custom strategy.
+  /// </summary>
+  /// <typeparam name="TStrategy">Strategy type. Must be DI-resolvable as a singleton.</typeparam>
+  /// <param name="services">DI service collection.</param>
+  /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
+  public static IServiceCollection AddWhizbangOutboxStrategy<TStrategy>(this IServiceCollection services)
+      where TStrategy : class, IOutboxBatchStrategy {
+    ArgumentNullException.ThrowIfNull(services);
+    var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IOutboxBatchStrategy));
+    if (existing is not null) {
+      services.Remove(existing);
+    }
+    services.AddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<TStrategy>());
+    return services;
+  }
+
+  private static OutboxBulkFlushCallback _buildOutboxFlushCallback(IServiceProvider sp) {
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
+    var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    return async (messages, ct) => {
+      await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+    };
+  }
 }
