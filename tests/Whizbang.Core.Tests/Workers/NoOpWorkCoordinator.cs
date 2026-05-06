@@ -38,6 +38,24 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
     return Task.CompletedTask;
   }
 
+  /// <summary>Number of times StoreOutboxMessagesAsync was invoked.</summary>
+  public int StoreOutboxCallCount { get; private set; }
+
+  /// <summary>Captured arguments from the last StoreOutboxMessagesAsync call — for end-to-end
+  /// wiring tests that verify the closure passes through correctly (partition count, message
+  /// array contents).</summary>
+  public int LastOutboxPartitionCount { get; private set; }
+
+  /// <summary>All outbox messages ever stored via StoreOutboxMessagesAsync.</summary>
+  public List<OutboxMessage> StoredOutboxMessages { get; } = [];
+
+  public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
+    StoreOutboxCallCount++;
+    LastOutboxPartitionCount = partitionCount;
+    StoredOutboxMessages.AddRange(messages);
+    return Task.CompletedTask;
+  }
+
   public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) =>
     Task.CompletedTask;
 
