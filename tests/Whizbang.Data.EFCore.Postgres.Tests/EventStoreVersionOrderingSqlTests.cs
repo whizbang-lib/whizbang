@@ -112,6 +112,136 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   }
 
   // ============================================================================
+  // SLICE 11 (Half B): batched _emit_event_store_chain — locks the producer-side
+  // stream-affinity batching contract used by SlidingWindowOutboxBatchStrategy.
+  // ============================================================================
+
+  [Test]
+  public async Task EmitChain_BatchOf50SameStream_AssignsContiguousVersionsAsync() {
+    // Slice 11: SlidingWindowOutboxBatchStrategy will hand the chain a batch of up to 100
+    // same-stream messages in a single call. Lock the contract: contiguous versions 1..N in
+    // message_id order, regardless of insertion order in wh_outbox.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var ids = new Guid[50];
+    for (var i = 0; i < 50; i++) {
+      ids[i] = (Guid)TrackedGuid.NewMedo();
+      await Task.Delay(1);
+    }
+
+    var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
+    // Insert in REVERSE message_id order — created_at sequence disagrees with message_id
+    // sequence, so any version assignment that doesn't ORDER BY message_id would violate
+    // the contract.
+    for (var i = 49; i >= 0; i--) {
+      await _insertOutboxEventAsync(conn, ids[i], streamId, instanceId, createdAt: nowOldest.AddMilliseconds(i));
+    }
+
+    await _callEmitEventStoreChainAsync(conn, instanceId, ids);
+
+    var versions = await _readVersionsAsync(conn, streamId);
+    await Assert.That(versions.Count).IsEqualTo(50);
+    for (var i = 0; i < 50; i++) {
+      await Assert.That(versions[ids[i]]).IsEqualTo(i + 1)
+        .Because($"contiguous versions: ids[{i}] (UUIDv7 ordered) must get version {i + 1}");
+    }
+  }
+
+  [Test]
+  public async Task EmitChain_BatchOfMixedStreams_PerStreamVersionsCorrectAsync() {
+    // Slice 11: when a single emit batch contains messages spanning two different streams,
+    // each stream's version sequence must be independently monotonic (1..N per stream),
+    // not a single 1..(N+M) sequence across the union.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    // 5 messages per stream, interleaved A/B in message_id order.
+    var ids = new (Guid Id, Guid Stream)[10];
+    for (var i = 0; i < 10; i++) {
+      ids[i] = ((Guid)TrackedGuid.NewMedo(), i % 2 == 0 ? streamA : streamB);
+      await Task.Delay(1);
+    }
+
+    var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
+    foreach (var (id, stream) in ids) {
+      await _insertOutboxEventAsync(conn, id, stream, instanceId, createdAt: nowOldest);
+    }
+
+    await _callEmitEventStoreChainAsync(conn, instanceId, ids.Select(x => x.Id).ToArray());
+
+    var versionsA = await _readVersionsAsync(conn, streamA);
+    var versionsB = await _readVersionsAsync(conn, streamB);
+    await Assert.That(versionsA.Count).IsEqualTo(5);
+    await Assert.That(versionsB.Count).IsEqualTo(5);
+
+    var idsA = ids.Where(x => x.Stream == streamA).Select(x => x.Id).ToArray();
+    var idsB = ids.Where(x => x.Stream == streamB).Select(x => x.Id).ToArray();
+    for (var i = 0; i < 5; i++) {
+      await Assert.That(versionsA[idsA[i]]).IsEqualTo(i + 1)
+        .Because("stream A version sequence is independent of stream B");
+      await Assert.That(versionsB[idsB[i]]).IsEqualTo(i + 1)
+        .Because("stream B version sequence is independent of stream A");
+    }
+  }
+
+  [Test]
+  public async Task EmitChain_BatchedShuffledMessageIds_InsertsByMessageIdOrderAsync() {
+    // Slice 11: regression lock for the cursor-inversion case at batch scale. Producer-side
+    // sliding window may write same-stream messages to its bounded channel in non-deterministic
+    // order under contention; the strategy sorts before flush, but the chain must also
+    // independently ORDER BY message_id (defense in depth). 20 shuffled messages, single batch.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var ordered = new Guid[20];
+    for (var i = 0; i < 20; i++) {
+      ordered[i] = (Guid)TrackedGuid.NewMedo();
+      await Task.Delay(1);
+    }
+
+    // Deterministic shuffle (seed 42) so test failures reproduce.
+    var rng = new Random(42);
+    var shuffled = ordered.OrderBy(_ => rng.Next()).ToArray();
+    var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
+    foreach (var id in shuffled) {
+      await _insertOutboxEventAsync(conn, id, streamId, instanceId, createdAt: nowOldest);
+    }
+
+    // Pass the SHUFFLED array to the chain — exercises the SQL ORDER BY explicitly.
+    await _callEmitEventStoreChainAsync(conn, instanceId, shuffled);
+
+    var versions = await _readVersionsAsync(conn, streamId);
+    await Assert.That(versions.Count).IsEqualTo(20);
+    for (var i = 0; i < 20; i++) {
+      await Assert.That(versions[ordered[i]]).IsEqualTo(i + 1)
+        .Because("regardless of array order in the call, version assignment is ORDER BY message_id");
+    }
+  }
+
+  // ============================================================================
   // SLICE 4: ON CONFLICT DO NOTHING tolerates (stream_id, version) collision
   // ============================================================================
 
