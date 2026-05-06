@@ -194,18 +194,11 @@ public partial class ServiceBusConsumerWorker(
     // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the JDX BFF
     // pattern where many cross-service events flow through with no local consumer.
     // Null registry → legacy behavior (always store) for back-compat in test harnesses.
-    // The transport delivers the wrapper envelope type (e.g.
-    // "MessageEnvelope`1[[MyApp.SomeEvent, MyApp]], Whizbang.Core"); the registry stores
-    // inner message types, so we extract first. If extraction fails (unexpected format),
-    // skip the gate and let the legacy serialization path surface the error — never drop
-    // a message because of a registry-side classification miss.
+    // EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; we
+    // skip the gate in that case rather than misclassifying — never drop a message
+    // because of a registry-side parse miss.
     if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)) {
-      string? innerMessageType = null;
-      try {
-        innerMessageType = _extractMessageTypeFromEnvelopeType(envelopeType);
-      } catch (InvalidOperationException) {
-        // Unwrapped format — fall through to the legacy storage path.
-      }
+      var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
       if (innerMessageType is not null && !_receptorRegistry.HasAnyConsumer(innerMessageType)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
         return;
