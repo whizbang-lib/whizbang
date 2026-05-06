@@ -378,12 +378,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       // stays as defense-in-depth — broader registry coverage here catches lifecycle
       // receptors and tag-attribute consumers the IEventTypeProvider list misses.
       if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)) {
-        string? innerMessageType = null;
-        try {
-          innerMessageType = _extractMessageTypeFromEnvelopeType(msg.EnvelopeType);
-        } catch (InvalidOperationException) {
-          // Unwrapped format — fall through to legacy serialization path.
-        }
+        var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
         if (innerMessageType is not null && !_receptorRegistry.HasAnyConsumer(innerMessageType)) {
           _metrics?.InboxMessagesDeduplicated.Add(1);
           continue;
