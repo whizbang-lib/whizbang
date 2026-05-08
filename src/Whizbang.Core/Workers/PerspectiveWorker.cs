@@ -264,7 +264,27 @@ public partial class PerspectiveWorker(
     }
 
     try {
-      await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
+      // Slice 17: spawn N parallel consumer loops. Each independently reads batches from the
+      // shared channels and processes them. ProcessChannelBatchAsync itself fans out per
+      // (streamId, perspectiveName) up to MaxConcurrentPerspectives, so outer × inner gives
+      // the steady-state concurrency ceiling. With outer=1 (pre-slice-17) the batch loop was
+      // serial — when batch N was processing, batch N+1's items piled up in the channel until
+      // batch N completed. Multiple consumers race for items, so different streams flow in
+      // parallel without each having to wait for a prior batch to finish.
+      var consumerCount = Math.Max(1, _options.MaxConcurrentDrainConsumers);
+      if (consumerCount == 1) {
+        await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
+      } else {
+        var consumers = new Task[consumerCount];
+        for (var i = 0; i < consumerCount; i++) {
+          consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), stoppingToken);
+        }
+        try {
+          await Task.WhenAll(consumers).ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+          // expected on shutdown
+        }
+      }
     } finally {
       // Graceful shutdown: drain any in-flight PostLifecycle task so background work
       // completes before the host disposes scoped services (DbContext, etc.) out from
@@ -3219,6 +3239,21 @@ public class PerspectiveWorkerOptions {
   /// Default: 30
   /// </summary>
   public int MaxConcurrentPerspectives { get; set; } = 30;
+
+  /// <summary>
+  /// Slice 17: number of parallel consumer loops running on the channel reader. Each loop
+  /// independently waits for work, builds a batch, and runs <c>ProcessChannelBatchAsync</c>
+  /// (which itself parallelizes per-stream-perspective up to <see cref="MaxConcurrentPerspectives"/>).
+  /// Outer × inner gives the steady-state concurrency ceiling. Default 4 (so ~120 concurrent
+  /// stream-perspective applies at peak).
+  /// <para>
+  /// Sized to break the single-consumer batch loop bottleneck observed on a consumer BFF where
+  /// saga fan-out enqueued perspective work faster than one consumer could drain (38/sec
+  /// drain vs ~180/sec arrivals). Set to 1 to restore the pre-slice-17 single-consumer
+  /// behavior.
+  /// </para>
+  /// </summary>
+  public int MaxConcurrentDrainConsumers { get; set; } = 4;
 
   /// <summary>
   /// Maximum number of streams to return per batch from the SQL function.
