@@ -37,6 +37,25 @@ public static class WorkCoordinatorStrategyFactory {
       WorkCoordinatorStrategy.Batch => _createBatch(sp),
       _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, $"Unknown work coordinator strategy: {strategy}")
     };
+    // Stream-affinity wrapping happens at the DI registration site (see EFCoreSnippets) so
+    // the wrap is applied exactly once across all branches (including Interval/Batch singletons
+    // that bypass this factory).
+  }
+
+  /// <summary>
+  /// Half B: wraps an inner strategy with the stream-affinity decorator when an
+  /// <see cref="IOutboxBatchStrategy"/> is registered. Routes outbox writes through per-stream
+  /// sliding-window batching so a saga's fan-out emits one batched insert per stream instead of
+  /// N per-message inserts. Returns <paramref name="inner"/> unchanged if no batch strategy is
+  /// registered (e.g., test fixtures or services that opted out of Half B).
+  /// </summary>
+  public static IWorkCoordinatorStrategy WrapWithStreamAffinity(IWorkCoordinatorStrategy inner, IServiceProvider sp) {
+    ArgumentNullException.ThrowIfNull(inner);
+    ArgumentNullException.ThrowIfNull(sp);
+    var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
+    return outboxBatch is null
+      ? inner
+      : new StreamAffinityWorkCoordinatorStrategy(inner, outboxBatch);
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
