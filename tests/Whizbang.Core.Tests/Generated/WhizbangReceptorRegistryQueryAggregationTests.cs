@@ -36,23 +36,30 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
 
   // ===== Single-contribution lookups =====
 
+  // Contributions are stored in the form the source generator emits — dotted, no assembly
+  // qualifier (e.g., "MyApp.SomeEvent"). At query time, _normalizeTypeName strips any
+  // assembly qualifier supplied by Type.AssemblyQualifiedName. Tests below mix both forms
+  // on the QUERY side to exercise normalization.
+
   [Test]
   public async Task SingleContribution_HasAnyConsumer_FindsTheTypeAsync() {
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["MyApp.SomeEvent, MyApp.Contracts"],
+      AnyConsumerTypes = ["MyApp.SomeEvent"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
 
-    await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("MyApp.SomeEvent, MyApp.Contracts")).IsTrue();
+    await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("MyApp.SomeEvent, MyApp.Contracts")).IsTrue()
+      .Because("Qualified runtime name must normalize to the stored unqualified form.");
+    await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("MyApp.SomeEvent")).IsTrue();
     await Assert.That(WhizbangReceptorRegistryQuery.HasAnyConsumer("Other.Type, Other")).IsFalse();
   }
 
   [Test]
   public async Task SingleContribution_HasInboxHandler_FindsTheTypeAsync() {
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["MyApp.Cmd, MyApp"],
-      InboxHandlerTypes = ["MyApp.Cmd, MyApp"],
+      AnyConsumerTypes = ["MyApp.Cmd"],
+      InboxHandlerTypes = ["MyApp.Cmd"],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
 
@@ -63,10 +70,10 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
   [Test]
   public async Task SingleContribution_HasReceptors_PerStageLookupAsync() {
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["MyApp.Evt, MyApp"],
+      AnyConsumerTypes = ["MyApp.Evt"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>> {
-        [LifecycleStage.PreInboxInline] = ["MyApp.Evt, MyApp"],
+        [LifecycleStage.PreInboxInline] = ["MyApp.Evt"],
       },
     });
 
@@ -85,12 +92,12 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
     // when each assembly emitted its own static-with-HashSets and Whizbang.Core's adapter
     // saw only the empty Core copy.
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["UserService.AccountCreated, UserService"],
+      AnyConsumerTypes = ["UserService.AccountCreated"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["BffService.PermissionsMaterialized, BffService"],
+      AnyConsumerTypes = ["BffService.PermissionsMaterialized"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
@@ -107,15 +114,15 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
       AnyConsumerTypes = [],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>> {
-        [LifecycleStage.PreInboxInline] = ["AssemblyA.Evt, A"],
+        [LifecycleStage.PreInboxInline] = ["AssemblyA.Evt"],
       },
     });
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
       AnyConsumerTypes = [],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>> {
-        [LifecycleStage.PreInboxInline] = ["AssemblyB.Evt, B"],
-        [LifecycleStage.PostInboxDetached] = ["AssemblyB.Cmd, B"],
+        [LifecycleStage.PreInboxInline] = ["AssemblyB.Evt"],
+        [LifecycleStage.PostInboxDetached] = ["AssemblyB.Cmd"],
       },
     });
 
@@ -142,7 +149,7 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
   public async Task NewContribution_AfterPriorQuery_ShowsUpInNextQueryAsync() {
     // Prime the cache with one contribution
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["First.Evt, First"],
+      AnyConsumerTypes = ["First.Evt"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
@@ -151,7 +158,7 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
 
     // Register another contribution — the count-based cache invalidation must pick it up
     AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
-      AnyConsumerTypes = ["Second.Evt, Second"],
+      AnyConsumerTypes = ["Second.Evt"],
       InboxHandlerTypes = [],
       StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
     });
