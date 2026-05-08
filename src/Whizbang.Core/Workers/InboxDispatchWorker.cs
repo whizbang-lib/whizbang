@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -55,6 +56,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly ILogger<InboxDispatchWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery? _receptorRegistry;
+  private readonly InboxDeserializeCache? _deserializeCache;
 
   /// <summary>Constructor.</summary>
   public InboxDispatchWorker(
@@ -72,7 +74,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
     LeaseRegistry? leaseRegistry = null,
     TimeProvider? timeProvider = null,
-    IReceptorRegistryQuery? receptorRegistry = null) {
+    IReceptorRegistryQuery? receptorRegistry = null,
+    InboxDeserializeCache? deserializeCache = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -88,6 +91,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;
+    _deserializeCache = deserializeCache;
   }
 
   /// <inheritdoc />
@@ -107,25 +111,62 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return;
     }
 
+    // Slice 14: stream-affinity hash partitioning. Spawn N internal queues + N consumer tasks.
+    // The demux loop reads from the main inbox channel and routes each work to the queue indexed
+    // by (StreamId.GetHashCode() mod N). Same-stream messages always land in the same queue, so
+    // per-stream FIFO is preserved automatically — different streams parallelize across queues.
+    // Different streams that hash-collide share a queue and process serially within that queue,
+    // which is benign (different-stream order has no FIFO requirement).
+    var partitionCount = Math.Max(1, _options.MaxConcurrentDispatch);
+    var partitions = new Channel<InboxWork>[partitionCount];
+    var consumers = new Task[partitionCount];
+    for (var i = 0; i < partitionCount; i++) {
+      partitions[i] = Channel.CreateUnbounded<InboxWork>(new UnboundedChannelOptions {
+        SingleReader = true,
+        SingleWriter = true,
+        AllowSynchronousContinuations = false
+      });
+      var partitionReader = partitions[i].Reader;
+      consumers[i] = Task.Run(async () => {
+        try {
+          await foreach (var work in partitionReader.ReadAllAsync(stoppingToken)) {
+            try {
+              await _processOneAsync(work, stoppingToken);
+            } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+              throw;
+            } catch (Exception ex) {
+              LogDispatchError(_logger, work.MessageId, ex);
+              _inboxChannelWriter.RemoveInFlight(work.MessageId);
+              await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+                MessageId = work.MessageId,
+                CompletedStatus = work.Status,
+                Error = ex.Message,
+                Reason = MessageFailureReason.Unknown
+              }, stoppingToken);
+            }
+          }
+        } catch (OperationCanceledException) {
+          // shutdown
+        }
+      }, stoppingToken);
+    }
+
     try {
       await foreach (var work in _inboxChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
-        try {
-          await _processOneAsync(work, stoppingToken);
-        } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-          throw;
-        } catch (Exception ex) {
-          LogDispatchError(_logger, work.MessageId, ex);
-          _inboxChannelWriter.RemoveInFlight(work.MessageId);
-          await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
-            MessageId = work.MessageId,
-            CompletedStatus = work.Status,
-            Error = ex.Message,
-            Reason = MessageFailureReason.Unknown
-          }, stoppingToken);
-        }
+        var partitionIndex = (int)((uint)work.StreamId.GetHashCode() % (uint)partitionCount);
+        await partitions[partitionIndex].Writer.WriteAsync(work, stoppingToken).ConfigureAwait(false);
       }
     } catch (OperationCanceledException) {
       // expected on shutdown
+    } finally {
+      foreach (var p in partitions) {
+        p.Writer.TryComplete();
+      }
+      try {
+        await Task.WhenAll(consumers).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        // shutdown
+      }
     }
 
     LogStopped(_logger);
@@ -168,8 +209,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
+      // Slice 15: deserialize the envelope payload ONCE per message — all four lifecycle stages
+      // reuse the same typed envelope. Cache hit on transport redelivery / lease re-claim within
+      // the configured TTL. Returns null (typedEnvelope == null) when no deserializer or no
+      // payload — lifecycle invocation then no-ops as before.
+      var typedEnvelope = _resolveTypedEnvelope(work);
+
       await _invokeInboxLifecycleStageAsync(
-        work, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
+        work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
         "PreInbox", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
 
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
@@ -180,20 +227,44 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // PostInbox lands AFTER event storage. Use LongRunning for the Detached stage so it can't be
       // starved by PerspectiveWorker drain churn.
       await _invokeInboxLifecycleStageAsync(
-        work, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+        work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
         "PostInbox", useLongRunningForDetached: true, ct, detachedCancellationToken: stoppingToken);
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
       if (_hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
         await _invokeInboxLifecycleStageAsync(
-          work, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
+          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
         await _invokeInboxLifecycleStageAsync(
-          work, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
+          work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline,
           "PostLifecycle", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
       }
     });
+  }
+
+  /// <summary>
+  /// Slice 15: deserialize the message payload once per dispatch (or hit the cache on
+  /// re-delivery within TTL). Returns null when no deserializer is registered, no envelope
+  /// payload exists, or deserialization fails — callers then no-op the lifecycle stage.
+  /// </summary>
+  private IMessageEnvelope? _resolveTypedEnvelope(InboxWork work) {
+    if (_lifecycleMessageDeserializer is null) {
+      return null;
+    }
+    if (_deserializeCache is not null && _deserializeCache.TryGet(work.MessageId, out var cached) && cached is not null) {
+      return work.Envelope.ReconstructWithPayload(cached);
+    }
+    try {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      _deserializeCache?.Set(work.MessageId, message);
+      return work.Envelope.ReconstructWithPayload(message);
+    } catch (Exception ex) {
+      // Deserialize is now best-effort at the top of dispatch; per-stage code logs lifecycle
+      // errors but a fail here would silently skip ALL stages. Surface it once.
+      LogLifecycleError(_logger, work.MessageId, "Deserialize", ex);
+      return null;
+    }
   }
 
   private HandlerCommitRequest _buildCommitRequest(InboxWork work, int status)
@@ -216,6 +287,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   private async Task _invokeInboxLifecycleStageAsync(
       InboxWork work,
+      IMessageEnvelope? typedEnvelope,
       AsyncServiceScope scope,
       IReceptorInvoker? receptorInvoker,
       LifecycleStage detachedStage,
@@ -231,7 +303,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // stoppingToken (or CancellationToken.None) here so detached stages run until shutdown.
     // If left default, falls back to <paramref name="cancellationToken"/> for backward-compat.
     var detachedCt = detachedCancellationToken == default ? cancellationToken : detachedCancellationToken;
-    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+    if (typedEnvelope is null || receptorInvoker is null) {
       return;
     }
 
@@ -247,15 +319,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // (registry is injected by AddWhizbangWorkers). Tag-notification hooks would never fire
     // for cross-service events. Future generator extension can broaden this gate; for now
     // _isGatedStage explicitly enumerates the safe set.
-    if (_receptorRegistry is not null && _isGatedStage(detachedStage)
-        && !_receptorRegistry.HasReceptors(detachedStage, work.MessageType)
-        && !_receptorRegistry.HasReceptors(inlineStage, work.MessageType)) {
+    var hasDetached = _receptorRegistry is null || !_isGatedStage(detachedStage)
+      || _receptorRegistry.HasReceptors(detachedStage, work.MessageType);
+    var hasInline = _receptorRegistry is null || !_isGatedStage(detachedStage)
+      || _receptorRegistry.HasReceptors(inlineStage, work.MessageType);
+    if (!hasDetached && !hasInline) {
       return;
     }
 
     try {
-      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = detachedStage,
         EventId = null,
@@ -265,36 +337,41 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         AttemptNumber = work.Attempts
       };
 
-      // Detached: fire-and-forget on a dedicated DI scope. PostInbox uses LongRunning to avoid
-      // ThreadPool starvation under PerspectiveWorker drain churn (legacy guard at lines 1311-1313).
-      Func<Func<Task>, CancellationToken, Task> scheduler = useLongRunningForDetached
-        ? (body, ct) => BackgroundStageDispatch.StartLongRunning(body, ct)
-        : (body, ct) => Task.Run(body, ct);
+      // Slice 16: only spawn the detached fire-and-forget when a receptor is actually registered
+      // for the detached stage. Without this guard, every message creates an extra DI scope +
+      // security context + Task.Run for a stage where nothing will fire — pure overhead.
+      if (hasDetached) {
+        Func<Func<Task>, CancellationToken, Task> scheduler = useLongRunningForDetached
+          ? (body, ct) => BackgroundStageDispatch.StartLongRunning(body, ct)
+          : (body, ct) => Task.Run(body, ct);
 
-      _ = scheduler(async () => {
-        try {
-          await using var detachedScope = _scopeFactory.CreateAsyncScope();
-          await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, detachedCt);
-          var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
-          if (detachedInvoker is null) {
-            return;
+        _ = scheduler(async () => {
+          try {
+            await using var detachedScope = _scopeFactory.CreateAsyncScope();
+            await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, detachedCt);
+            var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+            if (detachedInvoker is null) {
+              return;
+            }
+            var ctx = lifecycleContext with { CurrentStage = detachedStage };
+            await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, detachedCt);
+            await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+              ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+          } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
+            // graceful shutdown
+          } catch (Exception ex) {
+            LogLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
           }
-          var ctx = lifecycleContext with { CurrentStage = detachedStage };
-          await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, detachedCt);
-          await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-            ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
-        } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
-          // graceful shutdown
-        } catch (Exception ex) {
-          LogLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
-        }
-      }, detachedCt);
+        }, detachedCt);
+      }
 
       // Inline: blocks until complete
-      lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
-      await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-        lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+      if (hasInline) {
+        lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
+        await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
+        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+      }
     } catch (Exception ex) {
       LogLifecycleError(_logger, work.MessageId, stageName, ex);
     }
@@ -374,4 +451,16 @@ public sealed class InboxDispatchWorkerOptions {
   /// Modulo partition count carried into <see cref="HandlerCommitRequest"/>. Default 10000.
   /// </summary>
   public int PartitionCount { get; set; } = 10_000;
+
+  /// <summary>
+  /// Slice 14: number of parallel internal dispatch consumers. Same-stream messages always
+  /// route to the same consumer (stream-affinity hash partitioning) so per-stream FIFO is
+  /// preserved; different-stream messages parallelize across the N consumers. Default 8.
+  /// <para>
+  /// Sized for typical per-message dispatch cost on a saga consumer (~150-250 ms at the time
+  /// slice 14 shipped). Set to 1 to restore the pre-slice-14 single-consumer behavior. Higher
+  /// values trade ThreadPool fan-out for less inbox queue depth under burst load.
+  /// </para>
+  /// </summary>
+  public int MaxConcurrentDispatch { get; set; } = 8;
 }

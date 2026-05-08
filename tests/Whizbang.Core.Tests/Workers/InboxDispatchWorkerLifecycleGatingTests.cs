@@ -345,6 +345,164 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await cts.CancelAsync();
   }
 
+  // ========================================================================
+  // SLICE 15 + 16 — deserialize-once + skip empty-detached spawn invariants
+  // ========================================================================
+
+  private static WorkerHarness _buildWorkerWithCache(IReceptorRegistryQuery? registry, InboxDeserializeCache? cache) {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var invoker = new CapturingReceptorInvoker();
+    var deserializer = new CountingLifecycleDeserializer();
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(_ => invoker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: deserializer,
+      receptorRegistry: registry,
+      deserializeCache: cache);
+
+    return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, deserializer);
+  }
+
+  [Test]
+  public async Task Slice15_DeserializeOnce_AcrossAllFourLifecycleStagesAsync() {
+    // Lock the slice 15 invariant: a single inbox message dispatches through up to four
+    // lifecycle stages (PreInbox / PostInbox / PostAllPerspectives / PostLifecycle) but the
+    // payload MUST deserialize exactly once. Pre-slice-15 the deserializer was called inside
+    // each stage helper — 4× wasted JSON parsing per message at saga fan-out load.
+    var registry = new FakeReceptorRegistry(hasReceptors: (_, _) => true);
+    await using var harness = _buildWorkerWithCache(registry, cache: null);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+    var work = _makeWork("Slice15.AllStages.Event, Test");
+    await harness.Inbox.WriteAsync(work, cts.Token);
+
+    await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+    while ((!harness.Invoker.HasStage(LifecycleStage.PreInboxInline)
+            || !harness.Invoker.HasStage(LifecycleStage.PostInboxInline)
+            || !harness.Invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)
+            || !harness.Invoker.HasStage(LifecycleStage.PostLifecycleInline))
+           && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
+
+    await Assert.That(harness.Deserializer.CallCount).IsEqualTo(1)
+      .Because("Slice 15 invariant: payload must deserialize exactly once per dispatch even when all 4 lifecycle stages fire.");
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task Slice15_CacheHit_OnRedeliveryWithinTtl_SkipsDeserializeAsync() {
+    // Lock the slice 15 cache invariant: when the same messageId is re-dispatched (transport
+    // redelivery, lease re-claim, retry) within the cache's TTL window, the deserializer is
+    // NOT called again. Pre-slice-15 every redelivery re-parsed the JSON.
+    var registry = new FakeReceptorRegistry(hasReceptors: (_, _) => true);
+    var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 5, 7, 12, 0, 0, TimeSpan.Zero));
+    var cache = new InboxDeserializeCache(new SystemTimeProvider(fake), ttl: TimeSpan.FromMinutes(2));
+    await using var harness = _buildWorkerWithCache(registry, cache);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+
+    // First dispatch — populates the cache.
+    var work = _makeWork("Slice15.Cache.Event, Test");
+    await harness.Inbox.WriteAsync(work, cts.Token);
+    await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    var firstCount = harness.Deserializer.CallCount;
+
+    // Redeliver the SAME messageId (transport double-fire scenario). New work record but
+    // shares the message id so the cache key collides.
+    var redelivery = work with { Attempts = 1 };
+    await harness.Inbox.WriteAsync(redelivery, cts.Token);
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+    while (harness.HandlerCommit.All.Count < 2 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
+
+    await Assert.That(harness.HandlerCommit.All.Count).IsEqualTo(2)
+      .Because("Both dispatches should reach completion.");
+    await Assert.That(harness.Deserializer.CallCount).IsEqualTo(firstCount)
+      .Because("Cache hit on redelivery within TTL must skip the deserialize call entirely.");
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task Slice16_NoDetachedReceptor_DoesNotSpawnDetachedScopeAsync() {
+    // Lock the slice 16 invariant: when only the inline form of a stage has receptors, the
+    // detached fire-and-forget Task.Run + new DI scope + security context establishment is
+    // skipped. Pre-slice-16 every gated stage spawned a detached task even if no receptor
+    // would ever fire — pure overhead at saga fan-out load.
+    //
+    // We assert this indirectly: the CapturingReceptorInvoker records every call. If the
+    // detached path spawned, it would record a *Detached stage in addition to *Inline.
+    var registry = new FakeReceptorRegistry(hasReceptors: (stage, _) =>
+      stage == LifecycleStage.PreInboxInline || stage == LifecycleStage.PostInboxInline);
+    await using var harness = _buildWorkerWithCache(registry, cache: null);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+
+    var work = _makeWork("Slice16.InlineOnly.Event, Test");
+    await harness.Inbox.WriteAsync(work, cts.Token);
+
+    await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Give detached tasks a chance to spawn if they're going to.
+    for (var i = 0; i < 100; i++) {
+      await Task.Yield();
+    }
+
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxInline)).IsTrue()
+      .Because("Inline stage with a registered receptor must still fire.");
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)).IsFalse()
+      .Because("Slice 16: detached stage with no registered receptor must NOT spawn a Task.Run / new scope.");
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostInboxDetached)).IsFalse()
+      .Because("Same invariant for PostInbox detached stage.");
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task Slice16_DetachedReceptorRegistered_StillSpawnsDetachedAsync() {
+    // Positive complement to the slice 16 lock: when a receptor IS registered for the detached
+    // stage, the spawn still happens. Catches a regression where the new gate becomes too
+    // aggressive and skips legitimate detached work.
+    var registry = new FakeReceptorRegistry(hasReceptors: (_, _) => true);
+    await using var harness = _buildWorkerWithCache(registry, cache: null);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+
+    var work = _makeWork("Slice16.BothRegistered.Event, Test");
+    await harness.Inbox.WriteAsync(work, cts.Token);
+
+    await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+    while ((!harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)
+            || !harness.Invoker.HasStage(LifecycleStage.PostInboxDetached))
+           && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
+
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)).IsTrue()
+      .Because("With a registered detached receptor, the spawn must still happen.");
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostInboxDetached)).IsTrue();
+    await cts.CancelAsync();
+  }
+
   [Test]
   public async Task Process_NullRegistry_PreservesLegacyBehaviorFiresLifecycleAsync() {
     // Backward compatibility: when no IReceptorRegistryQuery is provided (test harnesses

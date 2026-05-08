@@ -61,6 +61,19 @@ public static class WorkerPipelineExtensions {
     });
     services.TryAddSingleton<RecentlyProcessedEventCacheSweepWorker>();
 
+    // Slice 15 of pump-then-process.md: per-instance bounded LRU cache for deserialized inbox
+    // payloads. Holds the parsed object across the four lifecycle stages of one dispatch AND
+    // across transport redelivery / lease re-claim within the configured TTL. Singleton —
+    // InboxDispatchWorker reads/writes; cache is a passive structure.
+    services.TryAddSingleton(sp => {
+      var opts = sp.GetRequiredService<IOptions<InboxDeserializeCacheOptions>>().Value;
+      var time = sp.GetRequiredService<ITimeProvider>();
+      return new InboxDeserializeCache(
+        timeProvider: time,
+        ttl: TimeSpan.FromMinutes(Math.Max(1, opts.TtlMinutes)),
+        maxEntries: Math.Max(1, opts.MaxEntries));
+    });
+
     // Phase H step 9 slice 7: lease-tied cancellation infrastructure. LeaseRegistry is the
     // singleton handle store; dispatch workers Register at claim, LeaseRenewalWorker looks up
     // by (category, work_id) when extending DB leases so the in-process CT deadline tracks the
@@ -133,6 +146,7 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
     services.AddOptions<RecentlyProcessedEventCacheOptions>();
+    services.AddOptions<InboxDeserializeCacheOptions>();
     services.AddOptions<LeaseHandleOptions>();
     services.AddOptions<SlidingWindowOutboxOptions>();
     services.AddOptions<SlidingWindowInboxOptions>();
