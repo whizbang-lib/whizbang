@@ -133,8 +133,9 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       }
     }
 
-    // A receptor with no [FireAt] is a direct inbox handler (defaults to ImmediateDetached
-    // post-storage). One with [FireAt(PreInboxInline)] is a lifecycle receptor at that stage.
+    // A receptor with no [FireAt] is a direct inbox handler that fires at PostInboxDetached/
+    // PostInboxInline by default (transport path) or LocalImmediateDetached (local path).
+    // One with [FireAt(PreInboxInline)] is a lifecycle receptor at that stage.
     // Receptors at PreInbox/PostInbox stages are NOT inbox handlers — they're lifecycle hooks.
     // Receptors with no stages OR with stages unrelated to PreInbox/PostInbox count as inbox handlers.
     var hasOnlyLifecycleStages = stages.Count > 0
@@ -243,6 +244,12 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
         inboxHandlerTypes.Add(entry.MessageType);
       }
     }
+
+    // Default-stage void receptors (no [FireAt]) fire at PostInboxDetached/PostInboxInline
+    // when messages arrive via transport. Register them in the per-stage lookup so the
+    // InboxDispatchWorker gate (HasReceptors check) doesn't skip their invocation.
+    stageTypes["PostInboxDetached"].UnionWith(inboxHandlerTypes);
+    stageTypes["PostInboxInline"].UnionWith(inboxHandlerTypes);
 
     var anyConsumerTypes = new System.Collections.Generic.HashSet<string>(inboxHandlerTypes, System.StringComparer.Ordinal);
     anyConsumerTypes.UnionWith(allReceptorMessageTypes);

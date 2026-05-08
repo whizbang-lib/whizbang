@@ -46,19 +46,34 @@ public static class WhizbangReceptorRegistryQuery {
   /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>
   public static bool HasReceptors(LifecycleStage stage, string messageType) {
     var stageTypes = _ensureStageTypesCached();
-    return stageTypes.TryGetValue(stage, out var set) && set.Contains(messageType);
+    return stageTypes.TryGetValue(stage, out var set) && set.Contains(_normalizeTypeName(messageType));
   }
 
   /// <summary>True if any inbox handler (IReceptor without lifecycle FireAt) is registered for the type.</summary>
   public static bool HasInboxHandler(string messageType) {
     var inboxHandlers = _ensureInboxHandlerCached();
-    return inboxHandlers.Contains(messageType);
+    return inboxHandlers.Contains(_normalizeTypeName(messageType));
   }
 
   /// <summary>True if any consumer (handler / lifecycle receptor / perspective / tag-attribute) cares about this message type.</summary>
   public static bool HasAnyConsumer(string messageType) {
     var anyConsumer = _ensureAnyConsumerCached();
-    return anyConsumer.Contains(messageType);
+    return anyConsumer.Contains(_normalizeTypeName(messageType));
+  }
+
+  /// <summary>
+  /// Normalizes a CLR type name to match the C# display format used by the source generator.
+  /// The generator uses <c>SymbolDisplayFormat.FullyQualifiedFormat</c> which produces dots for
+  /// nested types (e.g., <c>"Ns.Outer.Inner"</c>), but at runtime <c>Type.AssemblyQualifiedName</c>
+  /// uses <c>+</c> for nested types and includes the assembly (e.g., <c>"Ns.Outer+Inner, Asm"</c>).
+  /// This method bridges the two formats so the drop-gate lookup works correctly.
+  /// </summary>
+  private static string _normalizeTypeName(string typeName) {
+    // Strip assembly qualifier (everything after first ", ")
+    var commaIdx = typeName.IndexOf(", ", System.StringComparison.Ordinal);
+    var nameOnly = commaIdx >= 0 ? typeName.Substring(0, commaIdx) : typeName;
+    // Convert CLR nested-type separator (+) to C# display format (.)
+    return nameOnly.Contains('+') ? nameOnly.Replace('+', '.') : nameOnly;
   }
 
   // ===== Cache (re)building =====
