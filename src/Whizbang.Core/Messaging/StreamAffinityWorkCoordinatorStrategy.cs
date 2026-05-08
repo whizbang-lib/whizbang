@@ -24,7 +24,7 @@ namespace Whizbang.Core.Messaging;
 public sealed class StreamAffinityWorkCoordinatorStrategy(
     IWorkCoordinatorStrategy inner,
     IOutboxBatchStrategy outboxBatch
-) : IWorkCoordinatorStrategy {
+) : IWorkCoordinatorStrategy, IWorkFlusher {
   private readonly IWorkCoordinatorStrategy _inner = inner ?? throw new ArgumentNullException(nameof(inner));
   private readonly IOutboxBatchStrategy _outboxBatch = outboxBatch ?? throw new ArgumentNullException(nameof(outboxBatch));
 
@@ -73,4 +73,15 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
   /// <inheritdoc />
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default)
     => _inner.FlushAndGetBatchAsync(flags, ct);
+
+  /// <summary>
+  /// IWorkFlusher delegate — middleware (e.g., WhizbangFlushMiddleware) resolves
+  /// IWorkCoordinatorStrategy and casts to IWorkFlusher. Forwards to the inner strategy if it
+  /// implements IWorkFlusher; otherwise calls the standard FlushAsync(WorkBatchOptions, CT)
+  /// path. The outbox batch buffer is flushed by its own background loop, not by this hook.
+  /// </summary>
+  Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
+    _inner is IWorkFlusher flusher
+      ? flusher.FlushAsync(ct)
+      : _inner.FlushAsync(WorkBatchOptions.None, ct);
 }

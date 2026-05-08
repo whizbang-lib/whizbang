@@ -3493,11 +3493,12 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
-    // Queue event for batched processing
+    // Queue event for batched processing — async path routes through the per-stream
+    // sliding-window batcher when StreamAffinityWorkCoordinatorStrategy is active.
     // Guard against ObjectDisposedException — the singleton IntervalWorkCoordinatorStrategy
     // may be disposed during host shutdown while in-flight receptors are still publishing.
     try {
-      strategy.QueueOutboxMessage(newOutboxMessage);
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
     } catch (ObjectDisposedException ex) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
@@ -3567,7 +3568,7 @@ public abstract partial class Dispatcher(
         ?? messageId.Value;
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
-      strategy.QueueOutboxMessage(newOutboxMessage);
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
       await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
@@ -3843,8 +3844,8 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
 
-      // Queue message for batched processing
-      strategy.QueueOutboxMessage(newOutboxMessage);
+      // Queue message for batched processing — async path routes through the per-stream batcher.
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
       await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
@@ -3928,10 +3929,9 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-      // Queue message for batched processing
-      strategy.QueueOutboxMessage(newOutboxMessage);
+      // Queue message for batched processing — async path routes through the per-stream batcher.
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
 
-      // Flush strategy to execute the batch (strategy determines when to actually flush)
       // Flush strategy to execute the batch (strategy determines when to actually flush)
       await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
 
@@ -3983,7 +3983,7 @@ public abstract partial class Dispatcher(
         // Null destination = owned-domain event → event-store-only (no transport)
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-        strategy.QueueOutboxMessage(newOutboxMessage);
+        await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
 
         // Extract stream ID from [StreamId] attribute for delivery receipt
         var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
