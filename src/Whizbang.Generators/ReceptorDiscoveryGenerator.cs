@@ -907,12 +907,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
-    // Look for IPerspectiveFor<TModel, TEvent, ...> interface (any variant with 2+ type args)
+    // Look for IPerspectiveFor / IPerspectiveWithActionsFor<TModel, TEvent, ...> interface (any variant with 2+ type args)
     // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var hasPerspective = classSymbol.AllInterfaces.Any(i => {
       var originalDef = TypeNameHelper.GetOriginalDefinitionName(i);
       // Check if it starts with our perspective interface name and has at least 2 type arguments (model + events)
-      return originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<", StringComparison.Ordinal) && i.TypeArguments.Length >= 2;
+      return (originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<", StringComparison.Ordinal)
+           || originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<", StringComparison.Ordinal))
+          && i.TypeArguments.Length >= 2;
     });
 
     return hasPerspective;
