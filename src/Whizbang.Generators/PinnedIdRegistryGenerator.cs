@@ -61,7 +61,10 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
 
     var isPerspective = TypeNameHelper.ImplementsGenericInterface(
         typeSymbol,
-        StandardInterfaceNames.I_PERSPECTIVE_FOR);
+        StandardInterfaceNames.I_PERSPECTIVE_FOR) ||
+      TypeNameHelper.ImplementsGenericInterface(
+        typeSymbol,
+        StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR);
 
     if (!isMessage && !isPerspective) {
       return null;
