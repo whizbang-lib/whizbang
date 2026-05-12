@@ -1100,16 +1100,26 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       case AsbReceiveAction.AckAndDrop:
         // Slice 1 hotfix: ack + drop instead of broker DLQ on type-resolution failures.
-        _logger.LogWarning(
-          "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
-          decision.Reason,
-          decision.EnvelopeTypeName,
-          args.Message.MessageId,
-          args.SessionId,
-          destination.Address,
-          subscription,
-          decision.Description
-        );
+        // Focused port from feat/work-pump-decomposition's IMessageDiscardPolicy:
+        // NoLocalConsumer is routine for cross-domain subscribers — log at Debug so it
+        // doesn't spam production. Other AckAndDrop reasons (envelope/type/deserialise
+        // failures) still warn — those are genuine surprises.
+        var ackDropLevel = AckDropLogLevelFor(decision.Reason);
+        if (_logger.IsEnabled(ackDropLevel)) {
+#pragma warning disable CA2254 // Level chosen at runtime from decision.Reason — LoggerMessage source-gen doesn't help here.
+          _logger.Log(
+            ackDropLevel,
+            "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
+            decision.Reason,
+            decision.EnvelopeTypeName,
+            args.Message.MessageId,
+            args.SessionId,
+            destination.Address,
+            subscription,
+            decision.Description
+          );
+#pragma warning restore CA2254
+        }
         await args.CompleteMessageAsync(args.Message, args.CancellationToken);
         return (null, decision.EnvelopeTypeName);
 
@@ -1750,4 +1760,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     GC.SuppressFinalize(this);
   }
+
+  /// <summary>
+  /// Picks the log level for an <see cref="AsbReceiveAction.AckAndDrop"/> case based
+  /// on the reason. Routine <see cref="AsbReceiveReason.NO_LOCAL_CONSUMER"/> drops at
+  /// Debug — cross-domain subscribers see these every time a sibling event arrives
+  /// and the level would otherwise spam production logs. Everything else stays at
+  /// Warning so envelope/type/deserialise failures remain visible.
+  /// </summary>
+  /// <remarks>
+  /// Focused port from <c>feat/work-pump-decomposition</c>'s broader
+  /// <c>IMessageDiscardPolicy</c> refactor. The bigger architecture (reusable policy
+  /// + inbox/outbox gates) lives there; this branch only carries the receive-side
+  /// level fix.
+  /// </remarks>
+  internal static LogLevel AckDropLogLevelFor(string reason) =>
+    reason == AsbReceiveReason.NO_LOCAL_CONSUMER ? LogLevel.Debug : LogLevel.Warning;
 }
