@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
 
@@ -480,6 +481,37 @@ public sealed partial class OutboxPublishWorker : BackgroundService {
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "OutboxPublishWorker has no IMessagePublishStrategy registered — publish loop skipped (host did not register a transport)")]
   static partial void LogNoTransportRegistered(ILogger logger);
+
+  /// <summary>
+  /// Asks the discard policy whether an outbox row should be short-circuited before
+  /// publish — defends-in-depth against publishing events with no known consumer
+  /// anywhere when a future <c>IEventCatalog</c> seam provides that knowledge.
+  /// </summary>
+  /// <remarks>
+  /// Today this is a no-op: <see cref="MessageDiscardPolicy.EvaluateOutbox"/> always
+  /// returns <c>ShouldDiscard = false</c> so a misconfiguration can never silently
+  /// suppress a publish. The seam exists so a populated catalog can opt-in later
+  /// without changing the worker. Mirrors <c>ShouldSkipInbox</c> and
+  /// <c>RabbitMQTransport.ShouldSkipReceive</c>.
+  /// </remarks>
+  internal static bool ShouldSkipOutboxPublish(
+      IMessageDiscardPolicy? discardPolicy,
+      string messageType,
+      Guid messageId) {
+    if (discardPolicy is null || string.IsNullOrEmpty(messageType)) {
+      return false;
+    }
+    var decision = discardPolicy.EvaluateOutbox(messageType);
+    if (!decision.ShouldDiscard) {
+      return false;
+    }
+    discardPolicy.RecordDiscard(
+      gate: MessageDiscardGate.Outbox,
+      decision: decision,
+      payloadClrType: messageType,
+      additionalTags: new Dictionary<string, object?> { ["message_id"] = messageId });
+    return true;
+  }
 }
 
 /// <summary>Configuration for <see cref="OutboxPublishWorker"/>.</summary>

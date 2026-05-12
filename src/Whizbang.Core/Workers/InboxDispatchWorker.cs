@@ -7,6 +7,7 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Workers;
@@ -57,6 +58,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery? _receptorRegistry;
   private readonly InboxDeserializeCache? _deserializeCache;
+  private readonly IMessageDiscardPolicy? _discardPolicy;
 
   /// <summary>Constructor.</summary>
   public InboxDispatchWorker(
@@ -75,7 +77,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     LeaseRegistry? leaseRegistry = null,
     TimeProvider? timeProvider = null,
     IReceptorRegistryQuery? receptorRegistry = null,
-    InboxDeserializeCache? deserializeCache = null) {
+    InboxDeserializeCache? deserializeCache = null,
+    IMessageDiscardPolicy? discardPolicy = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -92,6 +95,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;
     _deserializeCache = deserializeCache;
+    _discardPolicy = discardPolicy;
   }
 
   /// <inheritdoc />
@@ -182,6 +186,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _handlerCommitChannel.EnqueueAsync(terminalRequest, stoppingToken);
+      return;
+    }
+
+    // Slice 4 (discard-policy): early gate before the lease / scope / security-context
+    // setup. When the active registry has no consumer for this row's message type,
+    // mark the row terminal and short-circuit. Avoids the dispatch machinery firing
+    // for messages that wouldn't invoke any receptor anyway — covers the
+    // RegistryChanged case where a row was written before a receptor was removed.
+    if (ShouldSkipInbox(_discardPolicy, work.MessageType, work.MessageId)) {
+      var skipRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
+      await _handlerCommitChannel.EnqueueAsync(skipRequest, stoppingToken);
       return;
     }
 
@@ -427,6 +442,39 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  /// <summary>
+  /// Asks the discard policy whether an inbox row should be short-circuited because
+  /// no current consumer exists for its message type. When the policy says discard,
+  /// records the skip telemetry (Information log + OTel counter) and returns
+  /// <c>true</c>; the caller marks the row terminal and skips the lease/dispatch
+  /// machinery. Returns <c>false</c> (legacy behaviour) when no policy is wired.
+  /// </summary>
+  /// <remarks>
+  /// Internal-static for unit testability without spinning up the full worker. Mirrors
+  /// the receive-time gates in <c>AzureServiceBusTransport.EmitAckDropTelemetry</c> and
+  /// <c>RabbitMQTransport.ShouldSkipReceive</c> — discard reason here is
+  /// <see cref="MessageDiscardReason.RegistryChanged"/>, which logs at Information so
+  /// rolling-deploy drift is visible without being noisy.
+  /// </remarks>
+  internal static bool ShouldSkipInbox(
+      IMessageDiscardPolicy? discardPolicy,
+      string messageType,
+      Guid messageId) {
+    if (discardPolicy is null || string.IsNullOrEmpty(messageType)) {
+      return false;
+    }
+    var decision = discardPolicy.EvaluateInbox(messageType);
+    if (!decision.ShouldDiscard) {
+      return false;
+    }
+    discardPolicy.RecordDiscard(
+      gate: MessageDiscardGate.Inbox,
+      decision: decision,
+      payloadClrType: messageType,
+      additionalTags: new Dictionary<string, object?> { ["message_id"] = messageId });
+    return true;
+  }
 }
 
 /// <summary>Configuration for <see cref="InboxDispatchWorker"/>.</summary>

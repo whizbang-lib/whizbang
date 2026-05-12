@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Routing;
 
 namespace Whizbang.Core.Workers;
 
@@ -86,6 +87,18 @@ public static class WorkerPipelineExtensions {
     // that the local service has no receptor for. Registered as a singleton — adapter is
     // stateless and just forwards to the static generated lookup.
     services.TryAddSingleton<IReceptorRegistryQuery, WhizbangReceptorRegistryQueryAdapter>();
+
+    // Message-discard policy: shared "should this message be skipped?" decision used by
+    // the transport-receive, inbox-dispatch, and outbox-publish gates. Owns the structured
+    // log level + OTel counter so all three gates emit consistent telemetry. The Meter is
+    // dedicated to this concern so dashboards can scrape it without picking up unrelated
+    // transport metrics. See <see cref="Whizbang.Core.Routing.MessageDiscardPolicy"/>.
+#pragma warning disable CA2000 // The Meter is held by the singleton policy for the host's lifetime.
+    services.TryAddSingleton<IMessageDiscardPolicy>(sp => new MessageDiscardPolicy(
+      sp.GetRequiredService<IReceptorRegistryQuery>(),
+      sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
+      new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME)));
+#pragma warning restore CA2000
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
