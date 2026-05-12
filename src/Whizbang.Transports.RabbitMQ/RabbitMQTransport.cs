@@ -7,6 +7,7 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 
@@ -30,6 +31,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
   private readonly ConcurrentDictionary<string, bool> _declaredExchanges = new();
+  private readonly IMessageDiscardPolicy? _discardPolicy;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
@@ -47,7 +49,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     JsonSerializerOptions jsonOptions,
     RabbitMQChannelPool channelPool,
     RabbitMQOptions options,
-    ILogger<RabbitMQTransport>? logger = null
+    ILogger<RabbitMQTransport>? logger = null,
+    IMessageDiscardPolicy? discardPolicy = null
   ) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(jsonOptions);
@@ -59,6 +62,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _channelPool = channelPool;
     _options = options;
     _logger = logger;
+    _discardPolicy = discardPolicy;
 
     // Hook into connection recovery event to notify subscribers
     _connection.RecoverySucceededAsync += _onConnectionRecoverySucceededAsync;
@@ -802,6 +806,15 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         return;
       }
 
+      // Slice 3 (discard-policy): ack-and-skip when no local consumer exists for the
+      // payload type. Telemetry routes through the shared policy (Debug + counter),
+      // matching the ASB transport's NoLocalConsumer path. When no policy is wired,
+      // behaviour is unchanged.
+      if (ShouldSkipReceive(_discardPolicy, envelopeTypeName, queueName, args.BasicProperties.MessageId)) {
+        await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
+        return;
+      }
+
       await handler(envelope, envelopeTypeName, cancellationToken);
       await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
 
@@ -815,6 +828,41 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (Exception ex) when (ex is not AlreadyClosedException) {
       await _handleMessageFailureAsync(channel, args, queueName, ex);
     }
+  }
+
+  /// <summary>
+  /// Asks the discard policy whether a just-deserialised envelope's payload type has no
+  /// local consumer; when so, records the skip telemetry (Debug log + OTel counter) and
+  /// returns <c>true</c> so the caller acks the broker without invoking the handler.
+  /// Returns <c>false</c> (legacy behaviour) when no policy is wired or the envelope's
+  /// type name is unknown.
+  /// </summary>
+  /// <remarks>
+  /// Mirrors <c>AzureServiceBusTransport.EmitAckDropTelemetry</c>'s NoLocalConsumer
+  /// branch — kept as an internal-static helper so it can be unit-tested without
+  /// standing up an <c>IConnection</c>.
+  /// </remarks>
+  internal static bool ShouldSkipReceive(
+      IMessageDiscardPolicy? discardPolicy,
+      string? envelopeTypeName,
+      string queueName,
+      string? messageId) {
+    if (discardPolicy is null || string.IsNullOrEmpty(envelopeTypeName)) {
+      return false;
+    }
+    var decision = discardPolicy.EvaluateReceive(envelopeTypeName!, topic: queueName, subscription: queueName);
+    if (!decision.ShouldDiscard) {
+      return false;
+    }
+    discardPolicy.RecordDiscard(
+      gate: MessageDiscardGate.Receive,
+      decision: decision,
+      payloadClrType: envelopeTypeName!,
+      additionalTags: new Dictionary<string, object?> {
+        ["queue"] = queueName,
+        ["message_id"] = messageId,
+      });
+    return true;
   }
 
   /// <summary>
