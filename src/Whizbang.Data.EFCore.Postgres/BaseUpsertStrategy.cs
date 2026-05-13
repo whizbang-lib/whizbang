@@ -162,22 +162,32 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     //
     // The retry loop in _upsertCoreAsync stays as defense-in-depth — any future call site that
     // bypasses this strategy is still race-safe.
+    //
+    // Slice 20 fix: wrap the tx-creating block in IExecutionStrategy.ExecuteAsync so DbContexts
+    // configured with NpgsqlRetryingExecutionStrategy (transient-error retry) accept the
+    // user-initiated transaction. Without this wrapper the retrying strategy throws
+    // "does not support user-initiated transactions" because it can't replay a tx that user
+    // code controls. Inside ExecuteAsync the strategy treats the whole lambda as one retriable
+    // unit. Non-retrying strategies (default) pass through transparently.
     var lockKey = _buildAdvisoryLockKey(typeof(TModel), id);
-    var existingTx = context.Database.CurrentTransaction;
-    var ownedTx = existingTx is null
-        ? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
-        : null;
-    try {
-      await _acquireAdvisoryLockAsync(context, lockKey, cancellationToken).ConfigureAwait(false);
-      await _upsertCoreInnerBodyAsync(context, args, cancellationToken).ConfigureAwait(false);
-      if (ownedTx is not null) {
-        await ownedTx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    var strategy = context.Database.CreateExecutionStrategy();
+    await strategy.ExecuteAsync(async ct => {
+      var existingTx = context.Database.CurrentTransaction;
+      var ownedTx = existingTx is null
+          ? await context.Database.BeginTransactionAsync(ct).ConfigureAwait(false)
+          : null;
+      try {
+        await _acquireAdvisoryLockAsync(context, lockKey, ct).ConfigureAwait(false);
+        await _upsertCoreInnerBodyAsync(context, args, ct).ConfigureAwait(false);
+        if (ownedTx is not null) {
+          await ownedTx.CommitAsync(ct).ConfigureAwait(false);
+        }
+      } finally {
+        if (ownedTx is not null) {
+          await ownedTx.DisposeAsync().ConfigureAwait(false);
+        }
       }
-    } finally {
-      if (ownedTx is not null) {
-        await ownedTx.DisposeAsync().ConfigureAwait(false);
-      }
-    }
+    }, cancellationToken).ConfigureAwait(false);
   }
 
   private static long _buildAdvisoryLockKey(Type modelType, Guid id) {
