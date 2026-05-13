@@ -28,7 +28,7 @@ namespace Whizbang.Core.Workers;
 /// next message for that stream creates a fresh buffer.
 /// </para>
 /// </remarks>
-/// <docs>internals/outbox-batch-strategy</docs>
+/// <docs>extending/internals/event-ordering-invariant</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/SlidingWindowOutboxBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   private static readonly Guid _defaultStreamKey = Guid.Empty;
