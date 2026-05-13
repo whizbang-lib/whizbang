@@ -17,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// callback. The drain task lives until <see cref="FlushAndStopAsync"/> completes the channel
 /// or the strategy is disposed; pending messages drain out before the task exits.</para>
 /// </remarks>
-/// <docs>internals/inbox-batch-strategy</docs>
+/// <docs>extending/internals/event-ordering-invariant</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/SlidingWindowInboxBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   private readonly Channel<InboxMessage> _channel;
@@ -88,6 +88,13 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
           continue;
         }
         var array = batch is InboxMessage[] arr ? arr : [.. batch];
+        // Slice 18: sort by MessageId (UUIDv7 chronological) before flushing. Concurrent
+        // transport consumers can deposit messages into this channel in non-deterministic
+        // order; sorting here locks the every-batch-boundary-delivers-sorted-output
+        // invariant that the perspective-apply cursor (event_id lex) depends on.
+        if (array.Length > 1) {
+          Array.Sort(array, static (a, b) => a.MessageId.CompareTo(b.MessageId));
+        }
         try {
           await _flush(array, _stopCts.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) when (_stopCts.IsCancellationRequested) {

@@ -121,6 +121,50 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(defaults.MaxSize).IsEqualTo(100);
   }
 
+  [Test]
+  public async Task AppendAsync_OutOfOrderArrivals_FlushedSortedByMessageIdAsync() {
+    // Slice 18 invariant: every batch boundary delivers event_id-sorted output. Concurrent
+    // producers (transport consumers across multiple RabbitMQ channels) can deposit messages
+    // into the inbox sliding window in non-deterministic order. Cursor-by-event_id on the
+    // perspective-apply side depends on lex order matching commit order, so the window must
+    // sort before flushing to wh_inbox.
+    var captured = new List<InboxMessage[]>();
+    var flushedSignal = new TaskCompletionSource();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, ct) => {
+        captured.Add(msgs);
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    // Generate three messages — Uuid7 provider guarantees m1 < m2 < m3 lex order.
+    var m1 = _makeMessage();
+    var m2 = _makeMessage();
+    var m3 = _makeMessage();
+
+    // Enqueue out-of-order on purpose — mirror of the producer race that triggers
+    // cursor inversion downstream.
+    await sut.AppendAsync(m3);
+    await sut.AppendAsync(m1);
+    await sut.AppendAsync(m2);
+
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(captured.Count).IsEqualTo(1);
+    var batch = captured[0];
+    await Assert.That(batch.Length).IsEqualTo(3);
+    // Batch MUST be sorted by MessageId ASC — locks the slice-18 invariant.
+    await Assert.That(batch[0].MessageId).IsEqualTo(m1.MessageId);
+    await Assert.That(batch[1].MessageId).IsEqualTo(m2.MessageId);
+    await Assert.That(batch[2].MessageId).IsEqualTo(m3.MessageId);
+  }
+
   // ===== helpers =====
 
   private InboxMessage _makeMessage() {
