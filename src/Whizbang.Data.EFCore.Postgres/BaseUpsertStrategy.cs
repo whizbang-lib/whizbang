@@ -78,7 +78,65 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       where TModel : class =>
     _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
 
+  /// <summary>
+  /// Maximum number of retries for TOCTOU duplicate-key races.
+  /// With drain-mode concurrent perspective processing, 3+ threads can race on the same row.
+  /// A single retry is insufficient — the retry itself can hit 23505 if yet another thread
+  /// inserts between the retry's SELECT and INSERT.
+  /// </summary>
+  private const int MAX_DUPLICATE_KEY_RETRIES = 3;
+
+  private static long _duplicateKeyRetriesRecovered;
+
+  /// <summary>
+  /// Process-wide counter for TOCTOU dup-key recoveries — incremented each time the retry
+  /// loop catches a 23505 and successfully recovers via UPDATE on the next pass. Exposed
+  /// for diagnostics + the concurrent-upsert regression test.
+  /// </summary>
+  /// <docs>extending/internals/event-ordering-invariant</docs>
+  public static long DuplicateKeyRetriesRecovered => Interlocked.Read(ref _duplicateKeyRetriesRecovered);
+
   private async Task _upsertCoreAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    // Slice 19: retry loop for TOCTOU dup-key races. The SELECT-then-INSERT pattern in
+    // _upsertCoreInnerAsync is not atomic; under concurrent perspective apply (slice 17
+    // parallel consumers, rewind path re-firing post-snapshot replay) two threads can both
+    // see "row absent" and both attempt INSERT. The second one hits 23505. The retry catches,
+    // clears change-tracker state, and re-enters — the second-pass SELECT now sees the
+    // first thread's committed row and the path goes UPDATE. After MAX retries the exception
+    // propagates and the caller routes the work through the failure channel.
+    for (var attempt = 0; attempt <= MAX_DUPLICATE_KEY_RETRIES; attempt++) {
+      try {
+        await _upsertCoreInnerAsync(context, args, cancellationToken);
+        if (attempt > 0) {
+          Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
+        }
+        return;
+      } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && _isDuplicateKeyException(ex)) {
+        // TOCTOU race: another thread inserted the row between our SELECT and INSERT.
+        // Clear the failed change tracker state and retry as an UPDATE.
+        context.ChangeTracker.Clear();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Detects PostgreSQL unique-constraint violation (23505) inside a DbUpdateException.
+  /// </summary>
+  private static bool _isDuplicateKeyException(DbUpdateException ex) {
+    for (var inner = ex.InnerException; inner != null; inner = inner.InnerException) {
+      // Npgsql.PostgresException exposes SqlState; check via reflection-free duck typing
+      if (inner is Npgsql.PostgresException pg && pg.SqlState == "23505") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async Task _upsertCoreInnerAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
