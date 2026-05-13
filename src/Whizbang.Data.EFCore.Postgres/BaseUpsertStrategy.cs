@@ -147,6 +147,66 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var scope = args.Scope;
     var physicalFieldValues = args.PhysicalFieldValues;
     var forceUpdateScope = args.ForceUpdateScope;
+
+    // Slice 20: pg_advisory_xact_lock serializes concurrent upserts for this (TModel, id) pair
+    // across processes. Without this, two threads (slice 17 parallel perspective consumers, OR
+    // a normal apply racing a cursor-inversion rewind) both see "row absent" in the SELECT
+    // below and both attempt INSERT — second thread hits PG 23505. Each conflict logs an [ERR]
+    // before the retry catches it.
+    //
+    // The advisory lock auto-releases at tx commit/rollback. Lock key = type-hash + first 32
+    // bits of the Guid: serializes per (perspective table, row id) without serializing across
+    // unrelated rows. UUIDv7's first 4 bytes are the ms timestamp, so adjacent insertions on
+    // different streams within the same ms can share a key — benign (brief contention only,
+    // no correctness impact).
+    //
+    // The retry loop in _upsertCoreAsync stays as defense-in-depth — any future call site that
+    // bypasses this strategy is still race-safe.
+    var lockKey = _buildAdvisoryLockKey(typeof(TModel), id);
+    var existingTx = context.Database.CurrentTransaction;
+    var ownedTx = existingTx is null
+        ? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
+        : null;
+    try {
+      await _acquireAdvisoryLockAsync(context, lockKey, cancellationToken).ConfigureAwait(false);
+      await _upsertCoreInnerBodyAsync(context, args, cancellationToken).ConfigureAwait(false);
+      if (ownedTx is not null) {
+        await ownedTx.CommitAsync(cancellationToken).ConfigureAwait(false);
+      }
+    } finally {
+      if (ownedTx is not null) {
+        await ownedTx.DisposeAsync().ConfigureAwait(false);
+      }
+    }
+  }
+
+  private static long _buildAdvisoryLockKey(Type modelType, Guid id) {
+    // Combine the model type's stable hash with the Guid's first 4 bytes (UUIDv7 millisecond
+    // timestamp + version nibble) into a 64-bit key. Stable hash from FullName so JIT shuffle
+    // doesn't change keys across process restarts.
+    var typeHash = (uint)(modelType.FullName?.GetHashCode(StringComparison.Ordinal) ?? 0);
+    var idBytes = id.ToByteArray();
+    var idLow = BitConverter.ToUInt32(idBytes, 0);
+    return ((long)typeHash << 32) | idLow;
+  }
+
+  private static Task<int> _acquireAdvisoryLockAsync(DbContext context, long lockKey, CancellationToken cancellationToken)
+    => context.Database.ExecuteSqlRawAsync(
+        "SELECT pg_advisory_xact_lock({0})",
+        new object[] { lockKey },
+        cancellationToken);
+
+  private async Task _upsertCoreInnerBodyAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    var id = args.Id;
+    var model = args.Model;
+    var metadata = args.Metadata;
+    var scope = args.Scope;
+    var physicalFieldValues = args.PhysicalFieldValues;
+    var forceUpdateScope = args.ForceUpdateScope;
     // Check if entity exists in local tracker and detach it to avoid tracking conflicts.
     // EF Core 10's ComplexProperty().ToJson() maintains internal indexes for collections
     // inside complex types. Any modification to tracked complex type collections corrupts
