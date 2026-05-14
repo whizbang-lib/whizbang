@@ -1,4 +1,8 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -16,9 +20,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
   /// <summary>
   /// Groups the row identity and payload data that flow through every upsert overload
-  /// into the shared core implementation.
+  /// into the shared core implementation. <see cref="TableName"/> is forwarded so the
+  /// atomic-UPSERT path (Path 1) can issue a raw <c>INSERT … ON CONFLICT DO UPDATE</c>
+  /// against the right table without re-querying EF's model metadata.
   /// </summary>
   private readonly record struct UpsertRowArgs<TModel>(
+    string TableName,
     Guid Id,
     TModel Model,
     PerspectiveMetadata Metadata,
@@ -26,6 +33,32 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     IDictionary<string, object?>? PhysicalFieldValues,
     bool ForceUpdateScope) where TModel : class;
 
+  /// <summary>
+  /// Optional Path 1 atomic-upsert hook. When set, <see cref="_upsertCoreAsync"/> attempts
+  /// an atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> using the provided
+  /// <see cref="JsonSerializerOptions"/> to serialize <c>Data</c>, <c>Metadata</c>, and
+  /// <c>Scope</c> as JSONB. When null (or when a row carries physical-field values), the
+  /// strategy falls back to the legacy SELECT-then-INSERT/UPDATE retry path.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Consumers register a provider via their DI module — typically pointing to a
+  /// generated <c>PerspectivePersistenceJsonContext.CreateOptions(...)</c> call that
+  /// chains the consumer's <c>MessageJsonContext.Default</c> and
+  /// <c>InfrastructureJsonContext.Default</c>. The chain MUST place a context that
+  /// returns object-mode <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/>
+  /// for <c>[WhizbangId]</c> structs first, so EF Core 10's nested-object byte format
+  /// is matched (otherwise reads through EF will throw <c>InvalidOperationException:
+  /// Invalid token type</c>).
+  /// </para>
+  /// <para>
+  /// Setting this hook is process-wide and shared by every <see cref="BaseUpsertStrategy"/>
+  /// instance. The atomic path eliminates the 23505 dup-key storm slice 19's retry loop
+  /// currently catches at <c>[ERR]</c> log severity.
+  /// </para>
+  /// </remarks>
+  public static Func<JsonSerializerOptions>? PathOnePersistenceOptionsProvider { get; set; }
+
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
@@ -36,7 +69,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, null, false), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, false), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -49,7 +82,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, null, forceUpdateScope), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, forceUpdateScope), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -62,7 +95,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, false), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, false), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -76,7 +109,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
 
   /// <summary>
   /// Maximum number of retries for TOCTOU duplicate-key races.
@@ -101,6 +134,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
       where TModel : class {
+    // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
+    // applicable (no physical fields, table name supplied), this single round-trip replaces
+    // the SELECT-then-INSERT/UPDATE pattern and structurally eliminates the 23505 dup-key
+    // race that slice 19's retry loop was built to recover from. Returns false to signal
+    // the caller should fall back to the retry loop (config off, physical fields present,
+    // or any other unsupported case).
+    if (await _tryAtomicUpsertAsync(context, args, cancellationToken)) {
+      return;
+    }
+
     // Slice 19: retry loop for TOCTOU dup-key races. The SELECT-then-INSERT pattern in
     // _upsertCoreInnerAsync is not atomic; under concurrent perspective apply (slice 17
     // parallel consumers, rewind path re-firing post-snapshot replay) two threads can both
@@ -119,6 +162,84 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         // TOCTOU race: another thread inserted the row between our SELECT and INSERT.
         // Clear the failed change tracker state and retry as an UPDATE.
         context.ChangeTracker.Clear();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Attempts the Path 1 atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> against the
+  /// underlying Npgsql connection. Returns false (no-op, no SQL issued) when the path is
+  /// not applicable so the caller can fall back to the legacy retry loop.
+  /// </summary>
+  /// <remarks>
+  /// Fall-back conditions: <see cref="PathOnePersistenceOptionsProvider"/> is null,
+  /// physical-field values are present (those require shadow-property hydration through
+  /// EF's interceptor pipeline), or the caller didn't supply a non-empty table name.
+  /// </remarks>
+  private static async Task<bool> _tryAtomicUpsertAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    var optionsProvider = PathOnePersistenceOptionsProvider;
+    if (optionsProvider is null) {
+      return false;
+    }
+    if (args.PhysicalFieldValues is not null) {
+      return false;
+    }
+    if (string.IsNullOrEmpty(args.TableName)) {
+      return false;
+    }
+
+    var options = optionsProvider();
+    var dataJson = JsonSerializer.Serialize(args.Model, options.GetTypeInfo(typeof(TModel)));
+    var metadataJson = JsonSerializer.Serialize(args.Metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
+    var scopeJson = JsonSerializer.Serialize(args.Scope, options.GetTypeInfo(typeof(PerspectiveScope)));
+
+    // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause.
+    // INSERT path always sets scope (a new row carries the caller's scope verbatim);
+    // UPDATE path preserves the existing row's scope unless the event is an IScopeEvent.
+    var scopeUpdateClause = args.ForceUpdateScope ? ", scope = EXCLUDED.scope" : string.Empty;
+
+    var sql = $@"
+        INSERT INTO {args.TableName} (id, data, metadata, scope, created_at, updated_at, version)
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1)
+        ON CONFLICT (id) DO UPDATE SET
+          data = EXCLUDED.data,
+          metadata = EXCLUDED.metadata,
+          updated_at = EXCLUDED.updated_at,
+          version = {args.TableName}.version + 1{scopeUpdateClause}";
+
+    var connection = context.Database.GetDbConnection();
+    var openedHere = false;
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync(cancellationToken);
+      openedHere = true;
+    }
+    try {
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = sql;
+      // Honor an ambient EF transaction so the atomic upsert participates in it.
+      var currentTx = context.Database.CurrentTransaction;
+      if (currentTx is not null) {
+        cmd.Transaction = currentTx.GetDbTransaction();
+      }
+      var idParam = new NpgsqlParameter("id", args.Id);
+      var dataParam = new NpgsqlParameter("data", dataJson);
+      var metadataParam = new NpgsqlParameter("metadata", metadataJson);
+      var scopeParam = new NpgsqlParameter("scope", scopeJson);
+      var nowParam = new NpgsqlParameter("now", DateTime.UtcNow);
+      cmd.Parameters.Add(idParam);
+      cmd.Parameters.Add(dataParam);
+      cmd.Parameters.Add(metadataParam);
+      cmd.Parameters.Add(scopeParam);
+      cmd.Parameters.Add(nowParam);
+      await cmd.ExecuteNonQueryAsync(cancellationToken);
+      return true;
+    } finally {
+      if (openedHere && connection.State == System.Data.ConnectionState.Open) {
+        await connection.CloseAsync();
       }
     }
   }
