@@ -50,14 +50,35 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
         transform: static (ctx, ct) => _extractWhizbangId(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Combine with assembly name so the generated context lands in the correct namespace.
+    // Combine with assembly name + a flag indicating whether the consumer has a
+    // generated MessageJsonContext (the per-assembly source-gen context emitted by
+    // MessageJsonContextGenerator when ICommand/IEvent/IPerspectiveFor types are
+    // discovered). Without it the auto-wire callback can't construct the resolver
+    // chain, so we skip emitting the callback for assemblies that have none.
     var assemblyAndIds = context.CompilationProvider
-        .Select(static (compilation, _) => compilation.AssemblyName ?? "Generated")
+        .Select(static (compilation, _) => (
+            AssemblyName: compilation.AssemblyName ?? "Generated",
+            HasMessageJsonContext: _hasMessageJsonContext(compilation)))
         .Combine(whizbangIds.Collect());
 
     context.RegisterSourceOutput(
         assemblyAndIds,
-        static (ctx, data) => _emit(ctx, data.Left, data.Right));
+        static (ctx, data) => _emit(ctx, data.Left.AssemblyName, data.Left.HasMessageJsonContext, data.Right));
+  }
+
+  /// <summary>
+  /// Returns true when the compilation contains a top-level
+  /// <c>{AssemblyName}.Generated.MessageJsonContext</c> type — i.e., when
+  /// <c>MessageJsonContextGenerator</c> emitted one for this assembly. Used to gate
+  /// the auto-wire callback emission so we don't reference a non-existent type.
+  /// </summary>
+  private static bool _hasMessageJsonContext(Compilation compilation) {
+    var assemblyName = compilation.AssemblyName;
+    if (string.IsNullOrEmpty(assemblyName)) {
+      return false;
+    }
+    var fullyQualified = $"{assemblyName}.Generated.MessageJsonContext";
+    return compilation.GetTypeByMetadataName(fullyQualified) is not null;
   }
 
   /// <summary>
@@ -99,6 +120,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   private static void _emit(
       SourceProductionContext context,
       string assemblyName,
+      bool hasMessageJsonContext,
       ImmutableArray<WhizbangIdInfo?> infos) {
     var distinct = infos
         .Where(static i => i is not null)
@@ -181,11 +203,14 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
     context.AddSource("PerspectivePersistenceJsonContext.g.cs", sb.ToString());
 
-    // Only emit the auto-wiring [ModuleInitializer] if the consumer assembly has at least
-    // one [WhizbangId] type — otherwise there's nothing for Path 1 to do and we'd be
-    // forcing a hard reference on Whizbang.Data.EFCore.Postgres + Whizbang.Core types that
-    // pure-Whizbang.Core consumers might not pull in.
-    if (!distinct.IsEmpty) {
+    // Auto-wire the Path 1 atomic-upsert provider when the consumer has a
+    // MessageJsonContext (always emitted by MessageJsonContextGenerator alongside
+    // discovered messages/perspectives). The atomic INSERT...ON CONFLICT DO UPDATE
+    // path works for plain-Guid TModels too — it doesn't require any [WhizbangId]
+    // types — so we emit unconditionally on the MessageJsonContext signal. (JDX's
+    // BFF/Chat/Job services are the motivating case: their TModels use raw Guid,
+    // not value-object structs, but still benefit from atomic UPSERT.)
+    if (hasMessageJsonContext) {
       _emitCallbackInitializer(context, assemblyName);
     }
   }
