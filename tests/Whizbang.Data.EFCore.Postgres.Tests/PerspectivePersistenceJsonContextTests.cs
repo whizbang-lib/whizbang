@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Data.EFCore.Postgres.Generated;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -37,7 +37,11 @@ public class PerspectivePersistenceJsonContextTests {
       Amount = 100.00m,
       Status = "Created"
     };
-    var options = PerspectivePersistenceJsonContext.CreateOptions();
+    // CreateOptions chains: PerspectivePersistenceJsonContext (object-mode [WhizbangId]) +
+    // MessageJsonContext (perspective TModels and other discovered messages).
+    // Order's JsonTypeInfo comes from MessageJsonContext; OrderId resolution falls through
+    // back to PerspectivePersistenceJsonContext (first in the chain) and returns object-mode.
+    var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
     var typeInfo = options.GetTypeInfo(typeof(Order));
 
     // Act
