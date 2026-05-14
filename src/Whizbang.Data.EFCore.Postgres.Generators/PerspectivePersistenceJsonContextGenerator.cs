@@ -50,35 +50,55 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
         transform: static (ctx, ct) => _extractWhizbangId(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Combine with assembly name + a flag indicating whether the consumer has a
-    // generated MessageJsonContext (the per-assembly source-gen context emitted by
-    // MessageJsonContextGenerator when ICommand/IEvent/IPerspectiveFor types are
-    // discovered). Without it the auto-wire callback can't construct the resolver
-    // chain, so we skip emitting the callback for assemblies that have none.
-    var assemblyAndIds = context.CompilationProvider
-        .Select(static (compilation, _) => (
-            AssemblyName: compilation.AssemblyName ?? "Generated",
-            HasMessageJsonContext: _hasMessageJsonContext(compilation)))
+    // Discover perspective implementations syntactically. We can't check for
+    // MessageJsonContext via Compilation.GetTypeByMetadataName because source generators
+    // run in parallel against user source only — MessageJsonContextGenerator's output
+    // isn't visible to us. But MessageJsonContextGenerator emits a MessageJsonContext
+    // whenever it sees an IPerspectiveFor / IPerspectiveWithActionsFor implementation,
+    // and so can we. If a perspective is present in user source, the callback is safe
+    // to emit (consumer has a MessageJsonContext by construction).
+    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) =>
+            (node is ClassDeclarationSyntax cls && cls.BaseList is not null) ||
+            (node is RecordDeclarationSyntax rec && rec.BaseList is not null),
+        transform: static (ctx, ct) => _hasPerspectiveInterface(ctx, ct))
+      .Where(static result => result);
+
+    var assemblyAndState = context.CompilationProvider
+        .Select(static (compilation, _) => compilation.AssemblyName ?? "Generated")
+        .Combine(perspectiveCandidates.Collect())
         .Combine(whizbangIds.Collect());
 
     context.RegisterSourceOutput(
-        assemblyAndIds,
-        static (ctx, data) => _emit(ctx, data.Left.AssemblyName, data.Left.HasMessageJsonContext, data.Right));
+        assemblyAndState,
+        static (ctx, data) => _emit(
+            ctx,
+            assemblyName: data.Left.Left,
+            hasPerspectives: !data.Left.Right.IsEmpty,
+            infos: data.Right));
   }
 
   /// <summary>
-  /// Returns true when the compilation contains a top-level
-  /// <c>{AssemblyName}.Generated.MessageJsonContext</c> type — i.e., when
-  /// <c>MessageJsonContextGenerator</c> emitted one for this assembly. Used to gate
-  /// the auto-wire callback emission so we don't reference a non-existent type.
+  /// Returns true when the class/record declaration implements any
+  /// <c>IPerspectiveFor&lt;TModel, …&gt;</c> or <c>IPerspectiveWithActionsFor&lt;TModel, …&gt;</c>
+  /// interface. Mirrors the discovery logic in <c>EFCorePerspectiveAssociationGenerator</c>
+  /// and <c>MessageJsonContextGenerator</c>, ensuring we only auto-wire when a
+  /// MessageJsonContext will exist in the same assembly.
   /// </summary>
-  private static bool _hasMessageJsonContext(Compilation compilation) {
-    var assemblyName = compilation.AssemblyName;
-    if (string.IsNullOrEmpty(assemblyName)) {
+  private static bool _hasPerspectiveInterface(GeneratorSyntaxContext ctx, CancellationToken ct) {
+    var symbol = ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct);
+    if (symbol is not INamedTypeSymbol named || named.IsAbstract) {
       return false;
     }
-    var fullyQualified = $"{assemblyName}.Generated.MessageJsonContext";
-    return compilation.GetTypeByMetadataName(fullyQualified) is not null;
+    foreach (var iface in named.AllInterfaces) {
+      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
+          originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<", StringComparison.Ordinal) ||
+          originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<", StringComparison.Ordinal)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>
@@ -120,7 +140,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   private static void _emit(
       SourceProductionContext context,
       string assemblyName,
-      bool hasMessageJsonContext,
+      bool hasPerspectives,
       ImmutableArray<WhizbangIdInfo?> infos) {
     var distinct = infos
         .Where(static i => i is not null)
@@ -203,14 +223,17 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
     context.AddSource("PerspectivePersistenceJsonContext.g.cs", sb.ToString());
 
-    // Auto-wire the Path 1 atomic-upsert provider when the consumer has a
-    // MessageJsonContext (always emitted by MessageJsonContextGenerator alongside
-    // discovered messages/perspectives). The atomic INSERT...ON CONFLICT DO UPDATE
-    // path works for plain-Guid TModels too — it doesn't require any [WhizbangId]
-    // types — so we emit unconditionally on the MessageJsonContext signal. (JDX's
-    // BFF/Chat/Job services are the motivating case: their TModels use raw Guid,
-    // not value-object structs, but still benefit from atomic UPSERT.)
-    if (hasMessageJsonContext) {
+    // Auto-wire the Path 1 atomic-upsert provider when the consumer has at least one
+    // perspective. We detect this syntactically — checking for IPerspectiveFor /
+    // IPerspectiveWithActionsFor / IPerspectiveBase implementations in user source —
+    // because we can't see MessageJsonContextGenerator's output (source generators
+    // run in parallel against user source only). The signals are equivalent:
+    // MessageJsonContext is always emitted alongside discovered perspectives.
+    //
+    // The atomic INSERT...ON CONFLICT DO UPDATE path works for plain-Guid TModels too
+    // — it doesn't require any [WhizbangId] types. JDX's BFF/Chat/Job services use
+    // raw Guid Ids and still benefit from atomic UPSERT.
+    if (hasPerspectives) {
       _emitCallbackInitializer(context, assemblyName);
     }
   }
