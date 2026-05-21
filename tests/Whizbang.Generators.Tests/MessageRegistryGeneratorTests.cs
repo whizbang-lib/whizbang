@@ -212,6 +212,42 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_EventWithPerspectiveWithActionsFor_DiscoversPerspectiveAsync() {
+    // Arrange
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderShippedEvent : IEvent {
+    public string OrderId { get; init; } = "";
+  }
+
+  public record OrderListModel(string OrderId);
+
+  public class ActionsOrderListPerspective : IPerspectiveWithActionsFor<OrderListModel, OrderShippedEvent> {
+    public ApplyResult<OrderListModel> Apply(OrderListModel? currentData, OrderShippedEvent @event) {
+      return ApplyResult<OrderListModel>.Update((currentData ?? new(@event.OrderId)) with { OrderId = @event.OrderId });
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+
+    // Assert - IPerspectiveWithActionsFor types must surface in the perspectives list
+    // alongside IPerspectiveFor; otherwise the registry silently omits them.
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("OrderShippedEvent");
+    await Assert.That(generatedSource).Contains("\"\"perspectives\"\":");
+    await Assert.That(generatedSource).Contains("ActionsOrderListPerspective");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_MultipleMessages_DiscoversAllAsync() {
     // Arrange
     const string source = """

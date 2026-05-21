@@ -112,6 +112,32 @@ public class PinnedIdAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task Analyzer_PerspectiveWithActionsForWithoutPinnedId_ReportsWhiz101Async() {
+    // IPerspectiveWithActionsFor types must be subject to the same [PinnedId]
+    // enforcement as IPerspectiveFor; otherwise the analyzer silently lets a
+    // pinned-id-less perspective ship.
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+        namespace TestApp;
+        public record OrderView;
+        public record OrderShippedEvent : IEvent;
+        public class ActionsOrderPerspective : IPerspectiveWithActionsFor<OrderView, OrderShippedEvent> {
+          public ApplyResult<OrderView> Apply(OrderView? current, OrderShippedEvent @event) =>
+            ApplyResult<OrderView>.Update(current ?? new());
+        }
+        """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PinnedIdAnalyzer>(source);
+
+    var perspectiveMatches = diagnostics.Where(d => d.Id == "WHIZ111").ToList();
+    await Assert.That(perspectiveMatches).Count().IsEqualTo(1);
+    await Assert.That(perspectiveMatches[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(perspectiveMatches[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ActionsOrderPerspective");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Analyzer_PerspectiveWithPinnedId_NoDiagnosticAsync() {
     const string source = """
         using Whizbang.Core;
