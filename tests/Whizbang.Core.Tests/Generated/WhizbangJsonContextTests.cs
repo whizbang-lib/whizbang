@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Serialization;
@@ -72,4 +73,35 @@ public class WhizbangJsonContextTests {
     // Verify converters were also registered (additional validation)
     await Assert.That(options.Converters).IsNotEmpty();
   }
+
+  [Test]
+  public async Task Initialize_RegistersLenientDateTimeOffsetConverters_Async() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var names = options.Converters.Select(c => c.GetType().Name).ToList();
+
+    await Assert.That(names.Any(n => n == nameof(LenientDateTimeOffsetConverter))).IsTrue();
+    await Assert.That(names.Any(n => n == nameof(LenientNullableDateTimeOffsetConverter))).IsTrue();
+  }
+
+  [Test]
+  public async Task CreateCombinedOptions_DeserializesPostgresInfinityTimestamp_Async() {
+    // CreateCombinedOptions() only knows source-generated types, so it cannot resolve
+    // a test-local record by itself. Append a reflection fallback resolver for the
+    // test model — the globally-registered Lenient converters still win for
+    // DateTimeOffset properties because options.Converters is consulted before
+    // the type info resolver's default converter. This mirrors the a consumer application failure
+    // path: type info comes from a consumer application's source-gen context, but the DateTimeOffset
+    // converter must come from the global registry.
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    options.TypeInfoResolverChain.Add(new DefaultJsonTypeInfoResolver());
+    var json = "{\"CreatedAt\":\"-infinity\",\"DeletedAt\":\"infinity\"}";
+
+    var model = JsonSerializer.Deserialize<_InfinityTestModel>(json, options);
+
+    await Assert.That(model).IsNotNull();
+    await Assert.That(model!.CreatedAt).IsEqualTo(DateTimeOffset.MinValue);
+    await Assert.That(model.DeletedAt).IsEqualTo(DateTimeOffset.MaxValue);
+  }
+
+  private sealed record _InfinityTestModel(DateTimeOffset CreatedAt, DateTimeOffset? DeletedAt);
 }
