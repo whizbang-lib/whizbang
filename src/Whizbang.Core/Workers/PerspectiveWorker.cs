@@ -3264,17 +3264,30 @@ public class PerspectiveWorkerOptions {
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from the perspective drain
-  /// channel. After the first signal arrives, the worker waits up to
+  /// channel — this IS the apply-batching window the user-facing
+  /// <see cref="Messaging.IApplyBatchStrategy"/> interface advertises. After the first
+  /// signal arrives, the worker waits up to
   /// <see cref="SlidingWindowBatcherOptions.SlidingWindow"/> for additional signals
   /// before fetching events — letting more arrivals accumulate so the per-stream
-  /// fetch returns a coherent in-order chunk. Bounded by
-  /// <see cref="SlidingWindowBatcherOptions.MaxWait"/> and
+  /// fetch returns a coherent in-order chunk and ONE apply cycle processes everything
+  /// pending. Bounded by <see cref="SlidingWindowBatcherOptions.MaxWait"/> and
   /// <see cref="SlidingWindowBatcherOptions.MaxSize"/>. The work channel (legacy
   /// <see cref="PerspectiveWork"/> items) is read in the same WhenAny loop but is
   /// NOT batched — the dedup tests assert per-cycle work-item processing semantics.
   /// </summary>
+  /// <remarks>
+  /// Defaults: 300 ms debounce / 3 s hard cap / 1000 signal ceiling. Tuned for the a consumer
+  /// bulk-import case where a single stream (e.g. <c>Order</c>) receives ~46
+  /// events in rapid succession — without the longer window, each event triggers a
+  /// separate apply cycle. With 300 ms the window almost always coalesces all 46
+  /// into one apply pass.
+  /// </remarks>
   /// <docs>fundamentals/perspectives/drain-mode#sliding-window</docs>
-  public SlidingWindowBatcherOptions DrainBatcher { get; set; } = new();
+  public SlidingWindowBatcherOptions DrainBatcher { get; set; } = new() {
+    SlidingWindow = TimeSpan.FromMilliseconds(300),
+    MaxWait = TimeSpan.FromSeconds(3),
+    MaxSize = 1000,
+  };
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
