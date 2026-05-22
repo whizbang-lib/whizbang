@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -185,9 +186,6 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     if (optionsProvider is null) {
       return false;
     }
-    if (args.PhysicalFieldValues is not null) {
-      return false;
-    }
     if (string.IsNullOrEmpty(args.TableName)) {
       return false;
     }
@@ -202,14 +200,46 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // UPDATE path preserves the existing row's scope unless the event is an IScopeEvent.
     var scopeUpdateClause = args.ForceUpdateScope ? ", scope = EXCLUDED.scope" : string.Empty;
 
+    // Physical-field columns (vector embeddings, denormalized scalars, etc.) ride
+    // alongside the JSONB columns in the same atomic statement. Column names come from
+    // EF model metadata via the caller's dictionary; we double-quote them to handle
+    // mixed case + reserved-word collisions and bind values as ordinary parameters
+    // (Vector + scalar types are handled natively by Npgsql once UseVector is on).
+    var pfColumnsClause = string.Empty;
+    var pfValuesClause = string.Empty;
+    var pfUpdateClause = string.Empty;
+    var pfCount = args.PhysicalFieldValues?.Count ?? 0;
+    if (pfCount > 0) {
+      var pfColumns = new StringBuilder();
+      var pfValues = new StringBuilder();
+      var pfUpdates = new StringBuilder();
+      var i = 0;
+      foreach (var columnName in args.PhysicalFieldValues!.Keys) {
+        if (i > 0) {
+          pfColumns.Append(", ");
+          pfValues.Append(", ");
+          pfUpdates.Append(", ");
+        }
+        // Double-quote the column to preserve case and dodge keyword collisions.
+        var quoted = "\"" + columnName.Replace("\"", "\"\"") + "\"";
+        pfColumns.Append(quoted);
+        pfValues.Append("@pf_").Append(i);
+        pfUpdates.Append(quoted).Append(" = EXCLUDED.").Append(quoted);
+        i++;
+      }
+      pfColumnsClause = ", " + pfColumns;
+      pfValuesClause = ", " + pfValues;
+      pfUpdateClause = ", " + pfUpdates;
+    }
+
     var sql = $@"
-        INSERT INTO {args.TableName} (id, data, metadata, scope, created_at, updated_at, version)
-        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1)
+        INSERT INTO {args.TableName} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1{pfValuesClause})
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at,
-          version = {args.TableName}.version + 1{scopeUpdateClause}";
+          version = {args.TableName}.version + 1{scopeUpdateClause}{pfUpdateClause}";
 
     var connection = context.Database.GetDbConnection();
     var openedHere = false;
@@ -225,16 +255,21 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       if (currentTx is not null) {
         cmd.Transaction = currentTx.GetDbTransaction();
       }
-      var idParam = new NpgsqlParameter("id", args.Id);
-      var dataParam = new NpgsqlParameter("data", dataJson);
-      var metadataParam = new NpgsqlParameter("metadata", metadataJson);
-      var scopeParam = new NpgsqlParameter("scope", scopeJson);
-      var nowParam = new NpgsqlParameter("now", DateTime.UtcNow);
-      cmd.Parameters.Add(idParam);
-      cmd.Parameters.Add(dataParam);
-      cmd.Parameters.Add(metadataParam);
-      cmd.Parameters.Add(scopeParam);
-      cmd.Parameters.Add(nowParam);
+      cmd.Parameters.Add(new NpgsqlParameter("id", args.Id));
+      cmd.Parameters.Add(new NpgsqlParameter("data", dataJson));
+      cmd.Parameters.Add(new NpgsqlParameter("metadata", metadataJson));
+      cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
+      cmd.Parameters.Add(new NpgsqlParameter("now", DateTime.UtcNow));
+      if (pfCount > 0) {
+        var i = 0;
+        foreach (var value in args.PhysicalFieldValues!.Values) {
+          // value is what the consumer's source generator already coerced to the
+          // EF-mapped CLR type (Vector for embedding columns, string/decimal/etc.
+          // for scalars). Null values bind as DBNull so nullable columns work.
+          cmd.Parameters.Add(new NpgsqlParameter("pf_" + i, value ?? (object)DBNull.Value));
+          i++;
+        }
+      }
       await cmd.ExecuteNonQueryAsync(cancellationToken);
       return true;
     } finally {
