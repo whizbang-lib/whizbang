@@ -26,22 +26,37 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_outbox_batch(
   status INTEGER,
   attempts INTEGER,
   partition_number INTEGER,
-  is_event BOOLEAN
+  is_event BOOLEAN,
+  -- Slice 26.6b: JOINed event-store fields used by the publisher to populate envelope
+  -- SourceServiceId + SourceCommitSequence before serializing to transport. NULL for
+  -- non-event outbox rows; commit_sequence may be NULL if stamper hasn't caught up.
+  commit_sequence BIGINT,
+  origin_service_id UUID,
+  origin_commit_sequence BIGINT
 ) AS $$
 BEGIN
   IF p_stream_ids IS NULL OR array_length(p_stream_ids, 1) IS NULL THEN
     RETURN;
   END IF;
 
-  -- Ordering invariant: sort by (stream_id, message_id). UUIDv7 message_ids ARE chronological;
-  -- created_at is wall-clock at insert and may diverge under concurrent producers. Within a
-  -- stream, message_id is the canonical time order. See plans/ordered-stream-invariant.md.
+  -- Ordering invariant: sort by (stream_id, commit_sequence NULLS LAST, message_id).
+  -- Slice 26.9: live publish order should match the source's commit-completion order so
+  -- downstream consumers see events in the same order across live + replay. For unstamped
+  -- rows the tail fall-back is message_id (UUIDv7, monotonic-at-generation).
   RETURN QUERY
   WITH ranked AS (
     SELECT
       o.*,
-      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.message_id) AS rank_in_stream
+      es.commit_sequence AS es_commit_sequence,
+      es.origin_service_id AS es_origin_service_id,
+      es.origin_commit_sequence AS es_origin_commit_sequence,
+      ROW_NUMBER() OVER (
+        PARTITION BY o.stream_id
+        ORDER BY es.commit_sequence ASC NULLS LAST, o.message_id
+      ) AS rank_in_stream
     FROM __SCHEMA__.wh_outbox o
+    LEFT JOIN __SCHEMA__.wh_event_store es
+      ON o.is_event AND es.event_id = o.message_id
     WHERE o.stream_id = ANY(p_stream_ids)
       AND o.instance_id = p_instance_id
       AND o.lease_expiry > NOW()
@@ -61,10 +76,13 @@ BEGIN
     r.status,
     r.attempts,
     r.partition_number,
-    r.is_event
+    r.is_event,
+    r.es_commit_sequence,
+    r.es_origin_service_id,
+    r.es_origin_commit_sequence
   FROM ranked r
   WHERE r.rank_in_stream <= p_max_per_stream
-  ORDER BY r.stream_id, r.message_id;
+  ORDER BY r.stream_id, r.es_commit_sequence ASC NULLS LAST, r.message_id;
 END;
 $$ LANGUAGE plpgsql;
 

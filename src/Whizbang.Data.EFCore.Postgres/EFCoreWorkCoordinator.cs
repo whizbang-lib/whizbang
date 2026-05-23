@@ -1407,6 +1407,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <inheritdoc />
+  public async Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) {
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection.State != System.Data.ConnectionState.Open) {
+      await dbConnection.OpenAsync(cancellationToken);
+    }
+    await using var cmd = dbConnection.CreateCommand();
+    cmd.CommandText = "SELECT service_id FROM wh_service_config LIMIT 1";
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return result switch {
+      null or DBNull => Guid.Empty,
+      Guid g => g,
+      _ => Guid.Empty
+    };
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
@@ -1437,6 +1454,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var results = new List<OutboxBatchRow>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    // Slice 26.6b: graceful fallback for the new commit_sequence / origin_* columns —
+    // matches the established pattern for older SQL functions that may not have them.
+    var hasCommitSequenceCol = false;
+    var commitSeqOrdinal = -1;
+    var originServiceOrdinal = -1;
+    var originSeqOrdinal = -1;
+    try {
+      commitSeqOrdinal = reader.GetOrdinal("commit_sequence");
+      originServiceOrdinal = reader.GetOrdinal("origin_service_id");
+      originSeqOrdinal = reader.GetOrdinal("origin_commit_sequence");
+      hasCommitSequenceCol = true;
+    } catch (IndexOutOfRangeException) {
+      // Older fetch_outbox_batch without slice 26.6b columns — leave as null.
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new OutboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -1450,7 +1481,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Status = reader.GetInt32(8),
         Attempts = reader.GetInt32(9),
         PartitionNumber = await reader.IsDBNullAsync(10, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt32(10),
-        IsEvent = reader.GetBoolean(11)
+        IsEvent = reader.GetBoolean(11),
+        CommitSequence = hasCommitSequenceCol && !await reader.IsDBNullAsync(commitSeqOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetInt64(commitSeqOrdinal)
+          : null,
+        OriginServiceId = hasCommitSequenceCol && !await reader.IsDBNullAsync(originServiceOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetGuid(originServiceOrdinal)
+          : null,
+        OriginCommitSequence = hasCommitSequenceCol && !await reader.IsDBNullAsync(originSeqOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetInt64(originSeqOrdinal)
+          : null,
       });
     }
     return results;

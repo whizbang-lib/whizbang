@@ -671,6 +671,16 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
 
   /// <summary>
+  /// Slice 26.6b — returns the local service's stable identity from
+  /// <c>wh_service_config</c>. Cached by callers (publish path) at startup; queried
+  /// once per process. Default implementation returns <see cref="Guid.Empty"/> for
+  /// legacy/in-memory coordinators that don't track service identity.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(Guid.Empty);
+
+  /// <summary>
   /// Per-stream-id payload fetch for the OutboxDrainWorker. Given stream_ids that
   /// <see cref="ClaimWorkAsync"/> emitted as <see cref="WorkBatch.OutboxStreamIds"/>, returns the
   /// actual leased outbox rows for those streams in stream-FIFO order. Caps at
@@ -1584,6 +1594,29 @@ public sealed record OutboxBatchRow {
   public int? PartitionNumber { get; init; }
   /// <summary>True if this outbox message is also written to the event store.</summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// Slice 26.6b — JOINed <c>wh_event_store.commit_sequence</c>. Null until the stamper
+  /// has caught up (publish should defer or fall back to publishing without the stamp
+  /// when null). Used by the publisher to populate envelope <c>SourceCommitSequence</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? CommitSequence { get; init; }
+
+  /// <summary>
+  /// Slice 26.6b — JOINed <c>wh_event_store.origin_service_id</c>. Non-null only for 1:1
+  /// forwarded events; null for locally-originated. Publisher COALESCEs to the local
+  /// <c>wh_service_config.service_id</c> when null.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public Guid? OriginServiceId { get; init; }
+
+  /// <summary>
+  /// Slice 26.6b — JOINed <c>wh_event_store.origin_commit_sequence</c>. Companion to
+  /// <see cref="OriginServiceId"/>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? OriginCommitSequence { get; init; }
 }
 
 /// <summary>

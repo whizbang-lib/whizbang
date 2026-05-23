@@ -39,6 +39,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly OutboxDrainWorkerOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
+  // Slice 26.6b: cached local service identity from wh_service_config; resolved once
+  // on first drain (after schema-ready gate) and reused for envelope publish-time
+  // injection. Guid.Empty until resolved.
+  private Guid _localServiceId;
 
   /// <summary>Constructor.</summary>
   public OutboxDrainWorker(
@@ -80,6 +84,21 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
     } catch (OperationCanceledException) {
       return;
+    }
+
+    // Slice 26.6b: resolve local service identity once for the worker lifetime. Used
+    // when injecting envelope SourceServiceId at publish-time; falls back to Guid.Empty
+    // for legacy coordinators that don't track service identity.
+    try {
+      await using var initScope = _scopeFactory.CreateAsyncScope();
+      var initCoordinator = initScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      _localServiceId = await initCoordinator.GetLocalServiceIdAsync(stoppingToken);
+    } catch (OperationCanceledException) {
+      return;
+    } catch (Exception) {
+      // Best-effort: leave _localServiceId at Guid.Empty if the lookup fails. Downstream
+      // consumers' SQL trigger then COALESCEs to their own local service.
+      _localServiceId = Guid.Empty;
     }
 
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
@@ -207,6 +226,31 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for message {row.MessageId}.");
+
+    // Slice 26.6b: inject source identity into the envelope before publish. The wire
+    // version of this envelope must carry SourceServiceId + SourceCommitSequence so
+    // the consumer can compare cursors per-source and apply events in the same order
+    // the source committed them — deterministic across live and replay paths.
+    //
+    // COALESCE: when wh_event_store.origin_service_id is non-null this event was 1:1
+    // forwarded from another service — preserve the original identity. Otherwise the
+    // event was originated locally; populate from the local wh_service_config.service_id.
+    if (envelope is MessageEnvelope<JsonElement> concrete) {
+      var effectiveSourceId = row.OriginServiceId ?? _localServiceId;
+      var effectiveCommitSeq = row.OriginCommitSequence ?? row.CommitSequence ?? 0L;
+      envelope = new MessageEnvelope<JsonElement> {
+        MessageId = concrete.MessageId,
+        Payload = concrete.Payload,
+        Hops = concrete.Hops,
+        DispatchContext = concrete.DispatchContext,
+        Version = concrete.Version,
+        ReceptorInvocations = concrete.ReceptorInvocations,
+        SourceServiceId = effectiveSourceId,
+        SourceCommitSequence = effectiveCommitSeq,
+        CausedByServiceId = concrete.CausedByServiceId,
+        CausedByCommitSequence = concrete.CausedByCommitSequence,
+      };
+    }
 
     return new OutboxWork {
       MessageId = row.MessageId,
