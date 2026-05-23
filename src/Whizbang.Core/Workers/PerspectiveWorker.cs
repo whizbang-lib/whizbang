@@ -1165,15 +1165,34 @@ public partial class PerspectiveWorker(
       lastProcessedEventId = cachedEventId;
     }
 
+    // Slice 26.10: prefer commit_sequence comparison for inversion detection when both
+    // the cached cursor and the incoming events have commit_sequence stamped. This is
+    // the architectural fix for the a consumer run-8 commit-order race — stamped values reflect
+    // commit-completion order (stable, never re-orders), unlike UUIDv7 event_ids which
+    // are stamped at generation-time and can invert under concurrent saga writers.
+    // Fall through to event_id comparison when either side lacks commit_sequence (stamper
+    // hasn't caught up, or row pre-dates slice 26).
+    long? lastProcessedCommitSequence = null;
+    if (_cursorCache.TryGetCommitSequence(streamId, perspectiveName, out var cachedSeq)) {
+      lastProcessedCommitSequence = cachedSeq;
+    }
+
     // Phase H step 6 slice 4: cursor-inversion detector. If any pending event has
     // event_id ≤ cached_cursor, the perspective row's metadata is past an event that's
     // still in the pending queue — invariant violation. Trigger snapshot-aware rewind via
     // RewindAndRunAsync(streamId, perspectiveName, earliestViolator). When cached_cursor
     // is null (new perspective on existing stream OR cold start), no inversion is possible
     // by definition; skip the check and forward-apply.
-    var inversionAnchor = lastProcessedEventId.HasValue
-      ? _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value)
-      : null;
+    Guid? inversionAnchor = null;
+    if (lastProcessedCommitSequence.HasValue) {
+      inversionAnchor = _findCursorInversionAnchorByCommitSequence(
+        filteredEvents, batchContext.RawByEventId, lastProcessedCommitSequence.Value);
+    }
+    // Fall back to event_id comparison if commit_sequence anchor came up empty
+    // (e.g., events not yet stamped) or commit_sequence cache was empty.
+    if (inversionAnchor is null && lastProcessedEventId.HasValue) {
+      inversionAnchor = _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value);
+    }
 
     // Phase H step 7 slice 5: cooldown short-circuit. If every event_work_id corresponding to
     // this perspective's filtered events is in the RecentlyProcessedEventCache, we already ran
@@ -1332,6 +1351,35 @@ public partial class PerspectiveWorker(
     return earliest;
   }
 
+  /// <summary>
+  /// Slice 26 — commit-sequence-based inversion anchor. Compares each event's
+  /// <see cref="StreamEventData.CommitSequence"/> against the cached commit_sequence cursor.
+  /// Returns the event_id of the earliest violator (commit_sequence ≤ cached) for snapshot-aware
+  /// rewind. Events without a CommitSequence (stamper hasn't caught up) are SKIPPED — they're
+  /// not yet stable for cursor comparison; the caller's fallback path uses
+  /// <see cref="_findCursorInversionAnchor"/> (event_id-based) for those.
+  /// </summary>
+  internal static Guid? _findCursorInversionAnchorByCommitSequence(
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      ILookup<Guid, StreamEventData> rawByEventId,
+      long cachedCommitSequence) {
+    Guid? earliestEventId = null;
+    long earliestSeq = long.MaxValue;
+    foreach (var envelope in events) {
+      var msgId = envelope.MessageId.Value;
+      var raw = rawByEventId[msgId].FirstOrDefault();
+      if (raw?.CommitSequence is null) {
+        continue;  // Unstamped — defer to event_id comparison path.
+      }
+      var seq = raw.CommitSequence.Value;
+      if (seq <= cachedCommitSequence && seq < earliestSeq) {
+        earliestSeq = seq;
+        earliestEventId = msgId;
+      }
+    }
+    return earliestEventId;
+  }
+
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Cursor inversion detected: pending event {AnchorEventId} ≤ cached cursor {CachedCursor} for stream {StreamId} / perspective {PerspectiveName}; triggering rewind")]
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
@@ -1464,6 +1512,22 @@ public partial class PerspectiveWorker(
       DrainBatchContext batchContext,
       CancellationToken ct) {
     _cursorCache.Set(streamCtx.StreamId, streamCtx.PerspectiveName, result.LastEventId);
+
+    // Slice 26.11: track commit_sequence cursor alongside event_id. Find the latest
+    // commit_sequence among events that share the result's LastEventId (the runner applies
+    // events in order and reports the last). Falls back to keeping the prior cursor when
+    // the lookup is null (e.g., result.LastEventId not in rawByEventId, or no stamped row).
+    if (result.LastEventId != Guid.Empty) {
+      long? lastSeq = null;
+      foreach (var raw in batchContext.RawByEventId[result.LastEventId]) {
+        if (raw.CommitSequence.HasValue && (lastSeq is null || raw.CommitSequence.Value > lastSeq.Value)) {
+          lastSeq = raw.CommitSequence;
+        }
+      }
+      if (lastSeq.HasValue) {
+        _cursorCache.SetCommitSequence(streamCtx.StreamId, streamCtx.PerspectiveName, lastSeq);
+      }
+    }
 
     foreach (var envelope in filteredEvents) {
       var id = envelope.MessageId.Value;

@@ -15,6 +15,14 @@ namespace Whizbang.Core.Workers;
 public sealed class PerspectiveCursorCache {
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), Guid?> _cache = new();
 
+  /// <summary>
+  /// Slice 26 — parallel commit_sequence cache. Populated by drain-mode worker alongside
+  /// the event_id cache. Inversion detection prefers commit_sequence comparison when both
+  /// the cached cursor and the incoming events have it populated; falls back to event_id
+  /// when either is missing (e.g., stamper hasn't caught up, or rows pre-date slice 26).
+  /// </summary>
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), long?> _commitSeqCache = new();
+
   /// <summary>Number of cached cursor entries.</summary>
   public int Count => _cache.Count;
 
@@ -65,6 +73,26 @@ public sealed class PerspectiveCursorCache {
   /// </summary>
   public void Invalidate(Guid streamId, string perspectiveName) {
     _cache.TryRemove((streamId, perspectiveName), out _);
+    _commitSeqCache.TryRemove((streamId, perspectiveName), out _);
+  }
+
+  /// <summary>
+  /// Slice 26 — gets the cached commit_sequence cursor for a (stream, perspective) pair.
+  /// </summary>
+  /// <param name="streamId">Stream to look up.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="lastCommitSequence">The cached last applied commit_sequence, or null if not cached.</param>
+  /// <returns>True if a commit_sequence cursor was cached; false if not.</returns>
+  public bool TryGetCommitSequence(Guid streamId, string perspectiveName, out long? lastCommitSequence) {
+    return _commitSeqCache.TryGetValue((streamId, perspectiveName), out lastCommitSequence);
+  }
+
+  /// <summary>
+  /// Slice 26 — sets the cached commit_sequence cursor. Called alongside <see cref="Set(Guid,string,Guid?)"/>
+  /// after a successful apply when the event has a known commit_sequence stamp.
+  /// </summary>
+  public void SetCommitSequence(Guid streamId, string perspectiveName, long? lastCommitSequence) {
+    _commitSeqCache[(streamId, perspectiveName)] = lastCommitSequence;
   }
 
   /// <summary>
@@ -75,6 +103,7 @@ public sealed class PerspectiveCursorCache {
     var keysToRemove = _cache.Keys.Where(k => k.StreamId == streamId).ToList();
     foreach (var key in keysToRemove) {
       _cache.TryRemove(key, out _);
+      _commitSeqCache.TryRemove(key, out _);
     }
   }
 
@@ -91,5 +120,6 @@ public sealed class PerspectiveCursorCache {
   /// </summary>
   public void Clear() {
     _cache.Clear();
+    _commitSeqCache.Clear();
   }
 }
