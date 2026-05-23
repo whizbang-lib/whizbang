@@ -31,7 +31,7 @@ public class PgWorkNotificationListenerSignalingModeTests {
       ConnectionStringKey = "should-be-ignored"
     });
     var config = _configWith("ConnectionStrings:should-be-ignored-direct", "Host=should-be-ignored");
-    var listener = new PgWorkNotificationListener(opts, config, NullLogger<PgWorkNotificationListener>.Instance);
+    var listener = new PgWorkNotificationListener(opts, config, new Whizbang.Core.Observability.ServiceInstanceProvider(config), NullLogger<PgWorkNotificationListener>.Instance);
 
     using var cts = new CancellationTokenSource();
     await listener.StartAsync(cts.Token);
@@ -51,7 +51,7 @@ public class PgWorkNotificationListenerSignalingModeTests {
       ConnectionStringKey = "ignored"
     });
     var config = _configWith("ConnectionStrings:ignored-direct", "Host=ignored");
-    var listener = new PgWorkNotificationListener(opts, config, NullLogger<PgWorkNotificationListener>.Instance);
+    var listener = new PgWorkNotificationListener(opts, config, new Whizbang.Core.Observability.ServiceInstanceProvider(config), NullLogger<PgWorkNotificationListener>.Instance);
 
     using var cts = new CancellationTokenSource();
     await listener.StartAsync(cts.Token);
@@ -69,7 +69,7 @@ public class PgWorkNotificationListenerSignalingModeTests {
     var opts = Options.Create(new WhizbangNotificationOptions {
       SignalingMode = WorkSignalingMode.Auto
     });
-    var listener = new PgWorkNotificationListener(opts, _emptyConfig(), NullLogger<PgWorkNotificationListener>.Instance);
+    var listener = new PgWorkNotificationListener(opts, _emptyConfig(), new Whizbang.Core.Observability.ServiceInstanceProvider(_emptyConfig()), NullLogger<PgWorkNotificationListener>.Instance);
 
     using var cts = new CancellationTokenSource();
     await listener.StartAsync(cts.Token);
@@ -87,7 +87,7 @@ public class PgWorkNotificationListenerSignalingModeTests {
     var opts = Options.Create(new WhizbangNotificationOptions {
       SignalingMode = WorkSignalingMode.ListenNotify
     });
-    var listener = new PgWorkNotificationListener(opts, _emptyConfig(), NullLogger<PgWorkNotificationListener>.Instance);
+    var listener = new PgWorkNotificationListener(opts, _emptyConfig(), new Whizbang.Core.Observability.ServiceInstanceProvider(_emptyConfig()), NullLogger<PgWorkNotificationListener>.Instance);
 
     using var cts = new CancellationTokenSource();
     await listener.StartAsync(cts.Token);

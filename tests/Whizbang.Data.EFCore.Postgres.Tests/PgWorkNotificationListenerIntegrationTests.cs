@@ -36,19 +36,26 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     return tcs;
   }
 
-  private PgWorkNotificationListener _newListener(WhizbangNotificationOptions options) {
+  // Slice 27: each test resolves a unique instance_id (via a fresh ServiceInstanceProvider)
+  // and exposes it so the test can also pin streams and emit on the routed channel.
+  private (PgWorkNotificationListener Listener, Guid InstanceId) _newListenerWithInstance(WhizbangNotificationOptions options) {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    return new PgWorkNotificationListener(
+    var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(config);
+    return (new PgWorkNotificationListener(
       Options.Create(options),
       config,
-      NullLogger<PgWorkNotificationListener>.Instance);
+      instanceProvider,
+      NullLogger<PgWorkNotificationListener>.Instance), instanceProvider.InstanceId);
   }
+
+  private PgWorkNotificationListener _newListener(WhizbangNotificationOptions options)
+    => _newListenerWithInstance(options).Listener;
 
   // ----- direct pg_notify round-trip -----
 
   [Test]
   public async Task PgNotify_OutboxCategory_FiresOnSignalWithOutboxAsync() {
-    var listener = _newListener(new WhizbangNotificationOptions {
+    var (listener, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
@@ -62,7 +69,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = "SELECT pg_notify('wh_work', 'outbox')";
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'outbox')";
       _ = await cmd.ExecuteScalarAsync();
     }
 
@@ -74,7 +81,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task PgNotify_InboxCategory_FiresOnSignalWithInboxAsync() {
-    var listener = _newListener(new WhizbangNotificationOptions {
+    var (listener, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
@@ -88,7 +95,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = "SELECT pg_notify('wh_work', 'inbox')";
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'inbox')";
       _ = await cmd.ExecuteScalarAsync();
     }
 
@@ -100,7 +107,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   [Test]
   public async Task PgNotify_PerspectiveCategory_FiresOnSignalWithPerspectiveAsync() {
-    var listener = _newListener(new WhizbangNotificationOptions {
+    var (listener, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
@@ -114,7 +121,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = "SELECT pg_notify('wh_work', 'perspective')";
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'perspective')";
       _ = await cmd.ExecuteScalarAsync();
     }
 
@@ -128,7 +135,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
   public async Task PgNotify_UnknownCategory_DoesNotFireOnSignalAsync() {
     // Defensive: payloads outside the known set are ignored. The listener still reads them
     // (which sets LastSignalAt) but does NOT fire OnSignal — so subscribers don't see noise.
-    var listener = _newListener(new WhizbangNotificationOptions {
+    var (listener, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
@@ -144,7 +151,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = "SELECT pg_notify('wh_work', 'gibberish')";
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'gibberish')";
       _ = await cmd.ExecuteScalarAsync();
     }
 
@@ -162,9 +169,10 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task CompletePerspective_RealSqlEmitsPgNotify_ListenerSeesPerspectiveAsync() {
     // Locks the cursor → awaiter wake linkage at the real SQL layer. If a future migration
-    // strips the pg_notify from complete_perspective (mig 029), this test fails — exactly
-    // what audit gap #4 wanted captured.
-    var listener = _newListener(new WhizbangNotificationOptions {
+    // strips the routed pg_notify from complete_perspective (mig 029), this test fails —
+    // captures audit gap #4. Slice 27 retrofit: routing is via wh_work_i_<owner>, so the
+    // test pins the stream to the listener's instance via wh_active_streams.
+    var (listener, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
     });
@@ -178,21 +186,40 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       await conn.OpenAsync();
     }
 
-    var workId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var eventId = Guid.NewGuid();
-    await using (var ins = conn.CreateCommand()) {
-      ins.CommandText = @"INSERT INTO wh_perspective_events
-                          (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
-                          VALUES (@work, @stream, 'TestPerspective', @eid, 0, 0, NOW())";
-      ins.Parameters.AddWithValue("work", workId);
-      ins.Parameters.AddWithValue("stream", streamId);
-      ins.Parameters.AddWithValue("eid", eventId);
-      await ins.ExecuteNonQueryAsync();
+    var cursorEventId = Guid.NewGuid();
+
+    // Register the listener instance + pin the stream so the routed NOTIFY can resolve.
+    await using (var reg = conn.CreateCommand()) {
+      reg.CommandText = @"INSERT INTO wh_service_instances
+                            (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+                          VALUES (@id, 'test-svc', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)
+                          ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = EXCLUDED.last_heartbeat_at";
+      reg.Parameters.AddWithValue("id", instanceId);
+      await reg.ExecuteNonQueryAsync();
     }
+    await using (var pin = conn.CreateCommand()) {
+      pin.CommandText = @"INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at)
+                          VALUES (@sid, 0, @inst, NOW())
+                          ON CONFLICT (stream_id) DO UPDATE
+                            SET assigned_instance_id = EXCLUDED.assigned_instance_id";
+      pin.Parameters.AddWithValue("sid", streamId);
+      pin.Parameters.AddWithValue("inst", instanceId);
+      await pin.ExecuteNonQueryAsync();
+    }
+
+    // Advance a cursor for the owned stream — this is the wake-trigger.
+    var cursorsJson = $$"""
+      [{
+        "StreamId": "{{streamId}}",
+        "PerspectiveName": "TestPerspective",
+        "CursorEventId": "{{cursorEventId}}",
+        "Metadata": {}
+      }]
+      """;
     await using (var fire = conn.CreateCommand()) {
-      fire.CommandText = "SELECT complete_perspective('[]'::jsonb, @ids, FALSE)";
-      fire.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = new[] { workId } });
+      fire.CommandText = "SELECT complete_perspective(@cursors::jsonb, NULL::uuid[], FALSE)";
+      fire.Parameters.AddWithValue("cursors", cursorsJson);
       _ = await fire.ExecuteScalarAsync();
     }
 
@@ -230,7 +257,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     // pg_terminate_backend, a service restart, or a transient network blip). The listener
     // should detect, log, back off, reconnect, and resume LISTENing — verified by health
     // toggling false → true and a fresh pg_notify still firing OnSignal.
-    var listener = _newListener(new WhizbangNotificationOptions {
+    var (listener, instanceId) = _newListenerWithInstance(new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
       ListenReconnectInitialDelay = TimeSpan.FromMilliseconds(100),
@@ -262,7 +289,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
         SELECT pg_terminate_backend(pid)
         FROM pg_stat_activity
         WHERE datname = current_database()
-          AND query LIKE '%LISTEN%wh_work%'
+          AND query LIKE '%LISTEN%wh_work_i_%'
           AND pid != pg_backend_pid()";
       _ = await kill.ExecuteScalarAsync();
     }
@@ -276,7 +303,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     var tcs = new TaskCompletionSource<WorkSignalCategory>(TaskCreationOptions.RunContinuationsAsynchronously);
     listener.OnSignal += cat => tcs.TrySetResult(cat);
     await using (var notify = conn.CreateCommand()) {
-      notify.CommandText = "SELECT pg_notify('wh_work', 'outbox')";
+      notify.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'outbox')";
       _ = await notify.ExecuteScalarAsync();
     }
     var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));

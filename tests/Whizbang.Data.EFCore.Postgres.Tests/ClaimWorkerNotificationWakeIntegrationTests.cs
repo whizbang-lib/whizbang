@@ -86,12 +86,15 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
+    var listenerConfig = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var listenerInstanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(listenerConfig);
     var listener = new PgWorkNotificationListener(
       Options.Create(new WhizbangNotificationOptions {
         DirectConnectionString = ConnectionString,
         SignalingMode = WorkSignalingMode.ListenNotify
       }),
-      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      listenerConfig,
+      listenerInstanceProvider,
       NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
@@ -124,7 +127,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
     var notifyAt = DateTimeOffset.UtcNow;
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = "SELECT pg_notify('wh_work', 'outbox')";
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{listenerInstanceProvider.InstanceId}', 'outbox')";
       _ = await cmd.ExecuteScalarAsync();
     }
 

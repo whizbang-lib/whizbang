@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -18,13 +19,20 @@ namespace Whizbang.Data.Postgres.Notifications;
 public sealed partial class PgWorkNotificationListener(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
+  IServiceInstanceProvider instanceProvider,
   ILogger<PgWorkNotificationListener> logger
 ) : BackgroundService, IWorkNotificationListener {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ILogger<PgWorkNotificationListener> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private bool _isHealthy;
   private DateTimeOffset? _lastSignalAt;
+
+  // Slice 27: instance-routed channel. Each instance LISTENs on exactly one channel
+  // — its own — so producer-side NOTIFYs from notify_instance_owners target only
+  // the owning instance and non-owners never wake.
+  private string _channelName => $"wh_work_i_{_instanceProvider.InstanceId}";
 
   /// <inheritdoc />
   public bool IsHealthy => _isHealthy;
@@ -69,13 +77,14 @@ public sealed partial class PgWorkNotificationListener(
         conn.Notification += _onNotification;
         await conn.OpenAsync(stoppingToken);
 
-        await using (var listenCmd = new NpgsqlCommand("LISTEN wh_work", conn)) {
+        // Identifier-quoted so the {GUID} suffix can include hyphens safely.
+        await using (var listenCmd = new NpgsqlCommand($"LISTEN \"{_channelName}\"", conn)) {
           await listenCmd.ExecuteNonQueryAsync(stoppingToken);
         }
 
         _setHealthy(true);
         attempt = 0;
-        LogConnected(_logger);
+        LogConnected(_logger, _channelName);
 
         while (!stoppingToken.IsCancellationRequested) {
           using var keepalive = new CancellationTokenSource(_options.ListenKeepaliveInterval);
@@ -106,7 +115,7 @@ public sealed partial class PgWorkNotificationListener(
 
   private void _onNotification(object? sender, NpgsqlNotificationEventArgs e) {
     _lastSignalAt = DateTimeOffset.UtcNow;
-    if (!string.Equals(e.Channel, "wh_work", StringComparison.Ordinal)) {
+    if (!string.Equals(e.Channel, _channelName, StringComparison.Ordinal)) {
       return;
     }
     var category = e.Payload switch {
@@ -138,8 +147,8 @@ public sealed partial class PgWorkNotificationListener(
   static partial void LogDisabledByMode(ILogger logger);
   [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "PgWorkNotificationListener started")]
   static partial void LogStarted(ILogger logger);
-  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PgWorkNotificationListener connected and LISTENing on wh_work")]
-  static partial void LogConnected(ILogger logger);
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PgWorkNotificationListener connected and LISTENing on {Channel}")]
+  static partial void LogConnected(ILogger logger, string channel);
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "PgWorkNotificationListener disconnected ({Reason}); reconnecting in {DelaySeconds}s")]
   static partial void LogReconnect(ILogger logger, string reason, double delaySeconds);
   [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "PgWorkNotificationListener stopped")]
