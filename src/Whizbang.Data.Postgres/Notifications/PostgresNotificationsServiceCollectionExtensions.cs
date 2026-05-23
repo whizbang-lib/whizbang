@@ -67,10 +67,60 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.AddSingleton<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
     services.AddHostedService(sp => sp.GetRequiredService<PgWorkNotificationListener>());
 
+    // Slice 26.12: register the commit-order stamper worker. Singleton per pod via
+    // pg_try_advisory_lock — every instance hosts it, only the lock-holder actively stamps.
+    // Bound to CommitOrderStamperOptions via the same Whizbang:Database section.
+    services.AddOptions<CommitOrderStamperOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IConfigureOptions<CommitOrderStamperOptions>,
+      ConfigureCommitOrderStamperOptionsFromConfiguration>());
+    services.AddHostedService<PgCommitOrderStamperWorker>();
+
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
 
     return services;
+  }
+}
+
+/// <summary>
+/// AOT-safe <see cref="IConfigureOptions{TOptions}"/> for <see cref="CommitOrderStamperOptions"/>.
+/// Reads <c>Whizbang:Database:Stamper</c> sub-section so operators can override defaults
+/// without touching the rest of the notification settings.
+/// </summary>
+internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfiguration configuration)
+  : IConfigureOptions<CommitOrderStamperOptions> {
+
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+
+  public void Configure(CommitOrderStamperOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var section = _configuration.GetSection(PostgresNotificationsServiceCollectionExtensions.CONFIGURATION_SECTION + ":Stamper");
+    if (!section.Exists()) {
+      return;
+    }
+
+    if (TimeSpan.TryParse(section["PollingInterval"], out var poll)) {
+      options.PollingInterval = poll;
+    }
+
+    if (TimeSpan.TryParse(section["LeaderElectionRetry"], out var retry)) {
+      options.LeaderElectionRetry = retry;
+    }
+
+    if (int.TryParse(section["BatchSize"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var batch)) {
+      options.BatchSize = batch;
+    }
+
+    if (bool.TryParse(section["DisableStamper"], out var disable)) {
+      options.DisableStamper = disable;
+    }
+
+    if (long.TryParse(section["AdvisoryLockKey"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var lockKey)) {
+      options.AdvisoryLockKey = lockKey;
+    }
   }
 }
 
