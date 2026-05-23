@@ -736,6 +736,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var pendingPurge = false;
     PerspectiveScope? lastScope = null;
 
+    // Slice 24c: intermediate-snapshot tracking. When the rewind interval is configured
+    // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
+    // rewinds — including "very late" events whose MessageId falls between intermediate
+    // points and the end — find a qualifying snapshot rather than replaying from event zero.
+    var rewindSnapshotInterval = _snapshotOptions?.Value.RewindSnapshotIntervalEvents ?? 0;
+    var eventsSinceIntermediateSnapshot = 0;
+
     // Build list of event types this perspective handles
     var eventTypes = new[] {
       #region REPLAY_EVENT_TYPES
@@ -810,6 +817,32 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       lastSuccessfulEventId = envelope.MessageId.Value;
       lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
+
+      // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
+      // at THIS point in the stream's history so future rewinds for late events with
+      // MessageId near this point find a qualifying restore point. PruneOldSnapshotsAsync
+      // caps total snapshots per stream so this can't bloat the table without bound.
+      if (rewindSnapshotInterval > 0
+          && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+          && !pendingPurge && updatedModel is not null) {
+        eventsSinceIntermediateSnapshot++;
+        if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval) {
+          try {
+            await _snapshotStore.CreateSnapshotAsync(
+                streamId, perspectiveName, lastSuccessfulEventId.Value,
+                ToSnapshotJson(updatedModel), cancellationToken);
+            await _snapshotStore.PruneOldSnapshotsAsync(
+                streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+            eventsSinceIntermediateSnapshot = 0;
+          } catch (Exception snapshotEx) when (snapshotEx is not OperationCanceledException) {
+            // Intermediate snapshots are best-effort — failures here don't break the rewind.
+            // The end-of-rewind snapshot at line ~833 is the durable fallback. Just log.
+            _logger.LogDebug(snapshotEx,
+                "Intermediate snapshot at event {EventId} for {PerspectiveName} stream {StreamId} failed; continuing replay",
+                lastSuccessfulEventId.Value, perspectiveName, streamId);
+          }
+        }
+      }
     }
 
     // Single atomic write at the end — lenses see pre-replay data until this point

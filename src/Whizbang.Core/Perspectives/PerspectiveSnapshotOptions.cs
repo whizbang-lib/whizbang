@@ -25,4 +25,20 @@ public class PerspectiveSnapshotOptions {
   /// Default: true.
   /// </summary>
   public bool Enabled { get; set; } = true;
+
+  /// <summary>
+  /// During a rewind replay, take an additional snapshot every N events applied. This puts
+  /// snapshots at multiple historical points along the stream's event timeline so future
+  /// rewinds — including for "very late" events whose MessageId falls *between* the end-of-
+  /// rewind snapshot and earlier events — find a qualifying snapshot to roll back to.
+  /// </summary>
+  /// <remarks>
+  /// Default: 10. With MaxSnapshotsPerStream=5 a 50-event rewind produces ~5 snapshots at
+  /// events 10, 20, 30, 40, 50 (the most recent 5 are kept post-prune). Each in-replay
+  /// snapshot adds one JSONB write + one prune call, but rewinds are uncommon enough that
+  /// the cost is offset many times over by avoiding future full-replays-from-zero. Set to
+  /// 0 to disable in-replay snapshots and keep only the end-of-rewind snapshot (legacy
+  /// behavior).
+  /// </remarks>
+  public int RewindSnapshotIntervalEvents { get; set; } = 10;
 }
