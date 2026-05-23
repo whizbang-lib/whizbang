@@ -82,6 +82,44 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public List<ReceptorInvocationRecord>? ReceptorInvocations { get; set; }
 
   /// <summary>
+  /// Slice 26 — service_id of the service that originated this event in its event store.
+  /// Set at outbox-publish time by joining to <c>wh_service_config</c> (or to
+  /// <c>wh_event_store.origin_service_id</c> for 1:1 forwarded events). Downstream
+  /// consumers persist this into <c>wh_inbox.source_service_id</c> and use it as
+  /// part of the per-source cursor key.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("sid")]
+  public Guid SourceServiceId { get; init; }
+
+  /// <summary>
+  /// Slice 26 — the commit_sequence value the source service stamped for this event.
+  /// Monotonic only within the same <see cref="SourceServiceId"/>. Downstream consumers
+  /// compare against their cached cursor per source to detect inversions.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("sseq")]
+  public long SourceCommitSequence { get; init; }
+
+  /// <summary>
+  /// Slice 26 — optional causality reference. Populated when this event was emitted
+  /// in response to another event (e.g., a handler reacted to an upstream event and
+  /// emitted a new one). Forensic only; NOT consulted by cursor logic — projection
+  /// authors must write idempotent, source-independent apply logic.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("cbid")]
+  public Guid? CausedByServiceId { get; init; }
+
+  /// <summary>
+  /// Slice 26 — companion to <see cref="CausedByServiceId"/>. The upstream event's
+  /// <see cref="SourceCommitSequence"/>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("cbseq")]
+  public long? CausedByCommitSequence { get; init; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {
