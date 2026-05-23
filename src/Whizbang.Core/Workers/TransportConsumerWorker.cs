@@ -817,7 +817,14 @@ public partial class TransportConsumerWorker : BackgroundService {
         Hops = envelope.Hops?.ToList() ?? [],
         DispatchContext = envelope.DispatchContext
       },
-      MessageType = messageTypeName
+      MessageType = messageTypeName,
+      // Slice 26.6: propagate source identity from envelope → wh_inbox columns.
+      // Producer side populates these on publish (slice 26.6b); receive-side records
+      // exactly what the source claimed. When envelope hasn't been populated (in-process
+      // dispatch, legacy envelope before slice 26.5), defaults to Guid.Empty + 0; the
+      // SQL trigger then COALESCEs to local wh_service_config.service_id.
+      SourceServiceId = envelope.SourceServiceId,
+      SourceCommitSequence = envelope.SourceCommitSequence,
     };
   }
 
