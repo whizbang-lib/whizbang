@@ -1,26 +1,45 @@
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// Configuration for <see cref="SlidingWindowInboxBatchStrategy"/>. Defaults match the
-/// pump-then-process plan: 50 ms debounce / 1 s hard cap / 100-message batch ceiling.
+/// Configuration for <see cref="SlidingWindowInboxBatchStrategy"/>. Per-slice-23 defaults
+/// align with the perspective apply boundary: 300 ms debounce / 3 s hard cap / 1000-message
+/// batch ceiling per stream / 30 s idle eviction.
 /// </summary>
+/// <remarks>
+/// The longer-than-the-old-50ms window is required for fan-in saga aggregates: events
+/// arriving across multiple transport messages for the same stream coalesce into one
+/// flush before downstream applies, eliminating cross-batch cursor inversions.
+/// </remarks>
 /// <docs>internals/inbox-batch-strategy</docs>
 public sealed record SlidingWindowInboxOptions {
   /// <summary>
-  /// Debounce window after the last append. Resets on each new arrival. When this elapses
-  /// without new arrivals, the current batch flushes. Default: 50 ms.
+  /// Debounce window after the last append PER STREAM. Resets on each new arrival for the
+  /// same stream. When this elapses without new arrivals, the stream's batch flushes.
+  /// Default: 300 ms (slice 23). Matches the apply-boundary window so a hot stream
+  /// receiving cross-producer events sees them all in one apply cycle.
   /// </summary>
-  public TimeSpan SlidingWindow { get; init; } = TimeSpan.FromMilliseconds(50);
+  public TimeSpan SlidingWindow { get; init; } = TimeSpan.FromMilliseconds(300);
 
   /// <summary>
-  /// Hard cap on time from the first append in a batch. Even a continuously-busy producer
-  /// flushes within this window. Default: 1 s.
+  /// Hard cap on time from the first append in a batch (per stream). A continuously-busy
+  /// stream still flushes within this window. Default: 3 s (slice 23).
   /// </summary>
-  public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(1);
+  public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(3);
 
   /// <summary>
-  /// Maximum messages per flushed batch. The batch flushes immediately when this is reached.
-  /// Default: 100.
+  /// Maximum messages per stream batch. The stream's batch flushes immediately when this is
+  /// reached. Default: 1000 (slice 23 — raised from 100 to accommodate larger fan-in bursts).
   /// </summary>
-  public int MaxSize { get; init; } = 100;
+  public int MaxSize { get; init; } = 1000;
+
+  /// <summary>
+  /// A stream's per-stream buffer is evicted when no items have been appended for this
+  /// duration. Bounds memory under workloads with many short-lived streams. Default: 30 s.
+  /// </summary>
+  public TimeSpan IdleEvictionWindow { get; init; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
+  /// How often the idle sweep runs to find and dispose evicted streams. Default: 10 s.
+  /// </summary>
+  public TimeSpan IdleSweepInterval { get; init; } = TimeSpan.FromSeconds(10);
 }
