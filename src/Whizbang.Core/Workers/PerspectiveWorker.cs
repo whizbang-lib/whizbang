@@ -1238,8 +1238,18 @@ public partial class PerspectiveWorker(
         if (inversionAnchor.HasValue) {
           // Cache is stale — reset and let RewindAndRunAsync rebuild from snapshot/event-zero.
           _cursorCache.Invalidate(streamId, perspectiveName);
-          LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId!.Value);
-          result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, leaseCt);
+          // Slice 26.11: look up the violator's commit_sequence so RewindAndRunAsync can
+          // use the commit-sequence-anchored snapshot path for full determinism. Falls
+          // back to event_id-anchored snapshot when the violator wasn't stamped yet.
+          long? anchorCommitSequence = null;
+          foreach (var raw in batchContext.RawByEventId[inversionAnchor.Value]) {
+            if (raw.CommitSequence.HasValue) {
+              anchorCommitSequence = raw.CommitSequence;
+              break;
+            }
+          }
+          LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId ?? Guid.Empty);
+          result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, leaseCt);
         } else {
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);

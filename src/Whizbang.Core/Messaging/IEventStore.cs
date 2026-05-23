@@ -43,6 +43,18 @@ public interface IEventStore {
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Slice 26.11 — resolves the <c>commit_sequence</c> stamped on a given event_id. Used by
+  /// runners at snapshot creation time to record the snapshot's commit_sequence anchor so
+  /// subsequent rewinds can locate the right snapshot deterministically. Returns null when
+  /// the row hasn't been stamped yet (stamper is async) or when the underlying store
+  /// doesn't track commit_sequence (in-memory test stores). Default impl returns null so
+  /// legacy event stores keep compiling.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult<long?>(null);
+
+  /// <summary>
   /// Appends an event to the specified stream using a raw message (AOT-compatible).
   /// If the message was dispatched through IDispatcher, its envelope is automatically
   /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).

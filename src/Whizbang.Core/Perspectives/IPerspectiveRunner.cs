@@ -74,6 +74,21 @@ public interface IPerspectiveRunner {
   );
 
   /// <summary>
+  /// Slice 26.11 — commit-sequence-anchored rewind. When an inversion violator has a known
+  /// <c>commit_sequence</c>, replay uses the commit-sequence snapshot anchor for full
+  /// deterministic replay regardless of UUIDv7 generation timing.
+  /// Default implementation falls through to <see cref="RewindAndRunAsync(Guid, string, Guid, CancellationToken)"/>
+  /// for legacy runners.
+  /// </summary>
+  Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid triggeringEventId,
+    long? triggeringCommitSequence,
+    CancellationToken cancellationToken = default
+  ) => RewindAndRunAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
+
+  /// <summary>
   /// Creates a bootstrap snapshot from the current model state.
   /// Called when a stream has processed events but has no snapshots yet.
   /// Idempotent — if snapshots already exist, this is never called.

@@ -117,6 +117,10 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      // Slice 26.
+      entity.Property(e => e.CommitSequence).HasColumnName("commit_sequence");
+      entity.Property(e => e.OriginServiceId).HasColumnName("origin_service_id");
+      entity.Property(e => e.OriginCommitSequence).HasColumnName("origin_commit_sequence");
 
       entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();  // Required for ON CONFLICT in process_work_batch
       entity.HasIndex(e => new { e.AggregateId, e.Version }).IsUnique();
