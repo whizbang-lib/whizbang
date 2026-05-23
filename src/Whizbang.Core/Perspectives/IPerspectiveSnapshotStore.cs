@@ -20,6 +20,22 @@ public interface IPerspectiveSnapshotStore {
   Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default);
 
   /// <summary>
+  /// Slice 26.11 — creates a snapshot with both the event_id and the commit_sequence anchor.
+  /// Default implementation falls through to <see cref="CreateSnapshotAsync(Guid,string,Guid,JsonDocument,CancellationToken)"/>
+  /// so legacy stores keep compiling; the commit-sequence-aware EFCore + Dapper implementations
+  /// override to persist <c>snapshot_commit_sequence</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  Task CreateSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid snapshotEventId,
+      long? snapshotCommitSequence,
+      JsonDocument snapshotData,
+      CancellationToken ct = default) =>
+    CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotData, ct);
+
+  /// <summary>
   /// Gets the latest snapshot for a stream/perspective pair.
   /// Returns null if no snapshots exist.
   /// </summary>
@@ -40,6 +56,19 @@ public interface IPerspectiveSnapshotStore {
   /// <param name="ct">Cancellation token</param>
   /// <returns>Tuple of (snapshotEventId, snapshotData) or null if no qualifying snapshot exists</returns>
   Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default);
+
+  /// <summary>
+  /// Slice 26.11 — commit-sequence-anchored snapshot lookup. Returns the latest snapshot whose
+  /// <c>snapshot_commit_sequence</c> is &lt; <paramref name="beforeCommitSequence"/>. Used by
+  /// rewind when an inversion violator's commit_sequence triggers replay: the snapshot
+  /// returned by this method represents model state strictly before the violator, so replay
+  /// from there reproduces the live-apply order regardless of UUIDv7 generation timing.
+  /// Default implementation returns null so legacy stores keep compiling.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  Task<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeCommitSequenceAsync(
+      Guid streamId, string perspectiveName, long beforeCommitSequence, CancellationToken ct = default) =>
+    Task.FromResult<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?>(null);
 
   /// <summary>
   /// Checks whether any snapshot exists for a stream/perspective pair.

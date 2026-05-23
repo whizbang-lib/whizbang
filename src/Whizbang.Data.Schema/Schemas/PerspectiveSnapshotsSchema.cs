@@ -50,12 +50,26 @@ public static class PerspectiveSnapshotsSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      // Slice 26.11: the post-commit-stamped commit_sequence as of this snapshot.
+      // Nullable for backward compat — pre-slice-26 snapshots have NULL; rewind anchor
+      // lookup falls back to snapshot_event_id ordering when null.
+      new ColumnDefinition(
+        Name: "snapshot_commit_sequence",
+        DataType: WhizbangDataType.BIG_INT,
+        Nullable: true
       )
     ),
     Indexes: [
       new IndexDefinition(
         Name: "idx_perspective_snapshots_lookup",
         Columns: ["stream_id", "perspective_name", "sequence_number"]
+      ),
+      // Slice 26.11: rewind by commit_sequence — partial index covers
+      // GetLatestSnapshotBeforeCommitSequenceAsync's WHERE filter.
+      new IndexDefinition(
+        Name: "idx_perspective_snapshots_commit_sequence",
+        Columns: ["stream_id", "perspective_name", "snapshot_commit_sequence"]
       )
     ]
   );
@@ -70,5 +84,7 @@ public static class PerspectiveSnapshotsSchema {
     public const string SNAPSHOT_DATA = "snapshot_data";
     public const string SEQUENCE_NUMBER = "sequence_number";
     public const string CREATED_AT = "created_at";
+    /// <summary>Slice 26.11 — commit_sequence as of this snapshot.</summary>
+    public const string SNAPSHOT_COMMIT_SEQUENCE = "snapshot_commit_sequence";
   }
 }

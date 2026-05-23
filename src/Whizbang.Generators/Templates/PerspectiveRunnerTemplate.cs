@@ -432,8 +432,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
           _eventsSinceLastSnapshot += eventsProcessed;
           if (_eventsSinceLastSnapshot >= _snapshotOptions.Value.SnapshotEveryNEvents) {
+            // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
+            // rewinds can locate the snapshot by commit_sequence (deterministic) rather
+            // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
+            // commit-sequence-anchored lookup falls back to event_id-anchored on miss.
+            var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                lastSuccessfulEventId.Value, cancellationToken);
             await _snapshotStore.CreateSnapshotAsync(
                 streamId, perspectiveName, lastSuccessfulEventId.Value,
+                snapshotCommitSequence,
                 ToSnapshotJson(updatedModel), cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
                 streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
@@ -639,10 +646,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     #endregion
   }
 
+  public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid triggeringEventId,
+      CancellationToken cancellationToken = default)
+    => RewindAndRunAsync(streamId, perspectiveName, triggeringEventId, triggeringCommitSequence: null, cancellationToken);
+
   public async Task<PerspectiveCursorCompletion> RewindAndRunAsync(
       Guid streamId,
       string perspectiveName,
       Guid triggeringEventId,
+      long? triggeringCommitSequence,
       CancellationToken cancellationToken = default) {
 
     Guid? replayFromEventId = null;
@@ -651,21 +666,39 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var startedAt = DateTimeOffset.UtcNow;
 
     if (_snapshotStore is not null) {
-      var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
-          streamId, perspectiveName, triggeringEventId, cancellationToken);
+      // Slice 26.11: prefer commit-sequence anchor for snapshot selection so live-apply
+      // and replay paths are fully deterministic. Falls back to event_id anchor when the
+      // commit_sequence isn't available (cache or events unstamped).
+      if (triggeringCommitSequence.HasValue) {
+        var seqSnapshot = await _snapshotStore.GetLatestSnapshotBeforeCommitSequenceAsync(
+            streamId, perspectiveName, triggeringCommitSequence.Value, cancellationToken);
+        if (seqSnapshot.HasValue) {
+          snapshotModel = FromSnapshotJson(seqSnapshot.Value.SnapshotData);
+          replayFromEventId = seqSnapshot.Value.SnapshotEventId;
+          hasSnapshot = true;
+          _logger.LogWarning(
+              "Restoring {PerspectiveName} stream {StreamId} from commit-sequence snapshot at {SnapshotEventId} (commit_sequence < {TriggeringCommitSequence}) due to late event {TriggeringEventId}",
+              perspectiveName, streamId, seqSnapshot.Value.SnapshotEventId, triggeringCommitSequence.Value, triggeringEventId);
+        }
+      }
 
-      if (snapshot.HasValue) {
-        snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
-        replayFromEventId = snapshot.Value.SnapshotEventId;
-        hasSnapshot = true;
+      if (!hasSnapshot) {
+        var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
+            streamId, perspectiveName, triggeringEventId, cancellationToken);
 
-        _logger.LogWarning(
-            "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
-            perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
-      } else {
-        _logger.LogWarning(
-            "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
-            perspectiveName, streamId, triggeringEventId);
+        if (snapshot.HasValue) {
+          snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
+          replayFromEventId = snapshot.Value.SnapshotEventId;
+          hasSnapshot = true;
+
+          _logger.LogWarning(
+              "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
+              perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
+        } else {
+          _logger.LogWarning(
+              "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+              perspectiveName, streamId, triggeringEventId);
+        }
       }
     } else {
       _logger.LogWarning(
@@ -828,8 +861,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         eventsSinceIntermediateSnapshot++;
         if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval) {
           try {
+            // Slice 26.11: resolve commit_sequence for the intermediate snapshot too,
+            // so a rewind triggered by a "very late" event with commit_sequence between
+            // intermediate snapshots finds the right restore point.
+            var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                lastSuccessfulEventId.Value, cancellationToken);
             await _snapshotStore.CreateSnapshotAsync(
                 streamId, perspectiveName, lastSuccessfulEventId.Value,
+                intermediateCommitSequence,
                 ToSnapshotJson(updatedModel), cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
                 streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
