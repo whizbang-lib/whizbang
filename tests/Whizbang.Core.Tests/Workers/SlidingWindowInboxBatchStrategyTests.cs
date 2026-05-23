@@ -103,22 +103,29 @@ public class SlidingWindowInboxBatchStrategyTests {
 
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsAsync() {
-    await using var sut = new SlidingWindowInboxBatchStrategy(
+    var sut = new SlidingWindowInboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask);
 
     await sut.FlushAndStopAsync();
 
-    await Assert.ThrowsAsync<ChannelClosedException>(async () =>
+    // Slice 23: per-stream architecture throws ObjectDisposedException at the AppendAsync
+    // entry (mirror of SlidingWindowOutboxBatchStrategy). Prior single-channel impl threw
+    // ChannelClosedException from the underlying writer.
+    await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
       await sut.AppendAsync(_makeMessage()));
   }
 
   [Test]
-  public async Task DefaultOptions_50ms_1s_100Async() {
-    // Lock the documented defaults from plans/pump-then-process.md
+  public async Task DefaultOptions_300ms_3s_1000Async() {
+    // Slice 23: per-stream defaults align with the apply boundary's sliding window so
+    // fan-in events across transport messages coalesce before flush. Idle eviction
+    // bounds memory under many short-lived streams (mirror of outbox slice 9).
     var defaults = new SlidingWindowInboxOptions();
-    await Assert.That(defaults.SlidingWindow).IsEqualTo(TimeSpan.FromMilliseconds(50));
-    await Assert.That(defaults.MaxWait).IsEqualTo(TimeSpan.FromSeconds(1));
-    await Assert.That(defaults.MaxSize).IsEqualTo(100);
+    await Assert.That(defaults.SlidingWindow).IsEqualTo(TimeSpan.FromMilliseconds(300));
+    await Assert.That(defaults.MaxWait).IsEqualTo(TimeSpan.FromSeconds(3));
+    await Assert.That(defaults.MaxSize).IsEqualTo(1000);
+    await Assert.That(defaults.IdleEvictionWindow).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(defaults.IdleSweepInterval).IsEqualTo(TimeSpan.FromSeconds(10));
   }
 
   [Test]
@@ -165,9 +172,125 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(batch[2].MessageId).IsEqualTo(m3.MessageId);
   }
 
+  // ===== slice 23: per-stream invariants =====
+
+  [Test]
+  public async Task AppendAsync_DifferentStreams_FlushIndependentBatchesAsync() {
+    // Slice 23 invariant: each stream gets its own per-stream buffer + drain task.
+    // Messages for stream A and stream B MUST NOT be mixed into one flush — that would
+    // re-introduce the cross-batch ordering race the slice fixed.
+    var captured = new System.Collections.Concurrent.ConcurrentBag<InboxMessage[]>();
+    var streamA = _idProvider.NewGuid();
+    var streamB = _idProvider.NewGuid();
+    var flushedCount = 0;
+    var done = new TaskCompletionSource();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, _) => {
+        captured.Add(msgs);
+        if (Interlocked.Increment(ref flushedCount) == 2) {
+          done.TrySetResult();
+        }
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(300),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_makeMessage(streamA));
+    await sut.AppendAsync(_makeMessage(streamA));
+    await sut.AppendAsync(_makeMessage(streamB));
+
+    await done.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    var batches = captured.ToArray();
+    await Assert.That(batches.Length).IsEqualTo(2);
+    // Each batch is single-stream. Find each by examining the StreamId of its first message.
+    var batchA = System.Linq.Enumerable.Single(batches, b => b[0].StreamId == streamA);
+    var batchB = System.Linq.Enumerable.Single(batches, b => b[0].StreamId == streamB);
+    await Assert.That(batchA.Length).IsEqualTo(2);
+    await Assert.That(batchB.Length).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AppendAsync_SameStream_CrossWindowArrivals_CoalesceInOneFlushAsync() {
+    // The motivating fan-in case: stream X receives messages from multiple producers
+    // across the sliding window. Per-slice-23 they MUST flush in a single batch (sorted
+    // by MessageId), so the downstream apply sees them in order with no inversion.
+    var captured = new List<InboxMessage[]>();
+    var flushedSignal = new TaskCompletionSource();
+    var streamX = _idProvider.NewGuid();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, _) => {
+        captured.Add(msgs);
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(80),
+        MaxWait = TimeSpan.FromMilliseconds(500),
+        MaxSize = 100,
+      });
+
+    // m1, m2, m3 are MessageId-sorted. Append m3 first, m1 second (within window),
+    // m2 third (also within window) — mirrors the cross-producer race that produced
+    // cursor inversions before slice 23.
+    var m1 = _makeMessage(streamX);
+    var m2 = _makeMessage(streamX);
+    var m3 = _makeMessage(streamX);
+    await sut.AppendAsync(m3);
+    await Task.Delay(20);
+    await sut.AppendAsync(m1);
+    await Task.Delay(20);
+    await sut.AppendAsync(m2);
+
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(captured.Count).IsEqualTo(1);
+    var batch = captured[0];
+    await Assert.That(batch.Length).IsEqualTo(3);
+    // Slice 18b sort survives — batch is MessageId-ASC even though arrival was out of order.
+    await Assert.That(batch[0].MessageId).IsEqualTo(m1.MessageId);
+    await Assert.That(batch[1].MessageId).IsEqualTo(m2.MessageId);
+    await Assert.That(batch[2].MessageId).IsEqualTo(m3.MessageId);
+  }
+
+  [Test]
+  public async Task AppendAsync_NullStreamId_RoutesToDefaultBufferAsync() {
+    // Broadcast-style messages with no aggregate identity (StreamId == null) MUST route
+    // through a single default buffer keyed by Guid.Empty — not create a buffer per null
+    // message. Mirrors the SlidingWindowOutboxBatchStrategy._defaultStreamKey behavior.
+    var captured = new List<InboxMessage[]>();
+    var flushedSignal = new TaskCompletionSource();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, _) => {
+        captured.Add(msgs);
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_makeMessage(streamId: null));
+    await sut.AppendAsync(_makeMessage(streamId: null));
+
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    await Assert.That(captured.Count).IsEqualTo(1);
+    await Assert.That(captured[0].Length).IsEqualTo(2);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
+  }
+
   // ===== helpers =====
 
-  private InboxMessage _makeMessage() {
+  private InboxMessage _makeMessage(Guid? streamId = null) {
     var messageId = _idProvider.NewGuid();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
@@ -179,6 +302,7 @@ public class SlidingWindowInboxBatchStrategyTests {
       Envelope = envelope,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      StreamId = streamId,
     };
   }
 }
