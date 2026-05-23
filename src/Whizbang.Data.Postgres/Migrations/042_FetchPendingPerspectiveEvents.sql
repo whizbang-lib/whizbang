@@ -86,22 +86,35 @@ BEGIN
   -- Step 1: atomic claim. Lease every eligible row (orphaned, expired, or already
   -- ours) to this instance. Same instance gets lease-extension; new claims bump
   -- attempts to match the claim_orphaned_perspective_events convention.
+  --
+  -- Deadlock prevention (slice 25 hotfix): inner CTE acquires row locks in
+  -- deterministic event_work_id order via FOR UPDATE SKIP LOCKED. Concurrent
+  -- callers can't lock rows in conflicting orders — same-row contention turns
+  -- into "the loser skips this row this cycle" instead of a 40P01 deadlock.
+  WITH eligible AS (
+    SELECT pe.event_work_id, pe.instance_id, pe.attempts
+    FROM wh_perspective_events pe
+    WHERE pe.stream_id = p_stream_id
+      AND pe.perspective_name = p_perspective_name
+      AND pe.processed_at IS NULL
+      AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
+      AND (
+        pe.instance_id IS NULL
+        OR pe.lease_expiry < p_now
+        OR pe.instance_id = p_instance_id
+      )
+    ORDER BY pe.event_work_id
+    FOR UPDATE OF pe SKIP LOCKED
+  )
   UPDATE wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
       attempts = CASE
-        WHEN pe.instance_id IS DISTINCT FROM p_instance_id THEN pe.attempts + 1
-        ELSE pe.attempts
+        WHEN e.instance_id IS DISTINCT FROM p_instance_id THEN e.attempts + 1
+        ELSE e.attempts
       END
-  WHERE pe.stream_id = p_stream_id
-    AND pe.perspective_name = p_perspective_name
-    AND pe.processed_at IS NULL
-    AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
-    AND (
-      pe.instance_id IS NULL
-      OR pe.lease_expiry < p_now
-      OR pe.instance_id = p_instance_id
-    );
+  FROM eligible e
+  WHERE pe.event_work_id = e.event_work_id;
 
   -- Step 2: return all rows now claimed by us, in event_id ASC order.
   -- Within the same transaction so we see our own UPDATE writes.
