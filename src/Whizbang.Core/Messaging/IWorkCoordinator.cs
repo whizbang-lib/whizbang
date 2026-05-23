@@ -1061,6 +1061,23 @@ public record InboxMessage {
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>
   public required string MessageType { get; init; }
+
+  /// <summary>
+  /// Slice 26 — originating service's identity, copied from the envelope's
+  /// <see cref="MessageEnvelope{T}.SourceServiceId"/>. Persisted into
+  /// <c>wh_inbox.source_service_id</c>. When omitted (default <see cref="Guid.Empty"/>),
+  /// the SQL trigger COALESCEs to the local <c>wh_service_config.service_id</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public Guid SourceServiceId { get; init; }
+
+  /// <summary>
+  /// Slice 26 — source service's <c>commit_sequence</c> stamp, copied from the envelope's
+  /// <see cref="MessageEnvelope{T}.SourceCommitSequence"/>. Persisted into
+  /// <c>wh_inbox.source_commit_sequence</c>. Defaults to 0.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long SourceCommitSequence { get; init; }
 }
 
 /// <summary>
