@@ -605,6 +605,11 @@ DECLARE
   v_new_inbox JSONB := COALESCE(p_request -> 'new_inbox_messages', '[]'::JSONB);
   v_outbox_inserted INTEGER := 0;
   v_inbox_inserted INTEGER := 0;
+  -- Slice 27: instance-routed NOTIFY. Collect stream IDs from the new outbox/inbox
+  -- payloads so we can route NOTIFYs only to the owning instance(s) of those streams
+  -- instead of broadcasting on a global wh_work channel.
+  v_outbox_stream_ids UUID[];
+  v_inbox_stream_ids UUID[];
 BEGIN
   -- 1. Mark inbox completion (if present). process_inbox_completions takes a JSONB array;
   --    wrap the single completion in an array.
@@ -626,6 +631,12 @@ BEGIN
       v_partition_count
     );
     v_outbox_inserted := jsonb_array_length(v_new_outbox);
+
+    -- Collect stream_ids for slice 27's routed NOTIFY.
+    SELECT array_agg(DISTINCT (elem ->> 'StreamId')::UUID)
+    INTO v_outbox_stream_ids
+    FROM jsonb_array_elements(v_new_outbox) AS elem
+    WHERE elem ->> 'StreamId' IS NOT NULL;
 
     -- 2.5. Event-store auto-create chain. For events with stream_id, copy into
     -- wh_event_store and auto-create wh_perspective_events rows for matching
@@ -658,19 +669,27 @@ BEGIN
       v_partition_count
     );
     v_inbox_inserted := jsonb_array_length(v_new_inbox);
+
+    SELECT array_agg(DISTINCT (elem ->> 'StreamId')::UUID)
+    INTO v_inbox_stream_ids
+    FROM jsonb_array_elements(v_new_inbox) AS elem
+    WHERE elem ->> 'StreamId' IS NOT NULL;
   END IF;
 
-  -- 4. NOTIFY signal types — one per category that received new rows.
-  --    pg_notify deduplicates (channel, payload) within the same transaction at COMMIT,
-  --    so 10 000 inserts → one delivered notification per category. Free.
-  IF v_outbox_inserted > 0 THEN
-    PERFORM pg_notify('wh_work', 'outbox');
-    -- Also notify perspective category since the event-store auto-create chain may
-    -- have queued perspective events. Postgres dedups within the tx at COMMIT.
-    PERFORM pg_notify('wh_work', 'perspective');
+  -- 4. NOTIFY signal types via slice 27's instance-routed helper. Listeners on each
+  --    instance subscribe to wh_work_i_<their_instance_id> only — non-owners never
+  --    wake. pg_notify still deduplicates (channel, payload) within a transaction at
+  --    COMMIT, so 10 000 inserts targeting the same owner collapse to one delivered
+  --    notification per (owner, category) pair. Streams without a known owner in
+  --    wh_active_streams emit zero NOTIFYs; polling backstop catches that work.
+  IF v_outbox_inserted > 0 AND v_outbox_stream_ids IS NOT NULL THEN
+    PERFORM __SCHEMA__.notify_instance_owners('outbox', v_outbox_stream_ids);
+    -- Event-store auto-create chain may have queued perspective events for the same
+    -- streams. Route the perspective wake to the same owners.
+    PERFORM __SCHEMA__.notify_instance_owners('perspective', v_outbox_stream_ids);
   END IF;
-  IF v_inbox_inserted > 0 THEN
-    PERFORM pg_notify('wh_work', 'inbox');
+  IF v_inbox_inserted > 0 AND v_inbox_stream_ids IS NOT NULL THEN
+    PERFORM __SCHEMA__.notify_instance_owners('inbox', v_inbox_stream_ids);
   END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -857,10 +876,23 @@ BEGIN
     PERFORM __SCHEMA__.update_perspective_cursors(p_cursors, p_debug_mode);
   END IF;
 
-  -- NOTIFY for downstream wakeups (e.g., perspective-sync awaiters watching for cursor advancement).
-  IF (p_cursors IS NOT NULL AND jsonb_array_length(p_cursors) > 0)
-     OR (p_event_work_ids IS NOT NULL AND array_length(p_event_work_ids, 1) IS NOT NULL) THEN
-    PERFORM pg_notify('wh_work', 'perspective');
+  -- Slice 27: routed NOTIFY for downstream wakeups (e.g., perspective-sync awaiters
+  -- watching for cursor advancement). Resolve stream IDs from the cursor payload and
+  -- route to each stream's owning instance only. Polling backstop catches streams
+  -- whose ownership isn't currently known in wh_active_streams.
+  IF p_cursors IS NOT NULL AND jsonb_array_length(p_cursors) > 0 THEN
+    DECLARE
+      v_cursor_stream_ids UUID[];
+    BEGIN
+      SELECT array_agg(DISTINCT (elem ->> 'StreamId')::UUID)
+      INTO v_cursor_stream_ids
+      FROM jsonb_array_elements(p_cursors) AS elem
+      WHERE elem ->> 'StreamId' IS NOT NULL;
+
+      IF v_cursor_stream_ids IS NOT NULL THEN
+        PERFORM __SCHEMA__.notify_instance_owners('perspective', v_cursor_stream_ids);
+      END IF;
+    END;
   END IF;
 END;
 $$ LANGUAGE plpgsql;
