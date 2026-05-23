@@ -450,6 +450,34 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<PendingPerspectiveEvent>> ClaimAndFetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    TimeSpan leaseDuration,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var now = DateTime.UtcNow;
+    var leaseExpiry = now + leaseDuration;
+
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM claim_and_fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, @p_now)",
+      new {
+        p_stream_id = streamId,
+        p_perspective_name = perspectiveName,
+        p_instance_id = instanceId,
+        p_lease_expiry = leaseExpiry,
+        p_now = now,
+      });
+
+    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id))];
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
     IReadOnlyList<Guid> eventIds,
     CancellationToken cancellationToken = default) {

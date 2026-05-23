@@ -723,6 +723,33 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
 
   /// <summary>
+  /// Slice 25: atomic per-stream claim+fetch. Claims (or re-leases) ALL eligible pending
+  /// rows for <paramref name="streamId"/> / <paramref name="perspectiveName"/> to
+  /// <paramref name="instanceId"/> — including orphans, expired-lease rows, and the
+  /// caller's own rows whose lease should be extended — then returns the post-claim set
+  /// in event_id ASC order. Prevents the cursor-advances-past-orphaned-rows race that
+  /// produced residual cursor inversions after slices 23 + 24c shipped: a row that
+  /// existed in <c>wh_perspective_events</c> but wasn't yet claimed by anyone was
+  /// invisible to <see cref="FetchPendingPerspectiveEventsAsync"/>, so the cursor
+  /// could advance past it, only for it to surface later (now behind cursor) and trigger
+  /// a rewind.
+  /// </summary>
+  /// <param name="streamId">Stream id to scope to.</param>
+  /// <param name="perspectiveName">Perspective name to scope to.</param>
+  /// <param name="instanceId">Calling instance id — rows are leased to this id.</param>
+  /// <param name="leaseDuration">Lease duration applied to claimed rows.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Pending event rows now leased to <paramref name="instanceId"/>, in event_id ASC order.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<PendingPerspectiveEvent>> ClaimAndFetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    TimeSpan leaseDuration,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
+
+  /// <summary>
   /// Scoped event-body fetch from <c>wh_event_store</c> by event_id list (Phase H step 7 slice 4).
   /// Used by the perspective drainer AFTER its prefetch + filter pipeline narrows pending tuples
   /// to only those needing apply. Drainer pairs the result back to its prefetched

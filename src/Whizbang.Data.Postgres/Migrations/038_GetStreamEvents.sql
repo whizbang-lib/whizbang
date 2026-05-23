@@ -12,7 +12,8 @@ SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
   p_stream_ids UUID[],
-  p_now TIMESTAMPTZ DEFAULT NOW()
+  p_now TIMESTAMPTZ DEFAULT NOW(),
+  p_lease_seconds INTEGER DEFAULT 300
 ) RETURNS TABLE(
   out_stream_id UUID,
   out_event_id UUID,
@@ -23,7 +24,48 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   out_event_work_id UUID,
   out_perspective_name VARCHAR(200)
 ) AS $$
+DECLARE
+  v_lease_expiry TIMESTAMPTZ;
 BEGIN
+  v_lease_expiry := p_now + (p_lease_seconds || ' seconds')::INTERVAL;
+
+  -- Slice 25: atomic claim+fetch. Before reading, claim/re-lease every eligible row
+  -- for the requested streams to p_instance_id. This closes the race where a row
+  -- existed in wh_perspective_events but was orphaned (instance_id NULL) or had an
+  -- expired lease at the moment of the SELECT — invisible to the original
+  -- instance_id-filtered query, so the perspective worker advanced its cursor past
+  -- it, only to find it later (now behind cursor) and trigger a rewind. Investigated
+  -- JDX run 6: BulkJobImportOrchestration / EmbeddingSaga streams produced
+  -- 38-second-delta inversions because batch N's fetch missed rows that
+  -- claim_orphaned_perspective_events only claimed between batch N and batch N+1.
+  --
+  -- Eligibility for claim:
+  --   * unprocessed
+  --   * scheduled_for is past (or null)
+  --   * AND (orphaned, OR expired lease, OR already leased to us)
+  --
+  -- attempts bumps only on lease takeover (instance_id changes) to match
+  -- claim_orphaned_perspective_events accounting; same-instance re-lease does
+  -- not inflate the counter.
+  UPDATE wh_perspective_events pe
+  SET instance_id = p_instance_id,
+      lease_expiry = v_lease_expiry,
+      attempts = CASE
+        WHEN pe.instance_id IS DISTINCT FROM p_instance_id THEN pe.attempts + 1
+        ELSE pe.attempts
+      END
+  WHERE pe.stream_id = ANY(p_stream_ids)
+    AND pe.processed_at IS NULL
+    AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
+    AND (
+      pe.instance_id IS NULL
+      OR pe.lease_expiry < p_now
+      OR pe.instance_id = p_instance_id
+    );
+
+  -- Now read all rows leased to us. Same MVCC snapshot as the UPDATE above —
+  -- PL/pgSQL functions execute in one transaction, so our writes are visible
+  -- to the subsequent SELECT.
   RETURN QUERY
   SELECT
     pe.stream_id,
@@ -47,4 +89,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.get_stream_events IS
-'Batch-fetches events for multiple streams in a single call. Returns denormalized rows joining wh_perspective_events (work queue) with wh_event_store (actual event data). Includes metadata and scope columns for full envelope reconstruction with tenant context and tracing. Only returns events leased to the requesting instance. C# determines which perspectives apply from event_type. event_work_id is used for completion reporting via complete_perspective_events.';
+'Slice 25 — atomic per-stream claim+fetch. Before returning, claims (or re-leases) every eligible wh_perspective_events row for the requested streams to p_instance_id (orphans, expired leases, and already-ours rows all consolidated under our lease). Then returns denormalized rows joining wh_perspective_events with wh_event_store. Caller invariant: after this returns, no unprocessed rows for the requested streams exist unleased to anyone else. Eliminates the cursor-advances-past-orphaned-rows race that produced residual inversions after slices 23 + 24c.';
