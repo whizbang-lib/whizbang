@@ -47,21 +47,39 @@ BEGIN
   -- attempts bumps only on lease takeover (instance_id changes) to match
   -- claim_orphaned_perspective_events accounting; same-instance re-lease does
   -- not inflate the counter.
+  --
+  -- Deadlock prevention (slice 25 hotfix): the inner CTE acquires row locks via
+  -- `FOR UPDATE SKIP LOCKED` in deterministic `event_work_id` order. Concurrent
+  -- get_stream_events calls with overlapping stream sets thus never lock rows in
+  -- conflicting orders — one acquires, the other skips (no wait, no deadlock).
+  -- SKIP LOCKED also means concurrent callers don't fight over the same rows;
+  -- the loser silently moves on with fewer claimed rows this cycle, and
+  -- claim_orphaned_perspective_events / the next get_stream_events tick picks
+  -- up whatever was skipped. Without SKIP LOCKED, JDX run 7 produced 40P01
+  -- deadlocks under high parallel apply pressure.
+  WITH eligible AS (
+    SELECT pe.event_work_id, pe.instance_id, pe.attempts
+    FROM wh_perspective_events pe
+    WHERE pe.stream_id = ANY(p_stream_ids)
+      AND pe.processed_at IS NULL
+      AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
+      AND (
+        pe.instance_id IS NULL
+        OR pe.lease_expiry < p_now
+        OR pe.instance_id = p_instance_id
+      )
+    ORDER BY pe.event_work_id
+    FOR UPDATE OF pe SKIP LOCKED
+  )
   UPDATE wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = v_lease_expiry,
       attempts = CASE
-        WHEN pe.instance_id IS DISTINCT FROM p_instance_id THEN pe.attempts + 1
-        ELSE pe.attempts
+        WHEN e.instance_id IS DISTINCT FROM p_instance_id THEN e.attempts + 1
+        ELSE e.attempts
       END
-  WHERE pe.stream_id = ANY(p_stream_ids)
-    AND pe.processed_at IS NULL
-    AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
-    AND (
-      pe.instance_id IS NULL
-      OR pe.lease_expiry < p_now
-      OR pe.instance_id = p_instance_id
-    );
+  FROM eligible e
+  WHERE pe.event_work_id = e.event_work_id;
 
   -- Now read all rows leased to us. Same MVCC snapshot as the UPDATE above —
   -- PL/pgSQL functions execute in one transaction, so our writes are visible
