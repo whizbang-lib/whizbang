@@ -1517,6 +1517,15 @@ public record StreamEventData {
   /// running on subsequent drains for the same event (a consumer 2026-05-04 silent-skip bug).
   /// </summary>
   public string? PerspectiveName { get; init; }
+
+  /// <summary>
+  /// Slice 26 — <c>wh_event_store.commit_sequence</c>, populated post-commit by the stamper
+  /// worker. NULL means the stamper hasn't caught up yet — downstream consumers should treat
+  /// this row as "not stable for cursor comparison" and either defer or fall back to event_id
+  /// ordering.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? CommitSequence { get; init; }
 }
 
 /// <summary>

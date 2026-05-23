@@ -22,7 +22,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   out_metadata TEXT,
   out_scope TEXT,
   out_event_work_id UUID,
-  out_perspective_name VARCHAR(200)
+  out_perspective_name VARCHAR(200),
+  out_commit_sequence BIGINT
 ) AS $$
 DECLARE
   v_lease_expiry TIMESTAMPTZ;
@@ -84,6 +85,12 @@ BEGIN
   -- Now read all rows leased to us. Same MVCC snapshot as the UPDATE above —
   -- PL/pgSQL functions execute in one transaction, so our writes are visible
   -- to the subsequent SELECT.
+  --
+  -- Slice 26.7: project es.commit_sequence (post-commit stamp from the stamper
+  -- worker). Order ASC NULLS LAST so stamped events sort by their stable
+  -- commit-completion order; unstamped events (stamper hasn't caught up yet)
+  -- fall back to event_id ordering at the tail. Downstream consumers (slice
+  -- 26.8-11) prefer commit_sequence for cursor comparison when available.
   RETURN QUERY
   SELECT
     pe.stream_id,
@@ -93,7 +100,8 @@ BEGIN
     es.metadata::TEXT,
     es.scope::TEXT,
     pe.event_work_id,
-    pe.perspective_name
+    pe.perspective_name,
+    es.commit_sequence
   FROM wh_perspective_events pe
   INNER JOIN wh_event_store es
     ON pe.stream_id = es.stream_id
@@ -102,7 +110,7 @@ BEGIN
     AND pe.lease_expiry > p_now
     AND pe.processed_at IS NULL
     AND pe.stream_id = ANY(p_stream_ids)
-  ORDER BY pe.stream_id, es.event_id;
+  ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.event_id;
 END;
 $$ LANGUAGE plpgsql;
 

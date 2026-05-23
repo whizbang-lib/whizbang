@@ -1373,6 +1373,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Older SQL function without out_perspective_name column. Field stays null; cooldown
       // gate falls back to legacy "all-rows-under-eventid" semantics.
     }
+    var hasCommitSequenceColumn = false;
+    var commitSequenceOrdinal = -1;
+    try {
+      commitSequenceOrdinal = reader.GetOrdinal("out_commit_sequence");
+      hasCommitSequenceColumn = true;
+    } catch (IndexOutOfRangeException) {
+      // Older SQL function without out_commit_sequence column (pre-slice-26.7).
+      // Field stays null; consumers fall back to event_id-based cursor ordering.
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
@@ -1387,7 +1396,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id")),
         PerspectiveName = hasPerspectiveColumn && !await reader.IsDBNullAsync(perspectiveOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetString(perspectiveOrdinal)
-          : null
+          : null,
+        CommitSequence = hasCommitSequenceColumn && !await reader.IsDBNullAsync(commitSequenceOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetInt64(commitSequenceOrdinal)
+          : null,
       });
     }
 
