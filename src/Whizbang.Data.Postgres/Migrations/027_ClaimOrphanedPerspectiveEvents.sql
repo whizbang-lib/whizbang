@@ -20,6 +20,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   stream_id UUID,
   perspective_name VARCHAR(200)
 ) AS $$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
   WITH claimable_events AS (
@@ -28,7 +29,8 @@ BEGIN
       pe.event_work_id,
       pe.stream_id,
       pe.perspective_name,
-      pe.event_id
+      pe.event_id,
+      pe.partition_number
     FROM wh_perspective_events pe
     WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
       AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
@@ -75,18 +77,47 @@ BEGIN
     SELECT DISTINCT ce.stream_id
     FROM claimable_events ce
     LIMIT p_max_streams
-  )
+  ),
   -- Claim ALL events for selected streams (full-stream capture)
-  UPDATE wh_perspective_events pe
-  SET instance_id = p_instance_id,
-      lease_expiry = p_lease_expiry,
-      -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
-      -- attempt counting; first claim → 1, every re-claim bumps; failures don't bump.
-      attempts = pe.attempts + 1
-  FROM claimable_events ce
-  INNER JOIN selected_streams ss ON ce.stream_id = ss.stream_id
-  WHERE pe.event_work_id = ce.event_work_id
-  RETURNING pe.event_work_id AS event_work_id, pe.stream_id AS stream_id, pe.perspective_name AS perspective_name;
+  claimed AS (
+    UPDATE wh_perspective_events pe
+    SET instance_id = p_instance_id,
+        lease_expiry = p_lease_expiry,
+        -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
+        -- attempt counting; first claim → 1, every re-claim bumps; failures don't bump.
+        attempts = pe.attempts + 1
+    FROM claimable_events ce
+    INNER JOIN selected_streams ss ON ce.stream_id = ss.stream_id
+    WHERE pe.event_work_id = ce.event_work_id
+    RETURNING pe.event_work_id AS c_event_work_id, pe.stream_id AS c_stream_id, pe.perspective_name AS c_perspective_name, pe.partition_number AS c_partition_number
+  ),
+  -- Slice 6 fix: any successful claim UPSERTs wh_active_streams so ownership ledger
+  -- stays current. INSERT creates a row when the producer-side pinning never fired
+  -- (e.g., strategy-flush path calls store_outbox_messages with NULL p_instance_id);
+  -- DO UPDATE refreshes last_activity_at always and re-binds assigned_instance_id only
+  -- when it's NULL or pointing to a dead instance. A live different owner is preserved
+  -- (the claim filter would have blocked the row anyway, so this branch is defensive).
+  -- Pre-fix on a consumer: 499 rows on appservice-db sat with NULL assigned_instance_id after
+  -- every deploy because cleanup_stale_instances nulls them and no path re-pinned.
+  -- Slice 27's routed NOTIFY infrastructure depends on this column being populated.
+  pinned AS (
+    INSERT INTO __SCHEMA__.wh_active_streams AS ast
+      (stream_id, partition_number, assigned_instance_id, last_activity_at)
+    SELECT DISTINCT c.c_stream_id, c.c_partition_number, p_instance_id, p_now
+    FROM claimed c
+    ON CONFLICT (stream_id) DO UPDATE
+      SET last_activity_at = EXCLUDED.last_activity_at,
+          assigned_instance_id = CASE
+            WHEN ast.assigned_instance_id IS NULL THEN EXCLUDED.assigned_instance_id
+            WHEN NOT EXISTS (
+              SELECT 1 FROM __SCHEMA__.wh_service_instances si
+              WHERE si.instance_id = ast.assigned_instance_id
+            ) THEN EXCLUDED.assigned_instance_id
+            ELSE ast.assigned_instance_id
+          END
+    RETURNING ast.stream_id AS pinned_stream_id
+  )
+  SELECT c.c_event_work_id AS event_work_id, c.c_stream_id AS stream_id, c.c_perspective_name AS perspective_name FROM claimed c;
 END;
 $$ LANGUAGE plpgsql;
 
