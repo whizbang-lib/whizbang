@@ -35,7 +35,12 @@ BEGIN
       elem->'Metadata' as metadata,
       elem->'Scope' as scope,
       (elem->>'StreamId')::UUID as stream_id,
-      (elem->>'IsEvent')::BOOLEAN as is_event
+      (elem->>'IsEvent')::BOOLEAN as is_event,
+      -- Slice 26: source identity. Real cross-service envelopes carry these fields
+      -- (receive-boundary gate enforces); local-emit / handler paths and tests omit
+      -- them, in which case they default to the local service's identity + sequence 0.
+      (elem->>'SourceServiceId')::UUID as source_service_id,
+      (elem->>'SourceCommitSequence')::BIGINT as source_commit_sequence
     FROM jsonb_array_elements(p_messages) as elem
     -- Sort by stream_id so the UPSERT on wh_active_streams below acquires row locks in
     -- a canonical order across all concurrent callers — prevents A→B vs B→A deadlock
@@ -75,7 +80,9 @@ BEGIN
       attempts,
       received_at,
       instance_id,
-      lease_expiry
+      lease_expiry,
+      source_service_id,
+      source_commit_sequence
     ) VALUES (
       v_msg.msg_id,
       v_msg.handler_name,
@@ -90,7 +97,11 @@ BEGIN
       0,  -- Initial attempts
       p_now,
       NULL,  -- No lease — immediately claimable by WorkCoordinatorPublisherWorker
-      NULL
+      NULL,
+      -- Slice 26: source identity. Real cross-service envelopes carry these; otherwise
+      -- default to local service's identity. wh_service_config has exactly one row.
+      COALESCE(v_msg.source_service_id, (SELECT service_id FROM __SCHEMA__.wh_service_config LIMIT 1)),
+      COALESCE(v_msg.source_commit_sequence, 0)
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
