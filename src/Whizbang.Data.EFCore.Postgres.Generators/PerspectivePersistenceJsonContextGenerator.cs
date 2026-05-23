@@ -35,6 +35,9 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// types would be reachable through the chain.
 /// </para>
 /// </remarks>
+/// <docs>extending/internals/event-ordering-invariant</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectivePersistenceJsonContextTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectivePersistenceByteFormatIntegrationTests.cs</tests>
 [Generator]
 #pragma warning disable S1144 // Initialize is the public IIncrementalGenerator entry point
 public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator {
