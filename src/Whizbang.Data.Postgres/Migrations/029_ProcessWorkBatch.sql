@@ -424,12 +424,19 @@ BEGIN
     )
   ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
 
+  -- Slice 26.4: wake the commit-order stamper. PG buffers NOTIFY until COMMIT and
+  -- dedups (channel, payload) within the transaction, so a tx storing 10k events
+  -- delivers exactly one wh_committed notification to each LISTEN-er. The stamper
+  -- is the only listener; on wake it runs stamp_pending_commit_sequences within ~1ms
+  -- instead of waiting for its polling tick.
+  PERFORM pg_notify('wh_committed', '');
+
   RETURN v_count;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain IS
-'Helper extracted from process_work_batch Phase 4.5A + 4.6 — copies newly-stored outbox events into wh_event_store with sequential versioning and creates wh_perspective_events rows for matching perspective associations. Called by commit_handler_result after store_outbox_messages so handler-emitted events flow through to perspectives.';
+'Helper extracted from process_work_batch Phase 4.5A + 4.6 — copies newly-stored outbox events into wh_event_store with sequential versioning and creates wh_perspective_events rows for matching perspective associations. Called by commit_handler_result after store_outbox_messages so handler-emitted events flow through to perspectives. Slice 26.4: emits NOTIFY wh_committed (deduped per tx) so the commit-order stamper wakes within ~1ms.';
 
 -- ============================================================================
 -- _emit_event_store_chain_for_inbox — Phase 4.5B + 4.6 equivalent for inbox-arrival
@@ -578,6 +585,12 @@ BEGIN
         AND pe_check.event_id = es.event_id
     )
   ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
+
+  -- Slice 26.4: wake the commit-order stamper. See _emit_event_store_chain above for
+  -- the rationale and dedup semantics. Inbox backfill is generally a smaller fan-in
+  -- than outbox-emit, but the NOTIFY is just as cheap and keeps the stamper hot path
+  -- responsive whether events arrive locally or via transport.
+  PERFORM pg_notify('wh_committed', '');
 
   RETURN v_count;
 END;
