@@ -258,6 +258,48 @@ public class CursorInversionDetectorTests {
     await Assert.That(anchor).IsNull();
   }
 
+  [Test]
+  public async Task ResolveInversionAnchor_NoCommitSeqCursor_PendingStamped_SkipsEventIdFallbackAsync() {
+    // Slice 26.18 — when cursor cache has no commit_sequence (stamper lag at cursor advance
+    // time) but pending events ARE stamped, comparing event_id-vs-event_id can produce false
+    // positives (UUIDv7 generation-vs-commit timing race). Skip the fallback entirely so we
+    // don't trigger spurious rewinds. The runner template's idempotency filter handles
+    // already-applied events safely at apply time.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var older = _uuidv7();   // pending — lex-less than cursor
+    await Task.Delay(2);
+    var cursor = _uuidv7();
+
+    var rawLookup = _lookup(_raw(streamId, older, commitSequence: 1000));
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(older)],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursor,
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsNull()
+      .Because("commit_sequence cursor missing + pending event stamped → unsafe to compare; skip detection");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_NoCommitSeqCursor_NoneStamped_FallsBackToEventIdAsync() {
+    // When NEITHER side has commit_sequence (pre-slice-26 legacy data, or stamper is way
+    // behind), event_id detector is still the only signal we have — preserve that behavior.
+    var older = _uuidv7();
+    await Task.Delay(2);
+    var cursor = _uuidv7();
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(older)],
+      rawByEventId: _lookup(),  // no stamped raw rows
+      lastProcessedEventId: cursor,
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsEqualTo(older)
+      .Because("nothing is stamped on either side → event_id fallback is the only option");
+  }
+
   // ---------- _partitionByCooldown (slice 26.15) ----------
   //
   // Splits the drain batch into (cooled, fresh) so the inversion detector runs only on

@@ -1399,6 +1399,16 @@ public partial class PerspectiveWorker(
   /// UUIDv7 same-millisecond false positives. The event_id detector is only used when
   /// commit_sequence cursor is unavailable (pre-slice-26 row, or cursor advanced to an
   /// unstamped event before slice 26.13 shipped).
+  ///
+  /// <para>
+  /// Slice 26.18 — when commit_sequence cursor is missing but <em>any</em> pending event
+  /// has a commit_sequence stamp, suppress the event_id fallback entirely. Mixing a
+  /// stamped pending event against an unstamped cursor is meaningless and produced the
+  /// dominant residual a consumer run-18 inversions (6 of 8 logged cursorSeq=-1). The runner
+  /// template's idempotency filter already drops events with event_id ≤ apply cursor at
+  /// apply time, so biasing toward "no rewind" here is safe — the worst case is one
+  /// extra applied-then-skipped pass, never a stale cursor.
+  /// </para>
   /// </summary>
   internal static Guid? _resolveInversionAnchor(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
@@ -1410,6 +1420,15 @@ public partial class PerspectiveWorker(
         filteredEvents, rawByEventId, lastProcessedCommitSequence.Value);
     }
     if (lastProcessedEventId.HasValue) {
+      // Slice 26.18 — if any pending event is stamped, we can't reliably compare an
+      // unstamped event_id cursor against a stamped commit_sequence world. Skip detection.
+      foreach (var envelope in filteredEvents) {
+        foreach (var raw in rawByEventId[envelope.MessageId.Value]) {
+          if (raw.CommitSequence.HasValue) {
+            return null;
+          }
+        }
+      }
       return _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value);
     }
     return null;
