@@ -396,12 +396,13 @@ BEGIN
   -- Phase H step 6 slice 2: populate partition_number via compute_partition(stream_id, p_partition_count)
   -- so claim_orphaned_perspective_events can apply partition-modulo load balancing symmetric
   -- with the outbox / inbox claim paths.
-  -- Slice 26.14: lease the new row to the stream's pinned owner (wh_active_streams) rather
-  -- than the commit instance. Without this, multi-instance saga commits to the same stream
-  -- each lease their perspective_events to themselves, so one drainer never sees the other's
-  -- events until orphan reclaim — surfacing as cursor inversions (a consumer run 14 root cause). When
-  -- no live owner is pinned (new stream OR stale owner), leave the row unleased so
-  -- claim_orphaned_perspective_events pins + leases atomically on its next cycle.
+  -- Slice 26.14: route the lease through wh_active_streams. When a live owner is pinned for
+  -- the stream, lease to that owner regardless of which instance ran the commit — eliminates
+  -- the cross-instance saga race (different instances commit to the same stream, each
+  -- selfishly leasing to themselves, drainer races) that produced the residual ~1000 cursor
+  -- inversions in a consumer run 14. When no live owner is pinned yet (new stream OR stale owner),
+  -- fall back to the commit instance so sync paths (UI waiting on a perspective checkpoint)
+  -- don't pay claim_orphaned-polling-interval latency on first-event-per-stream.
   INSERT INTO __SCHEMA__.wh_perspective_events (
     event_work_id, stream_id, perspective_name, event_id,
     partition_number, status, attempts, created_at, instance_id, lease_expiry
@@ -415,8 +416,8 @@ BEGIN
     1,                  -- Stored flag
     0,
     p_now,
-    owner.assigned_instance_id,
-    CASE WHEN owner.assigned_instance_id IS NOT NULL THEN p_lease_expiry ELSE NULL END
+    COALESCE(owner.assigned_instance_id, p_instance_id),
+    p_lease_expiry
   FROM __SCHEMA__.wh_event_store es
   INNER JOIN __SCHEMA__.wh_message_associations ma
     ON es.event_type = ma.normalized_message_type
@@ -574,9 +575,9 @@ BEGIN
 
   -- Auto-create perspective_events for the newly-stored events.
   -- Phase H step 6 slice 2: populate partition_number for symmetric load balancing.
-  -- Slice 26.14: lease to the stream owner (wh_active_streams) rather than the commit
-  -- instance. Mirror of the outbox-side change in _emit_event_store_chain. See the comment
-  -- block there for the cross-instance saga race this prevents.
+  -- Slice 26.14: route the lease through wh_active_streams (live owner wins; fall back to
+  -- commit instance when no live owner). Mirror of the outbox-side change in
+  -- _emit_event_store_chain.
   INSERT INTO __SCHEMA__.wh_perspective_events (
     event_work_id, stream_id, perspective_name, event_id,
     partition_number, status, attempts, created_at, instance_id, lease_expiry
@@ -590,8 +591,8 @@ BEGIN
     1,                  -- Stored flag
     0,
     p_now,
-    owner.assigned_instance_id,
-    CASE WHEN owner.assigned_instance_id IS NOT NULL THEN p_lease_expiry ELSE NULL END
+    COALESCE(owner.assigned_instance_id, p_instance_id),
+    p_lease_expiry
   FROM __SCHEMA__.wh_event_store es
   INNER JOIN __SCHEMA__.wh_message_associations ma
     ON es.event_type = ma.normalized_message_type
