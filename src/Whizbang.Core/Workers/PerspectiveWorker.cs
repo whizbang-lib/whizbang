@@ -1192,37 +1192,38 @@ public partial class PerspectiveWorker(
       lastProcessedCommitSequence = cachedSeq;
     }
 
-    // Phase H step 6 slice 4: cursor-inversion detector. If any pending event has
-    // event_id ≤ cached_cursor, the perspective row's metadata is past an event that's
-    // still in the pending queue — invariant violation. Trigger snapshot-aware rewind via
-    // RewindAndRunAsync(streamId, perspectiveName, earliestViolator). When cached_cursor
-    // is null (new perspective on existing stream OR cold start), no inversion is possible
-    // by definition; skip the check and forward-apply.
-    Guid? inversionAnchor = _resolveInversionAnchor(
-      filteredEvents, batchContext.RawByEventId, lastProcessedEventId, lastProcessedCommitSequence);
+    // Slice 26.15: partition cooled vs fresh BEFORE the inversion check. The cursor-flush
+    // race between drain finish and PerspectiveCompletionFlushWorker DELETE produces a
+    // window where just-applied event_work_ids are still in DB pending. Pre-26.15 the
+    // inversion detector ran on the full set, saw those cooled events as "pending ≤ cursor",
+    // and triggered a spurious rewind — measured as ~1100 phantom rewinds per a consumer bulk-import
+    // when sagas commit N events in two close transactions (drainer re-fetches between flush
+    // ticks, sees first-batch events still warm, second-batch fresh, mixed bag).
+    var (cooledEvents, freshEvents) = _partitionByCooldown(
+      filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache, perspectiveName);
 
-    // Phase H step 7 slice 5: cooldown short-circuit. If every event_work_id corresponding to
-    // this perspective's filtered events is in the RecentlyProcessedEventCache, we already ran
-    // apply for them within the TTL window — likely the cursor-flush race between drain finish
-    // and PerspectiveCompletionFlushWorker DELETE. Skip the apply call entirely. Don't re-enqueue
-    // completions either; the previous drain enqueued them already (the flusher will land them).
-    // The runner template's defensive idempotency guard remains as a safety net for
-    // post-restart / TTL-expiry scenarios where the cache was empty but the row was still pending.
-    if (_shouldSkipApplyDueToCooldown(filteredEvents, batchContext.RawByEventId, _recentlyProcessedEventCache, perspectiveName)) {
-      // Cooldown means a previous drain already ran apply for these events successfully and
-      // signaled SignalPerspectiveComplete in THAT batch's coordinator. The current batch has
-      // its own DrainBatchContext (BatchProcessedEvents is per-batch), so without re-asserting
-      // the completion in this batch the foreach in PerspectiveProcessTickAsync can't fire
-      // PostAllPerspectives — events skipped via cooldown never enter BatchProcessedEvents and
-      // never satisfy AreAllPerspectivesComplete in this batch. a consumer 2026-05-03: SagaCompleted
-      // never emitted because [FireAt(PostAllPerspectivesInline)] handlers (Saga completion
-      // dispatchers) never ran. SignalPerspectiveComplete is idempotent (HashSet-style) so
-      // re-signaling is safe; BatchProcessedEvents.TryAdd is idempotent on key collision.
+    // Signal cooled events into the batch's completion bookkeeping so PostAllPerspectives
+    // can fire correctly — same a consumer 2026-05-03 reasoning as the all-cooled short-circuit.
+    // SignalPerspectiveComplete + BatchProcessedEvents.TryAdd are idempotent so re-signaling
+    // is safe even when the previous drain already signaled them.
+    if (cooledEvents.Count > 0) {
       _signalCooldownSkippedEvents(
-        filteredEvents, perspectiveName, streamId,
+        cooledEvents, perspectiveName, streamId,
         batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
+    }
+
+    // Everything cooled → previous drain handled it; nothing left to do.
+    if (freshEvents.Count == 0) {
       return;
     }
+
+    // Phase H step 6 slice 4: cursor-inversion detector — now scoped to the fresh remainder
+    // so cursor-flush-race events don't masquerade as real inversions.
+    Guid? inversionAnchor = _resolveInversionAnchor(
+      freshEvents, batchContext.RawByEventId, lastProcessedEventId, lastProcessedCommitSequence);
+
+    // freshEvents is what we'll apply (or rewind around).
+    filteredEvents = freshEvents;
 
     // Phase H step 9 slice 4: lease-tied cancellation. Wrap the apply + post-apply housekeeping
     // in a LeaseHandle whose token cancels at lease_expiry - LeaseGraceSeconds. The runner
@@ -1475,6 +1476,60 @@ public partial class PerspectiveWorker(
   /// Apply from running (since both perspectives share the same EventId in <paramref name="rawByEventId"/>
   /// but have distinct work_ids). When <paramref name="perspectiveName"/> is null (legacy
   /// callers), all entries for the EventId are considered — back-compat mode.</param>
+  /// <summary>
+  /// Slice 26.15 — partitions <paramref name="filteredEvents"/> into (cooled, fresh).
+  /// "Cooled" events are those whose event_work_id is in <paramref name="cache"/> (just
+  /// applied, perspective_events row not yet DELETEd by the flusher). "Fresh" events are
+  /// the remainder. Drain path runs the inversion detector on the fresh remainder only —
+  /// without this, the saga-batch race (44 events committed in two transactions 18ms
+  /// apart, drainer re-fetches between completion-flush ticks) made the cooled events look
+  /// like real inversions and produced ~1100 spurious rewinds per a consumer bulk-import.
+  ///
+  /// <para>
+  /// An envelope is treated as <strong>fresh</strong> when (a) <paramref name="cache"/> is
+  /// null, (b) <paramref name="rawByEventId"/> has no row for it (mapping mismatch — same
+  /// defensive default as <see cref="_shouldSkipApplyDueToCooldown"/>), or (c) any of its
+  /// raw rows under the current perspective is NOT in the cache. An envelope is
+  /// <strong>cooled</strong> only when at least one matching raw row exists and ALL such
+  /// rows are cached.
+  /// </para>
+  /// </summary>
+  internal static (List<MessageEnvelope<IEvent>> cooled, List<MessageEnvelope<IEvent>> fresh) _partitionByCooldown(
+      IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
+      ILookup<Guid, StreamEventData> rawByEventId,
+      RecentlyProcessedEventCache? cache,
+      string? perspectiveName = null) {
+    var cooled = new List<MessageEnvelope<IEvent>>();
+    var fresh = new List<MessageEnvelope<IEvent>>();
+    if (cache is null) {
+      fresh.AddRange(filteredEvents);
+      return (cooled, fresh);
+    }
+    foreach (var envelope in filteredEvents) {
+      var rawRows = rawByEventId[envelope.MessageId.Value];
+      var rawSeen = false;
+      var allCooled = true;
+      foreach (var raw in rawRows) {
+        if (perspectiveName is not null
+            && raw.PerspectiveName is not null
+            && !string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal)) {
+          continue;
+        }
+        rawSeen = true;
+        if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
+          allCooled = false;
+          break;
+        }
+      }
+      if (rawSeen && allCooled) {
+        cooled.Add(envelope);
+      } else {
+        fresh.Add(envelope);
+      }
+    }
+    return (cooled, fresh);
+  }
+
   internal static bool _shouldSkipApplyDueToCooldown(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
       ILookup<Guid, StreamEventData> rawByEventId,

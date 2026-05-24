@@ -152,6 +152,10 @@ public class CursorInversionDetectorTests {
   private static ILookup<Guid, StreamEventData> _lookup(params StreamEventData[] rows) =>
     rows.ToLookup(r => r.EventId);
 
+  private static Whizbang.Core.SystemTimeProvider _timeProvider() =>
+    new(new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+      new DateTimeOffset(2026, 5, 24, 12, 0, 0, TimeSpan.Zero)));
+
   [Test]
   public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_UUIDv7ReversedButCommitOrderCorrect_ReturnsNullAsync() {
     // THE bug scenario from a consumer run 11 (bff stream 019e5a09-c8f6-...):
@@ -252,5 +256,117 @@ public class CursorInversionDetectorTests {
       lastProcessedCommitSequence: null);
 
     await Assert.That(anchor).IsNull();
+  }
+
+  // ---------- _partitionByCooldown (slice 26.15) ----------
+  //
+  // Splits the drain batch into (cooled, fresh) so the inversion detector runs only on
+  // the truly-pending events. Without this, a mixed batch (some events still warm in the
+  // cooldown cache while their perspective_events rows haven't been DELETEd yet, others
+  // genuinely new) made cooldown's "all-or-nothing" gate return false, letting the cooled
+  // events look like real inversions to the detector and triggering ~1100 spurious rewinds
+  // per a consumer bulk-import run.
+
+  [Test]
+  public async Task PartitionByCooldown_AllCooled_AllInCooledListAsync() {
+    var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var e1 = (Guid)TrackedGuid.NewMedo();
+    var w1 = (Guid)TrackedGuid.NewMedo();
+    var e2 = (Guid)TrackedGuid.NewMedo();
+    var w2 = (Guid)TrackedGuid.NewMedo();
+
+    cache.MarkProcessed(w1);
+    cache.MarkProcessed(w2);
+
+    var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
+      [_envelope(e1), _envelope(e2)],
+      _lookup(_raw(streamId, e1, 1L) with { EventWorkId = w1, PerspectiveName = "P" },
+              _raw(streamId, e2, 2L) with { EventWorkId = w2, PerspectiveName = "P" }),
+      cache,
+      perspectiveName: "P");
+
+    await Assert.That(cooled.Count).IsEqualTo(2);
+    await Assert.That(fresh.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PartitionByCooldown_NoneCooled_AllInFreshListAsync() {
+    var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var e1 = (Guid)TrackedGuid.NewMedo();
+    var e2 = (Guid)TrackedGuid.NewMedo();
+
+    var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
+      [_envelope(e1), _envelope(e2)],
+      _lookup(_raw(streamId, e1, 1L) with { PerspectiveName = "P" },
+              _raw(streamId, e2, 2L) with { PerspectiveName = "P" }),
+      cache,
+      perspectiveName: "P");
+
+    await Assert.That(cooled.Count).IsEqualTo(0);
+    await Assert.That(fresh.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task PartitionByCooldown_MixedCooledAndFresh_SplitsCorrectlyAsync() {
+    // The a consumer saga-batch race: e1 was just applied (still warm in cooldown, row not yet
+    // DELETEd), e2 is the next batch's fresh event. Pre-26.15 cooldown returned false
+    // (not all cooled) → inversion detector saw e1 as "pending ≤ cursor" → spurious rewind.
+    var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var e1 = (Guid)TrackedGuid.NewMedo();
+    var w1 = (Guid)TrackedGuid.NewMedo();
+    var e2 = (Guid)TrackedGuid.NewMedo();
+
+    cache.MarkProcessed(w1);
+
+    var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
+      [_envelope(e1), _envelope(e2)],
+      _lookup(_raw(streamId, e1, 1L) with { EventWorkId = w1, PerspectiveName = "P" },
+              _raw(streamId, e2, 2L) with { PerspectiveName = "P" }),
+      cache,
+      perspectiveName: "P");
+
+    await Assert.That(cooled.Count).IsEqualTo(1)
+      .Because("e1 is in the cooldown cache → cooled");
+    await Assert.That(cooled[0].MessageId.Value).IsEqualTo(e1);
+    await Assert.That(fresh.Count).IsEqualTo(1)
+      .Because("e2 hasn't been processed yet → fresh");
+    await Assert.That(fresh[0].MessageId.Value).IsEqualTo(e2);
+  }
+
+  [Test]
+  public async Task PartitionByCooldown_NullCache_AllFreshAsync() {
+    // When cooldown is disabled (null cache), everything must go through normal apply.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var e1 = (Guid)TrackedGuid.NewMedo();
+
+    var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
+      [_envelope(e1)],
+      _lookup(_raw(streamId, e1, 1L) with { PerspectiveName = "P" }),
+      cache: null,
+      perspectiveName: "P");
+
+    await Assert.That(cooled.Count).IsEqualTo(0);
+    await Assert.That(fresh.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PartitionByCooldown_EnvelopeMissingFromRawLookup_TreatedAsFreshAsync() {
+    // Defensive: if rawByEventId has no row for an envelope (mapping mismatch), don't
+    // accidentally treat it as cooled. Default to fresh so apply runs (matches
+    // _shouldSkipApplyDueToCooldown's `rawSeen` guard).
+    var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(_timeProvider());
+    var e1 = (Guid)TrackedGuid.NewMedo();
+
+    var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
+      [_envelope(e1)],
+      _lookup(),  // empty lookup
+      cache,
+      perspectiveName: "P");
+
+    await Assert.That(cooled.Count).IsEqualTo(0);
+    await Assert.That(fresh.Count).IsEqualTo(1);
   }
 }
