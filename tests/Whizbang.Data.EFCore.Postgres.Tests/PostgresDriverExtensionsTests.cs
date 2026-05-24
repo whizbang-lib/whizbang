@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 
@@ -88,6 +89,26 @@ public class PostgresDriverExtensionsTests {
   // Removed Postgres_*ReadinessCheck* tests — Phase H decoupled startup gating from
   // IDatabaseReadinessCheck. Workers now wait on ISchemaReadyGate. The Postgres driver
   // extensions no longer register IDatabaseReadinessCheck.
+
+  [Test]
+  public async Task Postgres_RegistersDbContextNotificationConnectionStringFallbackAsync() {
+    // Locks the DI wiring that lets PgWorkNotificationListener +
+    // PgCommitOrderStamperWorker reach the DbContext-backed fallback when
+    // Whizbang:Database is unconfigured. The connection-string round-trip itself is
+    // covered by DbContextNotificationConnectionStringFallbackTests — here we just
+    // verify the singleton lands in DI with the right concrete type.
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    var builder = new WhizbangPerspectiveBuilder(services);
+    _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    using var sp = services.BuildServiceProvider();
+    var fallback = sp.GetService<INotificationConnectionStringFallback>();
+
+    await Assert.That(fallback).IsNotNull();
+    await Assert.That(fallback).IsTypeOf<DbContextNotificationConnectionStringFallback>();
+  }
 
   /// <summary>
   /// Fake implementation of IDriverOptions for testing error handling.

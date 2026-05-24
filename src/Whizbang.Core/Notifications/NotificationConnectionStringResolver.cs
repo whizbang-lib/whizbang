@@ -26,6 +26,11 @@ public static class NotificationConnectionStringResolver {
     DirectKey,
     /// <summary>Used <c>ConnectionStrings:{Key}</c> (pooled) — fallback when no <c>-direct</c> variant exists.</summary>
     PooledKeyFallback,
+    /// <summary>
+    /// Used <see cref="INotificationConnectionStringFallback.GetConnectionString"/> — typically
+    /// the EF Core DbContext's connection string surfaced by <c>.WithDriver.Postgres&lt;TDbContext&gt;()</c>.
+    /// </summary>
+    DbContextFallback,
   }
 
   /// <summary>
@@ -37,7 +42,19 @@ public static class NotificationConnectionStringResolver {
   ///   <item><description>Otherwise <c>null</c></description></item>
   /// </list>
   /// </summary>
-  public static Resolution Resolve(WhizbangNotificationOptions options, IConfiguration config) {
+  public static Resolution Resolve(WhizbangNotificationOptions options, IConfiguration config)
+    => Resolve(options, config, fallback: null);
+
+  /// <summary>
+  /// Same precedence as <see cref="Resolve(WhizbangNotificationOptions, IConfiguration)"/>, but
+  /// after all explicit-config sources have come up empty, consults
+  /// <paramref name="fallback"/> (if provided) for a last-resort connection string. The fallback
+  /// is never consulted when an explicit value resolves — explicit notification config always wins.
+  /// </summary>
+  public static Resolution Resolve(
+      WhizbangNotificationOptions options,
+      IConfiguration config,
+      INotificationConnectionStringFallback? fallback) {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(config);
 
@@ -45,18 +62,21 @@ public static class NotificationConnectionStringResolver {
       return new Resolution(options.DirectConnectionString, ResolutionSource.ExplicitOption);
     }
 
-    if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
-      return new Resolution(null, ResolutionSource.None);
+    if (!string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
+      var direct = config.GetConnectionString($"{options.ConnectionStringKey}-direct");
+      if (!string.IsNullOrWhiteSpace(direct)) {
+        return new Resolution(direct, ResolutionSource.DirectKey);
+      }
+
+      var pooled = config.GetConnectionString(options.ConnectionStringKey);
+      if (!string.IsNullOrWhiteSpace(pooled)) {
+        return new Resolution(pooled, ResolutionSource.PooledKeyFallback);
+      }
     }
 
-    var direct = config.GetConnectionString($"{options.ConnectionStringKey}-direct");
-    if (!string.IsNullOrWhiteSpace(direct)) {
-      return new Resolution(direct, ResolutionSource.DirectKey);
-    }
-
-    var pooled = config.GetConnectionString(options.ConnectionStringKey);
-    if (!string.IsNullOrWhiteSpace(pooled)) {
-      return new Resolution(pooled, ResolutionSource.PooledKeyFallback);
+    var fallbackValue = fallback?.GetConnectionString();
+    if (!string.IsNullOrWhiteSpace(fallbackValue)) {
+      return new Resolution(fallbackValue, ResolutionSource.DbContextFallback);
     }
 
     return new Resolution(null, ResolutionSource.None);

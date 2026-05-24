@@ -20,12 +20,14 @@ public sealed partial class PgWorkNotificationListener(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
   IServiceInstanceProvider instanceProvider,
-  ILogger<PgWorkNotificationListener> logger
+  ILogger<PgWorkNotificationListener> logger,
+  INotificationConnectionStringFallback? connectionStringFallback = null
 ) : BackgroundService, IWorkNotificationListener {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ILogger<PgWorkNotificationListener> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private bool _isHealthy;
   private DateTimeOffset? _lastSignalAt;
 
@@ -52,7 +54,7 @@ public sealed partial class PgWorkNotificationListener(
       return;
     }
 
-    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration);
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback);
     if (resolution.ConnectionString is null) {
       if (_options.SignalingMode == WorkSignalingMode.ListenNotify) {
         // Fail-fast: production expected NOTIFY but config didn't provide a connection.

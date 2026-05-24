@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
@@ -130,6 +131,14 @@ public static class PostgresDriverExtensions {
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
         selector.Services.AddHostedService<TableStatisticsCollector>();
+
+        // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order
+        // stamper + app-signal channel use the same connection string EF Core already has,
+        // when neither Whizbang:Database:DirectConnectionString nor ConnectionStringKey is
+        // configured. Operators only need the explicit notification config when they want a
+        // bypass-pgbouncer "-direct" variant.
+        selector.Services.TryAddSingleton<INotificationConnectionStringFallback>(sp =>
+          new DbContextNotificationConnectionStringFallback(sp, dbContextType));
 
         // TURNKEY: Register Postgres LISTEN/NOTIFY listener. Binds WhizbangNotificationOptions
         // from "Whizbang:Database" so users only need to set ConnectionStringKey +
