@@ -178,6 +178,110 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ClaimAndFetch_AlreadyLeasedToMe_DoesNotReExtendLeaseAsync() {
+    // Slice 28: when rows are already leased to the caller with a valid lease, the
+    // function MUST NOT re-UPDATE them. pg_stat_user_tables on a consumer after run 19 showed
+    // 5.7M UPDATEs vs 800k inserts (7x bloat) directly caused by the prior behavior of
+    // bumping every fetch. LeaseRenewalWorker handles in-flight renewals independently,
+    // so the per-fetch re-extend is redundant.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    await _registerInstanceAsync(conn, instanceId);
+
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    await _insertPerspectiveEventAsync(conn, workId, streamId, perspectiveName, eventId, instanceId);
+
+    var beforeLease = await _readLeaseExpiryAsync(conn, workId);
+    var beforeAttempts = await _readAttemptsAsync(conn, workId);
+
+    // Wait briefly so any spurious re-UPDATE would produce a visibly different lease_expiry.
+    await Task.Delay(50);
+
+    // Call claim_and_fetch with a "different" lease expiry — if the function re-updates,
+    // we'll see this new value. If it correctly skips (slice 28), the original stays.
+    var passedLease = beforeLease.AddMinutes(10);
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT * FROM claim_and_fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, NOW())";
+      cmd.Parameters.AddWithValue("p_stream_id", streamId);
+      cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+      cmd.Parameters.AddWithValue("p_instance_id", instanceId);
+      cmd.Parameters.AddWithValue("p_lease_expiry", passedLease);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var afterLease = await _readLeaseExpiryAsync(conn, workId);
+    var afterAttempts = await _readAttemptsAsync(conn, workId);
+
+    await Assert.That(afterLease).IsEqualTo(beforeLease)
+      .Because("row already leased to caller — UPDATE must be skipped, lease_expiry must not change");
+    await Assert.That(afterAttempts).IsEqualTo(beforeAttempts)
+      .Because("re-fetching own row does not bump attempts");
+  }
+
+  [Test]
+  public async Task ClaimAndFetch_LeaseExpired_DoesReExtendLeaseAsync() {
+    // Counterpart to the previous test: rows whose lease has EXPIRED must still be
+    // re-claimed (lease_expiry bumped, attempts incremented). This is the original
+    // semantics for orphan recovery on the same-instance retry path.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    await _registerInstanceAsync(conn, instanceId);
+
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    // Insert with EXPIRED lease (already past).
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry,
+           partition_number, status, attempts, created_at, claimed_at, processed_at)
+        VALUES (@work, @stream, @persp, @event, @inst, NOW() - INTERVAL '1 minute',
+                0, 0, 3, NOW(), NOW(), NULL)";
+      ins.Parameters.AddWithValue("work", workId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      ins.Parameters.AddWithValue("persp", perspectiveName);
+      ins.Parameters.AddWithValue("event", eventId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var beforeAttempts = await _readAttemptsAsync(conn, workId);
+    var freshLease = DateTimeOffset.UtcNow.AddMinutes(5);
+
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT * FROM claim_and_fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, NOW())";
+      cmd.Parameters.AddWithValue("p_stream_id", streamId);
+      cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+      cmd.Parameters.AddWithValue("p_instance_id", instanceId);
+      cmd.Parameters.AddWithValue("p_lease_expiry", freshLease);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var afterLease = await _readLeaseExpiryAsync(conn, workId);
+    var afterAttempts = await _readAttemptsAsync(conn, workId);
+
+    await Assert.That(afterLease).IsEqualTo(freshLease)
+      .Because("expired lease must be re-extended even though instance_id is unchanged");
+    await Assert.That(afterAttempts).IsEqualTo(beforeAttempts + 1)
+      .Because("expired-then-re-claimed bumps attempts");
+  }
+
+  [Test]
   public async Task FetchPendingPerspectiveEvents_EmptyResult_WhenNoPendingAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -242,6 +346,22 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("inst", instanceId);
     ins.Parameters.Add(new NpgsqlParameter("processed", NpgsqlDbType.TimestampTz) { Value = (object?)processedAt ?? DBNull.Value });
     await ins.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<DateTimeOffset> _readLeaseExpiryAsync(NpgsqlConnection conn, Guid workId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT lease_expiry FROM wh_perspective_events WHERE event_work_id = @id";
+    cmd.Parameters.AddWithValue("id", workId);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return reader.GetFieldValue<DateTimeOffset>(0);
+  }
+
+  private static async Task<int> _readAttemptsAsync(NpgsqlConnection conn, Guid workId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT attempts FROM wh_perspective_events WHERE event_work_id = @id";
+    cmd.Parameters.AddWithValue("id", workId);
+    return (int)(await cmd.ExecuteScalarAsync())!;
   }
 
   private static async Task _registerInstanceAsync(NpgsqlConnection connection, Guid instanceId) {
