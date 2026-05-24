@@ -867,6 +867,17 @@ public record PerspectiveCursorInfo {
   public Guid? LastEventId { get; init; }
 
   /// <summary>
+  /// Slice 26.13 — commit_sequence of <see cref="LastEventId"/> at the time of cursor
+  /// advance. Hydrated by joining <c>wh_perspective_cursors.last_event_id</c> to
+  /// <c>wh_event_store.commit_sequence</c>. NULL when the cursor has never advanced or when
+  /// the underlying event hasn't been stamped yet. PerspectiveWorker prefetch uses this to
+  /// warm <see cref="Whizbang.Core.Workers.PerspectiveCursorCache.SetCommitSequence"/> so the
+  /// commit-sequence-based inversion detector runs on cold caches (process start, post-rewind),
+  /// not the UUIDv7 event_id fallback path.
+  /// </summary>
+  public long? LastCommitSequence { get; init; }
+
+  /// <summary>
   /// Current processing status.
   /// </summary>
   public PerspectiveProcessingStatus Status { get; init; }

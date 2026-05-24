@@ -965,8 +965,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var tableName = BuildSchemaQualifiedName(schema, PERSPECTIVE_CURSORS_TABLE);
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
-    var sql = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
+    var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
+#pragma warning disable S2077 // Schema-qualified table names built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
+    // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor hydration warms the
+    // commit_sequence half of PerspectiveCursorCache (see GetPerspectiveCursorsBatchAsync).
+    var sql = $"SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, " +
+              $"c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence " +
+              $"FROM {tableName} c " +
+              $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id " +
+              $"WHERE c.stream_id = {{0}} AND c.perspective_name = {{1}}";
 #pragma warning restore S2077
 
     var result = await _dbContext.Database
@@ -983,7 +990,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       PerspectiveName = result.PerspectiveName,
       LastEventId = result.LastEventId,
       Status = (PerspectiveProcessingStatus)result.Status,
-      RewindTriggerEventId = result.RewindTriggerEventId
+      RewindTriggerEventId = result.RewindTriggerEventId,
+      LastCommitSequence = result.LastCommitSequence
     };
   }
 
@@ -1007,9 +1015,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await dbConnection.OpenAsync(cancellationToken);
     }
 
+    var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
+
     await using var cmd = (Npgsql.NpgsqlCommand)dbConnection.CreateCommand();
-#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
-    cmd.CommandText = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = ANY(@p_stream_ids)";
+#pragma warning disable S2077 // Schema-qualified table names built from validated schema constant
+    // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor prefetch can warm the
+    // commit_sequence half of PerspectiveCursorCache. Without it, the inversion detector
+    // falls back to event_id (UUIDv7 lex) comparison and re-introduces same-millisecond
+    // generation-vs-commit-order false positives (a consumer run 11 surfaced 1,403 such logs).
+    cmd.CommandText =
+      $"SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, " +
+      $"c.rewind_trigger_event_id, e.commit_sequence " +
+      $"FROM {tableName} c " +
+      $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id " +
+      $"WHERE c.stream_id = ANY(@p_stream_ids)";
 #pragma warning restore S2077
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -1025,7 +1044,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         PerspectiveName = reader.GetString(1),
         LastEventId = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(2),
         Status = (PerspectiveProcessingStatus)reader.GetInt32(3),
-        RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4)
+        RewindTriggerEventId = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(4),
+        LastCommitSequence = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(5)
       });
     }
 
@@ -1827,6 +1847,9 @@ internal class CursorQueryResult {
 
   [Column("rewind_trigger_event_id")]
   public Guid? RewindTriggerEventId { get; set; }
+
+  [Column("last_commit_sequence")]
+  public long? LastCommitSequence { get; set; }
 }
 
 /// <summary>

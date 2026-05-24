@@ -132,4 +132,102 @@ public class CursorInversionDetectorTests {
     var anchor = PerspectiveWorker._findCursorInversionAnchor([], cursor);
     await Assert.That(anchor).IsNull();
   }
+
+  // ---------- _resolveInversionAnchor (slice 26.13) ----------
+  //
+  // Routes between commit_sequence and event_id detectors. When commit_sequence cursor is
+  // available, that detector's null return is FINAL — no fall-through to the UUIDv7 path.
+  // Without this rule, same-millisecond events whose UUIDv7 lex order disagrees with commit
+  // order produce false-positive rewinds (a consumer run-11 regression, 1,403 logged inversions).
+
+  private static StreamEventData _raw(Guid streamId, Guid eventId, long? commitSequence) => new() {
+    StreamId = streamId,
+    EventId = eventId,
+    EventType = "T",
+    EventData = "{}",
+    EventWorkId = (Guid)TrackedGuid.NewMedo(),
+    CommitSequence = commitSequence,
+  };
+
+  private static ILookup<Guid, StreamEventData> _lookup(params StreamEventData[] rows) =>
+    rows.ToLookup(r => r.EventId);
+
+  [Test]
+  public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_UUIDv7ReversedButCommitOrderCorrect_ReturnsNullAsync() {
+    // THE bug scenario from a consumer run 11 (bff stream 019e5a09-c8f6-...):
+    // Three same-millisecond UUIDv7 events whose random suffix put them in one lex order
+    // but commit_sequence puts them in another. Cursor advanced to the highest-commit_seq
+    // event; a pending sibling has a lower UUIDv7 lex value but a HIGHER commit_seq.
+    // commit_sequence detector says "no inversion" → must NOT fall back to event_id detector.
+    var streamId = Guid.NewGuid();
+
+    // UUIDv7-lex-order: cursorLowLex < pendingLex — would trip the event_id detector.
+    // Commit-order: cursorLowLex (cseq=100) < pendingLex (cseq=101) — no inversion.
+    var cursorEventId = Guid.Parse("019e5a09-d534-77b4-bf8d-62ba6ca3d5c4");
+    var pendingEventId = Guid.Parse("019e5a09-d529-74e7-bf97-e2ef18941879");
+
+    var pendingEnvelope = _envelope(pendingEventId);
+    var rawLookup = _lookup(_raw(streamId, pendingEventId, commitSequence: 101));
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [pendingEnvelope],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursorEventId,
+      lastProcessedCommitSequence: 100L);
+
+    await Assert.That(anchor).IsNull()
+      .Because("commit_sequence cursor present + pending event's commit_seq > cursor → no inversion; event_id fallback must NOT fire");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_ActualCommitOrderViolation_ReturnsViolatorAsync() {
+    // Real inversion via commit_sequence: pending event has lower commit_seq than cursor.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var pendingEventId = (Guid)TrackedGuid.NewMedo();
+
+    var rawLookup = _lookup(_raw(streamId, pendingEventId, commitSequence: 50));
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(pendingEventId)],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursorEventId,
+      lastProcessedCommitSequence: 100L);
+
+    await Assert.That(anchor).IsEqualTo(pendingEventId)
+      .Because("pending commit_seq (50) ≤ cursor commit_seq (100) is a real inversion");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_NoCommitSequenceCursor_FallsBackToEventIdDetectorAsync() {
+    // Pre-slice-26 cursor (no commit_sequence in cache, e.g. legacy row before stamper landed).
+    // Must fall back to event_id detector for SOME inversion protection. Imperfect (UUIDv7
+    // false positives possible) but better than no protection at all.
+    var older = _uuidv7();
+    await Task.Delay(2);
+    var cursor = _uuidv7();
+    await Task.Delay(2);
+    var newer = _uuidv7();
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(older), _envelope(newer)],
+      rawByEventId: _lookup(),  // empty — irrelevant since commit_sequence path is skipped
+      lastProcessedEventId: cursor,
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsEqualTo(older)
+      .Because("no commit_sequence cursor → fall back to event_id detector → older violator returned");
+  }
+
+  [Test]
+  public async Task ResolveInversionAnchor_NoCursorAtAll_ReturnsNullAsync() {
+    // Cold-start / brand-new perspective. Nothing to compare against; no inversion possible.
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(_uuidv7())],
+      rawByEventId: _lookup(),
+      lastProcessedEventId: null,
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsNull();
+  }
 }
