@@ -1052,9 +1052,24 @@ public partial class PerspectiveWorker(
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var batchCursors = await workCoordinator.GetPerspectiveCursorsBatchAsync(cursorsNotCached, cancellationToken);
     foreach (var cursor in batchCursors) {
-      if (cursor.LastEventId.HasValue) {
-        _cursorCache.Set(cursor.StreamId, cursor.PerspectiveName, cursor.LastEventId.Value);
-      }
+      _hydrateCursorCacheEntry(_cursorCache, cursor);
+    }
+  }
+
+  /// <summary>
+  /// Slice 26.13 — hydrates both halves of the cursor cache from a single
+  /// <see cref="PerspectiveCursorInfo"/>. Without warming the commit_sequence half on
+  /// cold caches (process start, post-rewind invalidate, eviction), the inversion detector
+  /// falls back to event_id (UUIDv7 lex) comparison and re-introduces same-millisecond
+  /// commit-order false positives. Extracted as <c>internal static</c> so the wiring is
+  /// directly unit-testable without spinning up a worker.
+  /// </summary>
+  internal static void _hydrateCursorCacheEntry(PerspectiveCursorCache cache, PerspectiveCursorInfo cursor) {
+    if (cursor.LastEventId.HasValue) {
+      cache.Set(cursor.StreamId, cursor.PerspectiveName, cursor.LastEventId.Value);
+    }
+    if (cursor.LastCommitSequence.HasValue) {
+      cache.SetCommitSequence(cursor.StreamId, cursor.PerspectiveName, cursor.LastCommitSequence.Value);
     }
   }
 
@@ -1183,16 +1198,8 @@ public partial class PerspectiveWorker(
     // RewindAndRunAsync(streamId, perspectiveName, earliestViolator). When cached_cursor
     // is null (new perspective on existing stream OR cold start), no inversion is possible
     // by definition; skip the check and forward-apply.
-    Guid? inversionAnchor = null;
-    if (lastProcessedCommitSequence.HasValue) {
-      inversionAnchor = _findCursorInversionAnchorByCommitSequence(
-        filteredEvents, batchContext.RawByEventId, lastProcessedCommitSequence.Value);
-    }
-    // Fall back to event_id comparison if commit_sequence anchor came up empty
-    // (e.g., events not yet stamped) or commit_sequence cache was empty.
-    if (inversionAnchor is null && lastProcessedEventId.HasValue) {
-      inversionAnchor = _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value);
-    }
+    Guid? inversionAnchor = _resolveInversionAnchor(
+      filteredEvents, batchContext.RawByEventId, lastProcessedEventId, lastProcessedCommitSequence);
 
     // Phase H step 7 slice 5: cooldown short-circuit. If every event_work_id corresponding to
     // this perspective's filtered events is in the RecentlyProcessedEventCache, we already ran
@@ -1362,12 +1369,36 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// Slice 26.13 — routes inversion detection to the authoritative detector based on what
+  /// the cursor cache has. When <paramref name="lastProcessedCommitSequence"/> is set, the
+  /// commit-sequence detector is the FINAL word — a null result from it means "no inversion,"
+  /// not "I don't know," so we don't fall through to the event_id detector and re-introduce
+  /// UUIDv7 same-millisecond false positives. The event_id detector is only used when
+  /// commit_sequence cursor is unavailable (pre-slice-26 row, or cursor advanced to an
+  /// unstamped event before slice 26.13 shipped).
+  /// </summary>
+  internal static Guid? _resolveInversionAnchor(
+      IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
+      ILookup<Guid, StreamEventData> rawByEventId,
+      Guid? lastProcessedEventId,
+      long? lastProcessedCommitSequence) {
+    if (lastProcessedCommitSequence.HasValue) {
+      return _findCursorInversionAnchorByCommitSequence(
+        filteredEvents, rawByEventId, lastProcessedCommitSequence.Value);
+    }
+    if (lastProcessedEventId.HasValue) {
+      return _findCursorInversionAnchor(filteredEvents, lastProcessedEventId.Value);
+    }
+    return null;
+  }
+
+  /// <summary>
   /// Slice 26 — commit-sequence-based inversion anchor. Compares each event's
   /// <see cref="StreamEventData.CommitSequence"/> against the cached commit_sequence cursor.
   /// Returns the event_id of the earliest violator (commit_sequence ≤ cached) for snapshot-aware
   /// rewind. Events without a CommitSequence (stamper hasn't caught up) are SKIPPED — they're
-  /// not yet stable for cursor comparison; the caller's fallback path uses
-  /// <see cref="_findCursorInversionAnchor"/> (event_id-based) for those.
+  /// not yet stable for cursor comparison; if the caller has a commit_sequence cursor, that's
+  /// authoritative (an unstamped event is newer than any stamped cursor by construction).
   /// </summary>
   internal static Guid? _findCursorInversionAnchorByCommitSequence(
       IReadOnlyList<MessageEnvelope<IEvent>> events,
