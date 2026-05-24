@@ -152,10 +152,11 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task EmitEventStoreChain_NoOwnerPinned_LeavesUnleasedAsync() {
-    // First-event-ever-for-this-stream case: no wh_active_streams row yet. Pre-fix leased
-    // to commit instance (race-prone). Post-fix leaves unleased so claim_orphaned can pin
-    // + lease atomically on next cycle.
+  public async Task EmitEventStoreChain_NoOwnerPinned_LeasesToCommitInstanceAsync() {
+    // First-event-ever-for-this-stream case: no wh_active_streams row yet. Fall back to
+    // the commit instance so sync paths (UI waiting on a perspective checkpoint) don't pay
+    // claim_orphaned-polling-interval latency on first event. The pinning happens via
+    // claim_orphaned on its next cycle; subsequent commits will see the pin and route correctly.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -173,16 +174,17 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
     var (leasedTo, leaseExpiry) = await _readLeaseAsync(conn, messageId);
 
-    await Assert.That(leasedTo).IsNull()
-      .Because("no pinned owner → leave unleased; claim_orphaned will pin + lease consistently");
-    await Assert.That(leaseExpiry).IsNull()
-      .Because("unleased rows have NULL lease_expiry");
+    await Assert.That(leasedTo).IsEqualTo(commitInstance)
+      .Because("no pinned owner → fall back to commit instance for zero-latency sync paths");
+    await Assert.That(leaseExpiry).IsNotNull()
+      .Because("fallback leases carry a real lease_expiry");
   }
 
   [Test]
-  public async Task EmitEventStoreChain_PinnedOwnerIsDeadInstance_LeavesUnleasedAsync() {
-    // Edge case: wh_active_streams points to an instance that's no longer in wh_service_instances
-    // (cleanup_stale_instances removed it). Don't lease to a zombie.
+  public async Task EmitEventStoreChain_PinnedOwnerIsDeadInstance_LeasesToCommitInstanceAsync() {
+    // Edge case: wh_active_streams points to an instance that's no longer in
+    // wh_service_instances (cleanup_stale_instances removed it). Treat as no owner, fall
+    // back to commit instance. claim_orphaned will eventually re-pin to a live instance.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -203,8 +205,8 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
     var (leasedTo, _) = await _readLeaseAsync(conn, messageId);
 
-    await Assert.That(leasedTo).IsNull()
-      .Because("pinned owner is not in wh_service_instances → treat as no owner; leave unleased");
+    await Assert.That(leasedTo).IsEqualTo(commitInstance)
+      .Because("pinned owner not in wh_service_instances → treat as no owner; fall back to commit instance");
   }
 
   [Test]
