@@ -1303,9 +1303,10 @@ public partial class PerspectiveWorker(
 
         if (result.Status == PerspectiveProcessingStatus.Completed) {
           _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, filteredEvents, batchContext.RawByEventId);
-          // Mark all processed work_ids in the cooldown cache so the next drain within the TTL
-          // window (including the cursor-flush race window) short-circuits before reaching apply.
-          _markProcessedInCooldown(_recentlyProcessedEventCache, filteredEvents, batchContext.RawByEventId, perspectiveName);
+          // Slice 26.17: cooldown is now marked at the top of _applyDrainModePerspectiveCompletionAsync,
+          // before any cursor cache update or lifecycle invocation that could throw. The
+          // late-mark site here was the source of the residual UberDraftJob inversions in JDX
+          // run 16 — keep the call site comment as a regression breadcrumb.
         }
 
         _metrics?.StreamsUpdated.Add(1);
@@ -1645,6 +1646,18 @@ public partial class PerspectiveWorker(
       PerspectiveCursorCompletion result,
       DrainBatchContext batchContext,
       CancellationToken ct) {
+    // Slice 26.17: mark cooldown FIRST, BEFORE cursor cache update. Invariant: if cursor
+    // cache advances, cooldown must already contain the work_ids of the events applied to
+    // produce that advance. Reversing this order (cursor first, cooldown later) was the
+    // dominant residual inversion cause in JDX run 16: when a lifecycle receptor invoker
+    // between cursor update and the deferred cooldown-mark call threw or the lease
+    // cancelled, cursor advanced but cooldown stayed empty. The next drain saw pending
+    // events that weren't in cooldown, the inversion detector compared them against the
+    // advanced cursor, and triggered a spurious full-replay rewind. With the order
+    // flipped, the failure mode is safe: cooldown set + cursor not yet advanced means the
+    // next drain finds all events cooled and short-circuits via _signalCooldownSkippedEvents.
+    _markProcessedInCooldown(_recentlyProcessedEventCache, filteredEvents, batchContext.RawByEventId, streamCtx.PerspectiveName);
+
     _cursorCache.Set(streamCtx.StreamId, streamCtx.PerspectiveName, result.LastEventId);
 
     // Slice 26.11: track commit_sequence cursor alongside event_id. Find the latest
