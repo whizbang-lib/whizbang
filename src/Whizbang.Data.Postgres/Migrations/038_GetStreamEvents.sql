@@ -58,6 +58,10 @@ BEGIN
   -- claim_orphaned_perspective_events / the next get_stream_events tick picks
   -- up whatever was skipped. Without SKIP LOCKED, JDX run 7 produced 40P01
   -- deadlocks under high parallel apply pressure.
+  -- Slice 28: only UPDATE rows that actually NEED claiming — unowned or with expired
+  -- lease. Mirror of the change in claim_and_fetch_pending_perspective_events (mig 042).
+  -- Rows already leased to us are picked up by the SELECT below without re-extending the
+  -- lease here; LeaseRenewalWorker handles in-flight renewals separately.
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
     FROM wh_perspective_events pe
@@ -67,7 +71,6 @@ BEGIN
       AND (
         pe.instance_id IS NULL
         OR pe.lease_expiry < p_now
-        OR pe.instance_id = p_instance_id
       )
     ORDER BY pe.event_work_id
     FOR UPDATE OF pe SKIP LOCKED
@@ -75,10 +78,7 @@ BEGIN
   UPDATE wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = v_lease_expiry,
-      attempts = CASE
-        WHEN e.instance_id IS DISTINCT FROM p_instance_id THEN e.attempts + 1
-        ELSE e.attempts
-      END
+      attempts = pe.attempts + 1
   FROM eligible e
   WHERE pe.event_work_id = e.event_work_id;
 

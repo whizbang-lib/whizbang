@@ -91,6 +91,11 @@ BEGIN
   -- deterministic event_work_id order via FOR UPDATE SKIP LOCKED. Concurrent
   -- callers can't lock rows in conflicting orders — same-row contention turns
   -- into "the loser skips this row this cycle" instead of a 40P01 deadlock.
+  -- Slice 28: only UPDATE rows that actually NEED claiming — unowned or with expired
+  -- lease. Rows already leased to us are returned by step 2's SELECT without re-extending
+  -- the lease here; LeaseRenewalWorker handles in-flight renewals separately. Skipping the
+  -- redundant own-row UPDATEs eliminates ~7x WAL write volume on wh_perspective_events
+  -- (pg_stat_user_tables on JDX after run 19: 5.7M UPDATEs vs 800k inserts).
   WITH eligible AS (
     SELECT pe.event_work_id, pe.instance_id, pe.attempts
     FROM wh_perspective_events pe
@@ -101,7 +106,6 @@ BEGIN
       AND (
         pe.instance_id IS NULL
         OR pe.lease_expiry < p_now
-        OR pe.instance_id = p_instance_id
       )
     ORDER BY pe.event_work_id
     FOR UPDATE OF pe SKIP LOCKED
@@ -109,10 +113,7 @@ BEGIN
   UPDATE wh_perspective_events pe
   SET instance_id = p_instance_id,
       lease_expiry = p_lease_expiry,
-      attempts = CASE
-        WHEN e.instance_id IS DISTINCT FROM p_instance_id THEN e.attempts + 1
-        ELSE e.attempts
-      END
+      attempts = pe.attempts + 1
   FROM eligible e
   WHERE pe.event_work_id = e.event_work_id;
 
