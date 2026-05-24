@@ -1413,7 +1413,11 @@ public partial class PerspectiveWorker(
         continue;  // Unstamped — defer to event_id comparison path.
       }
       var seq = raw.CommitSequence.Value;
-      if (seq <= cachedCommitSequence && seq < earliestSeq) {
+      // Strict < — equality means the pending event IS the cursor's last-applied event
+      // (cursor-flush race: row applied but perspective_events delete still in flight).
+      // That's an idempotent re-drain, not an inversion. The runner template's idempotency
+      // filter handles it without a rewind.
+      if (seq < cachedCommitSequence && seq < earliestSeq) {
         earliestSeq = seq;
         earliestEventId = msgId;
       }
