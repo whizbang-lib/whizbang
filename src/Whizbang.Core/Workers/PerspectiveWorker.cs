@@ -1256,6 +1256,27 @@ public partial class PerspectiveWorker(
               break;
             }
           }
+          // Slice 26.16 instrumentation: emit detailed inversion diagnostics so we can
+          // classify the residual ~400 inversions per a consumer import. Captures whether the
+          // commit_sequence detector or the event_id fallback fired, the gap, and the
+          // partition counts so we can spot cooldown misses.
+          long? pendingSeq = null;
+          foreach (var raw in batchContext.RawByEventId[inversionAnchor.Value]) {
+            if (raw.CommitSequence.HasValue) {
+              pendingSeq = raw.CommitSequence;
+              break;
+            }
+          }
+          LogInversionDiagnostics(
+            _logger,
+            streamId,
+            perspectiveName,
+            inversionAnchor.Value,
+            lastProcessedEventId ?? Guid.Empty,
+            pendingSeq ?? -1,
+            lastProcessedCommitSequence ?? -1,
+            cooledEvents.Count,
+            freshEvents.Count);
           LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId ?? Guid.Empty);
           result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, leaseCt);
         } else {
@@ -1429,6 +1450,19 @@ public partial class PerspectiveWorker(
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Cursor inversion detected: pending event {AnchorEventId} ≤ cached cursor {CachedCursor} for stream {StreamId} / perspective {PerspectiveName}; triggering rewind")]
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Inversion diagnostics: stream={StreamId} perspective={PerspectiveName} anchor={AnchorEventId} cursorEventId={CachedCursor} pendingSeq={PendingSeq} cursorSeq={CursorSeq} cooled={CooledCount} fresh={FreshCount}")]
+  private static partial void LogInversionDiagnostics(
+    ILogger logger,
+    Guid streamId,
+    string perspectiveName,
+    Guid anchorEventId,
+    Guid cachedCursor,
+    long pendingSeq,
+    long cursorSeq,
+    int cooledCount,
+    int freshCount);
 
   /// <summary>
   /// Phase H step 7 slice 5: returns <c>true</c> when every event_work_id for the given filtered
