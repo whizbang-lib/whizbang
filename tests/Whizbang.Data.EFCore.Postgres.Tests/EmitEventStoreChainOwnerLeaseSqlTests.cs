@@ -104,6 +104,16 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
+  private static async Task _callEmitEventStoreChainNullLeaseAsync(NpgsqlConnection conn, Guid[] outboxIds) {
+    // Strategy-flush path: caller passes NULL p_instance_id + NULL p_lease_expiry, signaling
+    // "leave unleased — claim_orphaned will pick it up." This contract must NOT be broken by
+    // the wh_active_streams owner lookup.
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT _emit_event_store_chain(@ids, NULL::uuid, NULL::timestamptz, NOW(), 10000)";
+    cmd.Parameters.AddWithValue("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, outboxIds);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
   private static async Task<(Guid? instanceId, DateTimeOffset? leaseExpiry)> _readLeaseAsync(NpgsqlConnection conn, Guid eventId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT instance_id, lease_expiry FROM wh_perspective_events WHERE event_id = @eid LIMIT 1";
@@ -207,6 +217,57 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
     await Assert.That(leasedTo).IsEqualTo(commitInstance)
       .Because("pinned owner not in wh_service_instances → treat as no owner; fall back to commit instance");
+  }
+
+  [Test]
+  public async Task EmitEventStoreChain_NullLeaseExpiry_LeavesUnleased_EvenWithPinnedOwnerAsync() {
+    // Regression lock for the JDX upload-stall bug (2026-05-24, slice 26.14 follow-up).
+    // The strategy-flush path calls store_outbox_messages with NULL p_instance_id +
+    // NULL p_lease_expiry, signaling "leave unleased — claim_orphaned will pick it up."
+    // store_outbox_messages UPSERTs wh_active_streams with the commit instance as owner.
+    // If _emit_event_store_chain THEN routes through the owner lookup unconditionally, the
+    // perspective_events row lands with instance_id SET (from owner) but lease_expiry NULL
+    // (from caller), and claim_orphaned's `(instance_id IS NULL OR lease_expiry < now)`
+    // filter excludes it → row stranded forever → sync sync_inquiry waiter times out →
+    // "Upload not found" UI symptom. Guard the owner lookup behind p_lease_expiry IS NOT NULL.
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var streamOwner = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.NewMedo();
+
+    await _registerAssociationAsync(conn, EVENT_TYPE, PERSPECTIVE_NAME);
+    await _registerLiveInstanceAsync(conn, streamOwner);
+    // Stream IS pinned (typical post-store_outbox_messages state).
+    await _pinStreamAsync(conn, streamId, ownerInstanceId: streamOwner);
+    // Outbox row inserted unleased (strategy-flush path).
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = """
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, envelope_type, event_data, metadata,
+           status, attempts, instance_id, lease_expiry, partition_number, stream_id, is_event,
+           created_at)
+        VALUES
+          (@id, 'test-dest', @type, 'env', '{"p":{}}'::jsonb, '{}'::jsonb,
+           1, 0, NULL, NULL, 0, @sid, true, NOW())
+        """;
+      ins.Parameters.AddWithValue("id", messageId);
+      ins.Parameters.AddWithValue("type", EVENT_TYPE);
+      ins.Parameters.AddWithValue("sid", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    await _callEmitEventStoreChainNullLeaseAsync(conn, [messageId]);
+
+    var (leasedTo, leaseExpiry) = await _readLeaseAsync(conn, messageId);
+
+    await Assert.That(leasedTo).IsNull()
+      .Because("caller passed NULL p_lease_expiry — owner-route would strand the row; preserve unleased contract for claim_orphaned");
+    await Assert.That(leaseExpiry).IsNull();
   }
 
   [Test]
