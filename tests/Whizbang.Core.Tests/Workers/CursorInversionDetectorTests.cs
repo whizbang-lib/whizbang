@@ -180,6 +180,29 @@ public class CursorInversionDetectorTests {
   }
 
   [Test]
+  public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_PendingEqualsCursor_ReturnsNullAsync() {
+    // Cursor-flush race: cursor advanced to event X (commit_seq 287962), but the same X is
+    // still in the pending queue because PerspectiveCompletionFlushWorker hasn't deleted the
+    // perspective_events row yet. Same commit_sequence ≠ inversion — it's the SAME event,
+    // idempotent re-drain. The runner template's filter handles it without a rewind.
+    // Strict `<` semantics — observed in a consumer run 13 on OrderRemoteWork.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var cursorEventId = (Guid)TrackedGuid.NewMedo();
+    var sameEventPending = cursorEventId;
+
+    var rawLookup = _lookup(_raw(streamId, sameEventPending, commitSequence: 287962));
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_envelope(sameEventPending)],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursorEventId,
+      lastProcessedCommitSequence: 287962L);
+
+    await Assert.That(anchor).IsNull()
+      .Because("pending commit_seq == cursor commit_seq means same event (cursor-flush race), not inversion");
+  }
+
+  [Test]
   public async Task ResolveInversionAnchor_CommitSequenceCursorPresent_ActualCommitOrderViolation_ReturnsViolatorAsync() {
     // Real inversion via commit_sequence: pending event has lower commit_seq than cursor.
     var streamId = (Guid)TrackedGuid.NewMedo();
