@@ -35,12 +35,14 @@ public sealed partial class PgCommitOrderStamperWorker(
   IOptions<WhizbangNotificationOptions> notificationOptions,
   IOptions<CommitOrderStamperOptions> stamperOptions,
   IConfiguration configuration,
-  ILogger<PgCommitOrderStamperWorker> logger
+  ILogger<PgCommitOrderStamperWorker> logger,
+  INotificationConnectionStringFallback? connectionStringFallback = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
 
   private const string CHANNEL_NAME = "wh_committed";
   private bool _isLeader;
@@ -65,7 +67,7 @@ public sealed partial class PgCommitOrderStamperWorker(
       return;
     }
 
-    var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration);
+    var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback);
     if (resolution.ConnectionString is null) {
       LogDisabledNoConnection(_logger);
       return;
