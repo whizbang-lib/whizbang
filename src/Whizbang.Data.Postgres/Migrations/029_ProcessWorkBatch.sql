@@ -416,7 +416,12 @@ BEGIN
     1,                  -- Stored flag
     0,
     p_now,
-    COALESCE(owner.assigned_instance_id, p_instance_id),
+    -- Slice 26.14: when caller is actively leasing (p_lease_expiry IS NOT NULL),
+    -- route through wh_active_streams to the stream's pinned owner. When caller passed
+    -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path — "leave unleased so
+    -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
+    -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
     p_lease_expiry
   FROM __SCHEMA__.wh_event_store es
   INNER JOIN __SCHEMA__.wh_message_associations ma
@@ -591,7 +596,12 @@ BEGIN
     1,                  -- Stored flag
     0,
     p_now,
-    COALESCE(owner.assigned_instance_id, p_instance_id),
+    -- Slice 26.14: when caller is actively leasing (p_lease_expiry IS NOT NULL),
+    -- route through wh_active_streams to the stream's pinned owner. When caller passed
+    -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path — "leave unleased so
+    -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
+    -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
     p_lease_expiry
   FROM __SCHEMA__.wh_event_store es
   INNER JOIN __SCHEMA__.wh_message_associations ma
