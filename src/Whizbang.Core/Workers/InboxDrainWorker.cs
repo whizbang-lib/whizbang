@@ -124,7 +124,14 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     // See OutboxDrainWorker._drainStreamInnerAsync for the rationale — same race shape.
     var seen = new HashSet<Guid>();
     var hadAnyNew = false;
+    // Slice 31 PERF instrumentation: per-drain wall time + deserialize/enqueue split.
+    var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    var totalDeserMs = 0.0;
+    var totalWriteMs = 0.0;
+    var enqueued = 0;
+    var fetchCount = 0;
     while (!ct.IsCancellationRequested) {
+      fetchCount++;
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
 
@@ -132,6 +139,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
         if (hadAnyNew) {
           _inboxChannelWriter.SignalNewInboxWorkAvailable();
         }
+        _logPerfIfInteresting(streamId, enqueued, fetchCount, totalDeserMs, totalWriteMs, drainStartTicks);
         return;
       }
 
@@ -147,13 +155,20 @@ public sealed partial class InboxDrainWorker : BackgroundService {
         }
         newRows++;
         InboxWork work;
+        var deserStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try {
           work = _toInboxWork(row);
         } catch (Exception ex) {
           LogDeserializeFailed(_logger, row.MessageId, ex);
           continue;
         }
+        totalDeserMs += (System.Diagnostics.Stopwatch.GetTimestamp() - deserStart)
+          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        var writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         await _inboxChannelWriter.WriteAsync(work, ct);
+        totalWriteMs += (System.Diagnostics.Stopwatch.GetTimestamp() - writeStart)
+          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        enqueued++;
         hadAnyNew = true;
       }
 
@@ -161,8 +176,33 @@ public sealed partial class InboxDrainWorker : BackgroundService {
         if (hadAnyNew) {
           _inboxChannelWriter.SignalNewInboxWorkAvailable();
         }
+        _logPerfIfInteresting(streamId, enqueued, fetchCount, totalDeserMs, totalWriteMs, drainStartTicks);
         return;
       }
+
+      // Slice 32 — partial-batch early exit. See OutboxDrainWorker for rationale: run-24
+      // measured 91% of inbox drain wall time on fetch+other, with fetches/drain = 2.0
+      // (every drain pays for a confirmation fetch that almost always returns 0).
+      if (rowsRaw.Count < _options.MaxPerStream) {
+        if (hadAnyNew) {
+          _inboxChannelWriter.SignalNewInboxWorkAvailable();
+        }
+        _logPerfIfInteresting(streamId, enqueued, fetchCount, totalDeserMs, totalWriteMs, drainStartTicks);
+        return;
+      }
+    }
+    _logPerfIfInteresting(streamId, enqueued, fetchCount, totalDeserMs, totalWriteMs, drainStartTicks);
+  }
+
+  private void _logPerfIfInteresting(Guid streamId, int enqueued, int fetches, double deserMs, double writeMs, long startTicks) {
+    var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks)
+      * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    if (enqueued >= 5 || totalMs > 100) {
+#pragma warning disable CA1848
+      _logger.LogWarning(
+        "PERF InboxDrain stream {StreamId}: enqueued={Enqueued} fetches={Fetches} total={TotalMs:F0}ms deser={DeserMs:F0}ms write={WriteMs:F0}ms other={OtherMs:F0}ms",
+        streamId, enqueued, fetches, totalMs, deserMs, writeMs, totalMs - deserMs - writeMs);
+#pragma warning restore CA1848
     }
   }
 

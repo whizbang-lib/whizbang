@@ -177,6 +177,26 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   private async Task _processOneAsync(InboxWork work, CancellationToken stoppingToken) {
+    // Slice 31 PERF: per-message dispatch wall time. Surfaces whether inbox throughput is
+    // bounded by the lifecycle invocation (security context + ReceptorInvoker + receptor body)
+    // or by the surrounding plumbing (lease handle + DI scope + handler commit channel).
+    var dispatchStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    try {
+      await _processOneInnerAsync(work, stoppingToken);
+    } finally {
+      var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
+        * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+      if (totalMs > 100) {
+#pragma warning disable CA1848
+        _logger.LogWarning(
+          "PERF InboxDispatch message {MessageId} type {MessageType}: total={TotalMs:F0}ms attempts={Attempts}",
+          work.MessageId, work.MessageType, totalMs, work.Attempts);
+#pragma warning restore CA1848
+      }
+    }
+  }
+
+  private async Task _processOneInnerAsync(InboxWork work, CancellationToken stoppingToken) {
     var maxAttempts = _options.MaxInboxAttempts;
     // Phase H step 8 slice D: attempts is one-based after the slice D refactor — the row
     // arrives here with attempts=1 on the first attempt, attempts=N on the Nth. Use strict
