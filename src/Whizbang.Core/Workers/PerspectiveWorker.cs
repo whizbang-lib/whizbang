@@ -954,7 +954,7 @@ public partial class PerspectiveWorker(
         CancellationToken = cancellationToken
       },
       (streamGroup, ct) => new ValueTask(_processDrainModeStreamAsync(
-        streamGroup.Key, streamGroup.Value, drainBatchContext, ct)));
+        scope, workCoordinator, streamGroup.Key, streamGroup.Value, drainBatchContext, ct)));
   }
 
   /// <summary>
@@ -1079,34 +1079,152 @@ public partial class PerspectiveWorker(
   /// in its own DI scope.
   /// </summary>
   private async Task _processDrainModeStreamAsync(
+      AsyncServiceScope scope,
+      IWorkCoordinator workCoordinator,
       Guid streamId,
       List<MessageEnvelope<IEvent>> streamEvents,
       DrainBatchContext batchContext,
       CancellationToken ct) {
+    // scope + workCoordinator come from the parent _processDrainModeStreamsAsync; they were
+    // used SAFELY there because the initial fetch happens BEFORE Parallel.ForEachAsync fans
+    // out. Inside this method we run concurrently with up to MaxConcurrentPerspectives peers
+    // — sharing the parent DbContext for refetch would produce
+    // NpgsqlOperationInProgressException. The refetch helper creates its own scope per call.
+    _ = scope;
+    _ = workCoordinator;
     // Phase H step 6 slice 5: bracket the entire per-stream drain with the channel-level
     // in-flight marker so ClaimWorker's _distributeAsync skips re-emitting this stream while
     // we're still working on it. Symmetric with OutboxDrainWorker / InboxDrainWorker Part B.
     _perspectiveDrainChannel?.MarkDraining(streamId);
     try {
-      var perspectiveNames = _collectDrainModePerspectiveNames(streamEvents, batchContext.TypeNameCache);
-      _registerDrainModeLifecycleTracking(streamEvents, batchContext.TypeNameCache, streamId, batchContext.LifecycleCoordinator);
+      // Slice 30: loop-until-empty inside the drain. JDX run 21 PERF data showed 22,318 single-
+      // event drains × ~150 ms each = ~55 min of per-drain envelope overhead. The dominant cost
+      // per drain (DI scope + LeaseHandle + BackgroundStageDispatch OS thread spawn + commit
+      // strategy plumbing) is roughly the same whether we process 1 or 44 events. By refetching
+      // pending events for THIS stream after the first pass — events that arrived from the
+      // transport DURING this drain or that the prior fetch missed due to claim timing — we
+      // amortize the envelope across all events for the stream in the same call.
+      //
+      // Termination: each iteration either processes ≥1 fresh event (cooldown filters
+      // already-processed) or refetches empty. Iteration cap (DrainLoopMaxIterations) prevents
+      // pathological scenarios where the transport feeds faster than apply can keep up. When
+      // the cap is hit, ClaimWorker picks up the stream on the next tick and we drain again
+      // with a fresh envelope — same throughput as today, no regression.
+      var iter = 0;
+      var currentEvents = streamEvents;
+      var currentContext = batchContext;
+      while (iter < _options.DrainLoopMaxIterations) {
+        iter++;
+        var perspectiveNames = _collectDrainModePerspectiveNames(currentEvents, currentContext.TypeNameCache);
+        _registerDrainModeLifecycleTracking(currentEvents, currentContext.TypeNameCache, streamId, currentContext.LifecycleCoordinator);
 
-      foreach (var perspectiveName in perspectiveNames) {
-        var filteredEvents = streamEvents
-            .Where(e => batchContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
-              && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
-            .OrderByMessageId()
-            .ToList();
+        foreach (var perspectiveName in perspectiveNames) {
+          var filteredEvents = currentEvents
+              .Where(e => currentContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
+                && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+              .OrderByMessageId()
+              .ToList();
 
-        if (filteredEvents.Count == 0) {
-          continue;
+          if (filteredEvents.Count == 0) {
+            continue;
+          }
+          // Slice 30 defensive: an OCE bubbling out of _runDrainModePerspectiveAsync (e.g.,
+          // shutdown cancellation, both ct + lease.Token cancelled so its own catch filter
+          // doesn't match) MUST NOT abort the loop for other perspectives on this stream.
+          // The single perspective's lease-handle catch already routes failure-mode OCEs;
+          // anything that bubbles is either expected shutdown propagation or an unhandled
+          // edge case — neither should poison sibling perspectives.
+          try {
+            await _runDrainModePerspectiveAsync(
+              streamId, perspectiveName, filteredEvents, currentContext, ct);
+          } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.
+            throw;
+          } catch (OperationCanceledException) {
+            // Lease-handle OCE that wasn't caught by _runDrainModePerspectiveAsync's filter.
+            // Log + continue with next perspective; the row's lease will expire and
+            // claim_orphaned will re-issue.
+#pragma warning disable CA1848
+            _logger.LogWarning("Drain mode: unhandled OCE from {Perspective} on stream {StreamId} — skipping to next perspective", perspectiveName, streamId);
+#pragma warning restore CA1848
+          }
         }
-        await _runDrainModePerspectiveAsync(
-          streamId, perspectiveName, filteredEvents, batchContext, ct);
+
+        // Slice 30 — refetch gate. Skip the refetch SQL roundtrip when this iteration only
+        // processed a single event: that's the steady-state low-arrival-rate case where a
+        // burst arrival during the drain is unlikely, and an empty refetch costs ~5-10 ms of
+        // wasted SQL. Multi-event iterations (bursts) are exactly the case where MORE events
+        // are likely still arriving — refetch is the right bet there.
+        if (currentEvents.Count < _options.DrainLoopRefetchMinBatch) {
+          break;
+        }
+        // Defensive: a refetch failure (transient DB error, lease cancellation, etc.) MUST
+        // NOT abort the already-completed first-iteration processing. The first iteration's
+        // work + completion enqueue have already landed; if refetch fails, just exit the loop
+        // and let the next ClaimWorker tick re-issue the stream if work is still pending.
+        (List<MessageEnvelope<IEvent>> Events, DrainBatchContext Context)? refetched;
+        try {
+          refetched = await _tryRefetchDrainModeStreamEventsAsync(streamId, currentContext, ct);
+        } catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+          break;
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+#pragma warning disable CA1848
+          _logger.LogWarning(ex, "Drain mode: refetch threw for stream {StreamId} — exiting loop, ClaimWorker will re-issue", streamId);
+#pragma warning restore CA1848
+          break;
+        }
+        if (refetched is null) {
+          break;
+        }
+        var (refetchedEvents, refetchedContext) = refetched.Value;
+        currentEvents = refetchedEvents;
+        currentContext = refetchedContext;
       }
     } finally {
       _perspectiveDrainChannel?.MarkDrained(streamId);
     }
+  }
+
+  /// <summary>
+  /// Slice 30 — refetches pending perspective events for one stream after an in-progress drain
+  /// has processed its initial batch. Returns null when no fresh events came back (loop exits).
+  /// Returns a typed-event list + a DrainBatchContext keyed to the refetched rows when there are
+  /// still events to process. Reuses cross-stream shared accumulators (BatchProcessedEvents,
+  /// BatchIsNewByEventId, LifecycleCoordinator) so PostAllPerspectives still fires correctly.
+  /// Already-applied events come back too (until completion-flush DELETEs them); the cooldown
+  /// cache short-circuits them inside _runDrainModePerspectiveAsync so we don't re-apply.
+  /// </summary>
+  private async Task<(List<MessageEnvelope<IEvent>> Events, DrainBatchContext Context)?> _tryRefetchDrainModeStreamEventsAsync(
+      Guid streamId,
+      DrainBatchContext sharedContext,
+      CancellationToken ct) {
+    // Create a fresh scope per refetch — the parent _processDrainModeStreamsAsync's scope
+    // hosts the initial workCoordinator that handed events to ALL parallel streams; if N
+    // streams' refetches share it we get Npgsql command-already-in-progress on the shared
+    // DbContext. Each refetch gets an isolated DbContext / connection.
+    await using var refetchScope = _scopeFactory.CreateAsyncScope();
+    var refetchWorkCoordinator = refetchScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
+      refetchScope, refetchWorkCoordinator, [streamId], ct);
+    if (fetchResult is null) {
+      return null;
+    }
+    var (typedEvents, rawByEventId) = fetchResult.Value;
+    if (typedEvents.Count == 0) {
+      return null;
+    }
+    var typeNameCache = _buildDrainModeTypeNameCache(typedEvents);
+    var grouped = _groupAndDedupeDrainModeEventsByStream(typedEvents, rawByEventId);
+    if (!grouped.TryGetValue(streamId, out var eventsForStream) || eventsForStream.Count == 0) {
+      return null;
+    }
+    var nextContext = new DrainBatchContext(
+      rawByEventId,
+      typeNameCache,
+      sharedContext.BatchProcessedEvents,
+      sharedContext.BatchIsNewByEventId,
+      sharedContext.LifecycleCoordinator);
+    return (eventsForStream, nextContext);
   }
 
   /// <summary>Collects the set of perspective names that apply to the event types in this stream.</summary>
@@ -3512,6 +3630,35 @@ public class PerspectiveWorkerOptions {
   /// Default: 300
   /// </summary>
   public int MaxStreamsPerBatch { get; set; } = 300;
+
+  /// <summary>
+  /// Slice 30 — caps the per-stream drain loop introduced to amortize per-drain envelope
+  /// overhead (DI scope + LeaseHandle + BackgroundStageDispatch OS thread) across events
+  /// that arrive from the transport DURING an in-progress drain. After the first iteration
+  /// processes the initially-fetched batch, the loop refetches the stream and runs again if
+  /// more events came back; cooldown filters already-processed rows so the next iteration
+  /// only runs for genuinely fresh work. The cap bounds latency for streams that receive a
+  /// sustained high arrival rate — when hit, the partially-processed remainder is picked up
+  /// by ClaimWorker on the next tick. Set to 1 to disable the loop and restore pre-slice-30
+  /// single-pass behavior.
+  /// <para>
+  /// Sized from JDX run 21 PERF data: 22 318 single-event drains × ~150 ms envelope cost
+  /// dominated the import wall time. Each loop iteration is a single SQL refetch (~5-10 ms)
+  /// plus the per-perspective apply path; even at the cap (5) the loop costs at most a few
+  /// hundred ms per stream vs the multi-second savings from skipping 5× drain envelopes.
+  /// </para>
+  /// </summary>
+  public int DrainLoopMaxIterations { get; set; } = 5;
+
+  /// <summary>
+  /// Slice 30 — minimum batch size that triggers a refetch in the per-stream drain loop.
+  /// When the current iteration processed fewer events than this threshold, the loop exits
+  /// without refetching to avoid wasting ~5-10 ms of SQL on the steady-state low-arrival
+  /// case (single-event drains, which dominated JDX run 21: 22 318 of ~30 000 total drains).
+  /// Set to 1 to refetch unconditionally; set above <see cref="DrainLoopMaxIterations"/> to
+  /// disable the loop entirely (functionally identical to <c>DrainLoopMaxIterations = 1</c>).
+  /// </summary>
+  public int DrainLoopRefetchMinBatch { get; set; } = 2;
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from the perspective drain

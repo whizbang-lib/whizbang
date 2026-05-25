@@ -229,6 +229,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
       if (events.Count > 0) {
         var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
+        var firstEnvelopeTypeName = firstEnvelope.Payload.GetType().FullName ?? string.Empty;
 
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveDetached,
@@ -239,23 +240,36 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
         };
 
-        // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing).
-        // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
-        // (pooled thread) so this stage isn't starved when the ThreadPool is saturated by EF
-        // continuations + transport callbacks during heavy processing. This invocation IS awaited
-        // via backgroundTasks below — without LongRunning, pool starvation causes the await to
-        // block past the test deadline even though the body is trivial.
-        var preAsyncTask = global::Whizbang.Core.Workers.BackgroundStageDispatch.StartLongRunning(async () => {
-          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
-          var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
-          }
-        }, cancellationToken);
-        backgroundTasks.Add(preAsyncTask);
+        // Slice 30A — gate the dedicated-OS-thread spawn on the source-gen receptor registry.
+        // When no receptor is registered for PrePerspectiveDetached on this event type the
+        // spawn is pure overhead: BackgroundStageDispatch.StartLongRunning creates an OS
+        // thread via TaskCreationOptions.LongRunning (~5-10 ms on Linux), and the drain
+        // awaits this task via backgroundTasks below. JDX run 21 PERF data showed the spawn
+        // dominates per-drain wall time on perspectives with no Pre/Post detached receptors
+        // registered. Tag dispatch fires from the inline path below so skipping the spawn
+        // does not lose tag side-effects.
+        if (global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveDetached, firstEnvelopeTypeName)) {
+          // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing).
+          // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
+          // (pooled thread) so this stage isn't starved when the ThreadPool is saturated by EF
+          // continuations + transport callbacks during heavy processing. This invocation IS awaited
+          // via backgroundTasks below — without LongRunning, pool starvation causes the await to
+          // block past the test deadline even though the body is trivial.
+          var preAsyncTask = global::Whizbang.Core.Workers.BackgroundStageDispatch.StartLongRunning(async () => {
+            await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+            var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
+            }
+          }, cancellationToken);
+          backgroundTasks.Add(preAsyncTask);
+        }
 
-        // Fire INLINE hooks (blocking, transactional)
-        {
+        // Slice 30A — same gate for inline PrePerspective. Inline cost is lower (no OS thread
+        // spawn) but still includes a DI scope creation + IReceptorInvoker lookup + security
+        // context establishment. Skip when no inline receptors are registered.
+        if (global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveInline, firstEnvelopeTypeName)) {
+          // Fire INLINE hooks (blocking, transactional)
           await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
           if (receptorInvoker is not null) {
@@ -464,6 +478,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
         // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally
         foreach (var envelope in processedEvents) {
+          // Slice 30A — gate the per-event PostPerspectiveDetached OS-thread spawn on the
+          // receptor registry. JDX run 21 PERF data showed per-event spawn cost dominates
+          // multi-event drains: e.g. a 44-event batch would otherwise spawn 44 dedicated
+          // OS threads even when no Post receptor is registered for the perspective's
+          // event types. The HasReceptors lookup is a HashSet contains check (~50 ns) vs
+          // the ~5-10 ms thread spawn it replaces.
+          var envelopeTypeName = envelope.Payload.GetType().FullName ?? string.Empty;
+          if (!global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PostPerspectiveDetached, envelopeTypeName)) {
+            continue;
+          }
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveDetached,
             StreamId = streamId,
