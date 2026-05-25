@@ -39,8 +39,10 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly INotificationConnectionStringFallback? _connectionStringFallback;
   private readonly ILogger<PgSharedNotifyConnection> _logger;
+  private readonly TimeProvider _timeProvider;
   private readonly NotifySubscriptionRegistry _registry = new();
   private readonly Lock _connectionGate = new();
+  private readonly Lock _availabilityGate = new();
   private NpgsqlConnection? _connection;
   private bool _isAvailable;
   private DateTimeOffset? _lastVerifiedAt;
@@ -53,12 +55,14 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     IConfiguration configuration,
     IServiceInstanceProvider instanceProvider,
     ILogger<PgSharedNotifyConnection>? logger = null,
-    INotificationConnectionStringFallback? connectionStringFallback = null) {
+    INotificationConnectionStringFallback? connectionStringFallback = null,
+    TimeProvider? timeProvider = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _logger = logger ?? NullLogger<PgSharedNotifyConnection>.Instance;
     _connectionStringFallback = connectionStringFallback;
+    _timeProvider = timeProvider ?? TimeProvider.System;
   }
 
   /// <inheritdoc />
@@ -74,12 +78,106 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
 
   /// <inheritdoc />
   /// <remarks>
-  /// Slice 33.1 — without the probe, "ProbeNow" is a no-op that reports the current
-  /// connection-open state. The real probe arrives in slice 33.2.
+  /// Slice 33.2 — opens an ephemeral connection, issues <c>LISTEN</c> on a single-use
+  /// self-test channel, emits <c>pg_notify</c> via a second ephemeral connection, and waits
+  /// up to <see cref="WhizbangNotificationOptions.SelfTestTimeout"/> for the notification.
+  /// Updates <see cref="IsAvailable"/> based on the result. Runs INDEPENDENTLY of the
+  /// BackgroundService's main loop so ops can force a re-test ("we just fixed the network")
+  /// without waiting for the periodic reprobe schedule.
   /// </remarks>
-  public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) {
+  public async Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) {
     cancellationToken.ThrowIfCancellationRequested();
-    return Task.FromResult(_isAvailable);
+    var resolution = NotificationConnectionStringResolver.Resolve(
+      _options, _configuration, _connectionStringFallback);
+    if (resolution.ConnectionString is null) {
+      _setAvailable(false, "no connection string resolvable");
+      return false;
+    }
+    try {
+      await using var conn = new NpgsqlConnection(resolution.ConnectionString);
+      await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+      // Pass the original resolved string (not conn.ConnectionString — Npgsql strips the
+      // password from that after Open for security, so a second connection built from it
+      // can't authenticate).
+      var ok = await _runProbeAsync(conn, resolution.ConnectionString, cancellationToken).ConfigureAwait(false);
+      _setAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
+      return ok;
+    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+      _setAvailable(false, "ProbeNowAsync timed out");
+      return false;
+    } catch (Exception ex) {
+      _setAvailable(false, ex.Message);
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Performs the LISTEN + NOTIFY-via-second-conn + wait-with-timeout round-trip. Returns
+  /// <c>true</c> when the notification arrived within <see cref="WhizbangNotificationOptions.SelfTestTimeout"/>.
+  /// Caller is responsible for updating <see cref="IsAvailable"/> based on the result.
+  /// </summary>
+  /// <param name="conn">The LISTENing connection (kept open across the probe).</param>
+  /// <param name="connectionString">Original resolved connection string. The NOTIFY side opens a fresh
+  /// connection from this — must be the original (with credentials) because Npgsql strips the
+  /// password from <see cref="NpgsqlConnection.ConnectionString"/> after Open for security.</param>
+  /// <param name="ct">Caller cancellation.</param>
+  private async Task<bool> _runProbeAsync(NpgsqlConnection conn, string connectionString, CancellationToken ct) {
+    // Nonce uses 8 hex chars of a fresh UUIDv7 — plenty of entropy for a 2 s self-test
+    // window while keeping the channel name short. Per `feedback_use_trackedguid`.
+    var nonce = global::Whizbang.Core.ValueObjects.TrackedGuid.NewMedo().Value.ToString("N")[..12];
+    var channelName = $"wh_selftest_{_instanceProvider.InstanceId:N}_{nonce}";
+    var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    void Handler(object? sender, NpgsqlNotificationEventArgs e) {
+      if (string.Equals(e.Channel, channelName, StringComparison.Ordinal)) {
+        signal.TrySetResult();
+      }
+    }
+
+    conn.Notification += Handler;
+    try {
+      await using (var listenCmd = new NpgsqlCommand($"LISTEN \"{channelName}\"", conn)) {
+        await listenCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+      }
+
+      // Emit NOTIFY on a separate connection. Postgres's LISTENing backend doesn't observe
+      // its own pre-commit NOTIFY on the same backend (would require the emitting tx to
+      // commit first, which is a chicken-and-egg for a long-lived LISTEN session). The
+      // original connection string carries credentials; conn.ConnectionString strips the
+      // password after Open and would fail SASL/SCRAM auth.
+      await using (var notifyConn = new NpgsqlConnection(connectionString)) {
+        await notifyConn.OpenAsync(ct).ConfigureAwait(false);
+        await using var notifyCmd = new NpgsqlCommand("SELECT pg_notify(@channel, 'ping')", notifyConn);
+        notifyCmd.Parameters.AddWithValue("@channel", channelName);
+        _ = await notifyCmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+      }
+
+      // Drive WaitAsync so Npgsql delivers the notification to our handler. Timeout via
+      // a linked CTS gives the SelfTestTimeout-bounded wait.
+      //
+      // WaitAsync returns as soon as ANY async message arrives — that includes the
+      // notification we expect, but also backend chatter (NoticeResponse, ParameterStatus,
+      // etc.) that fires between LISTEN and our NOTIFY. We must loop until either our
+      // specific signal arrives (handler set the TCS) or the timeout fires.
+      using var timeoutCts = new CancellationTokenSource(_options.SelfTestTimeout, _timeProvider);
+      using var combined = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+      while (!signal.Task.IsCompletedSuccessfully && !combined.Token.IsCancellationRequested) {
+        try {
+          await conn.WaitAsync(combined.Token).ConfigureAwait(false);
+        } catch (OperationCanceledException) when (combined.Token.IsCancellationRequested) {
+          break;
+        }
+      }
+      return signal.Task.IsCompletedSuccessfully;
+    } finally {
+      conn.Notification -= Handler;
+      try {
+        await using var unlistenCmd = new NpgsqlCommand($"UNLISTEN \"{channelName}\"", conn);
+        await unlistenCmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+      } catch {
+        // Best-effort cleanup; if UNLISTEN fails the channel goes away with the conn anyway.
+      }
+    }
   }
 
   /// <inheritdoc />
@@ -168,6 +266,18 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
           await cmd.ExecuteNonQueryAsync(stoppingToken).ConfigureAwait(false);
         }
 
+        // Slice 33.2 — gate IsAvailable behind a real round-trip probe rather than just
+        // "connection opened." Probe failure (timeout, error) means the conn is open but
+        // NOTIFYs aren't actually flowing — could be pgbouncer in tx-pooling mode, broken
+        // producer SQL, or a network partition affecting NOTIFY traffic. Treat as a failure
+        // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
+        var probeOk = await _runProbeAsync(conn, connectionString, stoppingToken).ConfigureAwait(false);
+        if (!probeOk) {
+          _setAvailable(false, "self-test probe round-trip failed");
+          throw new InvalidOperationException(
+            "Self-test probe failed: connection opened but pg_notify round-trip did not arrive within SelfTestTimeout.");
+        }
+
         attempt = 0;
         _setAvailable(true, failureReason: null);
         var channelCount = _registry.AllChannels().Count;
@@ -210,23 +320,38 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   }
 
   private void _setAvailable(bool available, string? failureReason) {
-    if (_isAvailable == available) {
-      return;
+    bool fire;
+    lock (_availabilityGate) {
+      // ProbeNowAsync can run concurrently with the BackgroundService loop's probe; both
+      // call _setAvailable. Guard the transition so OnAvailabilityChanged fires exactly
+      // once per actual change.
+      fire = _isAvailable != available;
+      _isAvailable = available;
+      var now = _timeProvider.GetUtcNow();
+      if (available) {
+        _lastVerifiedAt = now;
+      } else {
+        _lastFailureAt = now;
+        _lastFailureReason = failureReason;
+      }
     }
-    _isAvailable = available;
-    if (available) {
-      _lastVerifiedAt = DateTimeOffset.UtcNow;
-    } else {
-      _lastFailureAt = DateTimeOffset.UtcNow;
-      _lastFailureReason = failureReason;
+    if (fire) {
+      OnAvailabilityChanged?.Invoke(available);
     }
-    OnAvailabilityChanged?.Invoke(available);
   }
 
   private TimeSpan _computeBackoff(int attempt) {
     var ms = _options.ListenReconnectInitialDelay.TotalMilliseconds
       * Math.Pow(_options.ListenReconnectBackoffMultiplier, attempt - 1);
-    return TimeSpan.FromMilliseconds(Math.Min(ms, _options.ListenReconnectMaxDelay.TotalMilliseconds));
+    var capped = Math.Min(ms, _options.ListenReconnectMaxDelay.TotalMilliseconds);
+    // Slice 33.2 — after FailuresBeforeFallback consecutive failures, stretch the retry
+    // cadence to PeriodicReprobeInterval. The shorter ListenReconnectMaxDelay is right for
+    // transient network blips; the longer PeriodicReprobeInterval is right for "the system
+    // is fundamentally not working right now, check less often."
+    if (attempt >= _options.FailuresBeforeFallback) {
+      capped = Math.Max(capped, _options.PeriodicReprobeInterval.TotalMilliseconds);
+    }
+    return TimeSpan.FromMilliseconds(capped);
   }
 
   // Test hook — internal accessor for the registry so tests can introspect subscription state
