@@ -1240,6 +1240,7 @@ public partial class PerspectiveWorker(
       timeProvider: _timeProvider,
       linkedTokens: [ct]);
 
+    var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
     try {
       await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
         PerspectiveCursorCompletion result;
@@ -1284,11 +1285,19 @@ public partial class PerspectiveWorker(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
         }
 
+        // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
+        // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
+        // completion-enqueue + signaler. Surfaces the per-drain cost dominant when bff drains
+        // at ~40 events/sec despite 4×30 concurrency configured.
+        var runnerEndTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        var runnerMs = (runnerEndTicks - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
         if (result.Status == PerspectiveProcessingStatus.Completed) {
           var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
           await _applyDrainModePerspectiveCompletionAsync(
             streamCtx, filteredEvents, result, batchContext, leaseCt);
         }
+        var completionMs = (System.Diagnostics.Stopwatch.GetTimestamp() - runnerEndTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
         await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, leaseCt);
 
@@ -1312,6 +1321,18 @@ public partial class PerspectiveWorker(
         _metrics?.StreamsUpdated.Add(1);
         if (filteredEvents.Count > 0) {
           _metrics?.EventsProcessed.Add(filteredEvents.Count);
+        }
+
+        // Slice 29 instrumentation: emit per-drain perf breakdown when we processed >= 5 events
+        // or the drain took more than 100ms. Surfaces whether per-drain time scales with event
+        // count (apply is the cost) or is fixed-per-call (lifecycle / DI scope is the cost).
+        var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        if (filteredEvents.Count >= 5 || totalMs > 100) {
+#pragma warning disable CA1848
+          _logger.LogWarning(
+            "PERF Drain {Perspective} stream {StreamId}: events={EventCount} total={TotalMs:F0}ms runner={RunnerMs:F0}ms completion={CompletionMs:F0}ms cooled={Cooled}",
+            perspectiveName, streamId, filteredEvents.Count, totalMs, runnerMs, completionMs, cooledEvents.Count);
+#pragma warning restore CA1848
         }
       });
     } catch (OperationCanceledException) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {

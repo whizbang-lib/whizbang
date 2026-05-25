@@ -391,6 +391,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Unit of Work: Save model + checkpoint ONCE at end
       if (eventsProcessed > 0) {
+        // Slice 29 instrumentation: capture SaveModelAndCheckpoint + Flush wall time. a consumer run
+        // 20 measured ~40 events/sec drain on bff despite 4×30 concurrency configured — need
+        // to know whether DB write or in-memory apply or lifecycle dominates per drain.
+        var saveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         if (pendingPurge) {
           // Hard delete: Remove model from database entirely
           await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
@@ -416,6 +420,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // but we need to ensure the same DbContext is flushed before PostPerspectiveInline fires.
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
+        var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - saveStartTicks)
+          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        if (saveMs > 50 || eventsProcessed >= 10) {
+          _logger.LogWarning(
+            "PERF SaveModelAndCheckpoint {PerspectiveName} stream {StreamId}: {EventCount} events in {SaveMs:F1}ms ({MsPerEvent:F2}ms/evt)",
+            perspectiveName, streamId, eventsProcessed, saveMs, saveMs / eventsProcessed);
+        }
 
         _logger.LogDebug(
             "Successfully processed {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
