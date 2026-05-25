@@ -22,6 +22,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
+  private readonly INotifySignalingGate? _signalingGate;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IWorkChannelWriter? _outboxChannel;
   private readonly IInboxChannelWriter? _inboxChannel;
@@ -48,11 +49,13 @@ public sealed partial class ClaimWorker : BackgroundService {
     IPerspectiveChannelWriter? perspectiveChannel = null,
     IPerspectiveDrainChannel? perspectiveDrainChannel = null,
     IOutboxDrainChannel? outboxDrainChannel = null,
-    IInboxDrainChannel? inboxDrainChannel = null) {
+    IInboxDrainChannel? inboxDrainChannel = null,
+    INotifySignalingGate? signalingGate = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _notificationListener = notificationListener ?? throw new ArgumentNullException(nameof(notificationListener));
+    _signalingGate = signalingGate;
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -65,6 +68,13 @@ public sealed partial class ClaimWorker : BackgroundService {
 
     // Subscribe to outbox/inbox signals only — perspective signals route to PerspectiveProcessWorker.
     _notificationListener.OnSignal += _onSignal;
+
+    // Slice 33.6 — pick up the gate's availability transitions so a polling-to-NOTIFY-available
+    // recovery immediately polls (any work that accumulated during the unavailable window
+    // would otherwise wait for the next backoff tick).
+    if (_signalingGate is not null) {
+      _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
+    }
 
     // Wake immediately when a strategy persists new outbox/inbox rows — eliminates the
     // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that
@@ -82,6 +92,14 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox) {
       RequestImmediatePoll();
     }
+  }
+
+  private void _onGateAvailabilityChanged(bool nowAvailable) {
+    // Slice 33.6 — on either transition (available → unavailable OR unavailable → available)
+    // wake the poll loop immediately. Unavailable→available: drain any work that accumulated
+    // during the unavailable window. Available→unavailable: shorten the next wait cycle so
+    // we start tight-polling without waiting out the current adaptive backoff.
+    RequestImmediatePoll();
   }
 
   /// <summary>
@@ -262,6 +280,14 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   private int _computeAdaptivePollWaitMs() {
     var baseMs = _options.PollingIntervalMilliseconds;
+    // Slice 33.6 — when the gate has flipped NOTIFY availability to false, the listener
+    // won't wake us when work arrives, so we MUST keep polling at the tight base cadence
+    // (do not let the adaptive backoff stretch out to PollingMaxIntervalMilliseconds —
+    // that would silently increase latency to up to 10 s while NOTIFY is broken).
+    // When the gate isn't wired (null), preserve the pre-slice-33 behavior.
+    if (_signalingGate is not null && !_signalingGate.IsAvailable) {
+      return baseMs;
+    }
     var maxMs = _options.PollingMaxIntervalMilliseconds;
     var empty = Volatile.Read(ref _consecutiveEmptyPolls);
     if (maxMs <= baseMs || empty <= 0) {
