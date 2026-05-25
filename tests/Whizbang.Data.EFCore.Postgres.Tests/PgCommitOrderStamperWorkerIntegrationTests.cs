@@ -49,10 +49,22 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       DisableStamper = disable,
     };
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    // Slice 33.5 — use a real PgSharedNotifyConnection for the wh_committed LISTEN. Tests
+    // that exercise the NOTIFY-fired wake path also need to start the shared conn so its
+    // dispatch loop is running.
+    var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(config);
+    var shared = new PgSharedNotifyConnection(
+      Options.Create(notificationOptions),
+      config,
+      instanceProvider,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
     return new PgCommitOrderStamperWorker(
       Options.Create(notificationOptions),
       Options.Create(stamperOptions),
       config,
+      shared,
       NullLogger<PgCommitOrderStamperWorker>.Instance);
   }
 
