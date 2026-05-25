@@ -61,7 +61,18 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       IConfigureOptions<WhizbangNotificationOptions>,
       ConfigureWhizbangNotificationOptionsFromConfiguration>());
 
-    // Replace the NoOp listener registered by AddWhizbangWorkers with the real one.
+    // Slice 33 — shared direct connection: ONE NpgsqlConnection per pod multiplexes
+    // every per-channel subscription. PgSharedNotifyConnection is the singleton that
+    // implements both INotifySignalingGate (killswitch + functionality probe) and
+    // ISharedNotifyConnection (subscription registry + dispatch).
+    services.TryAddSingleton<PgSharedNotifyConnection>();
+    services.AddSingleton<INotifySignalingGate>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+    services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+    services.AddHostedService(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+
+    // Replace the NoOp listener registered by AddWhizbangWorkers with the real one — but
+    // the listener is now a thin subscriber. It subscribes via the shared connection in
+    // its IHostedService.StartAsync.
     services.RemoveAll<IWorkNotificationListener>();
     services.TryAddSingleton<PgWorkNotificationListener>();
     services.AddSingleton<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());

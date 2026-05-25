@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -88,13 +89,19 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
 
     var listenerConfig = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var listenerInstanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(listenerConfig);
-    var listener = new PgWorkNotificationListener(
-      Options.Create(new WhizbangNotificationOptions {
-        DirectConnectionString = ConnectionString,
-        SignalingMode = WorkSignalingMode.ListenNotify
-      }),
+    var listenerOptions = new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify
+    };
+    var sharedConn = new PgSharedNotifyConnection(
+      Options.Create(listenerOptions),
       listenerConfig,
       listenerInstanceProvider,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
+    var listener = new PgWorkNotificationListener(
+      sharedConn, sharedConn, listenerInstanceProvider,
       NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
@@ -109,7 +116,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<ClaimWorker>.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await listener.StartAsync(cts.Token);
+    await ((IHostedService)sharedConn).StartAsync(cts.Token);
+    // Wait for the shared conn's startup probe to succeed before subscribing the listener.
+    var probeDeadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!sharedConn.IsAvailable && DateTimeOffset.UtcNow < probeDeadline) { await Task.Delay(50); }
+    await ((IHostedService)listener).StartAsync(cts.Token);
     await worker.StartAsync(cts.Token);
 
     // Wait until both the listener is healthy AND the first claim cycle has fired.
@@ -144,6 +155,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       .Because("the wake-fired tick must land before the 5s polling interval would have");
 
     await worker.StopAsync(CancellationToken.None);
-    await listener.StopAsync(CancellationToken.None);
+    await ((IHostedService)listener).StopAsync(CancellationToken.None);
+    await ((IHostedService)sharedConn).StopAsync(CancellationToken.None);
   }
 }
