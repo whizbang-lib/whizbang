@@ -35,10 +35,22 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
 
   private PgAppSignalChannel _newChannel(WhizbangNotificationOptions? options = null) {
+    var opts = options ?? new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
+    // Slice 33.5 — Publish-only callers can pass a no-op shared connection since Publish
+    // doesn't route through it. Receive-side tests below use a real PgSharedNotifyConnection.
+    var noOpShared = new NoOpSharedConnection();
     return new PgAppSignalChannel(
-      Options.Create(options ?? new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
-      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      Options.Create(opts),
+      cfg,
+      noOpShared,
       NullLogger<PgAppSignalChannel>.Instance);
+  }
+
+  private sealed class NoOpSharedConnection : ISharedNotifyConnection {
+    public IDisposable Subscribe(INotifySubscription subscription) => new NoOpDisposable();
+    private sealed class NoOpDisposable : IDisposable { public void Dispose() { } }
   }
 
   [Test]
@@ -88,23 +100,89 @@ public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
-  [Skip("Known gap — see class remarks. PgAppSignalChannel.Subscribe registers handlers, but PgAppSignalChannel.Dispatch is never called from anywhere — no listener routes wh_app_* notifications to handlers. Will fail until the subscribe path is wired (extend PgWorkNotificationListener to LISTEN on additional channels, or add a sibling listener).")]
-  public async Task SubscribePathNotWired_IsKnownGapAsync() {
-    // Documents the gap: a subscriber receives nothing today even though publish works.
+  public async Task SubscribeAndPublish_RoundTripsViaSharedConnectionAsync() {
+    // Slice 33.5 — the gap is now closed: PgAppSignalChannel.Subscribe registers an
+    // INotifySubscription against the shared connection. Publish emits pg_notify on
+    // wh_app_<topic>, the shared conn's dispatch loop delivers, the in-memory handler
+    // fan-out fires.
     const string topic = "myapp_topic";
-    var channel = _newChannel();
-    var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var opts = new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+    };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
+    using var shared = new PgSharedNotifyConnection(
+      Options.Create(opts), cfg, instance,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
+    var channel = new PgAppSignalChannel(
+      Options.Create(opts), cfg, shared, NullLogger<PgAppSignalChannel>.Instance);
 
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    await ((Microsoft.Extensions.Hosting.IHostedService)shared).StartAsync(cts.Token);
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(50, cts.Token);
+    }
+    await Assert.That(shared.IsAvailable).IsTrue();
+
+    var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var subscription = channel.Subscribe(topic, (payload, _) => {
       received.TrySetResult(payload);
       return Task.CompletedTask;
     });
 
+    // Wait for the resync-signal to land the LISTEN on the shared conn before publishing.
+    await Task.Delay(200, cts.Token);
+
     await channel.PublishAsync(topic, "should-be-delivered");
 
-    // Today this would time out — Dispatch is never invoked. Skipped with [Skip] so the
-    // suite stays green while the gap is documented and discoverable.
-    var raced = await Task.WhenAny(received.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    await Assert.That(received.Task.IsCompleted).IsTrue();
+    var payload = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(payload).IsEqualTo("should-be-delivered");
+
+    await ((Microsoft.Extensions.Hosting.IHostedService)shared).StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Subscribe_MultipleHandlersOnSameTopic_AllReceiveDeliveriesAsync() {
+    const string topic = "myapp_fanout";
+    var opts = new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+    };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
+    using var shared = new PgSharedNotifyConnection(
+      Options.Create(opts), cfg, instance,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
+    var channel = new PgAppSignalChannel(
+      Options.Create(opts), cfg, shared, NullLogger<PgAppSignalChannel>.Instance);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    await ((Microsoft.Extensions.Hosting.IHostedService)shared).StartAsync(cts.Token);
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(50, cts.Token);
+    }
+
+    var a = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var b = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var subA = channel.Subscribe(topic, (p, _) => { a.TrySetResult(p); return Task.CompletedTask; });
+    using var subB = channel.Subscribe(topic, (p, _) => { b.TrySetResult(p); return Task.CompletedTask; });
+
+    await Task.Delay(200, cts.Token);
+
+    await channel.PublishAsync(topic, "fanout-payload");
+
+    var resA = await a.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var resB = await b.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(resA).IsEqualTo("fanout-payload");
+    await Assert.That(resB).IsEqualTo("fanout-payload");
+
+    await ((Microsoft.Extensions.Hosting.IHostedService)shared).StopAsync(CancellationToken.None);
   }
 }

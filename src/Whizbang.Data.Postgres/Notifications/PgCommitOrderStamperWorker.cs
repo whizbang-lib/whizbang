@@ -17,13 +17,22 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// Wake sources:
 /// </para>
 /// <list type="bullet">
-/// <item><description><strong>LISTEN <c>wh_committed</c></strong> — sub-ms wake from
-/// <c>_emit_event_store_chain</c> at commit time. Activated only when a direct
-/// connection is resolved (i.e. NOT pgbouncer-pooled).</description></item>
+/// <item><description><strong>Shared-conn LISTEN <c>wh_committed</c></strong> — sub-ms wake from
+/// <c>_emit_event_store_chain</c> at commit time. Routed through
+/// <see cref="ISharedNotifyConnection"/> (slice 33.5) instead of a dedicated direct connection
+/// so all per-pod LISTEN traffic multiplexes onto one direct Postgres connection.</description></item>
 /// <item><description><strong>Polling tick</strong> — <see cref="CommitOrderStamperOptions.PollingInterval"/>.
 /// Correctness floor; runs unconditionally on the lock-holder, so the system stamps
-/// even when LISTEN is unavailable.</description></item>
+/// even when LISTEN is unavailable (gate reports IsAvailable=false → wake won't fire from
+/// NOTIFY; polling tick keeps stamping anyway).</description></item>
 /// </list>
+///
+/// <para>
+/// The advisory lock is still held on a dedicated short-lived connection — not the shared
+/// conn — because the lock is session-scoped and would pin the shared conn for the worker's
+/// entire leader tenure. That's incompatible with the shared conn's role as the per-pod
+/// multiplexer.
+/// </para>
 ///
 /// <para>
 /// Restart safety: the advisory lock is session-scoped, so a crash auto-releases.
@@ -35,16 +44,19 @@ public sealed partial class PgCommitOrderStamperWorker(
   IOptions<WhizbangNotificationOptions> notificationOptions,
   IOptions<CommitOrderStamperOptions> stamperOptions,
   IConfiguration configuration,
+  ISharedNotifyConnection sharedConnection,
   ILogger<PgCommitOrderStamperWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+  private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
 
   private const string CHANNEL_NAME = "wh_committed";
+  private readonly SemaphoreSlim _wake = new(initialCount: 1, maxCount: 1);
   private bool _isLeader;
   private int _totalStamped;
 
@@ -75,6 +87,13 @@ public sealed partial class PgCommitOrderStamperWorker(
 
     LogStarted(_logger, resolution.Source);
 
+    // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
+    // worker lifetime. Even when this pod isn't the leader, the subscription is harmless;
+    // the wake semaphore saturates at maxCount=1 and the stamping loop never starts so
+    // no-op. When this pod IS the leader, the wake fires sub-ms on each committed event.
+    var subscription = new CommitNotificationSubscription(this);
+    using var subscriptionHandle = _sharedConnection.Subscribe(subscription);
+
     while (!stoppingToken.IsCancellationRequested) {
       NpgsqlConnection? lockConn = null;
       try {
@@ -91,36 +110,20 @@ public sealed partial class PgCommitOrderStamperWorker(
 
         _setLeader(true);
 
-        // Wake semaphore: signaled by NOTIFY listener AND polling tick. The loop drains
-        // it; if multiple signals arrived between iterations, one stamp call clears them all.
-        var wake = new SemaphoreSlim(initialCount: 1, maxCount: 1);
-        void onNotification(object? sender, NpgsqlNotificationEventArgs e) {
-          if (string.Equals(e.Channel, CHANNEL_NAME, StringComparison.Ordinal)) {
-            try { _ = wake.Release(); } catch (SemaphoreFullException) { /* already saturated, fine */ }
-          }
-        }
-
-        lockConn.Notification += onNotification;
-        await using (var listenCmd = new NpgsqlCommand($"LISTEN {CHANNEL_NAME}", lockConn)) {
-          await listenCmd.ExecuteNonQueryAsync(stoppingToken);
-        }
-
         try {
           while (!stoppingToken.IsCancellationRequested) {
-            // Wait for NOTIFY or polling-interval timeout. Either path fires the same stamp.
+            // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
+            // the same stamp.
             try {
-              _ = await wake.WaitAsync(_stamperOptions.PollingInterval, stoppingToken);
+              _ = await _wake.WaitAsync(_stamperOptions.PollingInterval, stoppingToken);
             } catch (OperationCanceledException) { break; }
-
-            // Drain any pending notifications so the next wait blocks on fresh signals.
-            await _pollPendingNotificationsAsync(lockConn, stoppingToken);
 
             var stamped = await _stampOnceAsync(lockConn, stoppingToken);
             _ = Interlocked.Add(ref _totalStamped, stamped);
             OnStampCompleted?.Invoke(stamped);
           }
-        } finally {
-          lockConn.Notification -= onNotification;
+        } catch (OperationCanceledException) {
+          // shutdown — fall through to finally
         }
       } catch (OperationCanceledException) {
         break;
@@ -140,6 +143,20 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Fires the wake semaphore from the shared-conn dispatch path. Called by
+  /// <see cref="CommitNotificationSubscription.OnNotification"/> on every wh_committed
+  /// notification. Idempotent saturation — overlapping NOTIFYs collapse to a single
+  /// pending wake.
+  /// </summary>
+  internal void Wake() {
+    try {
+      _ = _wake.Release();
+    } catch (SemaphoreFullException) {
+      // Already a wake pending — fine, the loop will pick up both at once.
+    }
   }
 
   private async Task<bool> _tryAcquireLeaderLockAsync(NpgsqlConnection conn, CancellationToken ct) {
@@ -162,17 +179,6 @@ public sealed partial class PgCommitOrderStamperWorker(
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
-  private static async Task _pollPendingNotificationsAsync(NpgsqlConnection conn, CancellationToken ct) {
-    // Force a network roundtrip so any pending NOTIFY messages dispatch to the handler
-    // before we proceed. Without this, NOTIFYs received during the WaitAsync timeout
-    // could remain queued on the connection until the next command — fine in practice
-    // but cleaner to drain explicitly.
-    try {
-      await using var ping = new NpgsqlCommand("SELECT 1", conn);
-      _ = await ping.ExecuteScalarAsync(ct);
-    } catch (OperationCanceledException) { /* shutdown */ }
-  }
-
   private void _setLeader(bool isLeader) {
     if (_isLeader == isLeader) { return; }
     _isLeader = isLeader;
@@ -182,6 +188,11 @@ public sealed partial class PgCommitOrderStamperWorker(
     } else {
       LogReleasedLeader(_logger);
     }
+  }
+
+  private sealed class CommitNotificationSubscription(PgCommitOrderStamperWorker owner) : INotifySubscription {
+    public string ChannelName => CHANNEL_NAME;
+    public void OnNotification(string payload) => owner.Wake();
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker disabled by DisableStamper=true")]
