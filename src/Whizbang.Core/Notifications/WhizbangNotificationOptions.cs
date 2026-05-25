@@ -91,4 +91,31 @@ public sealed class WhizbangNotificationOptions {
 
   /// <summary>Exponential growth factor for reconnect backoff. Default 2.0.</summary>
   public double ListenReconnectBackoffMultiplier { get; set; } = 2.0;
+
+  /// <summary>
+  /// Slice 33.2 — round-trip timeout for the gate's self-test probe. After opening the shared
+  /// direct connection, the gate <c>LISTEN</c>s a single-use self-test channel, emits a
+  /// <c>pg_notify</c> via an ephemeral second connection, and waits up to this duration for
+  /// the notification to land. A timeout flips <see cref="INotifySignalingGate.IsAvailable"/>
+  /// to <c>false</c> and schedules a reprobe (see <see cref="PeriodicReprobeInterval"/>).
+  /// Default 2 s — long enough for any healthy local-Postgres / pgbouncer-direct round-trip,
+  /// short enough that misconfigs surface quickly at startup.
+  /// </summary>
+  public TimeSpan SelfTestTimeout { get; set; } = TimeSpan.FromSeconds(2);
+
+  /// <summary>
+  /// Slice 33.2 — cadence at which the gate re-probes while <c>IsAvailable</c> is <c>false</c>.
+  /// Default 5 min — covers transient network blips + pgbouncer config errors that get fixed
+  /// out-of-band without permanently locking the system into polling-only mode.
+  /// </summary>
+  public TimeSpan PeriodicReprobeInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+  /// <summary>
+  /// Slice 33.2 — consecutive reconnect / probe failures tolerated before the gate flips
+  /// <c>IsAvailable</c> to <c>false</c> and falls back to polling. Producer-side <c>pg_notify</c>
+  /// is still emitted (cheap), but consumer-side <c>ClaimWorker</c> stops waiting for signals.
+  /// Default 5 — modest tolerance for transient blips before declaring NOTIFY broken for this
+  /// process.
+  /// </summary>
+  public int FailuresBeforeFallback { get; set; } = 5;
 }
