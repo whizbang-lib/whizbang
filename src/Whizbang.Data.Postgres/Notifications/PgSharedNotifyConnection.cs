@@ -43,7 +43,13 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   private readonly NotifySubscriptionRegistry _registry = new();
   private readonly Lock _connectionGate = new();
   private readonly Lock _availabilityGate = new();
+  private readonly HashSet<string> _listenedChannels = new(StringComparer.Ordinal);
   private NpgsqlConnection? _connection;
+  // Slice 33.3 — Subscribe wakes the dispatch loop by cancelling this CTS so the next
+  // iteration can issue LISTEN for the newly-registered channel. The dispatch loop holds
+  // the shared conn via WaitAsync, so we can't issue LISTEN from Subscribe directly —
+  // NpgsqlConnection isn't thread-safe and a concurrent command would throw.
+  private CancellationTokenSource? _resyncSignal;
   private bool _isAvailable;
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
@@ -185,43 +191,66 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     ArgumentNullException.ThrowIfNull(subscription);
     var wasFirst = _registry.Add(subscription);
     if (wasFirst) {
-      _ = _issueListenIfConnectedAsync(subscription.ChannelName);
+      _signalResync();
     }
     return new SubscriptionHandle(this, subscription);
   }
 
-  private async Task _issueListenIfConnectedAsync(string channelName) {
-    NpgsqlConnection? conn;
-    lock (_connectionGate) {
-      conn = _connection;
-    }
-    if (conn is null || conn.State != System.Data.ConnectionState.Open) {
-      // Will be LISTENed during the next ExecuteAsync open cycle. No-op here.
-      return;
+  /// <summary>
+  /// Slice 33.3 — wakes the dispatch loop so it can sync LISTEN/UNLISTEN state with the
+  /// registry. NpgsqlConnection isn't thread-safe; issuing LISTEN directly from Subscribe
+  /// while the dispatch loop holds the conn via WaitAsync would throw. Instead we cancel
+  /// the loop's wait token so it unwinds, calls _syncListensAsync, and resumes WaitAsync.
+  /// </summary>
+  private void _signalResync() {
+    var cts = Volatile.Read(ref _resyncSignal);
+    if (cts is null) {
+      return;  // Dispatch loop not currently waiting; next iteration will sync naturally.
     }
     try {
-      await using var cmd = new NpgsqlCommand($"LISTEN \"{channelName}\"", conn);
-      await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-      LogChannelListened(_logger, channelName);
-    } catch (Exception ex) {
-      LogListenFailed(_logger, channelName, ex);
+      cts.Cancel();
+    } catch (ObjectDisposedException) {
+      // Loop already moved past this iteration; signal is now stale. The fresh iteration
+      // will sync from registry state regardless.
     }
   }
 
-  private async Task _unlistenIfConnectedAsync(string channelName) {
-    NpgsqlConnection? conn;
-    lock (_connectionGate) {
-      conn = _connection;
+  /// <summary>
+  /// Issues LISTEN for every channel in the registry not yet covered, and UNLISTEN for any
+  /// channel that's covered but no longer in the registry. Idempotent — safe to call
+  /// repeatedly. MUST be called from the dispatch loop's stack so it has exclusive access
+  /// to the shared conn (no overlapping WaitAsync).
+  /// </summary>
+  private async Task _syncListensAsync(NpgsqlConnection conn, CancellationToken ct) {
+    var registryChannels = new HashSet<string>(_registry.AllChannels(), StringComparer.Ordinal);
+    // Add channels missing from the live set
+    foreach (var channel in registryChannels) {
+      if (_listenedChannels.Contains(channel)) {
+        continue;
+      }
+      try {
+        await using var listenCmd = new NpgsqlCommand($"LISTEN \"{channel}\"", conn);
+        await listenCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        _listenedChannels.Add(channel);
+        LogChannelListened(_logger, channel);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogListenFailed(_logger, channel, ex);
+      }
     }
-    if (conn is null || conn.State != System.Data.ConnectionState.Open) {
-      return;
-    }
-    try {
-      await using var cmd = new NpgsqlCommand($"UNLISTEN \"{channelName}\"", conn);
-      await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-      LogChannelUnlistened(_logger, channelName);
-    } catch (Exception ex) {
-      LogUnlistenFailed(_logger, channelName, ex);
+    // Remove channels that are no longer in registry (last subscriber went away).
+    // Iterate over a snapshot — _listenedChannels mutates as we go.
+    foreach (var channel in _listenedChannels.ToArray()) {
+      if (registryChannels.Contains(channel)) {
+        continue;
+      }
+      try {
+        await using var unlistenCmd = new NpgsqlCommand($"UNLISTEN \"{channel}\"", conn);
+        await unlistenCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        _listenedChannels.Remove(channel);
+        LogChannelUnlistened(_logger, channel);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogUnlistenFailed(_logger, channel, ex);
+      }
     }
   }
 
@@ -251,20 +280,29 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     while (!stoppingToken.IsCancellationRequested) {
       try {
         await using var conn = new NpgsqlConnection(connectionString);
+        // Slice 33.3 — attach the persistent dispatch handler BEFORE opening so any
+        // notifications that arrive immediately after LISTEN issue are observed. The
+        // handler routes by channel name into the subscription registry; the probe's
+        // ephemeral handler (slice 33.2) coexists alongside this one — both run, neither
+        // interferes (the dispatch handler no-ops on probe channels since they're not
+        // in the registry).
+        conn.Notification += _dispatchNotification;
         await conn.OpenAsync(stoppingToken).ConfigureAwait(false);
 
         lock (_connectionGate) {
           _connection = conn;
         }
 
+        // Slice 33.3 — clear the listened-channels tracking on each new conn. The new
+        // conn carries no LISTEN state (server-side LISTENs are per-backend-connection),
+        // so _syncListensAsync will issue LISTEN for every channel in the registry.
+        _listenedChannels.Clear();
+
         // LISTEN every registered channel atomically with the connection becoming visible to
         // Subscribe(). Order is "LISTEN first, then publish IsAvailable=true" so any consumer
         // reading IsAvailable inside its OnAvailabilityChanged handler can rely on LISTENs
         // already being live.
-        foreach (var channel in _registry.AllChannels()) {
-          await using var cmd = new NpgsqlCommand($"LISTEN \"{channel}\"", conn);
-          await cmd.ExecuteNonQueryAsync(stoppingToken).ConfigureAwait(false);
-        }
+        await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
 
         // Slice 33.2 — gate IsAvailable behind a real round-trip probe rather than just
         // "connection opened." Probe failure (timeout, error) means the conn is open but
@@ -283,15 +321,40 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
 
-        // Slice 33.3 will replace this Delay with a Notification + WaitAsync dispatch loop.
-        // For 33.1 we just hold the connection open so Subscribe-after-connect can issue
-        // LISTEN against a live conn.
+        // Slice 33.3 — real dispatch loop. WaitAsync blocks on the conn until either a
+        // notification arrives (the _dispatchNotification handler runs synchronously and
+        // delivers to subscribers), the keepalive timeout fires (issue SELECT 1), or a
+        // late Subscribe/Dispose triggers a resync (issue LISTEN/UNLISTEN to match registry).
+        // The shared _resyncSignal CTS is what _signalResync() cancels.
         while (!stoppingToken.IsCancellationRequested
             && conn.State == System.Data.ConnectionState.Open) {
-          await Task.Delay(_options.ListenKeepaliveInterval, stoppingToken).ConfigureAwait(false);
-          // Liveness check — slice 33.2's probe replaces this with a real round-trip.
-          await using var ping = new NpgsqlCommand("SELECT 1", conn);
-          _ = await ping.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
+          using var keepalive = new CancellationTokenSource(_options.ListenKeepaliveInterval, _timeProvider);
+          using var resync = new CancellationTokenSource();
+          Volatile.Write(ref _resyncSignal, resync);
+          using var combined = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken, keepalive.Token, resync.Token);
+          var resyncFired = false;
+          var keepaliveFired = false;
+          try {
+            await conn.WaitAsync(combined.Token).ConfigureAwait(false);
+            // Notification arrived (or backend message) — handler ran synchronously inside
+            // WaitAsync. Loop again to wait for the next one.
+          } catch (OperationCanceledException) when (combined.Token.IsCancellationRequested && !stoppingToken.IsCancellationRequested) {
+            resyncFired = resync.IsCancellationRequested;
+            keepaliveFired = keepalive.IsCancellationRequested;
+          } finally {
+            Volatile.Write(ref _resyncSignal, null);
+          }
+
+          if (resyncFired) {
+            await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
+          }
+          if (keepaliveFired) {
+            // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
+            // the outer catch and reconnect.
+            await using var ping = new NpgsqlCommand("SELECT 1", conn);
+            _ = await ping.ExecuteScalarAsync(stoppingToken).ConfigureAwait(false);
+          }
         }
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         break;
@@ -317,6 +380,33 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
 
     _setAvailable(false, failureReason: "shutdown");
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Persistent <see cref="NpgsqlConnection.Notification"/> handler. Looks up the subscribers
+  /// registered for the incoming channel and invokes their callbacks synchronously. Per-
+  /// subscriber exceptions are caught and logged so one bad subscriber can't poison the
+  /// dispatch loop. Self-test probe channels won't match any registered subscriber and
+  /// silently no-op; the probe's own ephemeral handler picks them up via the TCS.
+  /// </summary>
+  /// <remarks>
+  /// Runs synchronously on Npgsql's WaitAsync stack — subscribers must respect the
+  /// <see cref="INotifySubscription.OnNotification"/> contract (fast + non-blocking; enqueue
+  /// to a worker channel for real work). A slow subscriber blocks subsequent notifications
+  /// on this pod's shared connection.
+  /// </remarks>
+  private void _dispatchNotification(object? sender, NpgsqlNotificationEventArgs e) {
+    var subscribers = _registry.Get(e.Channel);
+    if (subscribers.IsEmpty) {
+      return;
+    }
+    foreach (var subscriber in subscribers) {
+      try {
+        subscriber.OnNotification(e.Payload);
+      } catch (Exception ex) {
+        LogSubscriberCallbackFailed(_logger, e.Channel, ex);
+      }
+    }
   }
 
   private void _setAvailable(bool available, string? failureReason) {
@@ -373,7 +463,9 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
       }
       var wasLast = owner._registry.Remove(subscription);
       if (wasLast) {
-        _ = owner._unlistenIfConnectedAsync(subscription.ChannelName);
+        // Slice 33.3 — signal the dispatch loop to issue UNLISTEN. Same conn-thread-safety
+        // reason as Subscribe: we can't run UNLISTEN here while the loop holds the conn.
+        owner._signalResync();
       }
     }
   }
@@ -408,4 +500,7 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
     Message = "PgSharedNotifyConnection UNLISTEN failed for {ChannelName}; will be left as a no-op on conn close")]
   static partial void LogUnlistenFailed(ILogger logger, string channelName, Exception ex);
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "PgSharedNotifyConnection subscriber callback threw on channel {Channel}; other subscribers continue")]
+  static partial void LogSubscriberCallbackFailed(ILogger logger, string channel, Exception ex);
 }
