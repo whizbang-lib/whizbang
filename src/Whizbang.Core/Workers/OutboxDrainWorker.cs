@@ -146,11 +146,20 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // the set, we'd re-publish the row multiple times — exactly the multi-fire we eliminated.
     // The set is bounded by drain-session size and GC'd on return.
     var seen = new HashSet<Guid>();
+    // Slice 31 PERF instrumentation: per-drain wall time + publish breakdown, mirroring
+    // the perspective worker pattern. JDX run-23 analysis identified outbox/inbox as the
+    // next hot path to characterize.
+    var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    var totalPublishMs = 0.0;
+    var publishedCount = 0;
+    var fetchCount = 0;
     while (!ct.IsCancellationRequested) {
+      fetchCount++;
       var rowsRaw = await coordinator.FetchOutboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, ct);
 
       if (rowsRaw.Count == 0) {
+        _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
         return;
       }
 
@@ -166,15 +175,44 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           continue;
         }
         newRows++;
+        var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
         await _publishOneAsync(row, ct);
+        totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
+          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        publishedCount++;
       }
 
       // If every row in this fetch was a dup of what we already published, completion flush
       // hasn't landed — exit so the next claim_work tick can re-issue the stream once the
       // pending rows clear.
       if (newRows == 0) {
+        _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
         return;
       }
+
+      // Slice 32 — skip the confirmation fetch when the previous fetch returned a partial
+      // batch (fewer rows than MaxPerStream). Run-24 PERF measured 84% of outbox drain wall
+      // time spent on fetch+other vs 16% on actual publish; fetches/drain = 2.0 means EVERY
+      // drain pays for a confirmation fetch that almost always returns 0 rows. If a row
+      // arrives between the partial fetch and the drain finishing, ClaimWorker's next tick
+      // (or LISTEN/NOTIFY signal) re-issues the stream — same recovery path used everywhere.
+      if (rowsRaw.Count < _options.MaxPerStream) {
+        _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
+        return;
+      }
+    }
+    _logPerfIfInteresting(streamId, publishedCount, fetchCount, totalPublishMs, drainStartTicks);
+  }
+
+  private void _logPerfIfInteresting(Guid streamId, int published, int fetches, double publishMs, long startTicks) {
+    var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks)
+      * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    if (published >= 5 || totalMs > 100) {
+#pragma warning disable CA1848
+      _logger.LogWarning(
+        "PERF OutboxDrain stream {StreamId}: published={Published} fetches={Fetches} total={TotalMs:F0}ms publish={PublishMs:F0}ms fetch+other={OtherMs:F0}ms",
+        streamId, published, fetches, totalMs, publishMs, totalMs - publishMs);
+#pragma warning restore CA1848
     }
   }
 
