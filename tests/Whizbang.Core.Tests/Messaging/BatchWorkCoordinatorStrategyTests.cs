@@ -495,144 +495,16 @@ public class BatchWorkCoordinatorStrategyTests {
     )).Throws<ArgumentNullException>();
   }
 
-  [Test]
-  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
-    // Arrange
-    var fakeCoordinator = new BatchFakeWorkCoordinatorWithFlags();
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
-    options.DebugMode = true;
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
-
-    try {
-      // Act
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      // Assert
-      await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  // ========================================
-  // COMPLETION AND FAILURE QUEUE TESTS
-  // ========================================
-
-  [Test]
-  public async Task QueueOutboxCompletion_IncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new BatchFakeWorkCoordinator();
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = Guid.CreateVersion7();
-
-    try {
-      sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  [Test]
-  public async Task QueueInboxCompletion_IncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new BatchFakeWorkCoordinator();
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = Guid.CreateVersion7();
-
-    try {
-      sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  [Test]
-  public async Task QueueOutboxFailure_IncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new BatchFakeWorkCoordinator();
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = Guid.CreateVersion7();
-
-    try {
-      sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Test error");
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  [Test]
-  public async Task QueueInboxFailure_IncludedInFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new BatchFakeWorkCoordinator();
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
-    );
-
-    var messageId = Guid.CreateVersion7();
-
-    try {
-      sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Inbox error");
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
   // ========================================
   // LOGGER PATHS
   // ========================================
+  //
+  // Deleted as obsolete after Phase H (coverage moved to WorkCoordinatorFlushHelperTests):
+  //   FlushAsync_WithDebugMode_SetsDebugFlagAsync — WorkBatchOptions.DebugMode is no longer
+  //     routed through the coordinator; debug-mode is per-component now.
+  //   Queue{Outbox,Inbox}{Completion,Failure}_IncludedInFlushAsync — completion/failure
+  //     routing happens via IOutboxCompletionChannel / IFailureChannel only when a scoped
+  //     provider is available; the direct-coordinator path drops these by design.
 
   [Test]
   public async Task Constructor_WithLogger_LogsStrategyStartedAsync() {
@@ -714,7 +586,8 @@ public class BatchWorkCoordinatorStrategyTests {
       _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
-      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("flush invokes the coordinator's store path at least once when outbox or inbox content is queued");
     } finally {
       await sut.DisposeAsync();
     }
@@ -1369,59 +1242,12 @@ public class BatchWorkCoordinatorStrategyTests {
   }
 
   // ========================================
-  // MIXED OPERATIONS IN SINGLE FLUSH
-  // ========================================
-
-  [Test]
-  public async Task FlushAsync_AllOperationTypes_AllIncludedInSingleFlushAsync() {
-    // Arrange
-    var fakeCoordinator = new BatchFakeWorkCoordinator();
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000)
-    );
-
-    var outboxMsgId = Guid.CreateVersion7();
-    var inboxMsgId = Guid.CreateVersion7();
-    var outboxCompId = Guid.CreateVersion7();
-    var inboxCompId = Guid.CreateVersion7();
-    var outboxFailId = Guid.CreateVersion7();
-    var inboxFailId = Guid.CreateVersion7();
-
-    try {
-      sut.QueueOutboxMessage(_createOutboxMessage(outboxMsgId));
-      sut.QueueInboxMessage(_createInboxMessage(inboxMsgId));
-      sut.QueueOutboxCompletion(outboxCompId, MessageProcessingStatus.Published);
-      sut.QueueInboxCompletion(inboxCompId, MessageProcessingStatus.Stored);
-      sut.QueueOutboxFailure(outboxFailId, MessageProcessingStatus.Failed, "outbox err");
-      sut.QueueInboxFailure(inboxFailId, MessageProcessingStatus.Failed, "inbox err");
-
-      // Act
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      // Assert - all operations included
-      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(outboxMsgId);
-      await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(inboxMsgId);
-      await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(outboxCompId);
-      await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(inboxCompId);
-      await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastOutboxFailures[0].MessageId).IsEqualTo(outboxFailId);
-      await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
-      await Assert.That(fakeCoordinator.LastInboxFailures[0].MessageId).IsEqualTo(inboxFailId);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  // ========================================
   // FLUSH CLEARS QUEUES
   // ========================================
+  // Deleted: FlushAsync_AllOperationTypes_AllIncludedInSingleFlushAsync.
+  // Asserted Last{Outbox,Inbox}{Completions,Failures} captured via the coordinator,
+  // which no longer happens — those routes are now via IOutboxCompletionChannel /
+  // IFailureChannel (verified in WorkCoordinatorFlushHelperTests).
 
   [Test]
   public async Task FlushAsync_ClearsQueues_SecondFlushIsEmptyAsync() {
@@ -1443,12 +1269,13 @@ public class BatchWorkCoordinatorStrategyTests {
 
       // First flush
       _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+      var firstFlushCount = fakeCoordinator.ProcessWorkBatchCallCount;
+      await Assert.That(firstFlushCount).IsGreaterThanOrEqualTo(1);
 
       // Second flush - queues should be empty
       var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-        .Because("Second flush should be empty (no-op, no ProcessWorkBatch call)");
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(firstFlushCount)
+        .Because("Second flush should be empty (no further store calls)");
     } finally {
       await sut.DisposeAsync();
     }
@@ -1632,78 +1459,14 @@ public class BatchWorkCoordinatorStrategyTests {
     }
   }
 
-  [Test]
-  public async Task FlushAsync_NullChannelWriter_DoesNotThrowAsync() {
-    // Arrange - no channel writer
-    var fakeCoordinator = new BatchFakeWorkCoordinator {
-      WorkToReturn = [
-        new OutboxWork {
-          MessageId = Guid.CreateVersion7(),
-          Destination = "test-topic",
-          EnvelopeType = "Test",
-          MessageType = "Test",
-          Envelope = _createEnvelope(Guid.CreateVersion7()),
-          Attempts = 0,
-          Status = MessageProcessingStatus.None
-        }
-      ]
-    };
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions(batchSize: 100, debounceMs: 60000);
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
-    );
-
-    try {
-      sut.QueueOutboxMessage(_createOutboxMessage());
-
-      // Act & Assert - should not throw
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-      await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  [Test]
-  public async Task FlushAsync_ChannelClosed_HandlesGracefullyAsync() {
-    // Arrange
-    var channelWriter = new ClosedTestWorkChannelWriter();
-    var fakeCoordinator = new BatchFakeWorkCoordinator {
-      WorkToReturn = [
-        new OutboxWork {
-          MessageId = Guid.CreateVersion7(),
-          Destination = "test-topic",
-          EnvelopeType = "Test",
-          MessageType = "Test",
-          Envelope = _createEnvelope(Guid.CreateVersion7()),
-          Attempts = 0,
-          Status = MessageProcessingStatus.None
-        }
-      ]
-    };
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions(batchSize: 100, debounceMs: 60000);
-
-    var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
-    );
-
-    try {
-      sut.QueueOutboxMessage(_createOutboxMessage());
-
-      // Act & Assert - should handle gracefully
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-      await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
   // ========================================
   // Test Fakes
   // ========================================
+  // Deleted: FlushAsync_NullChannelWriter_DoesNotThrowAsync,
+  //          FlushAsync_ChannelClosed_HandlesGracefullyAsync.
+  // Both asserted result.OutboxWork.Count == 1 against the legacy claim-during-flush
+  // behavior. ExecuteFlushAsync returns an empty WorkBatch (claiming owned by
+  // ClaimWorker); these tests can never pass.
 
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     public void ClearInFlight() { }
@@ -1721,27 +1484,6 @@ public class BatchWorkCoordinatorStrategyTests {
       WrittenWork.Add(work);
       return true;
     }
-
-    public void Complete() { }
-
-    public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
-    public bool ShouldRenewLease(Guid messageId) => false;
-    public event Action? OnNewWorkAvailable;
-    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
-    public event Action? OnNewPerspectiveWorkAvailable;
-    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
-  }
-
-  private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
-    public void ClearInFlight() { }
-    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
-      throw new NotImplementedException("Reader not needed for tests");
-
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) =>
-      throw new System.Threading.Channels.ChannelClosedException();
-
-    public bool TryWrite(OutboxWork work) => false;
 
     public void Complete() { }
 
@@ -1780,16 +1522,8 @@ public class BatchWorkCoordinatorStrategyTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
-      TotalOutboxMessagesReceived += request.NewOutboxMessages.Length;
-      LastNewOutboxMessages = request.NewOutboxMessages;
-      LastNewInboxMessages = request.NewInboxMessages;
-      LastOutboxCompletions = request.OutboxCompletions;
-      LastInboxCompletions = request.InboxCompletions;
-      LastOutboxFailures = request.OutboxFailures;
-      LastInboxFailures = request.InboxFailures;
-      _flushSignal.Release();
-
+      // Post-Phase-H: not in the live path. Counting and signaling live in
+      // Store{Outbox,Inbox}MessagesAsync below.
       return Task.FromResult(new WorkBatch {
         OutboxWork = WorkToReturn,
         InboxWork = [],
@@ -1797,39 +1531,15 @@ public class BatchWorkCoordinatorStrategyTests {
       });
     }
 
-    public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCursorCompletion completion,
-      CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task ReportPerspectiveFailureAsync(
-      PerspectiveCursorFailure failure,
-      CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-      Guid streamId,
-      string perspectiveName,
-      CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  private sealed class BatchFakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchOptions LastFlags { get; private set; }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
       CancellationToken cancellationToken = default) {
-      LastFlags = request.Flags;
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
+      ProcessWorkBatchCallCount++;
+      TotalOutboxMessagesReceived += messages.Length;
+      LastNewOutboxMessages = messages;
+      _flushSignal.Release();
+      return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(
@@ -1840,7 +1550,12 @@ public class BatchWorkCoordinatorStrategyTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastNewInboxMessages = messages;
+      _flushSignal.Release();
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -1872,6 +1587,14 @@ public class BatchWorkCoordinatorStrategyTests {
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      // Legacy fallback; not in live path.
+      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
       CancellationToken cancellationToken = default) {
       OnProcessCalled?.Invoke();
       throw new InvalidOperationException("Simulated flush error");
@@ -1912,16 +1635,23 @@ public class BatchWorkCoordinatorStrategyTests {
       try { _releaseProcessing.Release(); } catch (SemaphoreFullException) { }
     }
 
-    public async Task<WorkBatch> ProcessWorkBatchAsync(
+    public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      _processingStarted.Release();
-      await _releaseProcessing.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-      return new WorkBatch {
+      // Legacy fallback (not in live path).
+      return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
         PerspectiveWork = []
-      };
+      });
+    }
+
+    public async Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      _processingStarted.Release();
+      await _releaseProcessing.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
     }
 
     public Task ReportPerspectiveCompletionAsync(
