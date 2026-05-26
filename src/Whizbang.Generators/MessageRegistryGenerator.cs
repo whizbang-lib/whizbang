@@ -302,7 +302,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
-    // Look for IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Look for IPerspectiveFor / IPerspectiveWithActionsFor<TModel, TEvent1, ...> interfaces (all variants)
     // Must match the base marker interface or any event-handling variant
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
@@ -310,7 +310,10 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           // Check for base marker or event-handling variants (with or without space after comma)
           return originalDef == StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel>" ||
                  originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel,", StringComparison.Ordinal) ||
-                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal);
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal) ||
+                 originalDef == StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel>" ||
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel,", StringComparison.Ordinal) ||
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel, ", StringComparison.Ordinal);
         })
         .ToList();
 

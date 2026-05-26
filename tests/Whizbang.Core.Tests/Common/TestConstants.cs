@@ -61,7 +61,10 @@ public static class TestConstants {
   /// <para>- 1 receptor from DispatcherCascadeFlushTests.cs
   ///     (CascadeFlushCommandHandler — pins that cascade uses fire-and-forget FlushAsync)</para>
   ///
-  /// <para>Total: 115 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 2 receptors from OrphanInboxJanitorExtensionsTests.cs
+  ///     (FakeVoidReceptor, FakeResultReceptor — fixtures for janitor auto-wire test)</para>
+  ///
+  /// <para>Total: 117 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 115;
+  public const int EXPECTED_RECEPTOR_COUNT = 117;
 }

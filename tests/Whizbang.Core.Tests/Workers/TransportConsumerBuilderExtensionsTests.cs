@@ -190,6 +190,30 @@ public class TransportConsumerBuilderExtensionsTests {
   }
 
   [Test]
+  public async Task AddTransportConsumer_RegistersWorkCoordinatorPublisherWorkerAsHostedServiceAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => {
+      routing.OwnDomains("myapp.orders.commands");
+    });
+
+    // Act
+    builder.AddTransportConsumer();
+
+    // Assert - WorkCoordinatorPublisherWorker drives outbox/inbox drain, claim,
+    // heartbeat, and completion-flush loops. Without this hosted-service entry,
+    // outbox messages never publish and inter-service messaging is broken.
+    var hostedServiceDescriptor = services.FirstOrDefault(
+        d => d.ServiceType == typeof(IHostedService) &&
+             d.ImplementationType == typeof(WorkCoordinatorPublisherWorker));
+
+    await Assert.That(hostedServiceDescriptor).IsNotNull();
+  }
+
+  [Test]
   public async Task AddTransportConsumer_RegistersTransportConsumerOptionsAsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
@@ -472,6 +496,32 @@ public class TransportConsumerBuilderExtensionsTests {
         d => d.ServiceType == typeof(TransportConsumerOptions));
 
     await Assert.That(optionsDescriptor).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddTransportConsumer_OnPerspectiveBuilder_RegistersWorkCoordinatorPublisherWorkerAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => {
+      routing.OwnDomains("myapp.orders.commands");
+    });
+
+    var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
+
+    // Act
+    perspectiveBuilder.AddTransportConsumer();
+
+    // Assert - WorkCoordinatorPublisherWorker must also be registered on the
+    // perspective-builder overload so outbox/inbox drain loops run when
+    // AddTransportConsumer is called at the end of a WithEFCore/WithDriver chain.
+    var hostedServiceDescriptor = services.FirstOrDefault(
+        d => d.ServiceType == typeof(IHostedService) &&
+             d.ImplementationType == typeof(WorkCoordinatorPublisherWorker));
+
+    await Assert.That(hostedServiceDescriptor).IsNotNull();
   }
 
   #endregion

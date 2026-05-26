@@ -120,6 +120,38 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_WithIPerspectiveWithActionsFor_EmitsPerspectiveEntryAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp;
+
+      public record OrderShippedEvent : IEvent;
+      public record OrderView;
+
+      [PinnedId("44444444-4444-4444-4444-444444444444")]
+      public class ActionsOrderPerspective : IPerspectiveWithActionsFor<OrderView, OrderShippedEvent> {
+        public ApplyResult<OrderView> Apply(OrderView? current, OrderShippedEvent @event) =>
+          ApplyResult<OrderView>.Update(current ?? new());
+      }
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(errors).IsEmpty();
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("typeof(global::MyApp.ActionsOrderPerspective)");
+    await Assert.That(code!).Contains("\"perspective\"");
+    await Assert.That(code!).Contains("\"44444444-4444-4444-4444-444444444444\"");
+  }
+
+  [Test]
   public async Task Generator_EntryContainsNullWhenUnpinnedAsync() {
     const string source = """
 

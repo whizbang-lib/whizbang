@@ -208,6 +208,11 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
+    // Register WorkCoordinatorPublisherWorker — drives outbox drain, inbox drain,
+    // claim, heartbeat, and completion flush loops. Without this, outbox messages
+    // never publish and inter-service messaging is completely broken.
+    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
       .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
@@ -335,6 +340,11 @@ public static class TransportConsumerBuilderExtensions {
 
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
+
+    // Register WorkCoordinatorPublisherWorker — drives outbox drain, inbox drain,
+    // claim, heartbeat, and completion flush loops. Without this, outbox messages
+    // never publish and inter-service messaging is completely broken.
+    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
