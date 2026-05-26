@@ -263,7 +263,17 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      // DrainLoopMaxIterations = 1: phase H step 6 slice 3 added the drain-until-empty loop
+      // that refetches events after each iteration. Production gets termination from
+      // (a) cooldown cache filtering already-processed events and (b) completion-flush
+      // DELETEs removing rows. The test harness has neither — DrainWorkCoordinator returns
+      // the same events on every fetch — so the loop runs the full DrainLoopMaxIterations
+      // and fires lifecycle stages 5× per event. Pinning to 1 iteration here matches the
+      // "process this batch once and stop" semantic the lifecycle tests assume.
+      Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        DrainLoopMaxIterations = 1
+      }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
       eventTypeProvider: null,
