@@ -255,14 +255,15 @@ public class PostgresConnectionRetryTests {
     await using var connection = new Npgsql.NpgsqlConnection(connectionString);
     await connection.OpenAsync();
 
-    // Create required tables and process_work_batch function (in public schema)
+    // Phase H step 3 replaced process_work_batch with claim_work as the canonical
+    // "migrations done" function signal — _isSchemaReadyAsync polls for claim_work.
     const string createTablesSql = @"
       CREATE TABLE wh_inbox (id SERIAL PRIMARY KEY);
       CREATE TABLE wh_outbox (id SERIAL PRIMARY KEY);
       CREATE TABLE wh_event_store (id SERIAL PRIMARY KEY);
 
-      -- Create process_work_batch function in public schema (matches production)
-      CREATE OR REPLACE FUNCTION public.process_work_batch(
+      -- Create claim_work function in public schema (matches production signal).
+      CREATE OR REPLACE FUNCTION public.claim_work(
         p_instance_id UUID,
         p_batch_size INT
       ) RETURNS TABLE (
