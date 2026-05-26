@@ -41,7 +41,13 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     var streamId = Guid.NewGuid();
     await _registerInstanceAsync(connection, instanceId);
 
-    var ids = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    // Use TrackedGuid (UUIDv7) so message_ids are monotonic — fetch_inbox_batch falls
+    // back to message_id ordering when commit_sequence is unset (non-event rows).
+    var ids = new[] {
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo()
+    };
     var times = new[] {
       DateTimeOffset.UtcNow.AddSeconds(-30),
       DateTimeOffset.UtcNow.AddSeconds(-20),
