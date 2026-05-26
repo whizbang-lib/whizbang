@@ -21,6 +21,26 @@ public class SharedPostgresContainerIntegrationTests {
     await SharedPostgresContainer.InitializeAsync();
   }
 
+  [After(Test)]
+  public async Task EnsureContainerInitializedAsync() {
+    // CRITICAL: Restore container state for downstream tests.
+    //
+    // Several tests in this class deliberately call SharedPostgresContainer.DisposeAsync()
+    // to verify lifecycle behavior, then call InitializeAsync() at the end of the test
+    // body to restore state. If a test fails mid-body (assertion failure, timeout, etc.)
+    // between DisposeAsync() and the restoring InitializeAsync(), the static state stays
+    // dirty: _connectionString=null, _initialized=false. The next test in the
+    // [NotInParallel("PostgreSQL")] queue (e.g., a PostgresTestBase consumer) then calls
+    // InitializeOrSkipAsync(), which initializes successfully, but if any window allowed
+    // a stale read of ConnectionString, throws "Shared PostgreSQL not initialized".
+    //
+    // This After hook unconditionally re-initializes so the queue always sees a healthy
+    // container at the start of the next test — regardless of which assertion failed.
+    if (!SharedPostgresContainer.IsInitialized) {
+      await SharedPostgresContainer.InitializeAsync();
+    }
+  }
+
   [Test]
   [Timeout(60000)]
   public async Task InitializeAsync_StartsContainer_IsInitializedReturnsTrueAsync(CancellationToken cancellationToken) {
