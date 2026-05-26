@@ -67,7 +67,12 @@ public static class SharedPostgresContainer {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if the container is ready; false if Docker/PostgreSQL is unavailable.</returns>
   public static async Task<bool> TryInitializeAsync(CancellationToken cancellationToken = default) {
-    if (_initialized) {
+    // Check BOTH flags. Without `_connectionString is not null`, this method can return
+    // true after observing _initialized==true but a concurrent DisposeAsync() may have
+    // already nulled _connectionString — leaving the caller to throw on the very next
+    // ConnectionString read. Reading both fields here closes the race window for the
+    // common "lifecycle-test mutates state, downstream test reads state" pattern.
+    if (_initialized && _connectionString is not null) {
       return true;
     }
 
@@ -428,9 +433,15 @@ public static class SharedPostgresContainer {
     // The container persists until explicitly removed: docker rm -f whizbang-test-postgres
     Console.WriteLine("[SharedPostgresContainer] Keeping container running for reuse");
 
-    // Reset state to allow reinitialization if needed
-    _connectionString = null;
+    // Reset state to allow reinitialization if needed.
+    // Order matters: clear _initialized FIRST so any concurrent TryInitializeAsync()
+    // observes the disposed state and re-initializes via InitializeAsync() (which
+    // takes _initLock and atomically rebuilds both fields). Nulling _connectionString
+    // first would leave a window where _initialized==true but _connectionString==null,
+    // causing TryInitializeAsync() to return true while the downstream ConnectionString
+    // read throws.
     _initialized = false;
+    _connectionString = null;
     _initializationFailed = false;
     _lastInitializationError = null;
 
