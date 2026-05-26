@@ -50,11 +50,12 @@ public class InboxBatchStrategyRegistrationTests {
   }
 
   [Test]
-  public async Task SlidingWindowInboxOptions_DefaultsLockedAt50ms1s100Async() {
+  public async Task SlidingWindowInboxOptions_DefaultsLockedAt300ms3s1000Async() {
+    // Slice 23 defaults: 300ms / 3s / 1000.
     var defaults = new SlidingWindowInboxOptions();
-    await Assert.That(defaults.SlidingWindow).IsEqualTo(TimeSpan.FromMilliseconds(50));
-    await Assert.That(defaults.MaxWait).IsEqualTo(TimeSpan.FromSeconds(1));
-    await Assert.That(defaults.MaxSize).IsEqualTo(100);
+    await Assert.That(defaults.SlidingWindow).IsEqualTo(TimeSpan.FromMilliseconds(300));
+    await Assert.That(defaults.MaxWait).IsEqualTo(TimeSpan.FromSeconds(3));
+    await Assert.That(defaults.MaxSize).IsEqualTo(1000);
   }
 
   [Test]

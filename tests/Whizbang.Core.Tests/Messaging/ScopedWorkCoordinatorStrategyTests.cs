@@ -123,8 +123,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Act - Dispose should flush queued messages
     await sut.DisposeAsync();
 
-    // Assert - Messages should be flushed on disposal
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+    // Assert - Messages should be flushed on disposal (Store{Outbox,Inbox} each count)
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
       .Because("DisposeAsync should flush queued messages");
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
@@ -341,13 +341,13 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Act - Dispose should flush all queued operations together
     await sut.DisposeAsync();
 
-    // Assert - All operations flushed in single batch
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-      .Because("All operations should be flushed in a single batch");
+    // Assert - All operations flushed in single batch (outbox + inbox store calls)
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("All operations should be flushed via store calls on disposal");
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(2);
     await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
-    await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
+    // Completions/failures route through IOutboxCompletionChannel / IFailureChannel,
+    // not the coordinator — covered in WorkCoordinatorFlushHelperTests scope path.
   }
 
   // ========================================
@@ -767,31 +767,11 @@ public class ScopedWorkCoordinatorStrategyTests {
   // DEBUG MODE TEST
   // ========================================
 
-  [Test]
-  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinatorWithFlags();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions { DebugMode = true };
-
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
-
-    var messageId = _idProvider.NewGuid();
-    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-
-    // Act
-    await sut.FlushAsync(WorkBatchOptions.None);
-
-    // Assert - DebugMode flag should be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
   // ========================================
   // Logger Coverage Tests (Lines 97-100, 123, 161, 227-228, 270)
   // ========================================
+  // Deleted: FlushAsync_WithDebugMode_SetsDebugFlagAsync.
+  // DebugMode flag is no longer routed through the coordinator post-Phase-H.
 
   [Test]
   public async Task QueueOutboxMessage_WithAuditEnabled_BuildsAuditMessageAsync() {
@@ -946,17 +926,21 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
-      LastNewOutboxMessages = request.NewOutboxMessages;
-      LastNewInboxMessages = request.NewInboxMessages;
-      LastOutboxCompletions = request.OutboxCompletions;
-      LastInboxFailures = request.InboxFailures;
-
+      // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
         PerspectiveWork = []
       });
+    }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastNewOutboxMessages = messages;
+      return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(
@@ -971,7 +955,11 @@ public class ScopedWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastNewInboxMessages = messages;
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -1064,10 +1052,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      if (_disposed) {
-        throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
-      }
-      ProcessWorkBatchCallCount++;
+      // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -1075,12 +1060,29 @@ public class ScopedWorkCoordinatorStrategyTests {
       });
     }
 
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      if (_disposed) {
+        throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
+      }
+      ProcessWorkBatchCallCount++;
+      return Task.CompletedTask;
+    }
+
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      if (_disposed) {
+        throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
+      }
+      ProcessWorkBatchCallCount++;
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -1261,38 +1263,12 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   // ========================================
-  // FLUSH DIAGNOSTIC LOGGING — outbox work returned (Lines 176-179)
-  // ========================================
-
-  [Test]
-  public async Task FlushAsync_WithLogger_OutboxWorkReturned_LogsReturnedWorkAsync() {
-    // Arrange - logger != null + OutboxWork.Count > 0 exercises lines 176-179
-    var fakeCoordinator = new FakeWorkCoordinatorWithOutboxWork();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-    var logger = new FakeScopedLogger();
-
-    var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
-    );
-
-    _queueTestOutboxMessage(sut);
-
-    // Act
-    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    // Assert - OutboxWork was returned and logged
-    await Assert.That(result.OutboxWork).Count().IsGreaterThan(0);
-    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(3)
-      .Because("Should log flush summary, instance id, batch result, AND returned outbox work");
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
-  // ========================================
   // IWorkFlusher EXPLICIT INTERFACE (Line 190-191)
   // ========================================
+  // Deleted: FlushAsync_WithLogger_OutboxWorkReturned_LogsReturnedWorkAsync.
+  // Asserted on WorkBatch.OutboxWork.Count > 0 from the legacy claim-during-flush;
+  // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. Returned-work logging
+  // is exercised in publisher-worker / claim-worker tests.
 
   [Test]
   public async Task IWorkFlusher_FlushAsync_DelegatesToFlushWithRequiredModeAsync() {
@@ -1505,54 +1481,13 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   // ========================================
-  // FLUSH WITH COMPLETIONS-ONLY — exercises flush with no new messages but completions
+  // FLUSH WITH COMPLETIONS-ONLY / FAILURES-ONLY — DELETED
   // ========================================
-
-  [Test]
-  public async Task FlushAsync_WithCompletionsOnly_FlushesCompletionsAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-
-    var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options
-    );
-
-    sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
-
-    // Act
-    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    // Assert
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
-
-  [Test]
-  public async Task FlushAsync_WithOutboxFailuresOnly_FlushesFailuresAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-
-    var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options
-    );
-
-    sut.QueueOutboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "test error");
-
-    // Act
-    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    // Assert
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
+  // Deleted: FlushAsync_WithCompletionsOnly_FlushesCompletionsAsync,
+  //          FlushAsync_WithOutboxFailuresOnly_FlushesFailuresAsync.
+  // Both queued only a completion or failure and expected the coordinator to be called.
+  // Post-Phase-H, the direct-coordinator path drops completions/failures by design
+  // (channel routing requires a scoped provider). Covered in WorkCoordinatorFlushHelperTests.
 
   // ========================================
   // CONSTRUCTOR — null dependencies defaults (Line 62)
@@ -1581,35 +1516,10 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   // ========================================
-  // FLUSH WITH LOGGER — multiple outbox work items (Lines 177-179 loop)
+  // DELETED: FlushAsync_WithLogger_MultipleOutboxWorkReturned_LogsUpToThreeAsync.
+  // Asserted result.OutboxWork.Count == 4 against the legacy claim-during-flush path;
+  // ExecuteFlushAsync returns empty WorkBatch post-Phase-H.
   // ========================================
-
-  [Test]
-  public async Task FlushAsync_WithLogger_MultipleOutboxWorkReturned_LogsUpToThreeAsync() {
-    // Arrange - exercises the Take(3) loop at lines 177-179
-    var fakeCoordinator = new FakeWorkCoordinatorWithMultipleOutboxWork();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-    var logger = new FakeScopedLogger();
-
-    var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
-    );
-
-    _queueTestOutboxMessage(sut);
-
-    // Act
-    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    // Assert - should have logged returned work items (up to 3)
-    await Assert.That(result.OutboxWork).Count().IsEqualTo(4);
-    // Logs: queued message, flush summary, instance id, batch result, + 3 returned work items
-    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(6)
-      .Because("Should log up to 3 returned outbox work items plus other diagnostics");
-
-    // Cleanup
-    await sut.DisposeAsync();
-  }
 
   // ========================================
   // DISPOSE — inbox completions and failures in unflushed warning
@@ -1641,8 +1551,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Assert - logger should have many calls from queuing + disposal warning
     await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(7)
       .Because("Should log each queue operation AND the unflushed-on-disposal warning");
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
-      .Because("DisposeAsync should flush all remaining operations");
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("DisposeAsync should flush queued outbox + inbox via store calls");
   }
 
   // ========================================
@@ -1657,15 +1567,23 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      throw new InvalidOperationException("Simulated database failure");
+      // Legacy fallback (not in live path).
+      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) =>
+      throw new InvalidOperationException("Simulated database failure");
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+      throw new InvalidOperationException("Simulated database failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
