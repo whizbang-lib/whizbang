@@ -9,12 +9,18 @@
 
 DO $$
 BEGIN
+  -- Use '__SCHEMA__' literal in the existence checks so the EXISTS/NOT EXISTS branches
+  -- target the SAME schema as the ALTER and CREATE INDEX below. Earlier versions used
+  -- current_schema() in the checks but __SCHEMA__ in the DDL — when the runtime schema
+  -- differs from the migration's target schema, the IF returned false (column "missing"
+  -- from current_schema()), the ALTER was skipped, then the CREATE INDEX below failed
+  -- with 42703 because the column was never added to __SCHEMA__.wh_perspective_snapshots.
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
-    WHERE table_schema = current_schema() AND table_name = 'wh_perspective_snapshots'
+    WHERE table_schema = '__SCHEMA__' AND table_name = 'wh_perspective_snapshots'
   ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_schema = current_schema()
+    WHERE table_schema = '__SCHEMA__'
       AND table_name = 'wh_perspective_snapshots'
       AND column_name = 'snapshot_commit_sequence'
   ) THEN
