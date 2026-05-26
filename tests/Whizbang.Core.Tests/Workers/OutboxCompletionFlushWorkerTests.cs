@@ -20,6 +20,10 @@ public class OutboxCompletionFlushWorkerTests {
       FirstBatch.TrySetResult(ids);
       return Task.FromResult(ids.Count);
     }
+    public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken ct = default) {
+      FirstBatch.TrySetResult(ids);
+      return Task.FromResult(ids.Count);
+    }
     public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default)
       => throw new InvalidOperationException("not used");
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
