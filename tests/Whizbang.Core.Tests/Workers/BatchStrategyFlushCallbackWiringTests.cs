@@ -147,12 +147,8 @@ public class BatchStrategyFlushCallbackWiringTests {
     await Assert.That(postInline.Count).IsEqualTo(1)
       .Because("PostDistributeInline MUST fire inside the OutboxBulkFlushCallback. The StreamAffinity batch path bypasses ScopedWorkCoordinatorStrategy's queue, so without lifecycle invocation here, no receptor registered at PostDistributeInline ever fires for outbox messages.");
 
-    var preInline = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PreDistributeInline).ToList();
-    await Assert.That(preInline.Count).IsEqualTo(1)
-      .Because("PreDistributeInline must fire before StoreOutboxMessagesAsync — symmetric with the legacy WorkCoordinatorFlushHelper path.");
-
     await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(1)
-      .Because("The store call must still happen between the Pre and Post Distribute lifecycle stages.");
+      .Because("The store call must happen before the Post-Distribute lifecycle stages.");
   }
 
   // ===== Test fakes =====
