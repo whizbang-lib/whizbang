@@ -34,6 +34,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string IRECEPTOR_PREFIX = "global::Whizbang.Core.IReceptor";
   private const string ISYNCRECEPTOR_PREFIX = "global::Whizbang.Core.ISyncReceptor";
   private const string IPERSPECTIVE_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string IPERSPECTIVE_WITH_ACTIONS_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
@@ -168,7 +169,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     var entries = ImmutableArray.CreateBuilder<PerspectiveRegistryEntry>();
     foreach (var iface in classSymbol.AllInterfaces) {
       var prefix = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-      if (!prefix.StartsWith(IPERSPECTIVE_PREFIX, System.StringComparison.Ordinal)) {
+      if (!prefix.StartsWith(IPERSPECTIVE_PREFIX, System.StringComparison.Ordinal)
+          && !prefix.StartsWith(IPERSPECTIVE_WITH_ACTIONS_PREFIX, System.StringComparison.Ordinal)) {
         continue;
       }
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> — first type arg is the model, rest are events
