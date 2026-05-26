@@ -239,11 +239,54 @@ public static class WorkerPipelineExtensions {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
     var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    var lifecycleDeserializer = sp.GetService<ILifecycleMessageDeserializer>();
+    var lifecycleMetrics = sp.GetService<Whizbang.Core.Observability.LifecycleMetrics>();
+    var tracingOptions = sp.GetService<IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>();
+    var loggerFactory = sp.GetService<ILoggerFactory>();
+    var workChannelWriter = sp.GetService<IWorkChannelWriter>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+      // Stream-affinity batch path bypasses the scoped strategy's queue, so the
+      // dispatcher's strategy.FlushAsync sees an empty queue and skips lifecycle
+      // invocation. Fire the Distribute lifecycle stages here — same shape as
+      // WorkCoordinatorFlushHelper — so receptors at PreDistribute*, DistributeDetached,
+      // and PostDistribute* still fire for outbox messages routed through the batcher.
+      var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(Whizbang.Core.Tracing.TraceComponents.Lifecycle) ?? false;
+      var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
+      var distributeContext = new DistributeLifecycleContext(
+        OutboxMessages: messages,
+        InboxMessages: Array.Empty<InboxMessage>(),
+        ScopeFactory: scopeFactory,
+        LifecycleMessageDeserializer: lifecycleDeserializer,
+        Logger: lifecycleLogger,
+        EnableLifecycleTracing: enableLifecycleTracing,
+        Metrics: lifecycleMetrics);
+
+      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+        LifecycleStage.PreDistributeDetached,
+        LifecycleStage.PreDistributeInline,
+        distributeContext,
+        ct).ConfigureAwait(false);
+
+      LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+        LifecycleStage.DistributeDetached,
+        distributeContext,
+        ct);
+
       await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+
+      // Wake ClaimWorker so freshly-stored rows get claimed without waiting for the
+      // next poll. Mirrors WorkCoordinatorFlushHelper line 152.
+      workChannelWriter?.SignalNewWorkAvailable();
+
+      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+        LifecycleStage.PostDistributeDetached,
+        LifecycleStage.PostDistributeInline,
+        distributeContext,
+        ct).ConfigureAwait(false);
     };
   }
 
@@ -251,11 +294,49 @@ public static class WorkerPipelineExtensions {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
     var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    var lifecycleDeserializer = sp.GetService<ILifecycleMessageDeserializer>();
+    var lifecycleMetrics = sp.GetService<Whizbang.Core.Observability.LifecycleMetrics>();
+    var tracingOptions = sp.GetService<IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>();
+    var loggerFactory = sp.GetService<ILoggerFactory>();
+    var inboxChannelWriter = sp.GetService<IInboxChannelWriter>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+      // Same rationale as the outbox flush callback: stream-affinity inbox batching
+      // bypasses the scoped strategy queue, so fire Distribute lifecycle stages here.
+      var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(Whizbang.Core.Tracing.TraceComponents.Lifecycle) ?? false;
+      var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.InboxBatchFlush");
+      var distributeContext = new DistributeLifecycleContext(
+        OutboxMessages: Array.Empty<OutboxMessage>(),
+        InboxMessages: messages,
+        ScopeFactory: scopeFactory,
+        LifecycleMessageDeserializer: lifecycleDeserializer,
+        Logger: lifecycleLogger,
+        EnableLifecycleTracing: enableLifecycleTracing,
+        Metrics: lifecycleMetrics);
+
+      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+        LifecycleStage.PreDistributeDetached,
+        LifecycleStage.PreDistributeInline,
+        distributeContext,
+        ct).ConfigureAwait(false);
+
+      LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+        LifecycleStage.DistributeDetached,
+        distributeContext,
+        ct);
+
       await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+
+      inboxChannelWriter?.SignalNewInboxWorkAvailable();
+
+      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+        LifecycleStage.PostDistributeDetached,
+        LifecycleStage.PostDistributeInline,
+        distributeContext,
+        ct).ConfigureAwait(false);
     };
   }
 }
