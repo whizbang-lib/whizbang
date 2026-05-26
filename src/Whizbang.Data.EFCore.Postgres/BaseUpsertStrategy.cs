@@ -232,14 +232,27 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       pfUpdateClause = ", " + pfUpdates;
     }
 
+    // Resolve schema from the EF Core model (set via HasDefaultSchema on the DbContext) and
+    // schema-qualify the raw-SQL target. Without this, multi-tenant deployments that put
+    // perspective tables in a service-specific schema ("bff", "inventory", ...) get
+    // 42P01 "relation does not exist" because raw SQL doesn't honor EF's default schema —
+    // the connection's search_path determines what unqualified names resolve to, and that
+    // isn't set per-service in all deployments. PerspectiveRow<TModel> is the EF entity
+    // registered for the perspective table; its schema comes from HasDefaultSchema().
+    var entityType = context.Model.FindEntityType(typeof(PerspectiveRow<TModel>));
+    var schema = entityType?.GetSchema();
+    var qualifiedTable = string.IsNullOrEmpty(schema)
+      ? args.TableName
+      : $"\"{schema}\".{args.TableName}";
+
     var sql = $@"
-        INSERT INTO {args.TableName} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
+        INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
         VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1{pfValuesClause})
         ON CONFLICT (id) DO UPDATE SET
           data = EXCLUDED.data,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at,
-          version = {args.TableName}.version + 1{scopeUpdateClause}{pfUpdateClause}";
+          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}";
 
     var connection = context.Database.GetDbConnection();
     var openedHere = false;
