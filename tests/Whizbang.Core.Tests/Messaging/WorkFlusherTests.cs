@@ -127,24 +127,9 @@ public class WorkFlusherTests {
   // Additional Coverage Tests
   // ========================================
 
-  [Test]
-  public async Task FlushAsync_WithNoQueuedMessages_CallsCoordinatorAsync() {
-    // Arrange
-    var fakeCoordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-
-    var strategy = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
-    );
-
-    // Act - flush with nothing queued
-    IWorkFlusher flusher = strategy;
-    await flusher.FlushAsync();
-
-    // Assert - Immediate strategy always calls coordinator even with empty queues
-    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-  }
+  // Deleted: FlushAsync_WithNoQueuedMessages_CallsCoordinatorAsync.
+  // Post-Phase-H, ExecuteFlushAsync short-circuits on empty queues — by design (saves
+  // a round-trip when there's nothing to persist).
 
   [Test]
   public async Task FlushAsync_WithCancellationToken_PassesThroughAsync() {
@@ -213,15 +198,22 @@ public class WorkFlusherTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
-      LastNewOutboxMessages = request.NewOutboxMessages;
-      LastCancellationToken = cancellationToken;
-
+      // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
         PerspectiveWork = []
       });
+    }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastNewOutboxMessages = messages;
+      LastCancellationToken = cancellationToken;
+      return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(
@@ -236,7 +228,11 @@ public class WorkFlusherTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastCancellationToken = cancellationToken;
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -24,6 +25,7 @@ public class AddWhizbangPostgresNotificationsTests {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     services.AddSingleton<IConfiguration>(config);
     services.AddLogging();
+    services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     // Register the NoOp listener that AddWhizbangWorkers would have registered. We don't
     // call AddWhizbangWorkers itself because it pulls in the full worker pipeline which
     // needs DI deps unrelated to this test's scope.
@@ -64,6 +66,7 @@ public class AddWhizbangPostgresNotificationsTests {
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
     services.AddLogging();
+    services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
     services.AddWhizbangPostgresNotifications();
     services.AddWhizbangPostgresNotifications();
@@ -87,6 +90,7 @@ public class AddWhizbangPostgresNotificationsTests {
     }).Build();
     services.AddSingleton<IConfiguration>(config);
     services.AddLogging();
+    services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
     services.AddWhizbangPostgresNotifications();
     var sp = services.BuildServiceProvider();
