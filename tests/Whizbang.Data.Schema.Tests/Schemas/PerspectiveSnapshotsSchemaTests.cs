@@ -25,7 +25,7 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectColumnsAsync() {
     var columns = PerspectiveSnapshotsSchema.Table.Columns;
 
-    await Assert.That(columns).Count().IsEqualTo(6);
+    await Assert.That(columns).Count().IsEqualTo(7);
 
     var streamId = columns.First(c => c.Name == "stream_id");
     await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
@@ -56,6 +56,11 @@ public class PerspectiveSnapshotsSchemaTests {
     await Assert.That(createdAt.DefaultValue).IsNotNull();
     await Assert.That(createdAt.DefaultValue).IsTypeOf<FunctionDefault>();
     await Assert.That(((FunctionDefault)createdAt.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
+
+    // Slice 26.11 — added via schema (was previously deferred to migration 048 only).
+    var snapshotCommitSequence = columns.First(c => c.Name == "snapshot_commit_sequence");
+    await Assert.That(snapshotCommitSequence.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
+    await Assert.That(snapshotCommitSequence.Nullable).IsTrue();
   }
 
   [Test]
@@ -75,14 +80,21 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectIndexesAsync() {
     var indexes = PerspectiveSnapshotsSchema.Table.Indexes;
 
-    await Assert.That(indexes).Count().IsEqualTo(1);
+    await Assert.That(indexes).Count().IsEqualTo(2);
 
-    var lookupIndex = indexes[0];
-    await Assert.That(lookupIndex.Name).IsEqualTo("idx_perspective_snapshots_lookup");
+    var lookupIndex = indexes.First(i => i.Name == "idx_perspective_snapshots_lookup");
     await Assert.That(lookupIndex.Columns).Count().IsEqualTo(3);
     await Assert.That(lookupIndex.Columns[0]).IsEqualTo("stream_id");
     await Assert.That(lookupIndex.Columns[1]).IsEqualTo("perspective_name");
     await Assert.That(lookupIndex.Columns[2]).IsEqualTo("sequence_number");
+
+    // Slice 26.11 — partial index on commit_sequence for rewind lookups.
+    var commitSeqIndex = indexes.First(i => i.Name == "idx_perspective_snapshots_commit_sequence");
+    await Assert.That(commitSeqIndex.Columns).Count().IsEqualTo(3);
+    await Assert.That(commitSeqIndex.Columns[0]).IsEqualTo("stream_id");
+    await Assert.That(commitSeqIndex.Columns[1]).IsEqualTo("perspective_name");
+    await Assert.That(commitSeqIndex.Columns[2]).IsEqualTo("snapshot_commit_sequence");
+    await Assert.That(commitSeqIndex.WhereClause).IsEqualTo("snapshot_commit_sequence IS NOT NULL");
   }
 
   [Test]
