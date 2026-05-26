@@ -888,7 +888,7 @@ public partial class ServiceBusConsumerWorker(
     Level = LogLevel.Debug,
     Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
   )]
-  static partial void LogDroppedUnsubscribedType(ILogger logger, Guid messageId, string envelopeType);
+  static partial void LogDroppedUnsubscribedType(ILogger logger, global::Whizbang.Core.ValueObjects.MessageId messageId, string envelopeType);
 }
 
 /// <summary>
