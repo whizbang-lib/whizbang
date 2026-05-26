@@ -41,7 +41,16 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     var streamId = Guid.NewGuid();
     await _registerInstanceAsync(connection, instanceId);
 
-    var ids = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    // Slice 26.9: fetch_outbox_batch orders by (stream_id, commit_sequence NULLS LAST,
+    // message_id). For non-event rows (no event_store entry), commit_sequence is NULL
+    // and the fall-back is message_id ASC. Use TrackedGuid (UUIDv7, monotonic-at-generation)
+    // so message_ids match insertion order — that's the contract the function relies on
+    // per feedback_use_trackedguid.
+    var ids = new[] {
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+      (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo()
+    };
     var times = new[] {
       DateTimeOffset.UtcNow.AddSeconds(-30),
       DateTimeOffset.UtcNow.AddSeconds(-20),
