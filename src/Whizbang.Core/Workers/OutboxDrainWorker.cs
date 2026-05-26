@@ -44,6 +44,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // injection. Guid.Empty until resolved.
   private Guid _localServiceId;
 
+  /// <summary>
+  /// Fired once per successful transport publish (after <see cref="IMessagePublishStrategy.PublishAsync"/>
+  /// returns <c>Success = true</c>, before the completion is enqueued). Mirrors
+  /// <c>OutboxPublishWorker.OnOutboxMessagePublished</c> so integration test fixtures that
+  /// previously listened on the legacy worker keep working when the drain-worker path is
+  /// the active publisher. Public hook by design: production code can wire post-publish
+  /// observability or test fixtures can wire deterministic completion signals.
+  /// </summary>
+  /// <docs>operations/workers/publisher-worker</docs>
+  public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
+
   /// <summary>Constructor.</summary>
   public OutboxDrainWorker(
     IServiceScopeFactory scopeFactory,
@@ -248,6 +259,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
 
     if (result.Success) {
+      // Fire publish hook BEFORE enqueuing the completion. Test fixtures rely on the
+      // signal firing per-row; ordering it before completion enqueue means the next
+      // observed completion-flush always reflects the published row.
+      OnOutboxMessagePublished?.Invoke(new OutboxMessagePublishedEvent {
+        MessageId = row.MessageId,
+        Destination = row.Destination
+      });
       await _completionChannel.EnqueueAsync(row.MessageId, ct);
     } else {
       await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {

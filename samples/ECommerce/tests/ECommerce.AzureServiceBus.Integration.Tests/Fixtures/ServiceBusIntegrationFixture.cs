@@ -1421,22 +1421,35 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// </summary>
   public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<OutboxPublishWorker>().FirstOrDefault();
-    if (worker is null) {
-      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    // Post-Phase-H: OutboxDrainWorker is the active publish path (OutboxPublishWorker
+    // defaults disabled). Both expose OnOutboxMessagePublished; subscribe to whichever
+    // is registered as IHostedService so the fixture works on either configuration.
+    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
+    var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
+    if (drainWorker is null && publishWorker is null) {
+      throw new InvalidOperationException("Neither OutboxDrainWorker nor OutboxPublishWorker registered on InventoryHost");
     }
     OutboxMessagePublishedHandler? handler = null;
     handler = (e) => {
       tcs.TrySetResult(e.MessageId);
-      worker.OnOutboxMessagePublished -= handler;
     };
-    worker.OnOutboxMessagePublished += handler;
+    if (drainWorker is not null) {
+      drainWorker.OnOutboxMessagePublished += handler;
+    }
+    if (publishWorker is not null) {
+      publishWorker.OnOutboxMessagePublished += handler;
+    }
     try {
       var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
       return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
     } finally {
-      worker.OnOutboxMessagePublished -= handler;
+      if (drainWorker is not null) {
+        drainWorker.OnOutboxMessagePublished -= handler;
+      }
+      if (publishWorker is not null) {
+        publishWorker.OnOutboxMessagePublished -= handler;
+      }
     }
   }
 
