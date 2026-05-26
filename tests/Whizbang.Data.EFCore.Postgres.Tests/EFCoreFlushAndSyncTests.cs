@@ -56,10 +56,11 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
       OutboxIds: new Guid[] { outboxMsgId },
       PerspectiveEventWorkIds: new Guid[] { perspectiveWorkId }));
 
+    // Production-mode complete_outbox_published DELETEs the row outright; assert it's gone.
     await using (var v = conn.CreateCommand()) {
-      v.CommandText = "SELECT processed_at IS NOT NULL FROM wh_outbox WHERE message_id = @m";
+      v.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_id = @m";
       v.Parameters.AddWithValue("m", (Guid)outboxMsgId);
-      await Assert.That((bool)(await v.ExecuteScalarAsync())!).IsTrue();
+      await Assert.That((long)(await v.ExecuteScalarAsync())!).IsEqualTo(0L);
     }
     await using (var v = conn.CreateCommand()) {
       v.CommandText = "SELECT count(*) FROM wh_perspective_events WHERE event_work_id = @w";

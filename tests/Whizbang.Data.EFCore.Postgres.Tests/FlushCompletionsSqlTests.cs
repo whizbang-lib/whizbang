@@ -71,12 +71,14 @@ public class FlushCompletionsSqlTests : EFCoreTestBase {
       _ = await flush.ExecuteScalarAsync();
     }
 
-    // Assert both effects applied.
+    // Assert both effects applied. Production-mode complete_outbox_published DELETEs the
+    // row outright (not UPDATEs processed_at) — structurally immune to claim_work
+    // re-issuing it. The row should be gone.
     await using (var verifyOutbox = connection.CreateCommand()) {
-      verifyOutbox.CommandText = "SELECT processed_at IS NOT NULL FROM wh_outbox WHERE message_id = @msg";
+      verifyOutbox.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_id = @msg";
       verifyOutbox.Parameters.AddWithValue("msg", outboxMsgId);
-      var done = (bool)(await verifyOutbox.ExecuteScalarAsync())!;
-      await Assert.That(done).IsTrue();
+      var remaining = (long)(await verifyOutbox.ExecuteScalarAsync())!;
+      await Assert.That(remaining).IsEqualTo(0L);
     }
     await using (var verifyPersp = connection.CreateCommand()) {
       verifyPersp.CommandText = "SELECT count(*) FROM wh_perspective_events WHERE event_work_id = @work";

@@ -62,9 +62,17 @@ public class SyncInquiryWakeSqlTests : EFCoreTestBase {
     }
 
     // Trigger notification delivery on the listener side. Npgsql delivers notifications
-    // when the connection is read from; Wait() blocks up to the timeout.
-    var waitTask = listenConn.WaitAsync(CancellationToken.None);
+    // when the connection is read from. Use a cancellable WaitAsync so the call returns
+    // cleanly once the notification arrives (or the timeout fires) — leaving WaitAsync
+    // dangling in "Waiting" state breaks subsequent test runs with
+    // NpgsqlOperationInProgressException.
+    using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var waitTask = Task.Run(async () => {
+      try { await listenConn.WaitAsync(waitCts.Token); } catch (OperationCanceledException) { }
+    });
     await Task.WhenAny(firstNotification.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+    waitCts.Cancel();
+    await waitTask;
 
     await Assert.That(firstNotification.Task.IsCompleted).IsTrue()
       .Because("complete_perspective must emit pg_notify('wh_work', 'perspective') so sync awaiters wake within the LISTEN tick.");
