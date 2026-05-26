@@ -16,6 +16,41 @@ internal sealed class MockWorkCoordinator : IWorkCoordinator {
     _processHandler = processHandler;
   }
 
+  public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default) {
+    // Slice 26 split: PerspectiveSyncAwaiter calls this dedicated method instead of
+    // ProcessWorkBatchAsync. Tests historically express the desired sync result via
+    // a WorkBatch.SyncInquiryResults handler. Route through the handler so existing
+    // tests keep working without rewriting their setup.
+    if (_processHandler is null) {
+      return [];
+    }
+    var probe = await _processHandler(_emptyRequest(), cancellationToken).ConfigureAwait(false);
+    return probe.SyncInquiryResults ?? [];
+  }
+
+  private static ProcessWorkBatchRequest _emptyRequest() => new() {
+    InstanceId = Guid.NewGuid(),
+    ServiceName = "mock",
+    HostName = "mock",
+    ProcessId = 0,
+    NewOutboxMessages = [],
+    NewInboxMessages = [],
+    OutboxCompletions = [],
+    InboxCompletions = [],
+    OutboxFailures = [],
+    InboxFailures = [],
+    ReceptorCompletions = [],
+    ReceptorFailures = [],
+    PerspectiveCompletions = [],
+    PerspectiveEventCompletions = [],
+    PerspectiveFailures = [],
+    RenewOutboxLeaseIds = [],
+    RenewInboxLeaseIds = [],
+    Flags = WorkBatchOptions.None
+  };
+
   /// <summary>
   /// Creates a mock that returns sync results with specified pending count.
   /// </summary>

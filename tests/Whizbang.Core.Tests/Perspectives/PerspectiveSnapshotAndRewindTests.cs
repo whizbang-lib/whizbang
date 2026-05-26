@@ -297,7 +297,11 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task IPerspectiveRunner_HasRewindAndRunAsyncMethodAsync() {
     var interfaceType = typeof(IPerspectiveRunner);
-    var method = interfaceType.GetMethod("RewindAndRunAsync");
+    // Slice 26.11 added a second overload taking long? triggeringCommitSequence;
+    // specify the original 4-arg overload so this stays unambiguous.
+    var method = interfaceType.GetMethod(
+      "RewindAndRunAsync",
+      [typeof(Guid), typeof(string), typeof(Guid), typeof(CancellationToken)]);
 
     await Assert.That(method).IsNotNull();
     await Assert.That(method!.ReturnType).IsEqualTo(typeof(Task<PerspectiveCursorCompletion>));
@@ -568,7 +572,9 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task IPerspectiveRunner_RewindAndRunAsync_HasCorrectParametersAsync() {
     var interfaceType = typeof(IPerspectiveRunner);
-    var method = interfaceType.GetMethod("RewindAndRunAsync");
+    var method = interfaceType.GetMethod(
+      "RewindAndRunAsync",
+      [typeof(Guid), typeof(string), typeof(Guid), typeof(CancellationToken)]);
     var parameters = method!.GetParameters();
 
     await Assert.That(parameters.Length).IsEqualTo(4); // streamId, perspectiveName, triggeringEventId, ct
