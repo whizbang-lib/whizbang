@@ -342,8 +342,7 @@ public class FlushApiTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
-      LastNewOutboxMessages = request.NewOutboxMessages;
+      // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -351,12 +350,24 @@ public class FlushApiTests {
       });
     }
 
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      LastNewOutboxMessages = messages;
+      return Task.CompletedTask;
+    }
+
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
