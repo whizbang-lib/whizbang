@@ -50,17 +50,25 @@ public static class PerspectiveSnapshotsSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      // Slice 26.11 — commit_sequence as of this snapshot. NULL on existing rows; populated
+      // by the runner template via IEventStore.GetCommitSequenceAsync. Mig 048 backfills
+      // schema (ALTER + index) on existing JDX databases.
+      new ColumnDefinition(
+        Name: "snapshot_commit_sequence",
+        DataType: WhizbangDataType.BIG_INT,
+        Nullable: true
       )
-    // Slice 26.11 note: snapshot_commit_sequence column + idx_perspective_snapshots_commit_sequence
-    // index are added via SQL migration 048_AddSnapshotCommitSequence.sql (idempotent ALTER + CREATE
-    // INDEX IF NOT EXISTS). Keeping them out of the schema definition avoids a generator-time
-    // CREATE INDEX against a column that doesn't exist on existing JDX databases — the migration
-    // framework handles both fresh and upgraded DBs after CoreInfrastructureTables runs.
     ),
     Indexes: [
       new IndexDefinition(
         Name: "idx_perspective_snapshots_lookup",
         Columns: ["stream_id", "perspective_name", "sequence_number"]
+      ),
+      new IndexDefinition(
+        Name: "idx_perspective_snapshots_commit_sequence",
+        Columns: ["stream_id", "perspective_name", "snapshot_commit_sequence"],
+        WhereClause: "snapshot_commit_sequence IS NOT NULL"
       )
     ]
   );
