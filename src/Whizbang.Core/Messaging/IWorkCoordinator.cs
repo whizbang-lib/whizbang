@@ -464,8 +464,10 @@ public interface IWorkCoordinator {
     OutboxMessage[] messages,
     int partitionCount,
     CancellationToken cancellationToken = default)
-    => throw new NotImplementedException(
-      $"{GetType().Name} does not implement StoreOutboxMessagesAsync.");
+    // Default no-op for test fakes. Production coordinators (EFCoreWorkCoordinator,
+    // DapperWorkCoordinator) override this with the real INSERT. Tests that don't exercise
+    // the store path silently no-op; tests that DO exercise it use a fake that overrides.
+    => Task.CompletedTask;
 
   /// <summary>
   /// Evicts streams from <c>wh_active_streams</c> when their pending-work tables are empty,
