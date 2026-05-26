@@ -261,7 +261,13 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     }
 
     var beforeAttempts = await _readAttemptsAsync(conn, workId);
-    var freshLease = DateTimeOffset.UtcNow.AddMinutes(5);
+    // Truncate to microsecond precision: PG TIMESTAMPTZ stores 6 fractional-second digits
+    // while .NET DateTimeOffset stores 7 (100-ns ticks). Without this, the round-trip drops
+    // sub-microsecond ticks and a direct IsEqualTo fails by <1µs in CI builds even though
+    // the SQL function set the value verbatim.
+    var freshLease = new DateTimeOffset(
+      (DateTimeOffset.UtcNow.AddMinutes(5).UtcTicks / TimeSpan.TicksPerMicrosecond) * TimeSpan.TicksPerMicrosecond,
+      TimeSpan.Zero);
 
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = "SELECT * FROM claim_and_fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, NOW())";
