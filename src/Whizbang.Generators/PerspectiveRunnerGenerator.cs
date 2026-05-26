@@ -556,8 +556,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
-          return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
+          // Match IPerspectiveFor / IPerspectiveWithActionsFor<TModel, TEvent1, ...> with any number of event types (1-50)
+          return (originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
+               || originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal))
                  && i.TypeArguments.Length >= 2;
         })];
   }

@@ -187,6 +187,42 @@ public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithPerspectiveWithActionsForButNoReceptor_DoesNotWarnAsync() {
+    // IPerspectiveWithActionsFor must suppress WHIZ002 the same way IPerspectiveFor
+    // does; otherwise an event handled only by a WithActionsFor perspective is
+    // incorrectly flagged as "no IReceptor handles this event".
+    const string source = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace MyApp.Perspectives;
+
+public record TestEvent : IEvent;
+
+public record TestModel {
+  public Guid Id { get; set; }
+}
+
+public class TestActionsPerspective : IPerspectiveWithActionsFor<TestModel, TestEvent> {
+  public ApplyResult<TestModel> Apply(TestModel? currentData, TestEvent @event) {
+    return ApplyResult<TestModel>.Update(currentData ?? new());
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should not report WHIZ002 when WithActionsFor perspective exists
+    var warnings = result.Diagnostics.Where(d => d.Id == "WHIZ002").ToArray();
+    await Assert.That(warnings).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesDispatcherRegistrationsAsync() {
     // Arrange
     const string source = @"

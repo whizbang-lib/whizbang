@@ -100,6 +100,38 @@ public class PinnedIdRegistryGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_WithPinnedPerspectiveWithActionsFor_GeneratesRegistryAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp.Views;
+
+      public record OrderView;
+      public record OrderShippedEvent : IEvent;
+
+      [PinnedId("c0ffee00-1111-2222-3333-444444444444")]
+      public class ActionsOrderPerspective : IPerspectiveWithActionsFor<OrderView, OrderShippedEvent> {
+        public ApplyResult<OrderView> Apply(OrderView? current, OrderShippedEvent @event) =>
+          ApplyResult<OrderView>.Update(current ?? new());
+      }
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PinnedIdRegistryGenerator>(source);
+
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(errors).IsEmpty();
+
+    var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
+    await Assert.That(registryCode).IsNotNull();
+    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Views.ActionsOrderPerspective)");
+    await Assert.That(registryCode!).Contains("\"c0ffee00-1111-2222-3333-444444444444\"");
+  }
+
+  [Test]
   public async Task Generator_WithoutPinnedId_SkipsTypeAsync() {
     const string source = """
 

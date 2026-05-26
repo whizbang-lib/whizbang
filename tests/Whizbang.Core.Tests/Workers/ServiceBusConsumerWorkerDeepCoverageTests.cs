@@ -509,7 +509,9 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       }
     );
 
-    var invokedStages = new List<LifecycleStage>();
+    // Detached stages add via Task.Run while the inline path adds on the calling thread —
+    // use ConcurrentBag so concurrent Add() is safe.
+    var invokedStages = new System.Collections.Concurrent.ConcurrentBag<LifecycleStage>();
     var registry = new DeepCoverageReceptorRegistry();
     foreach (var stage in new[] {
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,

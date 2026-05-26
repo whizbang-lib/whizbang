@@ -56,7 +56,10 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
 
     var isPerspective = TypeNameHelper.ImplementsGenericInterface(
         typeSymbol,
-        StandardInterfaceNames.I_PERSPECTIVE_FOR);
+        StandardInterfaceNames.I_PERSPECTIVE_FOR) ||
+      TypeNameHelper.ImplementsGenericInterface(
+        typeSymbol,
+        StandardInterfaceNames.I_PERSPECTIVE_WITH_ACTIONS_FOR);
 
     if (!isMessage && !isPerspective) {
       return;
