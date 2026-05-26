@@ -122,12 +122,15 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
       }
     });
 
+    // Phase H step 8 — claim_orphaned_* is the sole attempt counter; ReportFailures
+    // records the error + releases the lease but doesn't bump attempts. The initial
+    // attempts=0 stays 0 until a subsequent claim_orphaned_outbox re-claims this row.
     await using var verify = conn.CreateCommand();
     verify.CommandText = "SELECT attempts, error FROM wh_outbox WHERE message_id = @msg";
     verify.Parameters.AddWithValue("msg", msgId);
     await using var reader = await verify.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
-    await Assert.That(reader.GetInt32(0)).IsEqualTo(1);
+    await Assert.That(reader.GetInt32(0)).IsEqualTo(0);
     await Assert.That(reader.GetString(1)).IsEqualTo("transport publish exploded");
   }
 

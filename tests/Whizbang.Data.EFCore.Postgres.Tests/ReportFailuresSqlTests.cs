@@ -60,6 +60,7 @@ public class ReportFailuresSqlTests : EFCoreTestBase {
       _ = await call.ExecuteScalarAsync();
     }
 
+    // Phase H step 8 — claim_orphaned_* is sole attempt counter; failures don't bump.
     await using var verify = connection.CreateCommand();
     verify.CommandText = "SELECT attempts, error FROM wh_outbox WHERE message_id = @msg";
     verify.Parameters.AddWithValue("msg", msgId);
@@ -67,7 +68,7 @@ public class ReportFailuresSqlTests : EFCoreTestBase {
     await Assert.That(await reader.ReadAsync()).IsTrue();
     var attempts = reader.GetInt32(0);
     var error = reader.IsDBNull(1) ? null : reader.GetString(1);
-    await Assert.That(attempts).IsEqualTo(1);
+    await Assert.That(attempts).IsEqualTo(0);
     await Assert.That(error).IsEqualTo("transport publish exploded");
   }
 
