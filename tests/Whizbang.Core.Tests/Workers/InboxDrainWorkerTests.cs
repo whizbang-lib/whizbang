@@ -255,4 +255,65 @@ public class InboxDrainWorkerTests {
     var defaults = new InboxDrainWorkerOptions();
     await Assert.That(defaults.Enabled).IsTrue();
   }
+
+  /// <summary>
+  /// Row helper that produces a malformed envelope (invalid JSON) so _toInboxWork throws.
+  /// Locks the deserialize-failure path: the malformed row is logged and SKIPPED, the
+  /// drain continues with subsequent rows.
+  /// </summary>
+  private static InboxBatchRow _malformedRow(Guid messageId, Guid streamId) => new() {
+    MessageId = messageId,
+    StreamId = streamId,
+    MessageType = "TestMessage",
+    EventData = "{not valid json",   // <-- deliberate
+    Metadata = "{}",
+    Scope = null,
+    Status = 1,
+    Attempts = 0,
+    PartitionNumber = 0,
+    HandlerName = "TestHandler",
+  };
+
+  [Test]
+  public async Task InboxDrainWorker_DeserializeFails_SkipsBadRow_ContinuesDrainAsync() {
+    // Locks the _toInboxWork catch path: a row with malformed EventData throws inside
+    // _toInboxWork — the drainer logs and CONTINUES (loop continue), enqueues good rows
+    // around it. Without this guard, a single corrupted row would block all subsequent
+    // inbox processing for the stream.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var badMsg = (Guid)TrackedGuid.NewMedo();
+    var goodMsg = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_malformedRow(badMsg, streamId), _row(goodMsg, streamId)];
+
+    var drainChannel = new FakeInboxDrainChannel();
+    var inboxChannelWriter = new CapturingInboxChannel { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, inboxChannelWriter, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(inboxChannelWriter.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(inboxChannelWriter.Written.Count).IsEqualTo(1)
+      .Because("Only the good row should be enqueued; the malformed one is logged + skipped.");
+    await Assert.That(inboxChannelWriter.Written.First().MessageId).IsEqualTo(goodMsg);
+  }
 }
