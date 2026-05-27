@@ -36,6 +36,11 @@ public sealed class LeaseHandle : IDisposable {
   private readonly int _maxRenewals;
   private readonly CancellationTokenSource _deadlineCts;
   private readonly CancellationTokenSource _linkedCts;
+  // Cache the linked token at construction so post-Dispose reads of Token still work
+  // (CancellationToken is a struct that holds a reference to the source — IsCancellationRequested
+  // remains queryable even after the source is disposed). Without this cache,
+  // _linkedCts.Token would throw ObjectDisposedException after Dispose.
+  private readonly CancellationToken _linkedToken;
   private readonly Lock _gate = new();
   private int _renewalCount;
   private bool _disposed;
@@ -87,6 +92,7 @@ public sealed class LeaseHandle : IDisposable {
       }
       _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(sources);
     }
+    _linkedToken = _linkedCts.Token;
   }
 
   /// <summary>Identifier of the work item this lease covers.</summary>
@@ -96,7 +102,7 @@ public sealed class LeaseHandle : IDisposable {
   public WorkCategory Category { get; }
 
   /// <summary>Cancellation token that fires at deadline, on shutdown, or on dispose.</summary>
-  public CancellationToken Token => _linkedCts.Token;
+  public CancellationToken Token => _linkedToken;
 
   /// <summary>Number of successful <see cref="TryExtendDeadline"/> calls.</summary>
   public int RenewalCount {
@@ -150,17 +156,16 @@ public sealed class LeaseHandle : IDisposable {
       }
       _disposed = true;
     }
-    // Cancel both sources so observers get the cancellation signal. We DO NOT dispose the CTSs
-    // here: callers may legitimately read <see cref="Token"/> after disposal to check
-    // <c>IsCancellationRequested</c> (e.g., in a catch block), and disposing a CTS makes its
-    // <c>Token</c> property throw <see cref="ObjectDisposedException"/>. The CTSs are short-lived
-    // (one per dispatch, seconds to minutes); GC reclaims them. The minor handle-cost is
-    // acceptable in exchange for safe post-dispose token reads.
+    // Cancel + dispose both sources. Post-dispose reads of <see cref="Token"/> remain safe
+    // because the token was cached at construction (CancellationToken is a struct that
+    // still answers IsCancellationRequested after its source is disposed).
     try {
       _deadlineCts.Cancel();
     } catch (ObjectDisposedException) {
       // Already disposed by a racing call.
     }
+    _linkedCts.Dispose();
+    _deadlineCts.Dispose();
     Disposed?.Invoke(this);
   }
 }
