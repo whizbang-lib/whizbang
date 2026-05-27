@@ -890,16 +890,29 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for a specific number of perspective completions using the
-  /// <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
-  /// Deterministic — fires directly from the worker's processing loop.
+  /// Waits for a specific number of perspective EVENTS (not fires) to be processed using
+  /// the <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The handler fires ONCE per (perspective, stream) batch — but each fire carries an
+  /// <c>EventCount</c> that reflects how many events were processed in that batch. This
+  /// implementation SUMS EventCount so callers can specify a precise event total instead
+  /// of guessing how the worker batched them.
+  /// </para>
+  /// <para>
+  /// Example: CreateProductCommand with InitialStock &gt; 0 produces 3 events on inventory
+  /// (ProductCreated x2 + InventoryRestocked x1). Whether the worker dispatches them in 2
+  /// or 3 batches (depending on drain timing) doesn't matter — <c>expectedCompletions: 3</c>
+  /// always waits until all 3 events have actually been applied.
+  /// </para>
+  /// </remarks>
   public async Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
       string? hostFilter = null) {
 
-    var completionCount = 0;
+    var eventCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     void WireWorker(PerspectiveWorker? worker) {
@@ -909,7 +922,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
       PerspectiveEventProcessedHandler? handler = null;
       handler = (e) => {
-        var current = Interlocked.Increment(ref completionCount);
+        var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }
