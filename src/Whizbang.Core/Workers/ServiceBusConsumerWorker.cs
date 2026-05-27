@@ -36,7 +36,8 @@ public partial class ServiceBusConsumerWorker(
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null,
   MessageProcessingOptions? messageProcessingOptions = null,
-  IReceptorRegistryQuery? receptorRegistry = null
+  IReceptorRegistryQuery? receptorRegistry = null,
+  IReceptorRegistry? runtimeReceptorRegistry = null
   ) : BackgroundService {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -48,6 +49,7 @@ public partial class ServiceBusConsumerWorker(
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
   private readonly IReceptorRegistryQuery? _receptorRegistry = receptorRegistry;
+  private readonly IReceptorRegistry? _runtimeReceptorRegistry = runtimeReceptorRegistry;
   private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
     ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
@@ -298,16 +300,30 @@ public partial class ServiceBusConsumerWorker(
     }
 
     foreach (var work in myWork) {
-      // Slice 4-symmetry gate: skip PreInbox deserialize when neither stage has receptors
-      // for this type. Same shape as InboxDispatchWorker; null registry preserves legacy
-      // behavior for back-compat in test harnesses.
-      if (_receptorRegistry is not null
-          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
-          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)) {
-        continue;
-      }
+      // Deserialize before the gate so the runtime-registry check can use the concrete
+      // payload type — the runtime registry keys by Type, not by string. Costs one extra
+      // JSON parse on the cross-service no-handler path versus the pre-fix slice-4 gate,
+      // but the alternative was the per-type runtime check missing because we had no
+      // Type to ask about. Loss is bounded: PostInbox below already deserializes
+      // unconditionally, so worst-case we go from 1 to 2 parses per message.
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+
+      // Slice 4-symmetry gate: skip PreInbox firing when neither stage has receptors —
+      // either compile-time (source-generated WhizbangReceptorRegistryQuery) OR
+      // runtime-registered via IReceptorRegistry. Without the runtime branch, services
+      // whose generated contribution emits empty arrays for the PreInbox stages would
+      // silently fail to fire runtime-registered receptors (integration-test waits,
+      // dynamic registrations). Mirrors the InboxDispatchWorker gate fix; null
+      // registries preserve legacy fire-unconditionally behavior for test harnesses.
+      var runtimeMessageType = typedEnvelope.Payload?.GetType();
+      if (_receptorRegistry is not null
+          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
+          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
+          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
+          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
+        continue;
+      }
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = LifecycleStage.PreInboxDetached,
         EventId = null,
@@ -416,6 +432,13 @@ public partial class ServiceBusConsumerWorker(
   private static async Task _invokeImmediateDetachedAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
     await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+  }
+
+  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+    if (_runtimeReceptorRegistry is null || messageType is null) {
+      return false;
+    }
+    return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
   }
 
   private void _fireDetachedStageAsync(
