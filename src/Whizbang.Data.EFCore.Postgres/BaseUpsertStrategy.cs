@@ -177,6 +177,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// physical-field values are present (those require shadow-property hydration through
   /// EF's interceptor pipeline), or the caller didn't supply a non-empty table name.
   /// </remarks>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single atomic UPSERT contains all the JSONB serialization + physical-field interpolation + retry-or-fallback control flow on purpose; splitting would force passing 6+ pieces of state across helpers and obscure the SQL composition.")]
   private static async Task<bool> _tryAtomicUpsertAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
