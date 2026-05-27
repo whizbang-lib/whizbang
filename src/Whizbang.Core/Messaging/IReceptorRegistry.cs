@@ -85,4 +85,28 @@ public interface IReceptorRegistry {
   /// <param name="stage">The lifecycle stage from which to remove the receptor.</param>
   /// <returns>True if the receptor was found and removed; false otherwise.</returns>
   bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage;
+
+  /// <summary>
+  /// True if any runtime-registered receptor exists for the given message-type string at any
+  /// lifecycle stage. Lets compile-time gates (the receive-boundary drop gate, lifecycle
+  /// short-circuits) honor runtime registrations without requiring a <see cref="Type"/> at
+  /// the call site — the gates only have an envelope-type string before deserialization.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Default implementation returns <c>false</c>: test doubles and stub registries that
+  /// don't care about this path keep working. The source-generated
+  /// <c>GeneratedReceptorRegistry</c> overrides with a real lookup that normalizes the
+  /// runtime registry's <see cref="Type"/> keys to strings and compares.
+  /// </para>
+  /// <para>
+  /// "Any stage" semantics — the drop gate wants to know whether <em>anything</em> on this
+  /// service will react to the message type. Per-stage runtime checks live alongside the
+  /// per-stage compile-time <c>HasReceptors</c> on <see cref="IReceptorRegistryQuery"/>.
+  /// </para>
+  /// </remarks>
+  /// <param name="messageType">Message-type string, typically from
+  /// <c>EnvelopeTypeNameHelper.ExtractInnerTypeName</c>. May be assembly-qualified or
+  /// FullName-only; the implementation normalizes.</param>
+  bool HasAnyRuntimeReceptors(string messageType) => false;
 }

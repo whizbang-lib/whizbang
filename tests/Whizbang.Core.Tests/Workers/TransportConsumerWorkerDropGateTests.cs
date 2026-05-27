@@ -74,6 +74,22 @@ public class TransportConsumerWorkerDropGateTests {
     public bool HasAnyConsumer(string messageType) => hasAnyConsumer;
   }
 
+  /// <summary>
+  /// Runtime-registry double — only <see cref="HasAnyRuntimeReceptors"/> is exercised by the
+  /// receive-boundary drop gate. The Register/Unregister/GetReceptorsFor methods throw or no-op
+  /// because the drop-gate tests never construct receptors through this path.
+  /// </summary>
+  private sealed class FakeRuntimeReceptorRegistry(Func<string, bool>? hasAnyRuntimeReceptors = null) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => Array.Empty<ReceptorInfo>();
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage
+      => throw new NotSupportedException("Drop-gate tests use the HasAnyRuntimeReceptors delegate; no real receptor registration.");
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage
+      => throw new NotSupportedException("Drop-gate tests use the HasAnyRuntimeReceptors delegate; no real receptor registration.");
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool HasAnyRuntimeReceptors(string messageType) => hasAnyRuntimeReceptors?.Invoke(messageType) ?? false;
+  }
+
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.New(),
     Payload = JsonDocument.Parse("{}").RootElement,
@@ -130,6 +146,62 @@ public class TransportConsumerWorkerDropGateTests {
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
       .Because("Drop gate must skip storage entirely for messages with no local consumer.");
+  }
+
+  [Test]
+  public async Task BatchHandler_CompileTimeEmptyButRuntimeReceptor_StoresInboxAsync() {
+    // Regression lock for the runtime-vs-compile-time gating bug across all three workers
+    // (InboxDispatchWorker, ServiceBusConsumerWorker, and now TransportConsumerWorker). The
+    // receive-boundary drop gate at the top of the batch handler consults the source-generated
+    // IReceptorRegistryQuery.HasAnyConsumer, which only knows about compile-time-declared
+    // consumers. A message of a type the service has runtime-registered (integration-test
+    // wait helper, dynamic registration) but no compile-time consumer for would be silently
+    // dropped at receive — no inbox row, no downstream lifecycle, nothing.
+    //
+    // The runtime registry's HasAnyRuntimeReceptors closes the gap. This test asserts that
+    // when compile-time HasAnyConsumer reports false but the runtime registry reports a
+    // matching runtime receptor, the message survives the drop gate and reaches the inbox.
+    var transport = new CapturingBatchTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var coordinator = new NoOpWorkCoordinator();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    await using var sp = services.BuildServiceProvider();
+
+    var compileTimeRegistry = new FakeReceptorRegistry(hasAnyConsumer: false);
+    // EnvelopeTypeNameHelper.ExtractInnerTypeName returns the inner type's assembly-qualified
+    // form (e.g. "TestApp.UnsubscribedEvent, TestApp"). The drop gate passes that string here.
+    // The real GeneratedReceptorRegistry normalizes both sides (strips assembly qualifier)
+    // before comparing; the test mimics by matching the unqualified-name prefix.
+    var runtimeRegistry = new FakeRuntimeReceptorRegistry(
+      hasAnyRuntimeReceptors: name => name.StartsWith("TestApp.UnsubscribedEvent", StringComparison.Ordinal));
+    var worker = new TransportConsumerWorker(
+      transport, options, new SubscriptionResilienceOptions(),
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new JsonSerializerOptions(),
+      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null, metrics: null,
+      NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: compileTimeRegistry,
+      runtimeReceptorRegistry: runtimeRegistry);
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(150);
+
+    await transport.SimulateBatchReceivedAsync([
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+      new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
+    ]);
+
+    cts.Cancel();
+
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
+      .Because("Drop gate must consult the runtime registry too — when a runtime receptor exists for the inner type, the message must NOT be dropped even when compile-time HasAnyConsumer reports false.");
   }
 
   [Test]

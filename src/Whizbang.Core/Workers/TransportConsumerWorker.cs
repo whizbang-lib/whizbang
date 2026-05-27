@@ -57,6 +57,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly IReceptorRegistryQuery? _receptorRegistry;
+  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
@@ -107,7 +108,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     TransportBatchOptions? transportBatchOptions = null,
     IWorkChannelWriter? workChannelWriter = null,
     Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
-    IReceptorRegistryQuery? receptorRegistry = null
+    IReceptorRegistryQuery? receptorRegistry = null,
+    IReceptorRegistry? runtimeReceptorRegistry = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -130,6 +132,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
     _receptorRegistry = receptorRegistry;
+    _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
     _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
@@ -377,9 +380,18 @@ public partial class TransportConsumerWorker : BackgroundService {
       // ServiceBusConsumerWorker. The post-build _filterInboxMessagesByKnownEventTypes
       // stays as defense-in-depth — broader registry coverage here catches lifecycle
       // receptors and tag-attribute consumers the IEventTypeProvider list misses.
+      //
+      // Gate consults BOTH the compile-time IReceptorRegistryQuery AND the runtime
+      // IReceptorRegistry. Without the runtime branch, services whose source-generated
+      // contribution lists no compile-time consumer for a type would silently drop messages
+      // even when a runtime receptor is listening (integration-test wait helpers, dynamic
+      // registrations). Worse than the lifecycle-gate version of this bug because dropping
+      // here means no inbox row gets written at all — no downstream anything can recover.
       if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
-        if (innerMessageType is not null && !_receptorRegistry.HasAnyConsumer(innerMessageType)) {
+        if (innerMessageType is not null
+            && !_receptorRegistry.HasAnyConsumer(innerMessageType)
+            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
           _metrics?.InboxMessagesDeduplicated.Add(1);
           continue;
         }
