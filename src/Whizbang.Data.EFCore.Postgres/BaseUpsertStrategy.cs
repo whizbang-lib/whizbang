@@ -201,12 +201,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     if (!_isValidSqlIdentifier(args.TableName)) {
       return false;
     }
-    if (args.PhysicalFieldValues is not null) {
-      foreach (var columnName in args.PhysicalFieldValues.Keys) {
-        if (!_isValidSqlIdentifier(columnName)) {
-          return false;
-        }
-      }
+    if (args.PhysicalFieldValues is not null
+        && args.PhysicalFieldValues.Keys.Any(k => !_isValidSqlIdentifier(k))) {
+      return false;
     }
 
     var options = optionsProvider();
@@ -214,9 +211,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var metadataJson = JsonSerializer.Serialize(args.Metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
     var scopeJson = JsonSerializer.Serialize(args.Scope, options.GetTypeInfo(typeof(PerspectiveScope)));
 
-    // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause.
-    // INSERT path always sets scope (a new row carries the caller's scope verbatim);
-    // UPDATE path preserves the existing row's scope unless the event is an IScopeEvent.
+    // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause:
+    // the INSERT path always sets scope so a new row carries the caller's scope verbatim,
+    // while the UPDATE path preserves the existing row's scope unless the event is an
+    // IScopeEvent.
     var scopeUpdateClause = args.ForceUpdateScope ? ", scope = EXCLUDED.scope" : string.Empty;
 
     // Physical-field columns (vector embeddings, denormalized scalars, etc.) ride

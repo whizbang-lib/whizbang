@@ -64,6 +64,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
 
   /// <summary>Constructor.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
   public OutboxDrainWorker(
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
