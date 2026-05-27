@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Workers;
 
@@ -24,7 +25,11 @@ namespace Whizbang.Core.Workers;
 /// <para>
 /// Replaces the body-on-poller path of <c>OutboxPublishWorker</c>. Lifecycle hooks
 /// (PreOutboxDetached/Inline, PostOutboxDetached/Inline) and security context propagation are
-/// deferred to a follow-up commit; this MVP focuses on the publish-and-complete core.
+/// fired around each publish — mirrors the legacy publisher's pattern and the sibling
+/// <see cref="InboxDispatchWorker"/>. Optional dependencies (deserializer + receptor registry):
+/// when absent, lifecycle invocation no-ops and the worker degrades to publish-and-complete.
+/// Skipped entirely for event-store-only messages (null destination) — those rows exist for
+/// event store persistence and don't transit transport.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
@@ -39,6 +44,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly OutboxDrainWorkerOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IReceptorRegistryQuery? _receptorRegistry;
+  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
   // on first drain (after schema-ready gate) and reused for envelope publish-time
   // injection. Guid.Empty until resolved.
@@ -66,7 +74,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IOptions<OutboxDrainWorkerOptions> options,
     JsonSerializerOptions jsonOptions,
     ILogger<OutboxDrainWorker> logger,
-    IMessagePublishStrategy? publishStrategy = null) {
+    IMessagePublishStrategy? publishStrategy = null,
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IReceptorRegistryQuery? receptorRegistry = null,
+    IReceptorRegistry? runtimeReceptorRegistry = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
@@ -77,6 +88,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _publishStrategy = publishStrategy;
+    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _receptorRegistry = receptorRegistry;
+    _runtimeReceptorRegistry = runtimeReceptorRegistry;
   }
 
   /// <inheritdoc />
@@ -242,6 +256,23 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       return;
     }
 
+    // Lifecycle scope: shared across PreOutbox + PostOutbox so the security context is
+    // established once and the typed envelope (payload-deserialized) is reused. Skipped
+    // for event-store-only messages (null/empty destination) — those rows exist only
+    // for event store persistence and shouldn't fire transport-side lifecycle stages.
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var typedEnvelope = _tryResolveTypedEnvelope(work);
+    IReceptorInvoker? receptorInvoker = null;
+    if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
+      await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+      receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    }
+
+    await _invokeOutboxLifecycleStageAsync(
+      work, typedEnvelope, receptorInvoker,
+      LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
+      "PreOutbox", ct);
+
     MessagePublishResult result;
     try {
       result = await _publishStrategy!.PublishAsync(work, ct);
@@ -259,6 +290,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
 
     if (result.Success) {
+      // Fire PostOutbox lifecycle BEFORE the publish hook + completion enqueue so
+      // receptors registered at PostOutbox* observe the published message before any
+      // test-side completion signal advances.
+      await _invokeOutboxLifecycleStageAsync(
+        work, typedEnvelope, receptorInvoker,
+        LifecycleStage.PostOutboxDetached, LifecycleStage.PostOutboxInline,
+        "PostOutbox", ct);
+
       // Fire publish hook BEFORE enqueuing the completion. Test fixtures rely on the
       // signal firing per-row; ordering it before completion enqueue means the next
       // observed completion-flush always reflects the published row.
@@ -275,6 +314,112 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         Reason = result.Reason,
       }, ct);
     }
+  }
+
+  /// <summary>
+  /// Deserialize the envelope payload once (Pre and Post stages reuse). Returns null when
+  /// the deserializer is absent or deserialize fails — both lifecycle helpers no-op cleanly
+  /// in that case so a missing deserializer never blocks the publish path.
+  /// </summary>
+  private IMessageEnvelope? _tryResolveTypedEnvelope(OutboxWork work) {
+    if (_lifecycleMessageDeserializer is null) {
+      return null;
+    }
+    try {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      return work.Envelope.ReconstructWithPayload(message);
+    } catch (Exception ex) {
+      LogLifecycleDeserializeError(_logger, work.MessageId, ex);
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Fire a Pre/PostOutbox lifecycle stage pair (Detached fire-and-forget + Inline awaited).
+  /// Mirrors <see cref="InboxDispatchWorker._invokeInboxLifecycleStageAsync"/>. Wrapped in
+  /// try/catch so a misbehaving receptor cannot block publish or completion.
+  /// </summary>
+  private async Task _invokeOutboxLifecycleStageAsync(
+      OutboxWork work,
+      IMessageEnvelope? typedEnvelope,
+      IReceptorInvoker? receptorInvoker,
+      LifecycleStage detachedStage,
+      LifecycleStage inlineStage,
+      string stageName,
+      CancellationToken ct) {
+    if (typedEnvelope is null || receptorInvoker is null) {
+      return;
+    }
+    // Skip for event-store-only messages (no transport publish).
+    if (string.IsNullOrEmpty(work.Destination)) {
+      return;
+    }
+
+    var runtimeMessageType = typedEnvelope.Payload?.GetType();
+    var hasDetached = _receptorRegistry is null || !_isGatedOutboxStage(detachedStage)
+      || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
+      || _runtimeHasReceptors(runtimeMessageType, detachedStage);
+    var hasInline = _receptorRegistry is null || !_isGatedOutboxStage(inlineStage)
+      || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
+      || _runtimeHasReceptors(runtimeMessageType, inlineStage);
+    if (!hasDetached && !hasInline) {
+      return;
+    }
+
+    try {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = detachedStage,
+        EventId = null,
+        StreamId = work.StreamId,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Outbox,
+        AttemptNumber = work.Attempts
+      };
+
+      if (hasDetached) {
+        _ = Task.Run(async () => {
+          try {
+            await using var detachedScope = _scopeFactory.CreateAsyncScope();
+            await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, ct);
+            var detachedInvoker = detachedScope.ServiceProvider.GetService<IReceptorInvoker>();
+            if (detachedInvoker is null) {
+              return;
+            }
+            var ctx = lifecycleContext with { CurrentStage = detachedStage };
+            await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, ct);
+          } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            // graceful shutdown
+          } catch (Exception ex) {
+            LogLifecycleStageError(_logger, work.MessageId, stageName + "Detached", ex);
+          }
+        }, ct);
+      }
+
+      if (hasInline) {
+        var inlineCtx = lifecycleContext with { CurrentStage = inlineStage };
+        await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, inlineCtx, ct);
+      }
+    } catch (Exception ex) {
+      LogLifecycleStageError(_logger, work.MessageId, stageName, ex);
+    }
+  }
+
+  /// <summary>
+  /// True when the lifecycle stage is one the source-generated WhizbangReceptorRegistryQuery
+  /// actually emits entries for. Stages outside this set return false unconditionally from
+  /// HasReceptors, so we fall back to invoking unconditionally for them.
+  /// </summary>
+  private static bool _isGatedOutboxStage(LifecycleStage stage) =>
+    stage is LifecycleStage.PreOutboxDetached
+          or LifecycleStage.PreOutboxInline
+          or LifecycleStage.PostOutboxDetached
+          or LifecycleStage.PostOutboxInline;
+
+  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+    if (_runtimeReceptorRegistry is null || messageType is null) {
+      return false;
+    }
+    return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
   }
 
   private OutboxWork _toOutboxWork(OutboxBatchRow row) {
@@ -347,6 +492,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 7, Level = LogLevel.Error,
     Message = "OutboxDrainWorker: publish threw for {MessageId}")]
   static partial void LogPublishFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: lifecycle deserialize failed for {MessageId} — Pre/Post Outbox lifecycle skipped for this message")]
+  static partial void LogLifecycleDeserializeError(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: lifecycle stage {Stage} failed for {MessageId}; publish path continues")]
+  static partial void LogLifecycleStageError(ILogger logger, Guid messageId, string stage, Exception ex);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
