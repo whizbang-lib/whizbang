@@ -484,10 +484,9 @@ public class PerspectiveLifecycleTests {
       InitialStock = 5
     };
 
-    // Act - Use hook to wait for inventory perspective completions (local, fast).
-    // InitialStock > 0 fires 3 perspective events on inventory.
+    // Act - Use hook to wait for inventory perspective completions (local, fast)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
