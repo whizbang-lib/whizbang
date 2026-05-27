@@ -62,6 +62,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IMessageDiscardPolicy? _discardPolicy;
 
   /// <summary>Constructor.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
   public InboxDispatchWorker(
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
@@ -325,6 +326,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // WorkCoordinatorPublisherWorker._invokeInboxLifecycleStagesAsync)
   // ============================================================
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Lifecycle stage invocation requires the full set of stage descriptors + ambient context; bundling would obscure call-site intent.")]
   private async Task _invokeInboxLifecycleStageAsync(
       InboxWork work,
       IMessageEnvelope? typedEnvelope,

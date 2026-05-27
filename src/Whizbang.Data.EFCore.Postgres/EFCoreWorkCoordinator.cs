@@ -52,6 +52,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
+  private const string PARAM_INSTANCE_ID = "p_instance_id";
 
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -1375,7 +1376,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids)";
 #pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streamIds
@@ -1469,7 +1470,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
 
     var results = new List<OutboxBatchRow>();
@@ -1542,7 +1543,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
 
     var results = new List<InboxBatchRow>();
@@ -1588,7 +1589,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
     cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 
     var results = new List<PendingPerspectiveEvent>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -1627,7 +1628,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, @p_now)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
     cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_lease_expiry", leaseExpiry));
     cmd.Parameters.Add(new NpgsqlParameter("p_now", now));
 

@@ -88,9 +88,10 @@ public sealed partial class PgCommitOrderStamperWorker(
     LogStarted(_logger, resolution.Source);
 
     // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
-    // worker lifetime. Even when this pod isn't the leader, the subscription is harmless;
-    // the wake semaphore saturates at maxCount=1 and the stamping loop never starts so
-    // no-op. When this pod IS the leader, the wake fires sub-ms on each committed event.
+    // worker lifetime. Even when this pod is not the leader, the subscription is harmless:
+    // the wake semaphore saturates at maxCount of 1 and the stamping loop never starts,
+    // so this becomes a no-op. When this pod is the leader, the wake fires sub-millisecond
+    // on each committed event.
     var subscription = new CommitNotificationSubscription(this);
     using var subscriptionHandle = _sharedConnection.Subscribe(subscription);
 
