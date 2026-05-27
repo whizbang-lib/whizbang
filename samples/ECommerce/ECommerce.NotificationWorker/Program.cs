@@ -63,8 +63,6 @@ builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();

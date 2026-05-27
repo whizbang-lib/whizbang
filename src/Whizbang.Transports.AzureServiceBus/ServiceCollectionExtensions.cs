@@ -96,12 +96,17 @@ public static class ServiceCollectionExtensions {
       // JsonContextRegistry. Optional; transport instantiates a default when missing.
       var typeBinder = sp.GetService<Whizbang.Core.Messaging.IMessageTypeBinder>();
 
+      // Shared discard policy — routes NoLocalConsumer drops through structured
+      // logging + the whizbang.message.skipped OTel counter (instead of WARN spam).
+      var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
+
       var transport = new AzureServiceBusTransport(
         client, jsonOptions, options, logger, adminClient,
         receptorRegistry: receptorRegistry,
         perspectiveRegistry: perspectiveRegistry,
         rawReceptorRegistry: rawReceptorRegistry,
-        typeBinder: typeBinder);
+        typeBinder: typeBinder,
+        discardPolicy: discardPolicy);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable

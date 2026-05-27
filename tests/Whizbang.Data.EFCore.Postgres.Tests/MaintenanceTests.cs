@@ -358,4 +358,114 @@ public class MaintenanceTests : EFCoreTestBase {
     await Assert.That(task6.RowsAffected).IsEqualTo(0L);
     await Assert.That(task6.Status).IsEqualTo("ok");
   }
+
+  // ================================================================
+  // Debug-mode preservation
+  //
+  // In debug mode (wh_settings.debug_mode = true), `complete_*` functions retain
+  // their rows for forensics with `processed_at` stamped. perform_maintenance
+  // MUST NOT delete those rows or it defeats the debug-mode purpose entirely.
+  // ================================================================
+
+  [Test]
+  public async Task PerformMaintenance_DebugModeOn_PreservesProcessedOutboxRowsAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setDebugModeAsync(conn, true);
+
+    var msgId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number, processed_at, published_at)
+      VALUES ('{msgId}', 'topic', 'Type', '{{}}', '{{}}', 5, 0, NOW(), '{streamId}', 0, NOW(), NOW())");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
+    await Assert.That(task.RowsAffected).IsEqualTo(0L);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_outbox WHERE message_id = '{msgId}'");
+    await Assert.That(remaining).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_DebugModeOn_PreservesProcessedInboxRowsAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setDebugModeAsync(conn, true);
+
+    var msgId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_inbox
+        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number, processed_at)
+      VALUES ('{msgId}', 'TestHandler', 'Type', '{{}}', '{{}}', 5, 0, NOW(), '{streamId}', 0, NOW())");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
+    await Assert.That(task.RowsAffected).IsEqualTo(0L);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_inbox WHERE message_id = '{msgId}'");
+    await Assert.That(remaining).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_DebugModeOn_PreservesProcessedPerspectiveEventRowsAsync() {
+    await using var conn = await _openConnectionAsync();
+    await _setDebugModeAsync(conn, true);
+
+    var workId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at, processed_at)
+      VALUES ('{workId}', '{streamId}', 'TestPerspective', '{eventId}', 1, 0, NOW(), NOW())");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_perspective_events");
+    await Assert.That(task.RowsAffected).IsEqualTo(0L);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = '{workId}'");
+    await Assert.That(remaining).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_DebugModeOff_DeletesProcessedOutboxRowsAsync() {
+    // Negative path of the debug-mode guard: with debug_mode=false (default), the
+    // production-style purge must continue to fire as before.
+    await using var conn = await _openConnectionAsync();
+    await _setDebugModeAsync(conn, false);
+
+    var msgId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    await conn.ExecuteAsync($@"
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number, processed_at)
+      VALUES ('{msgId}', 'topic', 'Type', '{{}}', '{{}}', 5, 0, NOW(), '{streamId}', 0, NOW())");
+
+    var results = await _runMaintenanceAsync(conn);
+
+    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
+    await Assert.That(task.RowsAffected).IsGreaterThanOrEqualTo(1);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_outbox WHERE message_id = '{msgId}'");
+    await Assert.That(remaining).IsEqualTo(0);
+  }
+
+  private static async Task _setDebugModeAsync(NpgsqlConnection conn, bool enabled) {
+    var value = enabled ? "true" : "false";
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('debug_mode', @v, 'boolean', 'When true, complete_* functions retain rows for forensics; perform_maintenance must skip purge of completed rows.')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value";
+    cmd.Parameters.AddWithValue("v", value);
+    await cmd.ExecuteNonQueryAsync();
+  }
 }

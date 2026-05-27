@@ -98,19 +98,19 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
   }
 
   [Test]
-  public async Task EnsureWhizbangDatabaseInitialized_WithNoPerspectives_CreatesProcessWorkBatchFunction() {
+  public async Task EnsureWhizbangDatabaseInitialized_WithNoPerspectives_CreatesClaimWorkFunction() {
     // Arrange
     await using var dbContext = new MinimalDbContext(_dbContextOptions);
 
     // Act - Initialize database schema
     await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
-    // Assert - Verify process_work_batch function exists
+    // Assert - Verify claim_work function exists (replaced process_work_batch in Phase A).
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
     await using var command = new NpgsqlCommand(
-      "SELECT EXISTS (SELECT FROM pg_proc WHERE proname = 'process_work_batch');",
+      "SELECT EXISTS (SELECT FROM pg_proc WHERE proname = 'claim_work');",
       connection);
 
     var exists = (bool)(await command.ExecuteScalarAsync())!;

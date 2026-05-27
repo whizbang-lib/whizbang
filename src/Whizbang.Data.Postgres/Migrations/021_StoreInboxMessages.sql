@@ -17,6 +17,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
   stream_id UUID,
   was_newly_created BOOLEAN
 ) AS $$
+#variable_conflict use_column
 DECLARE
   v_msg RECORD;
   v_partition INTEGER;
@@ -34,7 +35,12 @@ BEGIN
       elem->'Metadata' as metadata,
       elem->'Scope' as scope,
       (elem->>'StreamId')::UUID as stream_id,
-      (elem->>'IsEvent')::BOOLEAN as is_event
+      (elem->>'IsEvent')::BOOLEAN as is_event,
+      -- Slice 26: source identity. Real cross-service envelopes carry these fields
+      -- (receive-boundary gate enforces); local-emit / handler paths and tests omit
+      -- them, in which case they default to the local service's identity + sequence 0.
+      (elem->>'SourceServiceId')::UUID as source_service_id,
+      (elem->>'SourceCommitSequence')::BIGINT as source_commit_sequence
     FROM jsonb_array_elements(p_messages) as elem
     -- Sort by stream_id so the UPSERT on wh_active_streams below acquires row locks in
     -- a canonical order across all concurrent callers — prevents A→B vs B→A deadlock
@@ -74,7 +80,9 @@ BEGIN
       attempts,
       received_at,
       instance_id,
-      lease_expiry
+      lease_expiry,
+      source_service_id,
+      source_commit_sequence
     ) VALUES (
       v_msg.msg_id,
       v_msg.handler_name,
@@ -89,17 +97,30 @@ BEGIN
       0,  -- Initial attempts
       p_now,
       NULL,  -- No lease — immediately claimable by WorkCoordinatorPublisherWorker
-      NULL
+      NULL,
+      -- Slice 26: source identity. Real cross-service envelopes carry these; otherwise
+      -- default to local service's identity. wh_service_config has exactly one row.
+      COALESCE(v_msg.source_service_id, (SELECT service_id FROM __SCHEMA__.wh_service_config LIMIT 1)),
+      COALESCE(v_msg.source_commit_sequence, 0)
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
-      -- NOTE: wh_active_streams refresh is deliberately NOT done here. It is driven
-      -- from process_work_batch end-of-tick in a single batched, sorted UPSERT
-      -- covering all four stream sources. Keeping the inbox write path free of
-      -- wh_active_streams means store_inbox_messages never takes a row lock on a
-      -- shared resource — only wh_message_deduplication and wh_inbox per-message-id
-      -- rows, both keyed on unique UUIDv7 message ids. Eliminates the 40P01 cycle
-      -- class observed in JDNext.
+      -- Stream ownership pinning (Phase H step 6 slice 1). UPSERT into wh_active_streams
+      -- on first event for the stream — first-write-wins via ON CONFLICT DO NOTHING.
+      -- Subsequent stores by other instances do NOT steal ownership. Local variables
+      -- avoid plpgsql FOR-record field-name shadowing.
+      IF v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
+        DECLARE
+          v_pin_stream UUID := v_msg.stream_id;
+          v_pin_partition INTEGER := COALESCE(v_partition, 0);
+        BEGIN
+          INSERT INTO __SCHEMA__.wh_active_streams
+            (stream_id, partition_number, assigned_instance_id, last_activity_at)
+          VALUES
+            (v_pin_stream, v_pin_partition, p_instance_id, p_now)
+          ON CONFLICT (stream_id) DO NOTHING;
+        END;
+      END IF;
 
       -- Return message as newly created (deduplication succeeded)
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, (v_was_new = 1) AS was_newly_created;

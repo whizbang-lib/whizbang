@@ -22,23 +22,14 @@ public class PerspectiveWorkerEventTypeProviderTests {
   [Test]
   public async Task EventTypeProvider_ResolvedFromScope_WhenConstructorInjectionIsNull_Async() {
     // Arrange — DO NOT pass eventTypeProvider to constructor (simulates DI registration order issue).
-    // Instead, register IEventTypeProvider in the service collection so it's available from scope.
+    // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
+    var harness = new PerspectiveWorkerTestHarness();
 
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
-
-    coordinator.PerspectiveWorkToReturn = [
-      new PerspectiveWork {
-        StreamId = streamId,
-        PerspectiveName = "Test.FakePerspective",
-        LastProcessedEventId = null,
-        PartitionNumber = 1
-      }
-    ];
 
     var eventStore = new FakeEventStore();
     eventStore.AddEvent(streamId, eventId, new TestEvent("lazy-resolve-test"));
@@ -61,16 +52,31 @@ public class PerspectiveWorkerEventTypeProviderTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      eventTypeProvider: null // Explicitly null — the bug scenario
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
-    // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await harness.EnqueueWorkAsync(new PerspectiveWork {
+      StreamId = streamId,
+      PerspectiveName = "Test.FakePerspective",
+      LastProcessedEventId = null,
+      PartitionNumber = 1,
+      WorkId = eventId,
+    }, cts.Token);
 
+    // Wait for the worker to process — cursor lands on completion channel via the InstantCompletionStrategy
+    // when ReportCompletionAsync runs; but the strategy reports DIRECTLY to the coordinator (not the channel).
+    // Easier signal: the FakeEventStore call that proves lazy-resolve worked.
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+    while (eventStore.GetEventsBetweenPolymorphicCallCount == 0 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10);
+    }
+    cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert — If lazy-resolve works, the worker should have resolved IEventTypeProvider from scope
@@ -81,23 +87,15 @@ public class PerspectiveWorkerEventTypeProviderTests {
 
   [Test]
   public async Task EventTypeProvider_ReturnsNonEmptyTypeList_WhenResolvedFromScope_Async() {
-    // Arrange — Same setup: null constructor, provider in DI with real event types
+    // Arrange — Same setup: null constructor, provider in DI with real event types.
+    // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
+    var harness = new PerspectiveWorkerTestHarness();
 
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
-
-    coordinator.PerspectiveWorkToReturn = [
-      new PerspectiveWork {
-        StreamId = streamId,
-        PerspectiveName = "Test.FakePerspective",
-        LastProcessedEventId = null,
-        PartitionNumber = 1
-      }
-    ];
 
     var eventStore = new FakeEventStore();
     eventStore.AddEvent(streamId, eventId, new TestEvent("type-count-test"));
@@ -119,16 +117,28 @@ public class PerspectiveWorkerEventTypeProviderTests {
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      eventTypeProvider: null // Explicitly null
+      eventTypeProvider: null, // Explicitly null
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
-    // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await harness.EnqueueWorkAsync(new PerspectiveWork {
+      StreamId = streamId,
+      PerspectiveName = "Test.FakePerspective",
+      LastProcessedEventId = null,
+      PartitionNumber = 1,
+      WorkId = eventId,
+    }, cts.Token);
 
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+    while (eventTypeProvider.GetEventTypesCallCount == 0 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(10);
+    }
+    cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert — The resolved provider should have been called and returned non-empty types
@@ -253,12 +263,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
     public int ProcessId { get; } = 12345;
     public ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsReady);
-  }
-
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => new FakePerspectiveRunner();
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];

@@ -210,81 +210,23 @@ public sealed record ProcessWorkBatchRequest {
 /// - Strong stream ordering guarantees via NOT EXISTS clauses
 /// </remarks>
 public interface IWorkCoordinator {
+
   /// <summary>
-  /// <para>Processes a batch of work in a single atomic operation:
-  /// - Registers/updates instance with heartbeat
-  /// - Cleans up stale instances (expired heartbeats)
-  /// - Stores new outbox messages (immediate processing)
-  /// - Stores new inbox messages (deduplication + event store)
-  /// - Reports completions with granular status tracking (outbox, inbox, receptors, perspectives)
-  /// - Reports failures with partial completion tracking (outbox, inbox, receptors, perspectives)
-  /// - Claims work using hash-based virtual partition assignment and returns work for this instance</para>
-  ///
-  /// <para>Event store integration:
-  /// - Receptors: Process individual events (many receptors can process the same event)
-  /// - Perspectives: Checkpoint-based processing per stream (read model projections)</para>
-  ///
-  /// <para>This minimizes database round-trips and ensures consistency.</para>
+  /// Compatibility-only: returns an empty <see cref="WorkBatch"/>. The legacy orchestrator
+  /// SQL function <c>process_work_batch</c> has been dropped — work coordination is now
+  /// handled by <see cref="ClaimWorkAsync"/>, <see cref="StoreOutboxMessagesAsync"/>,
+  /// <see cref="StoreInboxMessagesAsync"/>, the per-completion / per-failure channel
+  /// flushers, and <see cref="CommitHandlerBatchAsync"/>. Retained so test fakes that
+  /// historically overrode the method continue to compile while migration completes.
   /// </summary>
-  /// <param name="request">Parameter object containing all work batch configuration and data</param>
-  /// <param name="cancellationToken">Cancellation token</param>
-  /// <returns>Work batch containing messages that need processing (including newly stored messages for immediate processing)</returns>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailedMessageWithSpecialCharacters_EscapesJsonCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnedWork_HasCorrectPascalCaseColumnMappingAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_JsonbColumns_ReturnAsTextCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ThreeInstances_DistributesPartitionsViaModuloAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CrossInstanceStreamOrdering_PreventsClaimingWhenEarlierMessagesHeldAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletionWithStatusZero_DoesNotChangeStatusFlagsAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StreamBasedFailureCascade_ReleasesLaterMessagesInSameStreamAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ClearedLeaseMessages_BecomeAvailableForOtherInstancesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_UnitOfWorkPattern_ProcessesCompletionsAndFailuresInSameCallAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_StoresAndReturnsImmediatelyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewInboxMessage_StoresWithDeduplicationAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewInboxMessage_WithStreamId_AssignsPartitionAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithStreamId_AssignsPartitionAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithEventOutbox_PersistsToEventStoreAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithEventInbox_PersistsToEventStoreAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_EventVersionConflict_HandlesOptimisticConcurrencyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_MultipleEventsInStream_IncrementsVersionAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NonEvent_DoesNotPersistToEventStoreAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ConsistentHashing_SameStreamSamePartitionAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartitionAssignment_WithinRangeAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_LoadBalancing_DistributesAcrossInstancesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventFalse_StoresIsEventFlagAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewInboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewInboxMessage_WithIsEventFalse_StoresIsEventFlagAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorMessageProcessingTests.cs:MessagesStoredInOutbox_AreReturnedImmediately_InSameCallAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorMessageProcessingTests.cs:MessagesWithExpiredLease_AreReclaimed_InSubsequentCallAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorMessageProcessingTests.cs:MessagesWithValidLease_SameInstance_AreNotReturnedAgainAsync</tests>
   Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
-  );
+  ) => Task.FromResult(new WorkBatch {
+    OutboxWork = [],
+    InboxWork = [],
+    PerspectiveWork = []
+  });
 
   /// <summary>
   /// Deregisters this instance on graceful shutdown.
@@ -293,6 +235,194 @@ public interface IWorkCoordinator {
   /// Called by WhizbangShutdownService.StopAsync on SIGTERM.
   /// </summary>
   Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Records a heartbeat for this instance. Decoupled from <see cref="ProcessWorkBatchAsync"/>
+  /// so the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
+  /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
+  /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">Instance identity + optional metadata.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreRecordHeartbeatTests.cs:RecordHeartbeatAsync_NewInstance_InsertsRowAsync</tests>
+  Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement RecordHeartbeatAsync. Override in your IWorkCoordinator implementation.");
+
+  /// <summary>
+  /// Marks the supplied outbox messages as processed (transport publish succeeded).
+  /// Coalesced flush from the C# OutboxCompletionFlushWorker. Idempotent: unknown ids ignored.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="ids">Outbox message ids to mark as processed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually updated.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default)
+    => CompleteOutboxPublishedAsync(ids, debugMode: false, cancellationToken);
+
+  /// <summary>
+  /// Marks outbox rows complete after successful transport publish.
+  /// Production (<paramref name="debugMode"/>=false): DELETEs the rows so claim_work cannot re-issue them.
+  /// Debug (<paramref name="debugMode"/>=true): retains rows with <c>published_at</c> + <c>processed_at</c>
+  /// stamped — eligible_outbox filters <c>published_at IS NULL</c> so claim_work treats them as deleted.
+  /// </summary>
+  /// <param name="ids">Outbox message ids whose transport publish succeeded.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually affected.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CompleteOutboxPublishedAsync.");
+
+  /// <summary>
+  /// Advances perspective cursors and deletes processed perspective_event rows in one round-trip.
+  /// Coalesced flush from the C# PerspectiveCompletionFlushWorker.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="cursors">Cursor advancement specs (StreamId + PerspectiveName per entry).</param>
+  /// <param name="eventWorkIds">wh_perspective_events.event_work_id rows to mark processed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    CancellationToken cancellationToken = default)
+    => CompletePerspectiveAsync(cursors, eventWorkIds, debugMode: false, cancellationToken);
+
+  /// <summary>
+  /// Same as the simpler <see cref="CompletePerspectiveAsync(IReadOnlyList{PerspectiveCursorCompletion}, IReadOnlyList{Guid}, CancellationToken)"/>
+  /// but propagates <paramref name="debugMode"/> to SQL. Production: DELETEs perspective_event rows.
+  /// Debug: retains rows with <c>processed_at</c> stamped.
+  /// </summary>
+  /// <param name="cursors">Cursor advancement specs.</param>
+  /// <param name="eventWorkIds">Event-work ids to mark processed.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CompletePerspectiveAsync.");
+
+  /// <summary>
+  /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category.
+  /// Called by C# LeaseRenewalWorker when in-flight items approach expiry.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="category">Which category table to update.</param>
+  /// <param name="ids">Message / work ids to renew.</param>
+  /// <param name="leaseSeconds">New lease duration from now (default 300).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually updated.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task<int> RenewLeasesAsync(
+    WorkCategory category,
+    IReadOnlyList<Guid> ids,
+    int leaseSeconds = 300,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement RenewLeasesAsync.");
+
+  /// <summary>
+  /// Reports failures for the supplied category. Increments retry counters and sets
+  /// error/failure_reason on the affected rows. Coalesced flush from C# FailureFlushWorker.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="category">Which category these failures belong to.</param>
+  /// <param name="failures">Failure records (MessageId/EventWorkId + CompletedStatus + Error + FailureReason).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task ReportFailuresAsync(
+    WorkCategory category,
+    IReadOnlyList<MessageFailure> failures,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ReportFailuresAsync.");
+
+  /// <summary>
+  /// Atomic transactional bundle for one handler's commit. Marks the inbox completion
+  /// AND stores any new outbox/inbox messages emitted by the handler in one transaction.
+  /// If any step fails the whole bundle rolls back. Emits pg_notify per category that
+  /// received new rows. Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">The handler's complete result bundle.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+  Task CommitHandlerResultAsync(
+    HandlerCommitRequest request,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CommitHandlerResultAsync.");
+
+  /// <summary>
+  /// SAVEPOINT-per-handler batched commit. The throughput multiplier: N handler results
+  /// in one round-trip, single fsync at outer commit, with per-handler success/failure
+  /// isolation. A failing handler rolls back only its own effects; siblings unaffected.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="requests">Handler bundles to commit.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Per-handler success/failure status, one row per request.</returns>
+  /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+  Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
+    IReadOnlyList<HandlerCommitRequest> requests,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement CommitHandlerBatchAsync.");
+
+  /// <summary>
+  /// Polls for work to claim. The only function the new ClaimWorker polls.
+  /// Empty-call short-circuit drops the legacy ~17 ms idle floor toward ≤ 1 ms.
+  /// Returns claimed outbox/inbox/perspective work; the C# layer distributes to channels.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">Claim parameters.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>WorkBatch with claimed work; empty if none available.</returns>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  Task<WorkBatch> ClaimWorkAsync(
+    ClaimWorkRequest request,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ClaimWorkAsync.");
+
+  /// <summary>
+  /// Composite single-round-trip flusher. Combines outbox completes, perspective completes,
+  /// and per-category failures into one call. Single fsync at outer commit.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="request">Composite flush payload.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  Task FlushCompletionsAsync(
+    FlushCompletionsRequest request,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement FlushCompletionsAsync.");
+
+  /// <summary>
+  /// PerspectiveSyncAwaiter read-only path. Returns pending vs processed event counts
+  /// per (stream, perspective) inquiry.
+  /// Phase B of work-pump decomposition.
+  /// </summary>
+  /// <param name="inquiries">Inquiry list.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/sync</docs>
+  Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<Perspectives.Sync.SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ResolveSyncInquiriesAsync.");
 
   /// <summary>
   /// Gathers expensive statistics (COUNT queries) for observability gauges.
@@ -319,6 +449,42 @@ public interface IWorkCoordinator {
     InboxMessage[] messages,
     int partitionCount,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Stores new outbox messages directly. Lightweight alternative to <c>process_work_batch</c>
+  /// that calls <c>store_outbox_messages</c> SQL function. Used by Dispatcher's
+  /// <see cref="IWorkCoordinatorStrategy"/> implementations to insert queued outbox messages
+  /// during flush. Default impl throws so non-Postgres backends opt in when ready.
+  /// </summary>
+  /// <param name="messages">Outbox messages to store.</param>
+  /// <param name="partitionCount">Number of partitions for load balancing. Must match the
+  /// service's configured <see cref="ClaimWorkerOptions.PartitionCount"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  Task StoreOutboxMessagesAsync(
+    OutboxMessage[] messages,
+    int partitionCount,
+    CancellationToken cancellationToken = default)
+    // Default no-op for test fakes. Production coordinators (EFCoreWorkCoordinator,
+    // DapperWorkCoordinator) override this with the real INSERT. Tests that don't exercise
+    // the store path silently no-op; tests that DO exercise it use a fake that overrides.
+    => Task.CompletedTask;
+
+  /// <summary>
+  /// Evicts streams from <c>wh_active_streams</c> when their pending-work tables are empty,
+  /// so the next event for an evicted stream rebinds via the
+  /// <c>store_outbox_messages</c> / <c>store_inbox_messages</c> UPSERT path. Called from
+  /// completion-flush workers after a batch lands.
+  /// </summary>
+  /// <remarks>
+  /// Default no-op so non-Postgres backends and test fakes don't need to override.
+  /// </remarks>
+  /// <param name="streamIds">Stream IDs that just had work completed; candidates for eviction.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Count of streams evicted.</returns>
+  Task<int> CleanupCompletedStreamsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0);
 
   /// <summary>
   /// Recomputes <c>partition_number</c> on <c>wh_inbox</c>, <c>wh_outbox</c>, and
@@ -474,6 +640,20 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/perspectives/drain-mode</docs>
   Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
+    CancellationToken cancellationToken = default) => CompletePerspectiveEventsAsync(workItemIds, debugMode: false, cancellationToken);
+
+  /// <summary>
+  /// Same as the simpler <see cref="CompletePerspectiveEventsAsync(Guid[], CancellationToken)"/>
+  /// overload but propagates <paramref name="debugMode"/> to the SQL. Production: DELETEs the rows.
+  /// Debug: retains rows with <c>processed_at</c> stamped.
+  /// </summary>
+  /// <param name="workItemIds">Array of event_work_id values to complete.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows affected.</returns>
+  Task<int> CompletePerspectiveEventsAsync(
+    Guid[] workItemIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
 
   /// <summary>
@@ -491,6 +671,111 @@ public interface IWorkCoordinator {
     Guid instanceId,
     Guid[] streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
+
+  /// <summary>
+  /// Slice 26.6b — returns the local service's stable identity from
+  /// <c>wh_service_config</c>. Cached by callers (publish path) at startup; queried
+  /// once per process. Default implementation returns <see cref="Guid.Empty"/> for
+  /// legacy/in-memory coordinators that don't track service identity.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult(Guid.Empty);
+
+  /// <summary>
+  /// Per-stream-id payload fetch for the OutboxDrainWorker. Given stream_ids that
+  /// <see cref="ClaimWorkAsync"/> emitted as <see cref="WorkBatch.OutboxStreamIds"/>, returns the
+  /// actual leased outbox rows for those streams in stream-FIFO order. Caps at
+  /// <paramref name="maxPerStream"/> rows per stream so one busy stream cannot monopolize a fetch.
+  /// </summary>
+  /// <param name="streamIds">Stream ids to fetch leased outbox rows for.</param>
+  /// <param name="instanceId">Calling instance — only its leased rows are returned.</param>
+  /// <param name="maxPerStream">Per-stream cap. Default 100.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Leased outbox rows in (stream_id, created_at, message_id) order.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<OutboxBatchRow>>(Array.Empty<OutboxBatchRow>());
+
+  /// <summary>
+  /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
+  /// <see cref="FetchOutboxBatchAsync"/> for <c>wh_inbox</c>, ordered by received_at within each stream.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<InboxBatchRow>>(Array.Empty<InboxBatchRow>());
+
+  /// <summary>
+  /// Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 2). Returns
+  /// (event_work_id, event_id) tuples for unprocessed <c>wh_perspective_events</c> rows leased
+  /// to the caller, scoped to a single (stream_id, perspective_name), ordered by event_id ASC.
+  /// The drainer uses this BEFORE pulling event bodies so it can filter against the in-memory
+  /// cooldown cache and the cached cursor without paying the body-fetch + JSON-deserialize cost
+  /// when no actual apply work is needed.
+  /// </summary>
+  /// <param name="streamId">Stream id to scope to.</param>
+  /// <param name="perspectiveName">Perspective name to scope to.</param>
+  /// <param name="instanceId">Calling instance id — only its leased rows are returned.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Pending event rows in event_id ASC order.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<PendingPerspectiveEvent>> FetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
+
+  /// <summary>
+  /// Slice 25: atomic per-stream claim+fetch. Claims (or re-leases) ALL eligible pending
+  /// rows for <paramref name="streamId"/> / <paramref name="perspectiveName"/> to
+  /// <paramref name="instanceId"/> — including orphans, expired-lease rows, and the
+  /// caller's own rows whose lease should be extended — then returns the post-claim set
+  /// in event_id ASC order. Prevents the cursor-advances-past-orphaned-rows race that
+  /// produced residual cursor inversions after slices 23 + 24c shipped: a row that
+  /// existed in <c>wh_perspective_events</c> but wasn't yet claimed by anyone was
+  /// invisible to <see cref="FetchPendingPerspectiveEventsAsync"/>, so the cursor
+  /// could advance past it, only for it to surface later (now behind cursor) and trigger
+  /// a rewind.
+  /// </summary>
+  /// <param name="streamId">Stream id to scope to.</param>
+  /// <param name="perspectiveName">Perspective name to scope to.</param>
+  /// <param name="instanceId">Calling instance id — rows are leased to this id.</param>
+  /// <param name="leaseDuration">Lease duration applied to claimed rows.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Pending event rows now leased to <paramref name="instanceId"/>, in event_id ASC order.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<PendingPerspectiveEvent>> ClaimAndFetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    TimeSpan leaseDuration,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
+
+  /// <summary>
+  /// Scoped event-body fetch from <c>wh_event_store</c> by event_id list (Phase H step 7 slice 4).
+  /// Used by the perspective drainer AFTER its prefetch + filter pipeline narrows pending tuples
+  /// to only those needing apply. Drainer pairs the result back to its prefetched
+  /// <see cref="PendingPerspectiveEvent"/> tuples by event_id in C#, so the returned
+  /// <see cref="StreamEventData.EventWorkId"/> is always <see cref="Guid.Empty"/>.
+  /// </summary>
+  /// <param name="eventIds">Event ids to fetch.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Matching event-store rows ordered by event_id ASC. Missing ids are silently dropped.</returns>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+  Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
+    IReadOnlyList<Guid> eventIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<StreamEventData>>(Array.Empty<StreamEventData>());
 
   /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
@@ -584,6 +869,17 @@ public record PerspectiveCursorInfo {
   public Guid? LastEventId { get; init; }
 
   /// <summary>
+  /// Slice 26.13 — commit_sequence of <see cref="LastEventId"/> at the time of cursor
+  /// advance. Hydrated by joining <c>wh_perspective_cursors.last_event_id</c> to
+  /// <c>wh_event_store.commit_sequence</c>. NULL when the cursor has never advanced or when
+  /// the underlying event hasn't been stamped yet. PerspectiveWorker prefetch uses this to
+  /// warm <see cref="Whizbang.Core.Workers.PerspectiveCursorCache.SetCommitSequence"/> so the
+  /// commit-sequence-based inversion detector runs on cold caches (process start, post-rewind),
+  /// not the UUIDv7 event_id fallback path.
+  /// </summary>
+  public long? LastCommitSequence { get; init; }
+
+  /// <summary>
   /// Current processing status.
   /// </summary>
   public PerspectiveProcessingStatus Status { get; init; }
@@ -643,6 +939,23 @@ public record WorkBatch {
   /// Replaces the per-event PerspectiveWork return for drain mode.
   /// </summary>
   public List<Guid> PerspectiveStreamIds { get; init; } = [];
+
+  /// <summary>
+  /// Distinct stream IDs that have leased outbox messages for this instance — the per-stream-id
+  /// drain channel surface for the new <c>OutboxDrainWorker</c>. Restored from the archive plan's
+  /// poller-vs-drainer split: the poller emits stream_ids only (small payload); the drainer
+  /// fetches payloads on demand via <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
+  /// During the Phase H step 5 transition this list is derived from <see cref="OutboxWork"/>;
+  /// once <c>claim_work</c> SQL drops the body projection, this becomes the only outbox surface.
+  /// </summary>
+  public List<Guid> OutboxStreamIds { get; init; } = [];
+
+  /// <summary>
+  /// Distinct stream IDs that have leased inbox messages for this instance — the per-stream-id
+  /// drain channel surface for the new <c>InboxDrainWorker</c>. Mirror of
+  /// <see cref="OutboxStreamIds"/> for inbox dispatch.
+  /// </summary>
+  public List<Guid> InboxStreamIds { get; init; } = [];
 
   /// <summary>
   /// Results of sync inquiries from this batch call.
@@ -771,6 +1084,23 @@ public record InboxMessage {
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>
   public required string MessageType { get; init; }
+
+  /// <summary>
+  /// Slice 26 — originating service's identity, copied from the envelope's
+  /// <see cref="MessageEnvelope{T}.SourceServiceId"/>. Persisted into
+  /// <c>wh_inbox.source_service_id</c>. When omitted (default <see cref="Guid.Empty"/>),
+  /// the SQL trigger COALESCEs to the local <c>wh_service_config.service_id</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public Guid SourceServiceId { get; init; }
+
+  /// <summary>
+  /// Slice 26 — source service's <c>commit_sequence</c> stamp, copied from the envelope's
+  /// <see cref="MessageEnvelope{T}.SourceCommitSequence"/>. Persisted into
+  /// <c>wh_inbox.source_commit_sequence</c>. Defaults to 0.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long SourceCommitSequence { get; init; }
 }
 
 /// <summary>
@@ -1202,6 +1532,23 @@ public record StreamEventData {
 
   /// <summary>Work ID from wh_perspective_events. Used for completion reporting via CompletePerspectiveEventsAsync.</summary>
   public required Guid EventWorkId { get; init; }
+
+  /// <summary>
+  /// Perspective name from wh_perspective_events.perspective_name. Required for the cooldown
+  /// gate's per-perspective filter — without it, marking ANY perspective's work_id as
+  /// recently-processed under the same event_id would prevent OTHER perspectives' Apply from
+  /// running on subsequent drains for the same event (JDX 2026-05-04 silent-skip bug).
+  /// </summary>
+  public string? PerspectiveName { get; init; }
+
+  /// <summary>
+  /// Slice 26 — <c>wh_event_store.commit_sequence</c>, populated post-commit by the stamper
+  /// worker. NULL means the stamper hasn't caught up yet — downstream consumers should treat
+  /// this row as "not stable for cursor comparison" and either defer or fall back to event_id
+  /// ordering.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? CommitSequence { get; init; }
 }
 
 /// <summary>
@@ -1221,69 +1568,97 @@ public record PerspectiveEventCompletion {
 }
 
 /// <summary>
-/// Groups the parameters for <see cref="WorkCoordinatorExtensions.ProcessWorkBatchAsync"/>
-/// to avoid S107 (too many parameters). Maps directly to <see cref="ProcessWorkBatchRequest"/>.
+/// One pending perspective-event row returned from
+/// <see cref="IWorkCoordinator.FetchPendingPerspectiveEventsAsync"/>. Carries only the IDs needed
+/// for the drainer's cheap-first pipeline: cooldown filter, cursor-inversion check, and
+/// scoped body fetch. Never carries event bodies — those are fetched separately for the subset
+/// of rows that survive filtering.
 /// </summary>
-public readonly record struct ProcessWorkBatchContext(
-  Guid InstanceId,
-  string ServiceName,
-  string HostName,
-  int ProcessId,
-  Dictionary<string, JsonElement>? Metadata,
-  MessageCompletion[] OutboxCompletions,
-  MessageFailure[] OutboxFailures,
-  MessageCompletion[] InboxCompletions,
-  MessageFailure[] InboxFailures,
-  ReceptorProcessingCompletion[] ReceptorCompletions,
-  ReceptorProcessingFailure[] ReceptorFailures,
-  PerspectiveCursorCompletion[] PerspectiveCompletions,
-  PerspectiveCursorFailure[] PerspectiveFailures,
-  OutboxMessage[] NewOutboxMessages,
-  InboxMessage[] NewInboxMessages,
-  Guid[] RenewOutboxLeaseIds,
-  Guid[] RenewInboxLeaseIds,
-  WorkBatchOptions Flags = WorkBatchOptions.None,
-  int PartitionCount = 10_000,
-  int LeaseSeconds = 300,
-  int AbandonStaleInstanceThresholdSeconds = 30);
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId);
 
 /// <summary>
-/// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
+/// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
+/// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before publishing.
 /// </summary>
-public static class WorkCoordinatorExtensions {
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record OutboxBatchRow {
+  /// <summary>Outbox message id (wh_outbox.message_id).</summary>
+  public required Guid MessageId { get; init; }
+  /// <summary>Stream id this message belongs to (may be null for unbound messages).</summary>
+  public Guid? StreamId { get; init; }
+  /// <summary>Transport destination (topic). Null for event-store-only messages.</summary>
+  public string? Destination { get; init; }
+  /// <summary>Assembly-qualified message payload type.</summary>
+  public required string MessageType { get; init; }
+  /// <summary>Assembly-qualified envelope type.</summary>
+  public string? EnvelopeType { get; init; }
+  /// <summary>Serialized envelope JSON (event_data column).</summary>
+  public required string EventData { get; init; }
+  /// <summary>Hop metadata JSON.</summary>
+  public required string Metadata { get; init; }
+  /// <summary>Scope JSON (may be null).</summary>
+  public string? Scope { get; init; }
+  /// <summary>Status bit flags.</summary>
+  public int Status { get; init; }
+  /// <summary>Number of previous publish attempts.</summary>
+  public int Attempts { get; init; }
+  /// <summary>Computed partition for this stream.</summary>
+  public int? PartitionNumber { get; init; }
+  /// <summary>True if this outbox message is also written to the event store.</summary>
+  public bool IsEvent { get; init; }
+
   /// <summary>
-  /// Backwards-compatible overload using a context record.
-  /// Converts to ProcessWorkBatchRequest internally.
+  /// Slice 26.6b — JOINed <c>wh_event_store.commit_sequence</c>. Null until the stamper
+  /// has caught up (publish should defer or fall back to publishing without the stamp
+  /// when null). Used by the publisher to populate envelope <c>SourceCommitSequence</c>.
   /// </summary>
-  public static Task<WorkBatch> ProcessWorkBatchAsync(
-    this IWorkCoordinator coordinator,
-    ProcessWorkBatchContext context,
-    CancellationToken cancellationToken = default
-  ) {
-    var request = new ProcessWorkBatchRequest {
-      InstanceId = context.InstanceId,
-      ServiceName = context.ServiceName,
-      HostName = context.HostName,
-      ProcessId = context.ProcessId,
-      Metadata = context.Metadata,
-      OutboxCompletions = context.OutboxCompletions,
-      OutboxFailures = context.OutboxFailures,
-      InboxCompletions = context.InboxCompletions,
-      InboxFailures = context.InboxFailures,
-      ReceptorCompletions = context.ReceptorCompletions,
-      ReceptorFailures = context.ReceptorFailures,
-      PerspectiveCompletions = context.PerspectiveCompletions,
-      PerspectiveEventCompletions = [],
-      PerspectiveFailures = context.PerspectiveFailures,
-      NewOutboxMessages = context.NewOutboxMessages,
-      NewInboxMessages = context.NewInboxMessages,
-      RenewOutboxLeaseIds = context.RenewOutboxLeaseIds,
-      RenewInboxLeaseIds = context.RenewInboxLeaseIds,
-      Flags = context.Flags,
-      PartitionCount = context.PartitionCount,
-      LeaseSeconds = context.LeaseSeconds,
-      AbandonStaleInstanceThresholdSeconds = context.AbandonStaleInstanceThresholdSeconds
-    };
-    return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
-  }
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? CommitSequence { get; init; }
+
+  /// <summary>
+  /// Slice 26.6b — JOINed <c>wh_event_store.origin_service_id</c>. Non-null only for 1:1
+  /// forwarded events; null for locally-originated. Publisher COALESCEs to the local
+  /// <c>wh_service_config.service_id</c> when null.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public Guid? OriginServiceId { get; init; }
+
+  /// <summary>
+  /// Slice 26.6b — JOINed <c>wh_event_store.origin_commit_sequence</c>. Companion to
+  /// <see cref="OriginServiceId"/>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? OriginCommitSequence { get; init; }
 }
+
+/// <summary>
+/// One leased inbox row returned from <see cref="IWorkCoordinator.FetchInboxBatchAsync"/>.
+/// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before dispatching to its handler.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+public sealed record InboxBatchRow {
+  /// <summary>Inbox message id (wh_inbox.message_id).</summary>
+  public required Guid MessageId { get; init; }
+  /// <summary>Stream id this message belongs to (may be null).</summary>
+  public Guid? StreamId { get; init; }
+  /// <summary>Handler name (e.g., the receptor type's full name).</summary>
+  public required string HandlerName { get; init; }
+  /// <summary>Assembly-qualified message payload type.</summary>
+  public required string MessageType { get; init; }
+  /// <summary>Serialized envelope JSON (event_data column).</summary>
+  public required string EventData { get; init; }
+  /// <summary>Hop metadata JSON.</summary>
+  public required string Metadata { get; init; }
+  /// <summary>Scope JSON (may be null).</summary>
+  public string? Scope { get; init; }
+  /// <summary>Status bit flags.</summary>
+  public int Status { get; init; }
+  /// <summary>Number of previous handler attempts.</summary>
+  public int Attempts { get; init; }
+  /// <summary>Computed partition for this stream.</summary>
+  public int? PartitionNumber { get; init; }
+  /// <summary>True if this inbox message is also written to the event store.</summary>
+  public bool IsEvent { get; init; }
+}
+

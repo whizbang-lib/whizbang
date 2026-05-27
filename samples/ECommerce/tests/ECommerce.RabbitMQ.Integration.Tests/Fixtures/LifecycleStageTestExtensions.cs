@@ -19,13 +19,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForImmediateDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.ImmediateDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -34,13 +36,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreDistributeInline,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -49,13 +53,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreDistributeDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -64,13 +70,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.DistributeDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -79,13 +87,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostDistributeInline,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -94,13 +104,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostDistributeDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostDistributeDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -109,13 +121,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreOutboxInline,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -124,13 +138,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreOutboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreOutboxDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -139,13 +155,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostOutboxInline,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -154,13 +172,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostOutboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostOutboxDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -169,13 +189,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreInboxInline,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -184,13 +206,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPreInboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreInboxDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -199,13 +223,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxInlineAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostInboxInline,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -214,13 +240,15 @@ public static class LifecycleStageTestExtensions {
   /// </summary>
   public static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForPostInboxDetachedAsync<TMessage>(
     this IHost host,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostInboxDetached,
-      timeoutMilliseconds);
+      timeoutMilliseconds,
+      messageFilter: messageFilter);
   }
 
   /// <summary>
@@ -230,14 +258,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPrePerspectiveInlineAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TEvent, bool>? messageFilter = null)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
       host,
       LifecycleStage.PrePerspectiveInline,
       timeoutMilliseconds,
-      perspectiveName);
+      perspectiveName,
+      messageFilter);
   }
 
   /// <summary>
@@ -247,14 +277,16 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPrePerspectiveDetachedAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TEvent, bool>? messageFilter = null)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
       host,
       LifecycleStage.PrePerspectiveDetached,
       timeoutMilliseconds,
-      perspectiveName);
+      perspectiveName,
+      messageFilter);
   }
 
   /// <summary>
@@ -264,25 +296,51 @@ public static class LifecycleStageTestExtensions {
   public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPostPerspectiveDetachedAsync<TEvent>(
     this IHost host,
     string? perspectiveName = null,
-    int timeoutMilliseconds = 45000)
+    int timeoutMilliseconds = 45000,
+    Func<TEvent, bool>? messageFilter = null)
     where TEvent : IEvent {
 
     return await _waitForLifecycleStageAsync<TEvent>(
       host,
       LifecycleStage.PostPerspectiveDetached,
       timeoutMilliseconds,
-      perspectiveName);
+      perspectiveName,
+      messageFilter);
+  }
+
+  /// <summary>
+  /// Waits for PostPerspectiveInline lifecycle stage to complete.
+  /// Fires after perspective completes, blocking checkpoint report (blocking).
+  /// </summary>
+  public static async Task<GenericLifecycleCompletionReceptor<TEvent>> WaitForPostPerspectiveInlineAsync<TEvent>(
+    this IHost host,
+    string? perspectiveName = null,
+    int timeoutMilliseconds = 45000,
+    Func<TEvent, bool>? messageFilter = null)
+    where TEvent : IEvent {
+
+    return await _waitForLifecycleStageAsync<TEvent>(
+      host,
+      LifecycleStage.PostPerspectiveInline,
+      timeoutMilliseconds,
+      perspectiveName,
+      messageFilter);
   }
 
   /// <summary>
   /// Core helper method that registers a receptor, waits for completion, and returns the receptor.
   /// Returns the receptor so tests can inspect invocation count, last message, etc.
   /// </summary>
+  /// <param name="messageFilter">Optional predicate that gates the completion signal. When supplied,
+  /// the receptor still records LastMessage / InvocationCount, but only signals completion when the
+  /// filter returns true. Use this to ignore stale messages that survive shared-fixture cleanup
+  /// (in-flight events from a prior test arriving after queue purge but before the consumer flushes).</param>
   private static async Task<GenericLifecycleCompletionReceptor<TMessage>> _waitForLifecycleStageAsync<TMessage>(
     IHost host,
     LifecycleStage stage,
     int timeoutMilliseconds,
-    string? perspectiveName = null)
+    string? perspectiveName = null,
+    Func<TMessage, bool>? messageFilter = null)
     where TMessage : IMessage {
 
     ArgumentNullException.ThrowIfNull(host);
@@ -295,7 +353,8 @@ public static class LifecycleStageTestExtensions {
     var receptor = new GenericLifecycleCompletionReceptor<TMessage>(
       completionSource,
       expectedStage: stage,
-      perspectiveName: perspectiveName);
+      perspectiveName: perspectiveName,
+      messageFilter: messageFilter);
 
     // Get registry from host
     var registry = host.Services.GetRequiredService<IReceptorRegistry>();

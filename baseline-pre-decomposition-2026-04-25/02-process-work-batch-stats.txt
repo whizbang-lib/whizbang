@@ -1,0 +1,24 @@
+         datname         | calls | tot_ms | mean_ms | rows 
+-------------------------+-------+--------+---------+------
+ bffservice-db           |  9784 |     34 |    0.00 |    0
+ bffservice-db           |  9784 | 183058 |   18.71 |    0
+ chatservice-db          |  9784 |     35 |    0.00 |    0
+ chatservice-db          |  9784 | 183566 |   18.76 |    0
+ integrationsservice-db  |  9784 | 183890 |   18.80 |    0
+ integrationsservice-db  |  9784 |     27 |    0.00 |    0
+ jobservice-db           |  9784 | 182517 |   18.65 |    0
+ jobservice-db           |  9784 |     25 |    0.00 |    0
+ notificationsservice-db |  9784 |     29 |    0.00 |    0
+ notificationsservice-db |  9784 | 190458 |   19.47 |    0
+ pdfservice-db           |  9784 | 187677 |   19.18 |    0
+ pdfservice-db           |  9784 |     29 |    0.00 |    0
+ taskservice-db          |  9786 | 188657 |   19.28 |    0
+ taskservice-db          |  9786 |     29 |    0.00 |    0
+ uploadservice-db        |  9784 | 186588 |   19.07 |    0
+ uploadservice-db        |  9784 |     27 |    0.00 |    0
+ userservice-db          |  9786 | 185395 |   18.94 |    0
+ userservice-db          |  9786 |     35 |    0.00 |    0
+ workflowservice-db      |  9784 | 187111 |   19.12 |    0
+ workflowservice-db      |  9784 |     27 |    0.00 |    0
+(20 rows)
+

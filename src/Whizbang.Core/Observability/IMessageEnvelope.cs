@@ -73,6 +73,37 @@ public interface IMessageEnvelope {
   List<ReceptorInvocationRecord>? ReceptorInvocations => null;
 
   /// <summary>
+  /// Slice 26 — originating service's identity. Default implementation returns
+  /// <see cref="Guid.Empty"/> so test doubles and legacy envelope implementations keep
+  /// compiling. Production envelopes (<see cref="MessageEnvelope{TMessage}"/>) override
+  /// via an init property.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("sid")]
+  Guid SourceServiceId => Guid.Empty;
+
+  /// <summary>
+  /// Slice 26 — source service's <c>commit_sequence</c> stamp for this event. Default 0.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("sseq")]
+  long SourceCommitSequence => 0;
+
+  /// <summary>
+  /// Slice 26 — optional causality reference (forensic only, not enforced).
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("cbid")]
+  Guid? CausedByServiceId => null;
+
+  /// <summary>
+  /// Slice 26 — companion to <see cref="CausedByServiceId"/>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [JsonPropertyName("cbseq")]
+  long? CausedByCommitSequence => null;
+
+  /// <summary>
   /// Returns the <see cref="ReceptorInvocations"/> list, creating and assigning it on the
   /// envelope if it was null. Default implementation throws: an envelope type must opt in
   /// to tracking by overriding this member. Callers (notably

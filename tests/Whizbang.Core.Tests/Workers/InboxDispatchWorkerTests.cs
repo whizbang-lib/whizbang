@@ -1,0 +1,449 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Threading.Channels;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+
+namespace Whizbang.Core.Tests.Workers;
+
+[NotInParallel("WhizbangBackgroundServiceTests")]
+public class InboxDispatchWorkerTests {
+
+  // ============================================================
+  // Test fakes
+  // ============================================================
+
+  private sealed class FakeInstanceProvider : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public string ServiceName => "test-svc";
+    public string HostName => "test-host";
+    public int ProcessId => 42;
+    public ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = InstanceId,
+      ServiceName = ServiceName,
+      HostName = HostName,
+      ProcessId = ProcessId
+    };
+  }
+
+  private sealed class FakeInboxChannelWriter : IInboxChannelWriter {
+    private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
+    public ConcurrentBag<Guid> RemovedInFlight { get; } = [];
+    public ChannelReader<InboxWork> Reader => _channel.Reader;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
+    public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { RemovedInFlight.Add(messageId); }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
+  private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
+    public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+      All.Add(request);
+      First.TrySetResult(request);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class FakeFailureChannel : IFailureChannel {
+    public TaskCompletionSource<MessageFailure> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+      All.Add((category, failure));
+      First.TrySetResult(failure);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private static InboxWork _makeWork(int attempts = 0, MessageProcessingStatus status = MessageProcessingStatus.Stored, Guid? id = null) {
+    var msgId = id ?? (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    return new InboxWork {
+      MessageId = msgId,
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From(msgId),
+        Payload = JsonDocument.Parse("{}").RootElement,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
+      },
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      StreamId = streamId,
+      PartitionNumber = 1,
+      Attempts = attempts,
+      Status = status,
+      Flags = WorkBatchOptions.None,
+    };
+  }
+
+  // ============================================================
+  // Tests
+  // ============================================================
+
+  [Test]
+  public async Task HappyPath_RoutesEventStoredCompletionToHandlerCommitChannelAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1234 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(routed.InboxCompletion.MessageId).IsEqualTo(work.MessageId);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored);
+    await Assert.That(routed.InstanceId).IsEqualTo(instance.InstanceId);
+    await Assert.That(routed.ServiceName).IsEqualTo("test-svc");
+    await Assert.That(routed.HostName).IsEqualTo("test-host");
+    await Assert.That(routed.ProcessId).IsEqualTo(42);
+    await Assert.That(routed.PartitionCount).IsEqualTo(1234);
+    await Assert.That(routed.HandlerId).IsEqualTo(work.MessageId);
+    await Assert.That(failure.All).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task MaxInboxAttemptsExceeded_RoutesTerminalCompletionAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork(attempts: 5, status: MessageProcessingStatus.Stored);
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(routed.InboxCompletion.MessageId).IsEqualTo(work.MessageId);
+    var expectedStatus = (int)(work.Status | MessageProcessingStatus.Published);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo(expectedStatus);
+    await Assert.That(failure.All).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task MaxInboxAttempts_AttemptsEqualToMax_StillProcessesAsync() {
+    // Phase H step 8 slice D regression lock: with one-based attempts (first attempt = 1)
+    // and N total attempts allowed, the dead-letter check must use strict greater-than.
+    // attempts=3, MaxInboxAttempts=3 → run the 3rd attempt (don't dead-letter early).
+    // Pre-refactor used >= with zero-based attempts which gave the same total-attempts count.
+    // Flipping the operator preserves "MaxInboxAttempts = N → N attempts allowed".
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork(attempts: 3, status: MessageProcessingStatus.Stored);
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Should be normal EventStored, NOT terminal Published — dead-letter only fires when
+    // attempts > max, not when equal.
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored)
+      .Because("attempts == MaxInboxAttempts means we're on the last allowed attempt, not over the limit");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task MaxInboxAttempts_AttemptsOneOverMax_DeadLettersAsync() {
+    // Counterpart to the boundary test: attempts > max strictly triggers dead-letter.
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork(attempts: 4, status: MessageProcessingStatus.Stored);
+    await inbox.WriteAsync(work, cts.Token);
+
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var expectedStatus = (int)(work.Status | MessageProcessingStatus.Published);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo(expectedStatus)
+      .Because("attempts > MaxInboxAttempts dead-letters with terminal Published status");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Disabled_NoMessagesConsumedAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();  // gate ready, but Enabled=false should still skip
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions { Enabled = false }),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    await Task.WhenAny(handlerCommit.First.Task, Task.Delay(500, CancellationToken.None));
+    await Assert.That(handlerCommit.First.Task.IsCompleted).IsFalse();
+    await Assert.That(handlerCommit.All).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task BlocksOnSchemaGate_UntilMarkedReadyAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();  // not marked ready
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    await Task.WhenAny(handlerCommit.First.Task, Task.Delay(300, CancellationToken.None));
+    await Assert.That(handlerCommit.First.Task.IsCompleted).IsFalse();
+
+    gate.MarkReady();
+    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(routed.InboxCompletion.MessageId).IsEqualTo(work.MessageId);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task MultipleMessages_AllRoutedToHandlerCommitChannelAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var works = new[] { _makeWork(), _makeWork(), _makeWork() };
+    foreach (var w in works) { await inbox.WriteAsync(w, cts.Token); }
+
+    await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (handlerCommit.All.Count < works.Length && sw.Elapsed < TimeSpan.FromSeconds(2)) {
+      await Task.Yield();
+    }
+    foreach (var w in works) {
+      await Assert.That(handlerCommit.All.Any(r => r.InboxCompletion.MessageId == w.MessageId)).IsTrue();
+    }
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  // ============================================================
+  // Phase H step 9 slice 3 — lease-tied cancellation
+  // ============================================================
+
+  /// <summary>
+  /// HandlerCommit channel that ignores its CT — simulates a misbehaving downstream that doesn't
+  /// honor cancellation. Used to verify the lease executor's abandonment path.
+  /// </summary>
+  private sealed class HungHandlerCommitChannel : IInboxHandlerCommitChannel {
+    private readonly TaskCompletionSource _block = new();
+    public Task Started => _entered.Task;
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public async ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+      _entered.TrySetResult();
+      // Deliberately ignore ct — simulates a hung downstream/handler.
+      await _block.Task.ConfigureAwait(false);
+    }
+    public void Unblock() => _block.TrySetResult();
+  }
+
+  [Test]
+  public async Task HungInsideLeaseExecutor_CancelsAtDeadline_RoutesToFailureChannelAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var hungChannel = new HungHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var fakeTime = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero));
+    var registry = new LeaseRegistry();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, hungChannel, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: null,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+      leaseRegistry: registry,
+      timeProvider: fakeTime);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    // Wait until the dispatch enters the hung EnqueueAsync (so we know the lease has been
+    // registered and the executor is awaiting the dispatch task).
+    await hungChannel.Started.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Advance fake clock past deadline (60 - 30 = 30 s grace, deadline at +30 s).
+    fakeTime.Advance(TimeSpan.FromSeconds(31));
+
+    // The lease executor should abandon the hung dispatch and route to the failure channel
+    // via the existing catch in ExecuteAsync.
+    var fail = await failure.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(fail.MessageId).IsEqualTo(work.MessageId);
+
+    // The hung downstream is still parked — abandon-not-cancel.
+    hungChannel.Unblock();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task SuccessfulDispatch_DisposesLeaseAndRemovesFromRegistryAsync() {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var registry = new LeaseRegistry();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      NullLogger<InboxDispatchWorker>.Instance,
+      lifecycleMessageDeserializer: null,
+      leaseHandleOptions: null,
+      leaseRenewalOptions: null,
+      leaseRegistry: registry,
+      timeProvider: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    var work = _makeWork();
+    await inbox.WriteAsync(work, cts.Token);
+
+    await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Allow dispatch to fully complete + lease.Dispose continuation to run.
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (registry.Count > 0 && sw.Elapsed < TimeSpan.FromSeconds(2)) {
+      await Task.Yield();
+    }
+
+    await Assert.That(registry.Count).IsEqualTo(0)
+      .Because("happy-path dispatch must dispose the lease (auto-removes from registry)");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+}

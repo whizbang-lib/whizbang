@@ -487,6 +487,90 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   [Test]
+  public async Task HandleMessage_PreInboxGate_RuntimeReceptorRegistered_ButCompileTimeEmpty_FiresAsync() {
+    // Regression lock for the same class of bug fixed in InboxDispatchWorker: the PreInbox
+    // gate in _invokePreInboxLifecycleAsync consults only the compile-time
+    // IReceptorRegistryQuery. When a consuming assembly's source-generated contribution
+    // emits empty arrays for PreInboxDetached / PreInboxInline (BFF-style services that
+    // have only perspective consumers, no compile-time lifecycle receptors), any
+    // runtime-registered receptor at those stages — including integration-test completion
+    // waits and any production dynamic registration — silently fails to fire because the
+    // gate short-circuits before reaching the receptor invoker.
+    //
+    // ServiceBusConsumerWorker is no longer on the production hot path (TransportConsumerWorker
+    // + InboxDispatchWorker replaced it), but the class is still constructed by ~10 test
+    // files exercising the legacy code path. Locking the invariant here keeps the gate
+    // story symmetric across both worker types.
+    var handlerCapturingTransport = new HandlerCapturingTransport();
+    var messageId = MessageId.New();
+    var streamId = Guid.NewGuid();
+
+    var inboxWork = new InboxWork {
+      MessageId = messageId.Value,
+      Envelope = _createJsonEnvelope(messageId, streamId),
+      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
+      Status = MessageProcessingStatus.None,
+      Attempts = 0
+    };
+
+    var strategy = new DeepCoverageWorkCoordinatorStrategy(
+      () => new WorkBatch {
+        InboxWork = [inboxWork],
+        OutboxWork = [],
+        PerspectiveWork = []
+      }
+    );
+
+    var invokedStages = new System.Collections.Concurrent.ConcurrentBag<LifecycleStage>();
+    var runtimeRegistry = new DeepCoverageReceptorRegistry();
+    runtimeRegistry.AddReceptor(LifecycleStage.PreInboxDetached, typeof(DeepCoverageTestEvent), new ReceptorInfo(
+      MessageType: typeof(DeepCoverageTestEvent),
+      ReceptorId: "test-runtime-pre-detached",
+      InvokeAsync: (_, _, _, _, _) => {
+        invokedStages.Add(LifecycleStage.PreInboxDetached);
+        return ValueTask.FromResult<object?>(null);
+      }
+    ));
+
+    // Compile-time query reports NO receptors at any stage — mimics a BFF service whose
+    // generated WhizbangReceptorRegistryQueryRegistration emits empty stageTypes arrays
+    // for the PreInbox lifecycle stages.
+    var compileTimeRegistry = new FakeReceptorRegistryQuery(hasReceptors: (_, _) => false);
+
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
+    services.AddSingleton<IReceptorRegistry>(runtimeRegistry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(runtimeRegistry, sp));
+
+    var deserializer = new DeepCoverageLifecycleMessageDeserializer();
+
+    var worker = _createWorker(
+      handlerCapturingTransport,
+      new ServiceBusConsumerOptions {
+        Subscriptions = [new TopicSubscription("t", "s")]
+      },
+      services,
+      lifecycleMessageDeserializer: deserializer,
+      receptorRegistry: compileTimeRegistry,
+      runtimeReceptorRegistry: runtimeRegistry
+    );
+
+    await worker.StartAsync(CancellationToken.None);
+
+    var envelope = _createJsonEnvelope(messageId, streamId);
+    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+    await worker.DrainDetachedAsync();
+
+    await Assert.That(invokedStages).Contains(LifecycleStage.PreInboxDetached)
+      .Because("PreInbox gate must consult the runtime registry too — without this, every runtime-registered receptor (integration test waits, dynamic registrations) silently fails to fire when the consuming assembly has no compile-time PreInbox receptors for the type.");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task HandleMessage_WithReceptorInvokerAndDeserializer_InvokesPreAndPostInboxDetachedAsync() {
     // Arrange
     var handlerCapturingTransport = new HandlerCapturingTransport();
@@ -1136,7 +1220,9 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     ServiceBusConsumerOptions options,
     ServiceCollection? services = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IEnvelopeSerializer? envelopeSerializer = null) {
+    IEnvelopeSerializer? envelopeSerializer = null,
+    IReceptorRegistryQuery? receptorRegistry = null,
+    IReceptorRegistry? runtimeReceptorRegistry = null) {
     services ??= new ServiceCollection();
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -1149,7 +1235,9 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       options,
       lifecycleMessageDeserializer,
-      envelopeSerializer
+      envelopeSerializer,
+      receptorRegistry: receptorRegistry,
+      runtimeReceptorRegistry: runtimeReceptorRegistry
     );
   }
 
@@ -1458,6 +1546,27 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  /// <summary>
+  /// Compile-time registry double — test-controllable HasReceptors. Mirrors the FakeReceptorRegistry
+  /// used in InboxDispatchWorkerLifecycleGatingTests so the runtime-vs-compile-time gating story
+  /// stays symmetric across both worker types.
+  /// </summary>
+  /// <remarks>
+  /// HasAnyConsumer defaults to <c>true</c> so the receive-boundary drop-gate at the top of
+  /// <c>_handleMessageAsync</c> (which also consults this query) doesn't drop the message
+  /// before it reaches the PreInbox lifecycle gate we're trying to exercise. Tests that want
+  /// to assert receive-boundary behavior pass an explicit <c>hasAnyConsumer</c> delegate.
+  /// </remarks>
+  private sealed class FakeReceptorRegistryQuery(
+      Func<LifecycleStage, string, bool>? hasReceptors = null,
+      Func<string, bool>? hasAnyConsumer = null) : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType)
+      => hasReceptors?.Invoke(stage, messageType) ?? false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasAnyConsumer(string messageType)
+      => hasAnyConsumer?.Invoke(messageType) ?? true;
   }
 
   /// <summary>

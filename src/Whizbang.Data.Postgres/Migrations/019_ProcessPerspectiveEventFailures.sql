@@ -24,13 +24,14 @@ BEGIN
     FROM jsonb_array_elements(p_failures) as elem
   LOOP
     -- Update event with failure information and exponential backoff
+    -- Phase H step 8 slice D: claim_orphaned_perspective_events is the SOLE source of
+    -- attempt counting. See mig 018 for the rationale — symmetric across all three tables.
     UPDATE wh_perspective_events pe
     SET status = pe.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
         error = v_failure.error_message,
         failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
-        attempts = pe.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
-        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(pe.attempts + 1, 10)), 10)),
+        -- Exponential backoff: 30s * 2^attempts, capped at 5 minutes
+        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(pe.attempts, 10)), 10)),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE pe.event_work_id = v_failure.work_id;

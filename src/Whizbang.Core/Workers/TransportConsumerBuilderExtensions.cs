@@ -208,10 +208,11 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
-    // Register WorkCoordinatorPublisherWorker — drives outbox drain, inbox drain,
-    // claim, heartbeat, and completion flush loops. Without this, outbox messages
-    // never publish and inter-service messaging is completely broken.
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
+    // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
+    // PerspectiveCompletionFlushWorker + HeartbeatWorker now cover what the legacy
+    // monolith did; registration moved to AddWhizbangWorkers. Develop's re-registration
+    // here was dropped by the merge.
 
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
@@ -341,10 +342,11 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
-    // Register WorkCoordinatorPublisherWorker — drives outbox drain, inbox drain,
-    // claim, heartbeat, and completion flush loops. Without this, outbox messages
-    // never publish and inter-service messaging is completely broken.
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    // Phase H step 3 deleted WorkCoordinatorPublisherWorker. ClaimWorker +
+    // OutboxDrainWorker + InboxDrainWorker + OutboxCompletionFlushWorker +
+    // PerspectiveCompletionFlushWorker + HeartbeatWorker now cover what the legacy
+    // monolith did; registration moved to AddWhizbangWorkers. Develop's re-registration
+    // here was dropped by the merge.
 
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()

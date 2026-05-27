@@ -1,0 +1,227 @@
+ calls | tot_ms | mean_ms | rows |                      q                       
+-------+--------+---------+------+----------------------------------------------
+  9784 | 190458 |   19.47 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9786 | 188657 |   19.28 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 187677 |   19.18 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 187111 |   19.12 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 186588 |   19.07 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9786 | 185395 |   18.94 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 183890 |   18.80 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 183566 |   18.76 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 183058 |   18.71 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 | 182517 |   18.65 |    0 | SELECT * FROM proce _work_batch(            +
+       |        |         |      |         $1,                                 +
+       |        |         |      |         $2,                                 +
+       |        |         |      |         $3,                                 +
+       |        |         |      |         $4,                                 +
+       |        |         |      |         $5,                                 +
+       |        |         |      |         $6,                                 +
+       |        |         |      |         $7,                                 +
+       |        |         |      |         $8,                                 +
+       |        |         |      |         $9,                                 +
+       |        |         |      |         $10,                                +
+       |        |         |      |         $11,                                +
+       |        |         |      |         $12,                                +
+       |        |         |      |         $13,                                +
+       |        |         |      |       
+  9784 |   2987 |    0.31 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9784 |   2975 |    0.30 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9784 |   2971 |    0.30 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9784 |   2971 |    0.30 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9784 |   2910 |    0.30 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9784 |   2857 |    0.29 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9786 |   2813 |    0.29 | 9786 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+  9784 |   2791 |    0.29 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+ 20280 |   2790 |    0.14 |    0 | DISCARD ALL
+  9784 |   2785 |    0.28 | 9784 | SELECT "public".regi ter_in tance_heartbeat(+
+       |        |         |      |           p_in tance_id,                    +
+       |        |         |      |           p_ ervice_name,                   +
+       |        |         |      |           p_ho t_name,                      +
+       |        |         |      |           p_proce _id,                      +
+       |        |         |      |           p_metadata,                       +
+       |        |         |      |           p_now,                            +
+       |        |         |      |           v_lea e_
+(20 rows)
+

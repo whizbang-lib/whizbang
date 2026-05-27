@@ -116,11 +116,6 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
     services.AddSingleton<JsonbSizeValidator>();
 
-    services.AddSingleton<IDatabaseReadinessCheck>(sp => {
-      var readinessLogger = sp.GetService<ILogger<PostgresDatabaseReadinessCheck>>();
-      return new PostgresDatabaseReadinessCheck(connectionString, readinessLogger!);
-    });
-
     services.AddScoped<IEventStore, DapperPostgresEventStore>();
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
@@ -246,13 +241,6 @@ public static class ServiceCollectionExtensions {
     // Register JSONB persistence infrastructure
     services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
     services.AddSingleton<JsonbSizeValidator>();
-
-    // Register database readiness check - CRITICAL for worker startup
-    // This prevents workers from starting before schema is initialized
-    services.AddSingleton<IDatabaseReadinessCheck>(sp => {
-      var readinessLogger = sp.GetService<ILogger<PostgresDatabaseReadinessCheck>>();
-      return new PostgresDatabaseReadinessCheck(connectionString, readinessLogger!);
-    });
 
     // Register Whizbang stores
     // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker

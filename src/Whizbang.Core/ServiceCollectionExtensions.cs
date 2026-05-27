@@ -12,6 +12,7 @@ using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core;
 
@@ -149,6 +150,13 @@ public static class ServiceCollectionExtensions {
 
     // Register perspective synchronization services
     _registerPerspectiveSyncServices(services);
+
+    // Register the Phase C work-pump pipeline (heartbeat, claim, inbox-handler,
+    // and the four batched flush workers + their channel surfaces).
+    // Driver-specific extensions (.WithDriver.Postgres()) wire IWorkCoordinator
+    // and may replace IWorkNotificationListener with a real Postgres LISTEN impl.
+    // Idempotent: TryAdd / AddOptions inside AddWhizbangWorkers handle repeat calls.
+    services.AddWhizbangWorkers();
 
     // Auto-invoke generated service registration callbacks
     // These are set by source-generated module initializers in consumer assemblies

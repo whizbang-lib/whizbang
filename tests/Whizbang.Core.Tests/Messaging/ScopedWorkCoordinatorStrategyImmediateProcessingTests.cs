@@ -24,63 +24,10 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     };
   }
 
-  [Test]
-  public async Task FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync(CancellationToken cancellationToken) {
-    // Arrange
-    var channelWriter = new TestWorkChannelWriter();
-    var messageId1 = System.Guid.CreateVersion7();
-    var messageId2 = System.Guid.CreateVersion7();
-    var coordinator = new TestWorkCoordinator {
-      WorkToReturn = [
-        new OutboxWork {
-          MessageId = messageId1,
-          Destination = "test-topic",
-          EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
-      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-          Envelope = _createTestEnvelope(messageId1),
-          Attempts = 0,
-          Status = MessageProcessingStatus.None
-        },
-        new OutboxWork {
-          MessageId = messageId2,
-          Destination = "test-topic",
-          EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
-      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-          Envelope = _createTestEnvelope(messageId2),
-          Attempts = 0,
-          Status = MessageProcessingStatus.None
-        }
-      ]
-    };
-
-    var instanceProvider = new TestServiceInstanceProvider();
-    var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
-
-    // Queue a message to trigger flush
-    var queuedMessageId = System.Guid.CreateVersion7();
-    strategy.QueueOutboxMessage(new OutboxMessage {
-      MessageId = queuedMessageId,
-      Destination = "test-topic",
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
-      Envelope = _createTestEnvelope(queuedMessageId),
-      IsEvent = false,
-      MessageType = "TestMessage, TestAssembly",
-      Metadata = new EnvelopeMetadata {
-        MessageId = MessageId.From(queuedMessageId),
-        Hops = []
-      }
-    });
-
-    // Act
-    var result = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None, ct: cancellationToken);
-
-    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
-    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
-    // Work was still persisted and returned in batch result
-    await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
-  }
+  // Deleted: FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync.
+  // Asserted result.OutboxWork.Count == 2 against the legacy claim-during-flush;
+  // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. The "no writes to channel"
+  // invariant is still locked in WorkCoordinatorFlushHelperTests via SignalCount.
 
   [Test]
   public async Task FlushAsync_NoReturnedWork_DoesNotWriteToChannelAsync(CancellationToken cancellationToken) {

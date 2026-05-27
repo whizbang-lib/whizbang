@@ -251,13 +251,14 @@ public sealed partial class PostgresConnectionRetry {
       return false;
     }
 
-    // Check for required function (process_work_batch is critical)
-    // Functions are installed in 'public' schema (via __SCHEMA__ placeholder replacement)
+    // Check for required function. Phase H step 3 replaced process_work_batch with
+    // the decomposed claim_work entry point — claim_work is now the canonical signal
+    // that migrations completed (it's installed by migration 029).
     const string checkFunctionsSql = @"
       SELECT COUNT(*)
       FROM information_schema.routines
       WHERE routine_schema = 'public'
-        AND routine_name = 'process_work_batch'
+        AND routine_name = 'claim_work'
         AND routine_type = 'FUNCTION'";
 
     await using var functionCommand = new NpgsqlCommand(checkFunctionsSql, connection);

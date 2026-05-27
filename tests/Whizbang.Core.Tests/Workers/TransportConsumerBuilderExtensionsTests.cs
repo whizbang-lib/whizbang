@@ -189,29 +189,11 @@ public class TransportConsumerBuilderExtensionsTests {
     await Assert.That(hostedServiceDescriptor!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
   }
 
-  [Test]
-  public async Task AddTransportConsumer_RegistersWorkCoordinatorPublisherWorkerAsHostedServiceAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    _registerRequiredServices(services);
-
-    var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
-
-    // Act
-    builder.AddTransportConsumer();
-
-    // Assert - WorkCoordinatorPublisherWorker drives outbox/inbox drain, claim,
-    // heartbeat, and completion-flush loops. Without this hosted-service entry,
-    // outbox messages never publish and inter-service messaging is broken.
-    var hostedServiceDescriptor = services.FirstOrDefault(
-        d => d.ServiceType == typeof(IHostedService) &&
-             d.ImplementationType == typeof(WorkCoordinatorPublisherWorker));
-
-    await Assert.That(hostedServiceDescriptor).IsNotNull();
-  }
+  // WorkCoordinatorPublisherWorker was deleted in Phase H step 3 — its responsibilities
+  // (outbox/inbox drain, claim, heartbeat, completion flushes) are now distributed across
+  // OutboxDrainWorker / InboxDrainWorker / ClaimWorker / HeartbeatWorker / *FlushWorker.
+  // Develop's test ("AddTransportConsumer_RegistersWorkCoordinatorPublisherWorkerAsHostedService")
+  // was dropped during the merge — it asserted registration of a class that no longer exists.
 
   [Test]
   public async Task AddTransportConsumer_RegistersTransportConsumerOptionsAsSingletonAsync() {
@@ -498,31 +480,9 @@ public class TransportConsumerBuilderExtensionsTests {
     await Assert.That(optionsDescriptor).IsNotNull();
   }
 
-  [Test]
-  public async Task AddTransportConsumer_OnPerspectiveBuilder_RegistersWorkCoordinatorPublisherWorkerAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    _registerRequiredServices(services);
-
-    var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
-
-    var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
-
-    // Act
-    perspectiveBuilder.AddTransportConsumer();
-
-    // Assert - WorkCoordinatorPublisherWorker must also be registered on the
-    // perspective-builder overload so outbox/inbox drain loops run when
-    // AddTransportConsumer is called at the end of a WithEFCore/WithDriver chain.
-    var hostedServiceDescriptor = services.FirstOrDefault(
-        d => d.ServiceType == typeof(IHostedService) &&
-             d.ImplementationType == typeof(WorkCoordinatorPublisherWorker));
-
-    await Assert.That(hostedServiceDescriptor).IsNotNull();
-  }
+  // Develop's "AddTransportConsumer_OnPerspectiveBuilder_RegistersWorkCoordinatorPublisherWorker"
+  // dropped — same reason as the sibling test above (WorkCoordinatorPublisherWorker deleted
+  // in Phase H step 3).
 
   #endregion
 

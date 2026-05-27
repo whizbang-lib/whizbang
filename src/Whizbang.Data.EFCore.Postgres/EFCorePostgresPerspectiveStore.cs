@@ -56,6 +56,16 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   }
 
   /// <inheritdoc/>
+  public async Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    var row = await _context.Set<PerspectiveRow<TModel>>()
+        .AsNoTracking()
+        .OrderBy(r => r.Id)
+        .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
+
+    return row?.Metadata;
+  }
+
+  /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
@@ -73,6 +83,17 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope, CancellationToken cancellationToken = default) =>
     _upsertStrategy.UpsertPerspectiveRowAsync(
         _context, _tableName, streamId, model, _defaultMetadata, scope, forceUpdateScope, cancellationToken);
+
+  /// <inheritdoc/>
+  public Task UpsertAsync(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, streamId, model, metadata, scope, forceUpdateScope, cancellationToken);
 
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
@@ -193,6 +214,19 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       CancellationToken cancellationToken = default) =>
     _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
         _context, _tableName, streamId, model, _defaultMetadata, scope ?? new PerspectiveScope(),
+        physicalFieldValues, forceUpdateScope, cancellationToken);
+
+  /// <inheritdoc/>
+  public Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context, _tableName, streamId, model, metadata, scope ?? new PerspectiveScope(),
         physicalFieldValues, forceUpdateScope, cancellationToken);
 
   /// <inheritdoc/>

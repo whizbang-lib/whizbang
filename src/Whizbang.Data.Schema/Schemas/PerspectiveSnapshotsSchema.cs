@@ -50,12 +50,25 @@ public static class PerspectiveSnapshotsSchema {
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      // Slice 26.11 — commit_sequence as of this snapshot. NULL on existing rows; populated
+      // by the runner template via IEventStore.GetCommitSequenceAsync. Mig 048 backfills
+      // schema (ALTER + index) on existing JDX databases.
+      new ColumnDefinition(
+        Name: "snapshot_commit_sequence",
+        DataType: WhizbangDataType.BIG_INT,
+        Nullable: true
       )
     ),
     Indexes: [
       new IndexDefinition(
         Name: "idx_perspective_snapshots_lookup",
         Columns: ["stream_id", "perspective_name", "sequence_number"]
+      ),
+      new IndexDefinition(
+        Name: "idx_perspective_snapshots_commit_sequence",
+        Columns: ["stream_id", "perspective_name", "snapshot_commit_sequence"],
+        WhereClause: "snapshot_commit_sequence IS NOT NULL"
       )
     ]
   );
@@ -70,5 +83,7 @@ public static class PerspectiveSnapshotsSchema {
     public const string SNAPSHOT_DATA = "snapshot_data";
     public const string SEQUENCE_NUMBER = "sequence_number";
     public const string CREATED_AT = "created_at";
+    /// <summary>Slice 26.11 — commit_sequence as of this snapshot (added via mig 048).</summary>
+    public const string SNAPSHOT_COMMIT_SEQUENCE = "snapshot_commit_sequence";
   }
 }

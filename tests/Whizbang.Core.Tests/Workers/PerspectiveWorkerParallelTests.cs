@@ -33,19 +33,18 @@ public sealed class PerspectiveWorkerParallelTests {
     var registry = new GatedPerspectiveRunnerRegistry(runner, perspectiveNames);
     var coordinator = new ParallelTestWorkCoordinator();
 
-    // Queue work items — one per perspective, same stream
-    coordinator.PerspectiveWorkToReturn = perspectiveNames
-      .ConvertAll(name => new PerspectiveWork {
+    var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: perspectiveCount);
+
+    // Act — start worker, then push work to the channel
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    var workerTask = worker.StartAsync(cts.Token);
+    foreach (var name in perspectiveNames) {
+      await harness.EnqueueWorkAsync(new PerspectiveWork {
         WorkId = Guid.CreateVersion7(),
         StreamId = streamId,
         PerspectiveName = name
-      });
-
-    var worker = _createWorker(coordinator, registry, maxConcurrentPerspectives: perspectiveCount);
-
-    // Act — start worker, wait for all runners to be concurrently active
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    var workerTask = worker.StartAsync(cts.Token);
+      }, cts.Token);
+    }
 
     // Wait for all 5 runners to enter RunAsync simultaneously.
     // If sequential, only 1 enters at a time → CountdownEvent never reaches 0 → timeout.
@@ -87,18 +86,18 @@ public sealed class PerspectiveWorkerParallelTests {
     var registry = new GatedPerspectiveRunnerRegistry(runner, perspectiveNames);
     var coordinator = new ParallelTestWorkCoordinator();
 
-    coordinator.PerspectiveWorkToReturn = perspectiveNames
-      .ConvertAll(name => new PerspectiveWork {
-        WorkId = Guid.CreateVersion7(),
-        StreamId = streamId,
-        PerspectiveName = name
-      });
-
-    var worker = _createWorker(coordinator, registry, maxConcurrentPerspectives: maxConcurrency);
+    var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: maxConcurrency);
 
     // Act
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var name in perspectiveNames) {
+      await harness.EnqueueWorkAsync(new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = streamId,
+        PerspectiveName = name
+      }, cts.Token);
+    }
 
     // Wait for all 5 runners to complete
     var allFinished = allCompleted.Wait(TimeSpan.FromSeconds(5));
@@ -133,13 +132,7 @@ public sealed class PerspectiveWorkerParallelTests {
       normalPerspectiveNames: ["Test.NormalA", "Test.NormalB"]);
 
     var coordinator = new ParallelTestWorkCoordinator();
-    coordinator.PerspectiveWorkToReturn = [
-      new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalA" },
-      new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalB" },
-      new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" },
-    ];
-
-    var worker = _createWorker(coordinator, registry, maxConcurrentPerspectives: 3);
+    var (worker, harness) = _createWorker(coordinator, registry, maxConcurrentPerspectives: 3);
 
     // Act
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -149,6 +142,10 @@ public sealed class PerspectiveWorkerParallelTests {
 
     // Worker will propagate the exception from the throwing perspective
     var workerTask = worker.StartAsync(cts.Token);
+
+    await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalA" }, cts.Token);
+    await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalB" }, cts.Token);
+    await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
 
     // Give it time to process the batch
     var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(5));
@@ -165,12 +162,12 @@ public sealed class PerspectiveWorkerParallelTests {
 
   #region Helper Methods
 
-  private static PerspectiveWorker _createWorker(
+  private static (PerspectiveWorker Worker, PerspectiveWorkerTestHarness Harness) _createWorker(
       ParallelTestWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry registry,
       int maxConcurrentPerspectives) {
     var instanceProvider = new TestServiceInstanceProvider();
-    var databaseReadiness = new TestDatabaseReadinessCheck();
+    var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -180,7 +177,7 @@ public sealed class PerspectiveWorkerParallelTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    return new PerspectiveWorker(
+    var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions {
@@ -190,8 +187,12 @@ public sealed class PerspectiveWorkerParallelTests {
       }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
+    return (worker, harness);
   }
 
   #endregion
@@ -383,11 +384,5 @@ public sealed class PerspectiveWorkerParallelTests {
       ProcessId = ProcessId
     };
   }
-
-  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(true);
-  }
-
   #endregion
 }
