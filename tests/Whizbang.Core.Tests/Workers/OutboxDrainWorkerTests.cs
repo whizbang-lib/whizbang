@@ -192,7 +192,7 @@ public class OutboxDrainWorkerTests {
     // Both completions enqueued.
     await Assert.That(completion.AllIds).Contains(msgA);
     await Assert.That(completion.AllIds).Contains(msgB);
-    await Assert.That(failure.All.Count).IsEqualTo(0);
+    await Assert.That(failure.All).IsEmpty();
   }
 
   [Test]
@@ -570,7 +570,7 @@ public class OutboxDrainWorkerTests {
       .Because("Receptor throwing at PreOutboxInline must not stop the transport publish.");
     await Assert.That(completion.AllIds).Contains(msgId)
       .Because("Completion must still be enqueued — the row is safely durable in the outbox table and reaching the transport.");
-    await Assert.That(failure.All.Count).IsEqualTo(0)
+    await Assert.That(failure.All).IsEmpty()
       .Because("A lifecycle-receptor failure is not a publish failure.");
   }
 
@@ -682,5 +682,192 @@ public class OutboxDrainWorkerTests {
 
     await Assert.That(invoker.Invocations.Count).IsEqualTo(0)
       .Because("Empty-destination (event-store-only) messages must not fire transport-side lifecycle stages.");
+  }
+
+  /// <summary>Publish strategy that returns Success=false to exercise the failure path.</summary>
+  private sealed class FailingPublishStrategy : IMessagePublishStrategy {
+    public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+      Reached.TrySetResult();
+      return Task.FromResult(new MessagePublishResult {
+        MessageId = work.MessageId,
+        Success = false,
+        CompletedStatus = MessageProcessingStatus.Failed,
+        Error = "transport reported failure",
+        Reason = MessageFailureReason.Unknown,
+      });
+    }
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_PublishReturnsFailure_RoutesToFailureChannelAsync() {
+    // Locks the publish-failure path: when IMessagePublishStrategy returns Success=false,
+    // the row must NOT be enqueued for completion — it routes to the failure channel so the
+    // lease can release, attempts counter can bump on re-claim, and the row eventually
+    // dead-letters per MaxAttempts.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FailingPublishStrategy();
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.Reached.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    // Give a moment for the failure-channel enqueue to land.
+    for (var i = 0; i < 50 && failure.All.IsEmpty; i++) {
+      await Task.Delay(20);
+    }
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(failure.All.Count).IsEqualTo(1)
+      .Because("Success=false from transport must route the row to the failure channel for orphan re-claim.");
+    await Assert.That(completion.AllIds).IsEmpty()
+      .Because("Failed publishes MUST NOT enqueue a completion — that would mark the row Published and bypass retry.");
+  }
+
+  /// <summary>Publish strategy that throws a non-cancellation exception to exercise the catch path.</summary>
+  private sealed class ThrowingPublishStrategy : IMessagePublishStrategy {
+    public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+      Reached.TrySetResult();
+      throw new InvalidOperationException("simulated transport blow-up");
+    }
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_PublishThrows_RoutesToFailureChannelAsync() {
+    // Locks the publish-throws path: when IMessagePublishStrategy.PublishAsync throws an
+    // unexpected exception (NOT OperationCanceledException tied to the worker shutdown),
+    // the row routes to the failure channel and the drain loop continues with the next stream.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new ThrowingPublishStrategy();
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.Reached.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    for (var i = 0; i < 50 && failure.All.IsEmpty; i++) {
+      await Task.Delay(20);
+    }
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(failure.All.Count).IsEqualTo(1)
+      .Because("A throwing publish must route the row to the failure channel.");
+    await Assert.That(completion.AllIds).IsEmpty();
+  }
+
+  /// <summary>Deserializer that throws to exercise the lifecycle-deserialize catch path.</summary>
+  private sealed class ThrowingLifecycleDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName)
+      => throw new InvalidOperationException("simulated deserialize failure");
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope)
+      => throw new InvalidOperationException("simulated deserialize failure");
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName)
+      => throw new InvalidOperationException("simulated deserialize failure");
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName)
+      => throw new InvalidOperationException("simulated deserialize failure");
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_LifecycleDeserializerThrows_PublishStillFiresAsync() {
+    // Locks the _tryResolveTypedEnvelope catch path: a deserializer that throws (e.g., type
+    // not in JSON context, malformed payload) must NOT block publish. The row is still
+    // safely durable in the outbox and reaches transport; only lifecycle invocation is
+    // skipped for this message.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var invoker = new CapturingReceptorInvoker();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton<IReceptorInvoker>(invoker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish,
+      lifecycleMessageDeserializer: new ThrowingLifecycleDeserializer(),
+      receptorRegistry: new AlwaysHasReceptorsRegistry(),
+      runtimeReceptorRegistry: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(1)
+      .Because("Lifecycle deserialize failure must not block publish.");
+    await Assert.That(completion.AllIds).Contains(msgId);
+    await Assert.That(invoker.Invocations.Count).IsEqualTo(0)
+      .Because("With deserialize failing, lifecycle invocation must be skipped (typedEnvelope is null).");
   }
 }
