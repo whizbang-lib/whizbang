@@ -305,13 +305,17 @@ public class InboxLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
 
       try {
-        var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(120_000);
+        // Hardcoded inner timeout — must be < [Timeout(180_000)] attribute above so this
+        // catch block fires FIRST (otherwise the test framework kills the method via the
+        // attribute and we lose the diagnostic). Scaling with WHIZBANG_TEST_TIMEOUT_MULTIPLIER
+        // would push the inner timeout past the attribute on CI (3× scale = 360s vs 180s
+        // attribute) — race the diagnostic loses.
         await Task.WhenAll(
           preInlineCompletion.Task,
           preAsyncCompletion.Task,
           postAsyncCompletion.Task,
           postInlineCompletion.Task
-        ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+        ).WaitAsync(TimeSpan.FromSeconds(120));
       } catch (TimeoutException) {
         static string _describe(string stage, TaskCompletionSource<bool> tcs, GenericLifecycleCompletionReceptor<ProductCreatedEvent> r)
           => $"{stage}: signaled={tcs.Task.IsCompleted}, invocations={r.InvocationCount}, lastMessageSeen={(r.LastMessage is not null ? "yes" : "no")}";
