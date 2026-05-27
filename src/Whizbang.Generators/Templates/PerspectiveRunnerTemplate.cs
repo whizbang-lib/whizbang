@@ -229,7 +229,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
       if (events.Count > 0) {
         var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
-        var firstEnvelopeTypeName = firstEnvelope.Payload.GetType().FullName ?? string.Empty;
+        var firstEnvelopeType = firstEnvelope.Payload.GetType();
+        var firstEnvelopeTypeName = firstEnvelopeType.FullName ?? string.Empty;
+
+        // Slice 30A gates short-circuit when no receptor is registered. Original code consulted
+        // only the source-generated compile-time WhizbangReceptorRegistryQuery, which has the
+        // same blind spot as the InboxDispatchWorker / TransportConsumerWorker fixes: services
+        // whose generated contribution lists no compile-time receptor for a stage would silently
+        // skip the spawn even when an integration-test wait helper (or any production runtime
+        // registration) was listening at that stage. Resolve the runtime IReceptorRegistry once
+        // here and OR the compile-time check with a per-Type lookup; GetReceptorsFor returns
+        // compile-time entries concatenated with runtime ones, so the per-Type call subsumes the
+        // static check in the common case. The static fallback covers harnesses that don't
+        // register IReceptorRegistry in DI.
+        var runtimeReceptorRegistry = _serviceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorRegistry>();
 
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveDetached,
@@ -248,7 +261,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // dominates per-drain wall time on perspectives with no Pre/Post detached receptors
         // registered. Tag dispatch fires from the inline path below so skipping the spawn
         // does not lose tag side-effects.
-        if (global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveDetached, firstEnvelopeTypeName)) {
+        if (runtimeReceptorRegistry?.GetReceptorsFor(firstEnvelopeType, LifecycleStage.PrePerspectiveDetached).Count > 0
+            || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveDetached, firstEnvelopeTypeName)) {
           // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing).
           // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
           // (pooled thread) so this stage isn't starved when the ThreadPool is saturated by EF
@@ -268,7 +282,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Slice 30A — same gate for inline PrePerspective. Inline cost is lower (no OS thread
         // spawn) but still includes a DI scope creation + IReceptorInvoker lookup + security
         // context establishment. Skip when no inline receptors are registered.
-        if (global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveInline, firstEnvelopeTypeName)) {
+        if (runtimeReceptorRegistry?.GetReceptorsFor(firstEnvelopeType, LifecycleStage.PrePerspectiveInline).Count > 0
+            || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveInline, firstEnvelopeTypeName)) {
           // Fire INLINE hooks (blocking, transactional)
           await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
@@ -477,15 +492,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveDetached is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
         // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally
+        // Slice 30A's runtime registry — resolved once for the post loop; same instance as the
+        // pre block but the variable isn't in scope here, so resolve again. Singleton lookup is
+        // cheap. Falls back to the static check when the registry isn't registered.
+        var postRuntimeReceptorRegistry = _serviceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorRegistry>();
         foreach (var envelope in processedEvents) {
           // Slice 30A — gate the per-event PostPerspectiveDetached OS-thread spawn on the
           // receptor registry. JDX run 21 PERF data showed per-event spawn cost dominates
           // multi-event drains: e.g. a 44-event batch would otherwise spawn 44 dedicated
           // OS threads even when no Post receptor is registered for the perspective's
           // event types. The HasReceptors lookup is a HashSet contains check (~50 ns) vs
-          // the ~5-10 ms thread spawn it replaces.
-          var envelopeTypeName = envelope.Payload.GetType().FullName ?? string.Empty;
-          if (!global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PostPerspectiveDetached, envelopeTypeName)) {
+          // the ~5-10 ms thread spawn it replaces. Consults both registries so runtime
+          // registrations (integration-test waits) still fire — see PrePerspective gate above
+          // for the same rationale.
+          var envelopeType = envelope.Payload.GetType();
+          var envelopeTypeName = envelopeType.FullName ?? string.Empty;
+          if (!(postRuntimeReceptorRegistry?.GetReceptorsFor(envelopeType, LifecycleStage.PostPerspectiveDetached).Count > 0)
+              && !global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PostPerspectiveDetached, envelopeTypeName)) {
             continue;
           }
           var context = new LifecycleExecutionContext {
