@@ -57,6 +57,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly ILogger<InboxDispatchWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery? _receptorRegistry;
+  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
   private readonly InboxDeserializeCache? _deserializeCache;
   private readonly IMessageDiscardPolicy? _discardPolicy;
 
@@ -78,7 +79,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     TimeProvider? timeProvider = null,
     IReceptorRegistryQuery? receptorRegistry = null,
     InboxDeserializeCache? deserializeCache = null,
-    IMessageDiscardPolicy? discardPolicy = null) {
+    IMessageDiscardPolicy? discardPolicy = null,
+    IReceptorRegistry? runtimeReceptorRegistry = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -96,6 +98,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _receptorRegistry = receptorRegistry;
     _deserializeCache = deserializeCache;
     _discardPolicy = discardPolicy;
+    _runtimeReceptorRegistry = runtimeReceptorRegistry;
   }
 
   /// <inheritdoc />
@@ -342,11 +345,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return;
     }
 
-    // Slice 4 of pump-then-process.md: gate by source-generated receptor registry. When the
-    // service has no receptor registered for either the detached or inline form of this stage,
-    // skip deserialize entirely. Saves wasted JSON parsing for cross-service event types in
-    // BFF-style services where many inbox events flow through with no local handler. Null
-    // registry → legacy behavior (fire unconditionally) for back-compat in test harnesses.
+    // Slice 4 of pump-then-process.md: gate by receptor registry. When the service has no
+    // receptor registered for either the detached or inline form of this stage, skip the
+    // scope creation, security context establishment, and Task.Run spawn entirely. Saves
+    // pure overhead for cross-service event types in BFF-style services where many inbox
+    // events flow through with no local handler. Null registries → legacy behavior (fire
+    // unconditionally) for back-compat in test harnesses.
     //
     // CRITICAL: only gate stages the source generator actually populates — Pre/Post Inbox.
     // The static WhizbangReceptorRegistryQuery.HasReceptors returns false for unknown stages,
@@ -354,10 +358,24 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // (registry is injected by AddWhizbangWorkers). Tag-notification hooks would never fire
     // for cross-service events. Future generator extension can broaden this gate; for now
     // _isGatedStage explicitly enumerates the safe set.
+    //
+    // The gate consults BOTH registries:
+    //   - <see cref="IReceptorRegistryQuery"/> covers compile-time-declared receptors via
+    //     the source-generated WhizbangReceptorRegistryQuery static.
+    //   - <see cref="IReceptorRegistry"/> covers runtime-registered receptors — both
+    //     integration-test completion waits AND any production dynamic registrations.
+    // Per IReceptorRegistry.GetReceptorsFor's contract, the runtime registry already
+    // concatenates compile-time + runtime entries, so OR-ing the two sources here is the
+    // authoritative "is anyone listening at this stage" check. Without the runtime branch
+    // the gate would silently skip runtime-registered receptors (the integration-test
+    // PreInboxDetached failure on ECommerce BFF was this exact bug).
+    var runtimeMessageType = typedEnvelope.Payload?.GetType();
     var hasDetached = _receptorRegistry is null || !_isGatedStage(detachedStage)
-      || _receptorRegistry.HasReceptors(detachedStage, work.MessageType);
-    var hasInline = _receptorRegistry is null || !_isGatedStage(detachedStage)
-      || _receptorRegistry.HasReceptors(inlineStage, work.MessageType);
+      || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
+      || _runtimeHasReceptors(runtimeMessageType, detachedStage);
+    var hasInline = _receptorRegistry is null || !_isGatedStage(inlineStage)
+      || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
+      || _runtimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
       return;
     }
@@ -423,6 +441,13 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           or LifecycleStage.PreInboxInline
           or LifecycleStage.PostInboxDetached
           or LifecycleStage.PostInboxInline;
+
+  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+    if (_runtimeReceptorRegistry is null || messageType is null) {
+      return false;
+    }
+    return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
+  }
 
   private static bool _hasNoPerspectives(string messageType, IServiceProvider serviceProvider) {
     var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
