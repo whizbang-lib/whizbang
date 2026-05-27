@@ -187,14 +187,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     try {
       await _processOneInnerAsync(work, stoppingToken);
     } finally {
-      var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
-        * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-      if (totalMs > 100) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dispatchStartTicks)
+          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        if (totalMs > 100) {
 #pragma warning disable CA1848
-        _logger.LogWarning(
-          "PERF InboxDispatch message {MessageId} type {MessageType}: total={TotalMs:F0}ms attempts={Attempts}",
-          work.MessageId, work.MessageType, totalMs, work.Attempts);
+          _logger.LogDebug(
+            "PERF InboxDispatch message {MessageId} type {MessageType}: total={TotalMs:F0}ms attempts={Attempts}",
+            work.MessageId, work.MessageType, totalMs, work.Attempts);
 #pragma warning restore CA1848
+        }
       }
     }
   }
