@@ -239,11 +239,65 @@ public static class WorkerPipelineExtensions {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var schemaReadyGate = sp.GetRequiredService<ISchemaReadyGate>();
     var coordinatorOptions = sp.GetRequiredService<IOptions<WorkCoordinatorOptions>>();
+    var lifecycleDeserializer = sp.GetService<ILifecycleMessageDeserializer>();
+    var lifecycleMetrics = sp.GetService<Whizbang.Core.Observability.LifecycleMetrics>();
+    var tracingOptions = sp.GetService<IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>();
+    var loggerFactory = sp.GetService<ILoggerFactory>();
+    var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+
+      // Stream-affinity batch path bypasses the scoped strategy's queue, so the
+      // dispatcher's strategy.FlushAsync sees an empty queue and skips lifecycle
+      // invocation. Fire Pre/Distribute lifecycle BEFORE store, Post after — same shape
+      // as WorkCoordinatorFlushHelper — so receptors registered at Distribute lifecycle
+      // stages still fire for outbox messages routed through the batcher.
+      //
+      // Lifecycle invocation is wrapped in try/catch so a misbehaving receptor (deserialize
+      // failure, handler throw) cannot block the storage path. The storage call MUST
+      // happen; without it the message is permanently lost.
+      var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(Whizbang.Core.Tracing.TraceComponents.Lifecycle) ?? false;
+      var distributeContext = new DistributeLifecycleContext(
+        OutboxMessages: messages,
+        InboxMessages: Array.Empty<InboxMessage>(),
+        ScopeFactory: scopeFactory,
+        LifecycleMessageDeserializer: lifecycleDeserializer,
+        Logger: lifecycleLogger,
+        EnableLifecycleTracing: enableLifecycleTracing,
+        Metrics: lifecycleMetrics);
+
+      try {
+        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+          LifecycleStage.PreDistributeDetached,
+          LifecycleStage.PreDistributeInline,
+          distributeContext,
+          ct).ConfigureAwait(false);
+
+        LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+          LifecycleStage.DistributeDetached,
+          distributeContext,
+          ct);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
+        lifecycleLogger?.LogError(ex, "Outbox batch flush: Pre/Distribute lifecycle invocation failed; proceeding to store {Count} message(s).", messages.Length);
+#pragma warning restore CA1848
+      }
+
       await coordinator.StoreOutboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
+
+      try {
+        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+          LifecycleStage.PostDistributeDetached,
+          LifecycleStage.PostDistributeInline,
+          distributeContext,
+          ct).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+#pragma warning disable CA1848
+        lifecycleLogger?.LogError(ex, "Outbox batch flush: Post-Distribute lifecycle invocation failed after store for {Count} message(s).", messages.Length);
+#pragma warning restore CA1848
+      }
     };
   }
 
