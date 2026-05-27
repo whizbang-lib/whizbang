@@ -380,4 +380,197 @@ public class OutboxDrainWorkerTests {
 
     await Assert.That(publish.Published.Count).IsEqualTo(1);
   }
+
+  // ==========================================================================
+  // Pre/Post Outbox lifecycle hooks
+  // ==========================================================================
+
+  private sealed class CapturingLifecycleDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => jsonBytes;
+    public object DeserializeFromJsonElement(JsonElement payload, string messageTypeName) => payload;
+  }
+
+  private sealed class CapturingReceptorInvoker : IReceptorInvoker {
+    private readonly List<(LifecycleStage Stage, IMessageEnvelope Envelope)> _invocations = [];
+    private readonly Lock _lock = new();
+    public Func<LifecycleStage, IMessageEnvelope, Task>? OnInvoke { get; set; }
+
+    public List<(LifecycleStage Stage, IMessageEnvelope Envelope)> Invocations {
+      get { lock (_lock) { return [.. _invocations]; } }
+    }
+
+    public async ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        _invocations.Add((stage, envelope));
+      }
+      if (OnInvoke is not null) {
+        await OnInvoke(stage, envelope);
+      }
+    }
+  }
+
+  private sealed class AlwaysHasReceptorsRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => true;
+    public bool HasInboxHandler(string messageType) => true;
+    public bool HasAnyConsumer(string messageType) => true;
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_WithLifecycleDeps_FiresPreAndPostOutboxInline_AroundPublishAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var invoker = new CapturingReceptorInvoker();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton<IReceptorInvoker>(invoker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish,
+      lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
+      receptorRegistry: new AlwaysHasReceptorsRegistry(),
+      runtimeReceptorRegistry: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    // Allow Post-Outbox lifecycle to fire after publish (it runs synchronously after PublishAsync returns).
+    for (var i = 0; i < 50 && invoker.Invocations.All(x => x.Stage != LifecycleStage.PostOutboxInline); i++) {
+      await Task.Delay(20);
+    }
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    var stages = invoker.Invocations.Select(x => x.Stage).ToList();
+    await Assert.That(stages).Contains(LifecycleStage.PreOutboxInline)
+      .Because("PreOutboxInline must fire before publish when a deserializer + receptor registry are wired.");
+    await Assert.That(stages).Contains(LifecycleStage.PostOutboxInline)
+      .Because("PostOutboxInline must fire after a successful publish.");
+    await Assert.That(publish.Published.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_NoLifecycleDeps_PublishesWithoutLifecycle_NoOpAsync() {
+    // When lifecycleMessageDeserializer + receptorRegistry are absent (legacy / minimal
+    // hosts), the worker must degrade gracefully: publish + complete still happen,
+    // lifecycle invocation simply no-ops.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(1)
+      .Because("publish must still happen even when lifecycle dependencies are unwired (legacy host).");
+    await Assert.That(completion.AllIds).Contains(msgId);
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_LifecycleReceptorThrows_PublishAndCompletionStillHappenAsync() {
+    // A misbehaving lifecycle receptor must NOT block the publish or completion path —
+    // the OutboxDrainWorker wraps lifecycle invocation in try/catch, logs at Warning, and
+    // proceeds. Production invariant: an Outbox row that's about to be published or has
+    // just been published MUST always reach completion-flush regardless of receptor faults.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var invoker = new CapturingReceptorInvoker {
+      OnInvoke = (stage, _) => {
+        if (stage == LifecycleStage.PreOutboxInline) {
+          throw new InvalidOperationException("test-induced receptor failure");
+        }
+        return Task.CompletedTask;
+      }
+    };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton<IReceptorInvoker>(invoker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish,
+      lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
+      receptorRegistry: new AlwaysHasReceptorsRegistry(),
+      runtimeReceptorRegistry: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(1)
+      .Because("Receptor throwing at PreOutboxInline must not stop the transport publish.");
+    await Assert.That(completion.AllIds).Contains(msgId)
+      .Because("Completion must still be enqueued — the row is safely durable in the outbox table and reaching the transport.");
+    await Assert.That(failure.All.Count).IsEqualTo(0)
+      .Because("A lifecycle-receptor failure is not a publish failure.");
+  }
 }

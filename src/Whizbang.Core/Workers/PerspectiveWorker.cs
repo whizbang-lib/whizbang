@@ -1441,16 +1441,19 @@ public partial class PerspectiveWorker(
           _metrics?.EventsProcessed.Add(filteredEvents.Count);
         }
 
-        // Slice 29 instrumentation: emit per-drain perf breakdown when we processed >= 5 events
-        // or the drain took more than 100ms. Surfaces whether per-drain time scales with event
-        // count (apply is the cost) or is fixed-per-call (lifecycle / DI scope is the cost).
-        var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        if (filteredEvents.Count >= 5 || totalMs > 100) {
+        // Slice 29 instrumentation: emit per-drain perf breakdown at Debug when we processed
+        // >= 5 events or the drain took more than 100ms. Surfaces whether per-drain time
+        // scales with event count (apply is the cost) or is fixed-per-call (lifecycle / DI
+        // scope is the cost). Enable Debug logging for the worker to see these.
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - drainStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          if (filteredEvents.Count >= 5 || totalMs > 100) {
 #pragma warning disable CA1848
-          _logger.LogWarning(
-            "PERF Drain {Perspective} stream {StreamId}: events={EventCount} total={TotalMs:F0}ms runner={RunnerMs:F0}ms completion={CompletionMs:F0}ms cooled={Cooled}",
-            perspectiveName, streamId, filteredEvents.Count, totalMs, runnerMs, completionMs, cooledEvents.Count);
+            _logger.LogDebug(
+              "PERF Drain {Perspective} stream {StreamId}: events={EventCount} total={TotalMs:F0}ms runner={RunnerMs:F0}ms completion={CompletionMs:F0}ms cooled={Cooled}",
+              perspectiveName, streamId, filteredEvents.Count, totalMs, runnerMs, completionMs, cooledEvents.Count);
 #pragma warning restore CA1848
+          }
         }
       });
     } catch (OperationCanceledException) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {

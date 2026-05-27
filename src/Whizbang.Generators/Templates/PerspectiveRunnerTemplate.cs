@@ -449,12 +449,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // but we need to ensure the same DbContext is flushed before PostPerspectiveInline fires.
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
-        var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - saveStartTicks)
-          * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        if (saveMs > 50 || eventsProcessed >= 10) {
-          _logger.LogWarning(
-            "PERF SaveModelAndCheckpoint {PerspectiveName} stream {StreamId}: {EventCount} events in {SaveMs:F1}ms ({MsPerEvent:F2}ms/evt)",
-            perspectiveName, streamId, eventsProcessed, saveMs, saveMs / eventsProcessed);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - saveStartTicks)
+            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          if (saveMs > 50 || eventsProcessed >= 10) {
+            _logger.LogDebug(
+              "PERF SaveModelAndCheckpoint {PerspectiveName} stream {StreamId}: {EventCount} events in {SaveMs:F1}ms ({MsPerEvent:F2}ms/evt)",
+              perspectiveName, streamId, eventsProcessed, saveMs, saveMs / eventsProcessed);
+          }
         }
 
         _logger.LogDebug(

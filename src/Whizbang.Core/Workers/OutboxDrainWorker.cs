@@ -230,11 +230,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   private void _logPerfIfInteresting(Guid streamId, int published, int fetches, double publishMs, long startTicks) {
+    if (!_logger.IsEnabled(LogLevel.Debug)) {
+      return;
+    }
     var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks)
       * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     if (published >= 5 || totalMs > 100) {
 #pragma warning disable CA1848
-      _logger.LogWarning(
+      _logger.LogDebug(
         "PERF OutboxDrain stream {StreamId}: published={Published} fetches={Fetches} total={TotalMs:F0}ms publish={PublishMs:F0}ms fetch+other={OtherMs:F0}ms",
         streamId, published, fetches, totalMs, publishMs, totalMs - publishMs);
 #pragma warning restore CA1848
