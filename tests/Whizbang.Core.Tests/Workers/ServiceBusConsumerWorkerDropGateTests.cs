@@ -103,6 +103,20 @@ public class ServiceBusConsumerWorkerDropGateTests {
     public bool HasAnyConsumer(string messageType) => hasAnyConsumer;
   }
 
+  /// <summary>Runtime-registry double for the slice-3 receive-boundary drop-gate tests.
+  /// Only <see cref="HasAnyRuntimeReceptors"/> is exercised; the registration paths throw if
+  /// touched so the test surface stays narrow.</summary>
+  private sealed class FakeRuntimeReceptorRegistry(Func<string, bool>? hasAnyRuntimeReceptors = null) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => Array.Empty<ReceptorInfo>();
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage
+      => throw new NotSupportedException("Drop-gate tests use the HasAnyRuntimeReceptors delegate; no real receptor registration.");
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage
+      => throw new NotSupportedException("Drop-gate tests use the HasAnyRuntimeReceptors delegate; no real receptor registration.");
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool HasAnyRuntimeReceptors(string messageType) => hasAnyRuntimeReceptors?.Invoke(messageType) ?? false;
+  }
+
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
@@ -121,7 +135,8 @@ public class ServiceBusConsumerWorkerDropGateTests {
       CapturingTransport transport,
       CountingStrategy strategy,
       ServiceProvider sp)
-    _buildWorker(IReceptorRegistryQuery? registry) {
+    _buildWorker(IReceptorRegistryQuery? registry, IReceptorRegistry? runtimeRegistry = null,
+                 IEnvelopeSerializer? envelopeSerializer = null) {
     var transport = new CapturingTransport();
     var strategy = new CountingStrategy();
     var services = new ServiceCollection();
@@ -140,7 +155,9 @@ public class ServiceBusConsumerWorkerDropGateTests {
       new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("test-topic", "test-sub")],
       },
-      receptorRegistry: registry);
+      envelopeSerializer: envelopeSerializer,
+      receptorRegistry: registry,
+      runtimeReceptorRegistry: runtimeRegistry);
 
     return (worker, transport, strategy, sp);
   }
@@ -192,4 +209,40 @@ public class ServiceBusConsumerWorkerDropGateTests {
   // its drop-gate-positive test exercises the symmetric invariant on a path that doesn't
   // require IEnvelopeSerializer. The 49-test ServiceBusConsumerWorker* suite covers the
   // null-registry pass-through. Both would break if slice 3's gate became unconditional.
+
+  [Test]
+  public async Task HandleMessage_CompileTimeEmptyButRuntimeReceptor_DoesNotDropAsync() {
+    // Regression lock for the compile-time-vs-runtime gating gap at the receive boundary.
+    // Same bug shape as the TransportConsumerWorker drop-gate fix: HasAnyConsumer is
+    // source-generated and only knows about compile-time-declared consumers, so a message
+    // type with no compile-time consumer but a runtime-registered receptor would be silently
+    // dropped before the inbox row is written. The gate must also consult IReceptorRegistry's
+    // HasAnyRuntimeReceptors. SBC is no longer on the prod path (TransportConsumerWorker
+    // replaced it) but the symmetry keeps the legacy worker honest for anyone still
+    // constructing it directly.
+    var compileTimeRegistry = new FakeReceptorRegistry(hasAnyConsumer: false);
+    var runtimeRegistry = new FakeRuntimeReceptorRegistry(
+      hasAnyRuntimeReceptors: name => name.Contains("DropGateTestEvent", StringComparison.Ordinal));
+    // Real EnvelopeSerializer so the message can flow past the gate into QueueInboxMessage —
+    // the existing negative tests don't need this because the gate drops before serialization.
+    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = DropGateTestJsonContext.Default };
+    var envelopeSerializer = new EnvelopeSerializer(jsonOptions);
+    var (worker, transport, strategy, sp) = _buildWorker(compileTimeRegistry, runtimeRegistry, envelopeSerializer);
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+
+      await Assert.That(transport.BatchHandler).IsNotNull()
+        .Because("Worker must register a batch handler with the transport during StartAsync.");
+
+      await transport.BatchHandler!.Invoke(
+        [new TransportMessage(_makeEnvelope(), _makeWrapperEnvelopeType())],
+        cts.Token);
+
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1)
+        .Because("Drop gate must consult runtime registry too — when a runtime receptor exists for the inner type, the message must NOT be dropped even when compile-time HasAnyConsumer reports false.");
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
 }
