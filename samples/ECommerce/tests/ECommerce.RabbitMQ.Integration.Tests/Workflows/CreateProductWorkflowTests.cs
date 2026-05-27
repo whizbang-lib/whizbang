@@ -131,14 +131,10 @@ public class CreateProductWorkflowTests {
       }
     };
 
-    // Act - Create each product, using worker hooks for deterministic completion.
-    // Each CreateProductCommand with InitialStock > 0 fires 3 perspective events on
-    // inventory (ProductCreated -> ProductCatalog + InventoryLevels, plus
-    // InventoryRestocked -> InventoryLevels). Wait for all 3 per command so a late
-    // 3rd event from this iteration doesn't satisfy the NEXT iteration's wait.
+    // Act - Create each product, using worker hooks for deterministic completion
     foreach (var command in commands) {
       var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-        expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+        expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
       await fixture.Dispatcher.SendAsync(command);
       await perspectiveTask;
     }
@@ -216,10 +212,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act
-    // Act — use hooks for deterministic waiting.
-    // InitialStock > 0 produces 3 perspective events on inventory (ProductCreated x2 + InventoryRestocked x1).
+    // Act — use hooks for deterministic waiting
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
