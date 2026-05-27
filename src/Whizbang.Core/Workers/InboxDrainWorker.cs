@@ -195,11 +195,14 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   }
 
   private void _logPerfIfInteresting(Guid streamId, int enqueued, int fetches, double deserMs, double writeMs, long startTicks) {
+    if (!_logger.IsEnabled(LogLevel.Debug)) {
+      return;
+    }
     var totalMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks)
       * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     if (enqueued >= 5 || totalMs > 100) {
 #pragma warning disable CA1848
-      _logger.LogWarning(
+      _logger.LogDebug(
         "PERF InboxDrain stream {StreamId}: enqueued={Enqueued} fetches={Fetches} total={TotalMs:F0}ms deser={DeserMs:F0}ms write={WriteMs:F0}ms other={OtherMs:F0}ms",
         streamId, enqueued, fetches, totalMs, deserMs, writeMs, totalMs - deserMs - writeMs);
 #pragma warning restore CA1848
