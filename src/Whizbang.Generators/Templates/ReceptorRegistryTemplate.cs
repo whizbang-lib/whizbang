@@ -98,7 +98,18 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
 
     var info = new global::Whizbang.Core.Messaging.ReceptorInfo(
       MessageType: typeof(TMessage),
-      ReceptorId: "runtime_" + receptor.GetType().Name,
+      // Build a stable, unique ID for the runtime receptor:
+      //  - FullName (namespace + class) instead of just Name so two receptor types that
+      //    happen to share a class name in different namespaces don't share an ID.
+      //  - Suffix the lifecycle stage so the ReceptorInvoker's double-fire guardrail (which
+      //    dedups by (envelope, ReceptorId), per-receptor not per-stage) doesn't collide
+      //    when the SAME receptor instance is registered at multiple stages — common in
+      //    integration tests that register one wait helper at each of Pre/Post Inbox.
+      //    Without the stage suffix all four registrations share one ID, so once
+      //    PreInboxDetached fires the dedup store rejects the same receptor at PostInbox.
+      // Compile-time receptors keep their attribute-derived ID — they have a [FireAt] stage
+      // baked in so the collision can't happen.
+      ReceptorId: "runtime_" + (receptor.GetType().FullName ?? receptor.GetType().Name) + "_" + stage,
       InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
         // IAcceptsLifecycleContext via compile-time pattern match (not reflection)
         if (receptor is global::Whizbang.Core.Messaging.IAcceptsLifecycleContext contextAware) {
@@ -130,7 +141,18 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
 
     var info = new global::Whizbang.Core.Messaging.ReceptorInfo(
       MessageType: typeof(TMessage),
-      ReceptorId: "runtime_" + receptor.GetType().Name,
+      // Build a stable, unique ID for the runtime receptor:
+      //  - FullName (namespace + class) instead of just Name so two receptor types that
+      //    happen to share a class name in different namespaces don't share an ID.
+      //  - Suffix the lifecycle stage so the ReceptorInvoker's double-fire guardrail (which
+      //    dedups by (envelope, ReceptorId), per-receptor not per-stage) doesn't collide
+      //    when the SAME receptor instance is registered at multiple stages — common in
+      //    integration tests that register one wait helper at each of Pre/Post Inbox.
+      //    Without the stage suffix all four registrations share one ID, so once
+      //    PreInboxDetached fires the dedup store rejects the same receptor at PostInbox.
+      // Compile-time receptors keep their attribute-derived ID — they have a [FireAt] stage
+      // baked in so the collision can't happen.
+      ReceptorId: "runtime_" + (receptor.GetType().FullName ?? receptor.GetType().Name) + "_" + stage,
       InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
         if (receptor is global::Whizbang.Core.Messaging.IAcceptsLifecycleContext contextAware) {
           var ctxAccessor = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleContextAccessor>();
