@@ -190,6 +190,25 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       return false;
     }
 
+    // Defense-in-depth identifier validation. args.TableName and the keys of
+    // args.PhysicalFieldValues are NOT user input — they come from source-generated
+    // perspective infrastructure and reflect compile-time table / column definitions.
+    // But the atomic UPSERT path interpolates them into raw SQL, which Sonar S2077
+    // flags as security-sensitive and could become a real exposure if the caller is
+    // ever refactored. The regex matches the unquoted-identifier rule for PostgreSQL
+    // (letter or underscore followed by letters, digits, or underscores). Reject
+    // anything that doesn't pass — falls back to the SELECT-then-UPDATE retry path.
+    if (!_isValidSqlIdentifier(args.TableName)) {
+      return false;
+    }
+    if (args.PhysicalFieldValues is not null) {
+      foreach (var columnName in args.PhysicalFieldValues.Keys) {
+        if (!_isValidSqlIdentifier(columnName)) {
+          return false;
+        }
+      }
+    }
+
     var options = optionsProvider();
     var dataJson = JsonSerializer.Serialize(args.Model, options.GetTypeInfo(typeof(TModel)));
     var metadataJson = JsonSerializer.Serialize(args.Metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
@@ -303,6 +322,29 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       }
     }
     return false;
+  }
+
+  /// <summary>
+  /// Defense-in-depth check for SQL identifiers (table + column names) interpolated into
+  /// the atomic UPSERT raw SQL. PostgreSQL unquoted identifier rule: letter or underscore
+  /// followed by letters, digits, or underscores. Hand-rolled (no regex) to avoid any
+  /// regex-timeout concern and to keep the check zero-allocation on the hot path.
+  /// </summary>
+  private static bool _isValidSqlIdentifier(string s) {
+    if (string.IsNullOrEmpty(s) || s.Length > 63) {
+      return false; // PG identifier max is 63 bytes
+    }
+    var first = s[0];
+    if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_')) {
+      return false;
+    }
+    for (var i = 1; i < s.Length; i++) {
+      var c = s[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async Task _upsertCoreInnerAsync<TModel>(

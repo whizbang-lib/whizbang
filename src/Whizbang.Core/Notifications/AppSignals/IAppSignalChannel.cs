@@ -29,8 +29,13 @@ public interface IAppSignalChannel {
 /// Validates app-signal topic names. Internal <c>wh_</c> prefix is reserved; reject.
 /// </summary>
 public static class AppSignalTopicValidator {
-  private static readonly System.Text.RegularExpressions.Regex _topicPattern =
-    new(@"^[a-z][a-z0-9_]{0,62}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+  // Compiled regex with a hard 100ms timeout. The pattern itself is linear and bounded
+  // ({0,62}) so it can't ReDoS, but Sonar S6444 (and defense-in-depth) wants a timeout
+  // on every untrusted-input regex. Topic names are caller-supplied so we honor that.
+  private static readonly System.Text.RegularExpressions.Regex _topicPattern = new(
+    @"^[a-z][a-z0-9_]{0,62}$",
+    System.Text.RegularExpressions.RegexOptions.Compiled,
+    TimeSpan.FromMilliseconds(100));
 
   /// <summary>Returns the validated topic; throws if invalid or reserved.</summary>
   public static string Validate(string topic) {
