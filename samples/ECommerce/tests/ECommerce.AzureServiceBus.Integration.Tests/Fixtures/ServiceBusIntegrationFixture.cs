@@ -877,6 +877,18 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       return;
     }
 
+    // Wait for prior test's workers to drain in-flight work BEFORE truncate. Otherwise
+    // a perspective worker mid-Apply against a row that gets truncated can still commit
+    // a stray UPSERT into wh_per_*, then fire OnPerspectiveEventProcessed — the next
+    // test's WaitForPerspectiveProcessingAsync handler sees those stale fires and
+    // satisfies its count without the new command's events actually applying. Mirror
+    // of RabbitMqIntegrationFixture.CleanupDatabaseAsync step 1.
+    try {
+      await WaitForWorkersIdleAsync(timeoutMilliseconds: 15000);
+    } catch (TimeoutException) {
+      Console.WriteLine("[ServiceBusFixture] Workers not idle before cleanup — proceeding with truncation");
+    }
+
     // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
     // This ensures the transport receivers are inactive while we drain stale messages
     Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");

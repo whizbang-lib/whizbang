@@ -47,9 +47,10 @@ public class SeedProductsWorkflowTests {
       fixture.BffProductLens,
       fixture.GetLogger<SeedMutations>());
 
-    // Wait for 24 inventory perspectives (12 products × 2 ProductCreatedEvent perspectives)
+    // Wait for 36 inventory perspective applies: 12 products × 3 events each
+    // (ProductCreated→ProductCatalog + ProductCreated→Inventory + InventoryRestocked→Inventory).
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 24, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: 36, timeoutMilliseconds: 90000, hostFilter: "inventory");
 
     var seededCount = await seedMutations.SeedProductsAsync();
     Console.WriteLine($"[SeedProducts] SeedProductsAsync returned: {seededCount}");
