@@ -26,7 +26,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -60,18 +59,25 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -86,7 +92,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -108,18 +113,25 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -134,7 +146,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var locker = new FakePerspectiveStreamLocker();
@@ -168,20 +179,27 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       streamLocker: locker,
-      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions())
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -197,7 +215,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var locker = new FakePerspectiveStreamLocker { AcquireResult = false };
@@ -231,20 +248,27 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       streamLocker: locker,
-      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions())
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -265,7 +289,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var snapshotStore = new FakeSnapshotStore { HasSnapshots = false };
@@ -299,19 +322,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      snapshotStore: snapshotStore
+      snapshotStore: snapshotStore,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -326,7 +356,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var snapshotStore = new FakeSnapshotStore { HasSnapshots = true };
@@ -359,19 +388,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      snapshotStore: snapshotStore
+      snapshotStore: snapshotStore,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -385,7 +421,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange - brand new stream with no cursor position
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
     var snapshotStore = new FakeSnapshotStore { HasSnapshots = false };
@@ -408,19 +443,26 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      snapshotStore: snapshotStore
+      snapshotStore: snapshotStore,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -439,7 +481,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new TrackingPerspectiveRunner();
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -470,28 +511,33 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(600);
     await cts.CancelAsync();
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - At least one request captured, and later requests should contain event completions
-    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThanOrEqualTo(1);
-
-    // The first batch processes the work; completions are sent in subsequent batches
-    var hasCompletions = coordinator.CapturedRequests.Any(r => r.PerspectiveEventCompletions.Length > 0);
-    await Assert.That(hasCompletions).IsTrue();
+    // Assert - Event work IDs flow through the completion channel (channel architecture
+    // replaces the legacy CapturedRequests.PerspectiveEventCompletions assertion).
+    await Assert.That(harness.CompletionCapture.EventWorkIds.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Worker should enqueue completed event work IDs to the perspective completion channel");
   }
 
   #endregion
@@ -503,7 +549,6 @@ public class PerspectiveWorkerRewindTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var runner = new ThrowingPerspectiveRunner(new InvalidOperationException("Snapshot corrupt"));
     var registry = new SingleRunnerRegistry("TestPerspective", runner);
 
@@ -536,18 +581,25 @@ public class PerspectiveWorkerRewindTests {
     services.AddLogging();
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act — worker should NOT crash despite the rewind throwing
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var __w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(__w, cts.Token);
+    }
     await Task.Delay(400);
     await cts.CancelAsync();
 
@@ -676,13 +728,6 @@ public class PerspectiveWorkerRewindTests {
       ProcessId = ProcessId
     };
   }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; }
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(IsReady);
-  }
-
   private sealed class SingleRunnerRegistry(string perspectiveName, IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) =>
       name == perspectiveName ? runner : null;

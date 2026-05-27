@@ -27,9 +27,16 @@ namespace Whizbang.Testing.Observability;
 /// </para>
 /// </remarks>
 public sealed class InMemorySpanCollector : IDisposable {
+  // AsyncLocal so each test's collector only captures spans started in its own async
+  // context. ActivityListener is process-global; without scoping, spans from
+  // concurrently-running tests leak into baseline assertions.
+  private static readonly AsyncLocal<InMemorySpanCollector?> _current = new();
+
   private readonly ActivityListener _listener;
   private readonly ConcurrentBag<CapturedSpan> _spans = [];
   private readonly HashSet<string> _sourceNames;
+  private readonly DateTime _createdAtUtc;
+  private readonly InMemorySpanCollector? _previousCurrent;
   private bool _disposed;
 
   /// <summary>
@@ -43,6 +50,12 @@ public sealed class InMemorySpanCollector : IDisposable {
     _sourceNames = activitySourceNames.Length > 0
       ? [.. activitySourceNames]
       : [];
+    // Track creation time + AsyncLocal scope so concurrent tests don't pollute each
+    // other's captures. ActivityListener is process-global; without scoping, spans
+    // from concurrently-running tests leak into our results.
+    _createdAtUtc = DateTime.UtcNow;
+    _previousCurrent = _current.Value;
+    _current.Value = this;
 
     _listener = new ActivityListener {
       ShouldListenTo = source => _sourceNames.Count == 0 || _sourceNames.Contains(source.Name),
@@ -55,6 +68,17 @@ public sealed class InMemorySpanCollector : IDisposable {
   }
 
   private void _onActivityStopped(Activity activity) {
+    // Filter 1: spans started before this collector existed (process-global listener
+    // could see them from a different test).
+    if (activity.StartTimeUtc < _createdAtUtc) {
+      return;
+    }
+    // Filter 2: spans from a different async-context. When two tests run in parallel
+    // and both have collectors, AsyncLocal flow ensures each test's spans land in
+    // its own collector — not the other's.
+    if (_current.Value != this) {
+      return;
+    }
     _spans.Add(CapturedSpan.From(activity));
   }
 
@@ -168,6 +192,8 @@ public sealed class InMemorySpanCollector : IDisposable {
   public void Dispose() {
     if (!_disposed) {
       _listener.Dispose();
+      // Restore the prior AsyncLocal value if any (supports nested collectors).
+      _current.Value = _previousCurrent;
       _disposed = true;
     }
   }

@@ -86,8 +86,9 @@ public static class ServiceCollectionExtensions {
       var connection = sp.GetRequiredService<IConnection>();
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
       var logger = sp.GetService<ILogger<RabbitMQTransport>>();
+      var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
 
-      var transport = new RabbitMQTransport(connection, jsonOptions, pool, options, logger);
+      var transport = new RabbitMQTransport(connection, jsonOptions, pool, options, logger, discardPolicy);
 
       // Initialize during registration
       transport.InitializeAsync().GetAwaiter().GetResult();

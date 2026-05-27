@@ -1,18 +1,19 @@
 using System;
-using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Groups the parameters for <see cref="WorkCoordinatorFlushHelper.ExecuteFlushAsync"/>.
+/// Most fields are kept for source compatibility with strategy call sites; the new-path
+/// helper only consumes the ones documented below.
 /// </summary>
 internal readonly record struct FlushContext(
   IWorkCoordinator? Coordinator,
@@ -37,125 +38,152 @@ internal readonly record struct FlushContext(
   bool SkipLifecycle = false);
 
 /// <summary>
-/// Shared flush logic used by <see cref="IntervalWorkCoordinatorStrategy"/> and <see cref="BatchWorkCoordinatorStrategy"/>
-/// to eliminate duplication of the core flush pipeline (coordinator resolution, lifecycle stages, ProcessWorkBatchAsync,
-/// metrics recording, and scope cleanup).
+/// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
+/// their queued operations through the new (post-Phase-H) work-pump path.
 /// </summary>
+/// <remarks>
+/// The legacy implementation routed every flush through <c>process_work_batch</c>, which
+/// inserted messages, recorded completions/failures, and claimed work in one trip.
+/// The new path decomposes those responsibilities:
+///  - <c>store_outbox_messages</c> / <c>store_inbox_messages</c> insert new rows
+///  - <see cref="IOutboxCompletionChannel"/> + <see cref="IFailureChannel"/> handle completions/failures
+///  - <c>claim_work</c> is owned by <c>ClaimWorker</c>; nothing is claimed during a flush
+///
+/// Lifecycle stages, tracing, and audit-message expansion that this helper used to drive
+/// during a flush are now driven by <c>OutboxPublishWorker</c> and <c>InboxDispatchWorker</c>
+/// when they pick up the inserted rows. The strategy flush path therefore only needs to
+/// persist the queued state and signal the publisher to wake.
+/// </remarks>
 internal static class WorkCoordinatorFlushHelper {
-  /// <summary>
-  /// Executes the core flush pipeline: resolves the coordinator (direct or via scope factory),
-  /// invokes lifecycle stages, calls ProcessWorkBatchAsync, records metrics, and disposes the scope.
-  /// </summary>
-  /// <remarks>
-  /// Callers are responsible for concurrency guards (_flushing flag), queue snapshot/clear,
-  /// and resetting _flushing in their own finally block. This method handles coordinator resolution
-  /// through scope disposal.
-  /// </remarks>
   internal static async Task<WorkBatch> ExecuteFlushAsync(
     FlushContext ctx,
     CancellationToken ct
   ) {
-    // Resolve coordinator: use direct reference if available, otherwise create a scope
+    if (ctx.OutboxMessages.Length == 0 &&
+        ctx.InboxMessages.Length == 0 &&
+        ctx.OutboxCompletions.Length == 0 &&
+        ctx.InboxCompletions.Length == 0 &&
+        ctx.OutboxFailures.Length == 0 &&
+        ctx.InboxFailures.Length == 0) {
+      return _empty;
+    }
+
     IServiceScope? flushScope = null;
-    IWorkCoordinator resolvedCoordinator;
-    if (ctx.Coordinator != null) {
-      resolvedCoordinator = ctx.Coordinator;
+    IWorkCoordinator coordinator;
+    IServiceProvider? scopedProvider;
+
+    if (ctx.Coordinator is not null) {
+      coordinator = ctx.Coordinator;
+      scopedProvider = null;
     } else {
-      flushScope = ctx.ScopeFactory!.CreateScope();
-      resolvedCoordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      if (ctx.ScopeFactory is null) {
+        throw new InvalidOperationException(
+          "FlushContext must supply either Coordinator or ScopeFactory.");
+      }
+      flushScope = ctx.ScopeFactory.CreateScope();
+      coordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      scopedProvider = flushScope.ServiceProvider;
     }
 
     try {
+      var partitionCount = _resolvePartitionCount(scopedProvider, ctx.Options);
+
+      var enableLifecycleTracing = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+      var lifecycleScopeFactory = ctx.ScopeFactory ?? scopedProvider?.GetService<IServiceScopeFactory>();
+
+      var distributeContext = new DistributeLifecycleContext(
+        ctx.OutboxMessages,
+        ctx.InboxMessages,
+        lifecycleScopeFactory,
+        ctx.LifecycleMessageDeserializer,
+        ctx.Logger,
+        enableLifecycleTracing,
+        ctx.LifecycleMetrics);
+
       if (!ctx.SkipLifecycle) {
-        // Check if lifecycle tracing is enabled
-        var enableLifecycleTracing = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-        var lifecycleContext = new DistributeLifecycleContext(
-          ctx.OutboxMessages, ctx.InboxMessages, ctx.ScopeFactory, ctx.LifecycleMessageDeserializer,
-          ctx.Logger, enableLifecycleTracing, ctx.LifecycleMetrics);
-
-        // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
           LifecycleStage.PreDistributeDetached,
           LifecycleStage.PreDistributeInline,
-          lifecycleContext,
-          ct: ct
-        );
+          distributeContext,
+          ct).ConfigureAwait(false);
 
-        // DistributeDetached lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
         LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
           LifecycleStage.DistributeDetached,
-          lifecycleContext,
-          ct: ct
-        );
+          distributeContext,
+          ct);
       }
 
-      // Merge pending audit messages (after lifecycle stages, before request build)
-      var finalOutboxMessages = ctx.OutboxMessages;
+      var outboxToStore = ctx.OutboxMessages;
       if (ctx.PendingAuditMessages is { Length: > 0 }) {
-        finalOutboxMessages = [.. ctx.OutboxMessages, .. ctx.PendingAuditMessages];
+        outboxToStore = [.. ctx.OutboxMessages, .. ctx.PendingAuditMessages];
       }
 
-      // Call process_work_batch with snapshot
-      var request = new ProcessWorkBatchRequest {
-        InstanceId = ctx.InstanceProvider.InstanceId,
-        ServiceName = ctx.InstanceProvider.ServiceName,
-        HostName = ctx.InstanceProvider.HostName,
-        ProcessId = ctx.InstanceProvider.ProcessId,
-        Metadata = null,
-        OutboxCompletions = ctx.OutboxCompletions,
-        OutboxFailures = ctx.OutboxFailures,
-        InboxCompletions = ctx.InboxCompletions,
-        InboxFailures = ctx.InboxFailures,
-        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
-        ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
-        PerspectiveEventCompletions = [],
-        PerspectiveFailures = [],
-        NewOutboxMessages = finalOutboxMessages,
-        NewInboxMessages = ctx.InboxMessages,
-        RenewOutboxLeaseIds = [],
-        RenewInboxLeaseIds = [],
-        Flags = ctx.Flags | (ctx.Options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
-        PartitionCount = ctx.Options.PartitionCount,
-        LeaseSeconds = ctx.Options.LeaseSeconds,
-        AbandonStaleInstanceThresholdSeconds = ctx.Options.AbandonStaleInstanceThresholdSeconds
-      };
-      var flushSw = System.Diagnostics.Stopwatch.StartNew();
-      var workBatch = await resolvedCoordinator.ProcessWorkBatchAsync(request, ct);
-      flushSw.Stop();
-      ctx.Metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", ctx.StrategyName));
+      if (outboxToStore.Length > 0) {
+        await coordinator.StoreOutboxMessagesAsync(outboxToStore, partitionCount, ct).ConfigureAwait(false);
+      }
 
-      // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
+      if (ctx.InboxMessages.Length > 0) {
+        await coordinator.StoreInboxMessagesAsync(ctx.InboxMessages, partitionCount, ct).ConfigureAwait(false);
+      }
+
+      var completionChannel = scopedProvider?.GetService<IOutboxCompletionChannel>();
+      if (completionChannel is not null) {
+        foreach (var c in ctx.OutboxCompletions) {
+          await completionChannel.EnqueueAsync(c.MessageId, ct).ConfigureAwait(false);
+        }
+      }
+
+      var failureChannel = scopedProvider?.GetService<IFailureChannel>();
+      if (failureChannel is not null) {
+        foreach (var f in ctx.OutboxFailures) {
+          await failureChannel.EnqueueAsync(WorkCategory.Outbox, f, ct).ConfigureAwait(false);
+        }
+        foreach (var f in ctx.InboxFailures) {
+          await failureChannel.EnqueueAsync(WorkCategory.Inbox, f, ct).ConfigureAwait(false);
+        }
+      }
+
+      // Wake ClaimWorker immediately so freshly-stored outbox/inbox rows are claimed
+      // on this tick instead of after the next 250 ms poll. ClaimWorker subscribes to
+      // OnNewWorkAvailable / OnNewInboxWorkAvailable to translate this signal into
+      // an immediate poll. Without this, dispatch-then-immediately-read flows see a
+      // sub-second perspective lag that reads as "no activity" in the UI.
+      if (outboxToStore.Length > 0) {
+        ctx.WorkChannelWriter?.SignalNewWorkAvailable();
+      }
+      if (ctx.InboxMessages.Length > 0) {
+        var inboxChannelWriter = scopedProvider?.GetService<IInboxChannelWriter>();
+        inboxChannelWriter?.SignalNewInboxWorkAvailable();
+      }
+
       if (!ctx.SkipLifecycle) {
-        var enableLifecycleTracingPost = ctx.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-        var postLifecycleContext = new DistributeLifecycleContext(
-          ctx.OutboxMessages, ctx.InboxMessages, ctx.ScopeFactory, ctx.LifecycleMessageDeserializer,
-          ctx.Logger, enableLifecycleTracingPost, ctx.LifecycleMetrics);
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
           LifecycleStage.PostDistributeDetached,
           LifecycleStage.PostDistributeInline,
-          postLifecycleContext,
-          ct: ct
-        );
+          distributeContext,
+          ct).ConfigureAwait(false);
       }
-
-      // NOTE: Do NOT write outbox work to channel here — the coordinator loop in
-      // WorkCoordinatorPublisherWorker._processWorkBatchAsync writes to the channel
-      // with proper ordering and in-flight tracking (lines 879-892).
-      // Signal the coordinator to wake immediately so it picks up the work.
-      if (ctx.WorkChannelWriter is not null) {
-        if (workBatch.OutboxWork.Count > 0) {
-          ctx.WorkChannelWriter.SignalNewWorkAvailable();
-        }
-        if (workBatch.PerspectiveWork.Count > 0) {
-          ctx.WorkChannelWriter.SignalNewPerspectiveWorkAvailable();
-        }
-      }
-
-      return workBatch;
     } finally {
       flushScope?.Dispose();
     }
+
+    return _empty;
   }
+
+  private static int _resolvePartitionCount(IServiceProvider? scopedProvider, WorkCoordinatorOptions fallback) {
+    if (scopedProvider is null) {
+      return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;
+    }
+    var claimOptions = scopedProvider.GetService<IOptions<ClaimWorkerOptions>>()?.Value;
+    if (claimOptions is not null && claimOptions.PartitionCount > 0) {
+      return claimOptions.PartitionCount;
+    }
+    return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;
+  }
+
+  private static readonly WorkBatch _empty = new() {
+    OutboxWork = [],
+    InboxWork = [],
+    PerspectiveWork = []
+  };
 }

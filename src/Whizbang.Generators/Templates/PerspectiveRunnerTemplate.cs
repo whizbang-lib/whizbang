@@ -113,6 +113,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       CancellationToken cancellationToken = default) {
 
+    // Ordering invariant: sort by MessageId (UUIDv7 = chronological) before any processing.
+    // Defensive — callers should already pass sorted, but this is the apply boundary.
+    // See plans/ordered-stream-invariant.md.
+    if (events.Count > 1) {
+      events = events.OrderByMessageId().ToList();
+    }
+
     // Load current model or create new one
     var currentModel = await _perspectiveStore.GetByStreamIdAsync(
         streamId,
@@ -135,12 +142,79 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       currentModel = CreateEmptyModel(streamId);
     }
 
+    // Idempotency guard: skip events already applied to this row.
+    // The cursor advances in a separate transaction (PerspectiveCompletionFlushWorker) than
+    // the row upsert (this method). When the worker dies between commits, the same events
+    // get re-claimed and would re-apply to a populated model — duplicating list-style
+    // projection rows. UUIDv7 ids are time-ordered AND lex-ordered, so a string compare on
+    // the canonical "D" form is sufficient to detect "already applied".
+    var existingMetadata = modelLoadedFromDb
+        ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
+        : null;
+    var lastAppliedEventId = existingMetadata?.EventId;
+    if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
+      var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
+      foreach (var e in events) {
+        if (string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) > 0) {
+          filtered.Add(e);
+        }
+      }
+      if (filtered.Count != events.Count) {
+        if (filtered.Count == 0) {
+          // All events already applied. Status MUST be Completed (not None) so the
+          // PerspectiveWorker enqueues each EventWorkId for deletion from wh_perspective_events
+          // — otherwise claim_orphaned_perspective_events keeps re-claiming the same rows
+          // every safety-net interval and we get a hot loop of "Skipped already-applied".
+          // The events ARE done from the perspective-events table standpoint; the runner just
+          // had no model work to do because the row already reflects them.
+          //
+          // Logged at Debug as of Phase H step 7 slice 6: with the drainer's cooldown gate
+          // (step 7 slice 5) active, this branch only fires when a duplicate slipped past the
+          // cache (post-restart, TTL expiry, or handler-failure recovery). All steady-state
+          // duplicates are caught one layer up; reaching here is rare and self-heals via the
+          // Status=Completed return below. Promote back to Information ONLY if production
+          // shows a sustained rate, which would indicate a real anomaly worth investigating.
+          _logger.LogDebug(
+              "All {Skipped} events already applied for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — returning Completed for self-heal",
+              events.Count - filtered.Count,
+              perspectiveName,
+              streamId,
+              lastAppliedEventId);
+          var alreadyAppliedAsGuid = Guid.TryParse(lastAppliedEventId, out var parsed) ? parsed : Guid.Empty;
+          return new PerspectiveCursorCompletion {
+            StreamId = streamId,
+            PerspectiveName = perspectiveName,
+            PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+            LastEventId = alreadyAppliedAsGuid != Guid.Empty ? alreadyAppliedAsGuid : (lastProcessedEventId ?? Guid.Empty),
+            Status = PerspectiveProcessingStatus.Completed,
+            EventsProcessed = 0,
+            ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
+          };
+        } else {
+          // Partial skip: cursor-flush race within one instance — perspective row metadata
+          // advanced past some events whose cursor write hasn't landed yet (PerspectiveCompletion
+          // FlushWorker coalesces ~10 ms). Benign and self-heals on the next tick. Logged at
+          // Debug only — at high event rates this fires once per event on busy streams (8.6k/day
+          // observed on a consumer BFF before this drop). See Phase H step 6 slice 6 for context.
+          _logger.LogDebug(
+              "Skipped {Skipped} already-applied events for {PerspectiveName} stream {StreamId} (last applied {LastEventId}) — cursor-flush lag, applying {Remaining} new events",
+              events.Count - filtered.Count,
+              perspectiveName,
+              streamId,
+              lastAppliedEventId,
+              filtered.Count);
+        }
+      }
+      events = filtered;
+    }
+
     // Get perspective instance from DI
     var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
 
     // Track progress
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
+    string? lastSuccessfulEventType = existingMetadata?.EventType;
     var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
@@ -155,6 +229,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
       if (events.Count > 0) {
         var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
+        var firstEnvelopeType = firstEnvelope.Payload.GetType();
+        var firstEnvelopeTypeName = firstEnvelopeType.FullName ?? string.Empty;
+
+        // Slice 30A gates short-circuit when no receptor is registered. Original code consulted
+        // only the source-generated compile-time WhizbangReceptorRegistryQuery, which has the
+        // same blind spot as the InboxDispatchWorker / TransportConsumerWorker fixes: services
+        // whose generated contribution lists no compile-time receptor for a stage would silently
+        // skip the spawn even when an integration-test wait helper (or any production runtime
+        // registration) was listening at that stage. Resolve the runtime IReceptorRegistry once
+        // here and OR the compile-time check with a per-Type lookup; GetReceptorsFor returns
+        // compile-time entries concatenated with runtime ones, so the per-Type call subsumes the
+        // static check in the common case. The static fallback covers harnesses that don't
+        // register IReceptorRegistry in DI.
+        var runtimeReceptorRegistry = _serviceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorRegistry>();
 
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveDetached,
@@ -165,20 +253,38 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
         };
 
-        // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing)
-        // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
-        // However, we track it to ensure completion before returning from RunAsync.
-        var preAsyncTask = Task.Run(async () => {
-          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
-          var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
-          }
-        }, cancellationToken);
-        backgroundTasks.Add(preAsyncTask);
+        // Slice 30A — gate the dedicated-OS-thread spawn on the source-gen receptor registry.
+        // When no receptor is registered for PrePerspectiveDetached on this event type the
+        // spawn is pure overhead: BackgroundStageDispatch.StartLongRunning creates an OS
+        // thread via TaskCreationOptions.LongRunning (~5-10 ms on Linux), and the drain
+        // awaits this task via backgroundTasks below. a consumer run 21 PERF data showed the spawn
+        // dominates per-drain wall time on perspectives with no Pre/Post detached receptors
+        // registered. Tag dispatch fires from the inline path below so skipping the spawn
+        // does not lose tag side-effects.
+        if (runtimeReceptorRegistry?.GetReceptorsFor(firstEnvelopeType, LifecycleStage.PrePerspectiveDetached).Count > 0
+            || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveDetached, firstEnvelopeTypeName)) {
+          // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing).
+          // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
+          // (pooled thread) so this stage isn't starved when the ThreadPool is saturated by EF
+          // continuations + transport callbacks during heavy processing. This invocation IS awaited
+          // via backgroundTasks below — without LongRunning, pool starvation causes the await to
+          // block past the test deadline even though the body is trivial.
+          var preAsyncTask = global::Whizbang.Core.Workers.BackgroundStageDispatch.StartLongRunning(async () => {
+            await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+            var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
+            }
+          }, cancellationToken);
+          backgroundTasks.Add(preAsyncTask);
+        }
 
-        // Fire INLINE hooks (blocking, transactional)
-        {
+        // Slice 30A — same gate for inline PrePerspective. Inline cost is lower (no OS thread
+        // spawn) but still includes a DI scope creation + IReceptorInvoker lookup + security
+        // context establishment. Skip when no inline receptors are registered.
+        if (runtimeReceptorRegistry?.GetReceptorsFor(firstEnvelopeType, LifecycleStage.PrePerspectiveInline).Count > 0
+            || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveInline, firstEnvelopeTypeName)) {
+          // Fire INLINE hooks (blocking, transactional)
           await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
           var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
           if (receptorInvoker is not null) {
@@ -193,6 +299,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Process all events in order
       foreach (var envelope in events) {
+
+        // Phase H step 9 slice 4: cooperative cancellation between events. Apply itself is a
+        // pure synchronous function and can't be cancelled mid-call, but we check the lease
+        // token between events so a hot stream with N pending events doesn't run past the
+        // deadline. The dispatch worker's LeaseHandle (constructed at drain start) is what
+        // drives this token; without the check the apply loop would ignore the deadline and
+        // a runaway perspective could park the drain pump for many minutes.
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Extract event from envelope
         var @event = envelope.Payload;
@@ -285,6 +399,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
+        lastSuccessfulEventType = @event.GetType().FullName ?? eventTypeName;
         eventsProcessed++;
       }
 
@@ -305,6 +420,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Unit of Work: Save model + checkpoint ONCE at end
       if (eventsProcessed > 0) {
+        // Slice 29 instrumentation: capture SaveModelAndCheckpoint + Flush wall time. a consumer run
+        // 20 measured ~40 events/sec drain on bff despite 4×30 concurrency configured — need
+        // to know whether DB write or in-memory apply or lifecycle dominates per drain.
+        var saveStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         if (pendingPurge) {
           // Hard delete: Remove model from database entirely
           await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
@@ -318,6 +437,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
+              lastSuccessfulEventType ?? string.Empty,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
@@ -329,6 +449,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // but we need to ensure the same DbContext is flushed before PostPerspectiveInline fires.
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var saveMs = (System.Diagnostics.Stopwatch.GetTimestamp() - saveStartTicks)
+            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          if (saveMs > 50 || eventsProcessed >= 10) {
+            _logger.LogDebug(
+              "PERF SaveModelAndCheckpoint {PerspectiveName} stream {StreamId}: {EventCount} events in {SaveMs:F1}ms ({MsPerEvent:F2}ms/evt)",
+              perspectiveName, streamId, eventsProcessed, saveMs, saveMs / eventsProcessed);
+          }
+        }
 
         _logger.LogDebug(
             "Successfully processed {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
@@ -345,8 +474,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
           _eventsSinceLastSnapshot += eventsProcessed;
           if (_eventsSinceLastSnapshot >= _snapshotOptions.Value.SnapshotEveryNEvents) {
+            // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
+            // rewinds can locate the snapshot by commit_sequence (deterministic) rather
+            // than event_id (subject to UUIDv7 generation-time race). Null is OK — the
+            // commit-sequence-anchored lookup falls back to event_id-anchored on miss.
+            var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                lastSuccessfulEventId.Value, cancellationToken);
             await _snapshotStore.CreateSnapshotAsync(
                 streamId, perspectiveName, lastSuccessfulEventId.Value,
+                snapshotCommitSequence,
                 ToSnapshotJson(updatedModel), cancellationToken);
             await _snapshotStore.PruneOldSnapshotsAsync(
                 streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
@@ -358,7 +494,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveDetached is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
         // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally
+        // Slice 30A's runtime registry — resolved once for the post loop; same instance as the
+        // pre block but the variable isn't in scope here, so resolve again. Singleton lookup is
+        // cheap. Falls back to the static check when the registry isn't registered.
+        var postRuntimeReceptorRegistry = _serviceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorRegistry>();
         foreach (var envelope in processedEvents) {
+          // Slice 30A — gate the per-event PostPerspectiveDetached OS-thread spawn on the
+          // receptor registry. a consumer run 21 PERF data showed per-event spawn cost dominates
+          // multi-event drains: e.g. a 44-event batch would otherwise spawn 44 dedicated
+          // OS threads even when no Post receptor is registered for the perspective's
+          // event types. The HasReceptors lookup is a HashSet contains check (~50 ns) vs
+          // the ~5-10 ms thread spawn it replaces. Consults both registries so runtime
+          // registrations (integration-test waits) still fire — see PrePerspective gate above
+          // for the same rationale.
+          var envelopeType = envelope.Payload.GetType();
+          var envelopeTypeName = envelopeType.FullName ?? string.Empty;
+          if (!(postRuntimeReceptorRegistry?.GetReceptorsFor(envelopeType, LifecycleStage.PostPerspectiveDetached).Count > 0)
+              && !global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PostPerspectiveDetached, envelopeTypeName)) {
+            continue;
+          }
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveDetached,
             StreamId = streamId,
@@ -368,11 +522,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
           };
 
-          // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits)
-          // Note: We don't await this immediately, allowing perspective processing to complete.
-          // However, we track it to ensure completion before returning from RunAsync.
-          // Envelope passed to preserve security context from message hops
-          var postAsyncTask = Task.Run(async () => {
+          // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits).
+          // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
+          // for the same reason as PrePerspectiveDetached above — under heavy parallel load,
+          // pooled-thread Task.Run continuations get starved and the awaiting Task.WhenAll
+          // hangs past the test deadline.
+          var postAsyncTask = global::Whizbang.Core.Workers.BackgroundStageDispatch.StartLongRunning(async () => {
             await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
             var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
             if (receptorInvoker is not null) {
@@ -423,6 +578,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 streamId,
                 updatedModel,
                 lastSuccessfulEventId.Value,
+                lastSuccessfulEventType ?? string.Empty,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
@@ -511,9 +667,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid streamId,
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
+      string checkpointEventType,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false) {
+
+    // Build metadata that captures the last applied event id. The runner reads this back
+    // on the next run via GetMetadataByStreamIdAsync to filter out already-applied events,
+    // making projections idempotent across worker crashes between row upsert and cursor advance.
+    var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
+      EventId = checkpointEventId.ToString("D"),
+      EventType = checkpointEventType,
+      Timestamp = DateTime.UtcNow
+    };
 
     #region UPSERT_CALL
     // Upsert model (insert or update)
@@ -523,22 +689,35 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           streamId,
           model,
           scope,
+          forceUpdateScope,
+          metadata,
           cancellationToken
       );
     } else {
       await _perspectiveStore.UpsertAsync(
           streamId,
           model,
+          new global::Whizbang.Core.Lenses.PerspectiveScope(),
+          false,
+          metadata,
           cancellationToken
       );
     }
     #endregion
   }
 
+  public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid triggeringEventId,
+      CancellationToken cancellationToken = default)
+    => RewindAndRunAsync(streamId, perspectiveName, triggeringEventId, triggeringCommitSequence: null, cancellationToken);
+
   public async Task<PerspectiveCursorCompletion> RewindAndRunAsync(
       Guid streamId,
       string perspectiveName,
       Guid triggeringEventId,
+      long? triggeringCommitSequence,
       CancellationToken cancellationToken = default) {
 
     Guid? replayFromEventId = null;
@@ -547,21 +726,39 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var startedAt = DateTimeOffset.UtcNow;
 
     if (_snapshotStore is not null) {
-      var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
-          streamId, perspectiveName, triggeringEventId, cancellationToken);
+      // Slice 26.11: prefer commit-sequence anchor for snapshot selection so live-apply
+      // and replay paths are fully deterministic. Falls back to event_id anchor when the
+      // commit_sequence isn't available (cache or events unstamped).
+      if (triggeringCommitSequence.HasValue) {
+        var seqSnapshot = await _snapshotStore.GetLatestSnapshotBeforeCommitSequenceAsync(
+            streamId, perspectiveName, triggeringCommitSequence.Value, cancellationToken);
+        if (seqSnapshot.HasValue) {
+          snapshotModel = FromSnapshotJson(seqSnapshot.Value.SnapshotData);
+          replayFromEventId = seqSnapshot.Value.SnapshotEventId;
+          hasSnapshot = true;
+          _logger.LogWarning(
+              "Restoring {PerspectiveName} stream {StreamId} from commit-sequence snapshot at {SnapshotEventId} (commit_sequence < {TriggeringCommitSequence}) due to late event {TriggeringEventId}",
+              perspectiveName, streamId, seqSnapshot.Value.SnapshotEventId, triggeringCommitSequence.Value, triggeringEventId);
+        }
+      }
 
-      if (snapshot.HasValue) {
-        snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
-        replayFromEventId = snapshot.Value.SnapshotEventId;
-        hasSnapshot = true;
+      if (!hasSnapshot) {
+        var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
+            streamId, perspectiveName, triggeringEventId, cancellationToken);
 
-        _logger.LogWarning(
-            "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
-            perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
-      } else {
-        _logger.LogWarning(
-            "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
-            perspectiveName, streamId, triggeringEventId);
+        if (snapshot.HasValue) {
+          snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
+          replayFromEventId = snapshot.Value.SnapshotEventId;
+          hasSnapshot = true;
+
+          _logger.LogWarning(
+              "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
+              perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
+        } else {
+          _logger.LogWarning(
+              "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+              perspectiveName, streamId, triggeringEventId);
+        }
       }
     } else {
       _logger.LogWarning(
@@ -627,9 +824,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Track progress
     var eventsProcessed = 0;
     Guid? lastSuccessfulEventId = replayFromEventId;
+    string? lastSuccessfulEventType = null;
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;
     PerspectiveScope? lastScope = null;
+
+    // Slice 24c: intermediate-snapshot tracking. When the rewind interval is configured
+    // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
+    // rewinds — including "very late" events whose MessageId falls between intermediate
+    // points and the end — find a qualifying snapshot rather than replaying from event zero.
+    var rewindSnapshotInterval = _snapshotOptions?.Value.RewindSnapshotIntervalEvents ?? 0;
+    var eventsSinceIntermediateSnapshot = 0;
 
     // Build list of event types this perspective handles
     var eventTypes = new[] {
@@ -646,6 +851,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         eventTypes,
         cancellationToken)) {
       events.Add(envelope);
+    }
+
+    // Ordering invariant: sort by MessageId before applying. Event-store reads should be
+    // sorted at the source, but this is defensive — replays must be strictly time-ordered.
+    if (events.Count > 1) {
+      events = events.OrderByMessageId().ToList();
     }
 
     // Apply all events in memory — no intermediate DB writes, no lifecycle hooks
@@ -697,7 +908,40 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       lastSuccessfulEventId = envelope.MessageId.Value;
+      lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
       eventsProcessed++;
+
+      // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
+      // at THIS point in the stream's history so future rewinds for late events with
+      // MessageId near this point find a qualifying restore point. PruneOldSnapshotsAsync
+      // caps total snapshots per stream so this can't bloat the table without bound.
+      if (rewindSnapshotInterval > 0
+          && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+          && !pendingPurge && updatedModel is not null) {
+        eventsSinceIntermediateSnapshot++;
+        if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval) {
+          try {
+            // Slice 26.11: resolve commit_sequence for the intermediate snapshot too,
+            // so a rewind triggered by a "very late" event with commit_sequence between
+            // intermediate snapshots finds the right restore point.
+            var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                lastSuccessfulEventId.Value, cancellationToken);
+            await _snapshotStore.CreateSnapshotAsync(
+                streamId, perspectiveName, lastSuccessfulEventId.Value,
+                intermediateCommitSequence,
+                ToSnapshotJson(updatedModel), cancellationToken);
+            await _snapshotStore.PruneOldSnapshotsAsync(
+                streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+            eventsSinceIntermediateSnapshot = 0;
+          } catch (Exception snapshotEx) when (snapshotEx is not OperationCanceledException) {
+            // Intermediate snapshots are best-effort — failures here don't break the rewind.
+            // The end-of-rewind snapshot at line ~833 is the durable fallback. Just log.
+            _logger.LogDebug(snapshotEx,
+                "Intermediate snapshot at event {EventId} for {PerspectiveName} stream {StreamId} failed; continuing replay",
+                lastSuccessfulEventId.Value, perspectiveName, streamId);
+          }
+        }
+      }
     }
 
     // Single atomic write at the end — lenses see pre-replay data until this point
@@ -706,7 +950,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);

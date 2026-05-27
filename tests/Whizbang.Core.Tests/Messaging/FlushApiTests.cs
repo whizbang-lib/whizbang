@@ -81,18 +81,8 @@ public class FlushApiTests {
       .ThrowsExactly<ObjectDisposedException>();
   }
 
-  [Test]
-  public async Task Scoped_FlushAndGetBatchAsync_DebugModeFlag_PropagatedAsync() {
-    var coordinator = new FakeWorkCoordinatorWithFlags();
-    var options = new WorkCoordinatorOptions { DebugMode = true };
-    var strategy = _createScopedStrategy(coordinator, options);
-    _queueTestOutboxMessage(strategy);
-
-    _ = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    await TUnit.Assertions.Assert.That(coordinator.LastFlags & WorkBatchOptions.DebugMode)
-      .IsEqualTo(WorkBatchOptions.DebugMode);
-  }
+  // Deleted: Scoped_FlushAndGetBatchAsync_DebugModeFlag_PropagatedAsync.
+  // DebugMode flag is no longer routed through the coordinator post-Phase-H.
 
   [Test]
   public async Task Scoped_FlushAndGetBatchAsync_ClearsQueuesAfterFlushAsync() {
@@ -123,27 +113,9 @@ public class FlushApiTests {
       .Because("Immediate always flushes eagerly");
   }
 
-  [Test]
-  public async Task Immediate_FlushAndGetBatchAsync_WithQueuedMessages_ReturnsBatchAsync() {
-    var messageId = Guid.CreateVersion7();
-    var coordinator = new FakeWorkCoordinatorWithReturnedWork([
-      new OutboxWork {
-        MessageId = messageId,
-        Destination = "test-topic",
-        EnvelopeType = "TestEnvelope, TestAssembly",
-        MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-        Envelope = _createTestEnvelope(messageId),
-        Attempts = 0,
-        Status = MessageProcessingStatus.None
-      }
-    ]);
-    var strategy = _createImmediateStrategy(coordinator);
-    _queueTestOutboxMessage(strategy);
-
-    var result = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-    await TUnit.Assertions.Assert.That(result.OutboxWork).Count().IsEqualTo(1);
-  }
+  // Deleted: Immediate_FlushAndGetBatchAsync_WithQueuedMessages_ReturnsBatchAsync.
+  // Asserted result.OutboxWork.Count == 1; ExecuteFlushAsync returns empty WorkBatch
+  // post-Phase-H (claiming is owned by ClaimWorker, not flush).
 
   [Test]
   public async Task Immediate_FlushAndGetBatchAsync_ClearsQueuesAfterFlushAsync() {
@@ -152,11 +124,11 @@ public class FlushApiTests {
     _queueTestOutboxMessage(strategy);
 
     _ = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
-    await TUnit.Assertions.Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1);
+    await TUnit.Assertions.Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
 
     _ = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
-    await TUnit.Assertions.Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(0)
-      .Because("second flush should have no outbox messages since queues were cleared");
+    await TUnit.Assertions.Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("second flush should not invoke coordinator since queues were cleared (empty-queue short-circuit)");
   }
 
   // ========================================
@@ -342,13 +314,21 @@ public class FlushApiTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
+      // Legacy fallback (not in live path).
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
-      LastNewOutboxMessages = request.NewOutboxMessages;
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
+      LastNewOutboxMessages = messages;
+      return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
@@ -356,62 +336,10 @@ public class FlushApiTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
-      => Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchOptions LastFlags { get; private set; }
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      LastFlags = request.Flags;
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = []
-      });
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      return Task.CompletedTask;
     }
-
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
-      => Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  private sealed class FakeWorkCoordinatorWithReturnedWork(List<OutboxWork> workToReturn) : IWorkCoordinator {
-    private readonly List<OutboxWork> _workToReturn = workToReturn;
-
-    public Task<WorkBatch> ProcessWorkBatchAsync(
-      ProcessWorkBatchRequest request,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = _workToReturn,
-        InboxWork = [],
-        PerspectiveWork = []
-      });
-    }
-
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
-
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

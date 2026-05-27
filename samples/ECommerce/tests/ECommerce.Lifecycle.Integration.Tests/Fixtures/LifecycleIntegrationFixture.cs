@@ -149,8 +149,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
       new TestRoutingStrategy(_testId));
 
     // Database readiness (schema created before host starts)
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(new DefaultDatabaseReadinessCheck());
-
     // Clear static callbacks to avoid contamination from other assemblies
     ServiceRegistrationCallbacks.Dispatcher = null;
     ServiceRegistrationCallbacks.PerspectiveServices = null;
@@ -211,15 +209,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Worker options (fast polling for tests)
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;
-    });
-
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
       options.LeaseSeconds = 300;
@@ -230,7 +219,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     });
 
     // Background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // RabbitMQ consumer with test-specific routing

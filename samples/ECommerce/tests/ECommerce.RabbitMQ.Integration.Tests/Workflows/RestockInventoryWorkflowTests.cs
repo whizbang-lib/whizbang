@@ -62,8 +62,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock.png",
       InitialStock = 10
     };
+    // 3 perspective events: ProductCreated x2 (ProductCatalog + InventoryLevels) + InventoryRestocked x1.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -111,8 +112,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/multi-restock.png",
       InitialStock = 5
     };
+    // 3 perspective events for non-zero stock.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -211,8 +213,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/zero-qty.png",
       InitialStock = 25
     };
+    // 3 perspective events for non-zero stock.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -258,8 +261,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/large-restock.png",
       InitialStock = 50
     };
+    // 3 perspective events for non-zero stock.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();

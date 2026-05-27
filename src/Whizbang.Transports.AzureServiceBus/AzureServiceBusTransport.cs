@@ -4,6 +4,7 @@ using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 
@@ -30,6 +31,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
+  private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly bool _isEmulator;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -53,7 +55,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     Whizbang.Core.Messaging.IReceptorRegistry? receptorRegistry = null,
     Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? perspectiveRegistry = null,
     Whizbang.Core.Messaging.IRawReceptorRegistry? rawReceptorRegistry = null,
-    Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null
+    Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null,
+    IMessageDiscardPolicy? discardPolicy = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -77,6 +80,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // Slice 4 — default to the multi-pass binder so the registry-miss → binder-cascade
     // fallback works without explicit DI configuration. Tests can inject a fake.
     _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
+    _discardPolicy = discardPolicy;
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -1100,26 +1104,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       case AsbReceiveAction.AckAndDrop:
         // Slice 1 hotfix: ack + drop instead of broker DLQ on type-resolution failures.
-        // Focused port from feat/work-pump-decomposition's IMessageDiscardPolicy:
-        // NoLocalConsumer is routine for cross-domain subscribers — log at Debug so it
-        // doesn't spam production. Other AckAndDrop reasons (envelope/type/deserialise
-        // failures) still warn — those are genuine surprises.
-        var ackDropLevel = AckDropLogLevelFor(decision.Reason);
-        if (_logger.IsEnabled(ackDropLevel)) {
-#pragma warning disable CA2254 // Level chosen at runtime from decision.Reason — LoggerMessage source-gen doesn't help here.
-          _logger.Log(
-            ackDropLevel,
-            "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
-            decision.Reason,
-            decision.EnvelopeTypeName,
-            args.Message.MessageId,
-            args.SessionId,
-            destination.Address,
-            subscription,
-            decision.Description
-          );
-#pragma warning restore CA2254
-        }
+        // Slice 2 (discard-policy): NoLocalConsumer is a routine cross-domain drop and
+        // routes through the policy (Debug + counter) instead of WARN logspam. All
+        // other AckAndDrop reasons (genuine envelope/type failures) still warn.
+        EmitAckDropTelemetry(
+          transportLogger: _logger,
+          discardPolicy: _discardPolicy,
+          decision: decision,
+          messageId: args.Message.MessageId,
+          sessionId: args.SessionId,
+          topic: destination.Address,
+          subscription: subscription);
         await args.CompleteMessageAsync(args.Message, args.CancellationToken);
         return (null, decision.EnvelopeTypeName);
 
@@ -1762,18 +1757,54 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <summary>
-  /// Picks the log level for an <see cref="AsbReceiveAction.AckAndDrop"/> case based
-  /// on the reason. Routine <see cref="AsbReceiveReason.NO_LOCAL_CONSUMER"/> drops at
-  /// Debug — cross-domain subscribers see these every time a sibling event arrives
-  /// and the level would otherwise spam production logs. Everything else stays at
-  /// Warning so envelope/type/deserialise failures remain visible.
+  /// Routes the ack+drop telemetry through the shared <see cref="IMessageDiscardPolicy"/>
+  /// when the reason is <see cref="AsbReceiveReason.NO_LOCAL_CONSUMER"/> — that case logs
+  /// at Debug and bumps the <c>whizbang.message.skipped</c> OTel counter. Other AckAndDrop
+  /// reasons (genuine envelope/type-resolution failures, deserialization failures) keep
+  /// the existing Warning log so they remain visible in production.
   /// </summary>
   /// <remarks>
-  /// Focused port from <c>feat/work-pump-decomposition</c>'s broader
-  /// <c>IMessageDiscardPolicy</c> refactor. The bigger architecture (reusable policy
-  /// + inbox/outbox gates) lives there; this branch only carries the receive-side
-  /// level fix.
+  /// Internal-static so the unit tests can exercise the level-routing without standing up
+  /// a real <c>ServiceBusClient</c>. Caller in the receive path passes
+  /// <see cref="_discardPolicy"/> — when the policy isn't wired (legacy / test configs)
+  /// the legacy Warning fires so behaviour is never silently lost.
   /// </remarks>
-  internal static LogLevel AckDropLogLevelFor(string reason) =>
-    reason == AsbReceiveReason.NO_LOCAL_CONSUMER ? LogLevel.Debug : LogLevel.Warning;
+  internal static void EmitAckDropTelemetry(
+      ILogger<AzureServiceBusTransport> transportLogger,
+      IMessageDiscardPolicy? discardPolicy,
+      AsbReceiveDecision decision,
+      string? messageId,
+      string? sessionId,
+      string topic,
+      string subscription) {
+    if (decision.Reason == AsbReceiveReason.NO_LOCAL_CONSUMER
+        && discardPolicy is not null
+        && !string.IsNullOrEmpty(decision.EnvelopeTypeName)) {
+      var policyDecision = new MessageDiscardDecision(
+        ShouldDiscard: true,
+        Reason: MessageDiscardReason.NoLocalConsumer,
+        Detail: decision.Description);
+      discardPolicy.RecordDiscard(
+        gate: MessageDiscardGate.Receive,
+        decision: policyDecision,
+        payloadClrType: decision.EnvelopeTypeName!,
+        additionalTags: new Dictionary<string, object?> {
+          ["topic"] = topic,
+          ["subscription"] = subscription,
+          ["message_id"] = messageId,
+          ["session_id"] = sessionId,
+        });
+      return;
+    }
+
+    transportLogger.LogWarning(
+      "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
+      decision.Reason,
+      decision.EnvelopeTypeName,
+      messageId,
+      sessionId,
+      topic,
+      subscription,
+      decision.Description);
+  }
 }

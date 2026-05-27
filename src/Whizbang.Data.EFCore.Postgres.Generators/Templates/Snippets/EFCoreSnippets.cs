@@ -231,7 +231,7 @@ __PHYSICAL_FIELD_CONFIGS__
     // Scoped/Immediate create per-scope instances via the factory.
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
-      return options.Strategy switch {
+      global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy inner = options.Strategy switch {
         global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Interval =>
           new global::Whizbang.Core.Messaging.NonDisposingStrategyAdapter(
             sp.GetRequiredService<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>()),
@@ -240,6 +240,11 @@ __PHYSICAL_FIELD_CONFIGS__
             sp.GetRequiredService<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>()),
         _ => global::Whizbang.Core.Messaging.WorkCoordinatorStrategyFactory.Create(options.Strategy, sp)
       };
+      // Half B: wrap with StreamAffinity decorator when IOutboxBatchStrategy is registered so
+      // outbox writes route through per-stream sliding-window batching. WorkCoordinatorStrategyFactory.Create
+      // returns the bare inner; the wrap happens here so Interval/Batch singletons (which bypass
+      // the factory) receive the same treatment.
+      return global::Whizbang.Core.Messaging.WorkCoordinatorStrategyFactory.WrapWithStreamAffinity(inner, sp);
     });
 
     // Register IEventStoreQuery - scoped (for web APIs, receptors)

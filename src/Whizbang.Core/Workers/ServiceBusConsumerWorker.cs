@@ -35,7 +35,9 @@ public partial class ServiceBusConsumerWorker(
   ServiceBusConsumerOptions? options = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null,
-  MessageProcessingOptions? messageProcessingOptions = null
+  MessageProcessingOptions? messageProcessingOptions = null,
+  IReceptorRegistryQuery? receptorRegistry = null,
+  IReceptorRegistry? runtimeReceptorRegistry = null
   ) : BackgroundService {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -46,10 +48,35 @@ public partial class ServiceBusConsumerWorker(
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
+  private readonly IReceptorRegistryQuery? _receptorRegistry = receptorRegistry;
+  private readonly IReceptorRegistry? _runtimeReceptorRegistry = runtimeReceptorRegistry;
   private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
     ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
+
+  // Stream-affinity per-stream serializer — slice 2 of plans/stream-affinity-everywhere.md.
+  // Routes received messages by stream_id so same-stream items process serially under one
+  // worker even when the transport delivers them across many parallel consumer threads.
+  // Different streams continue to run in parallel via independent per-stream workers.
+  private readonly PerStreamSerializer<AsbReceivedItem> _streamSerializer = new(
+    streamIdSelector: static item => _extractStreamId(item.Envelope),
+    processor: static (item, ct) => item.HandleAsync(ct));
+
+  private sealed record AsbReceivedItem(
+    IMessageEnvelope Envelope,
+    string? EnvelopeType,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> Handler,
+    TaskCompletionSource Done) {
+    public async Task HandleAsync(CancellationToken ct) {
+      try {
+        await Handler(Envelope, EnvelopeType, ct).ConfigureAwait(false);
+        Done.TrySetResult();
+      } catch (Exception ex) {
+        Done.TrySetException(ex);
+      }
+    }
+  }
 
   /// <summary>
   /// Pauses all subscriptions to temporarily stop receiving messages.
@@ -97,8 +124,29 @@ public partial class ServiceBusConsumerWorker(
 
         var subscription = await _transport.SubscribeBatchAsync(
           async (batch, ct) => {
+            // Stream-affinity routing: enqueue all batch messages to _streamSerializer first
+            // (keyed by _extractStreamId), then await all completions concurrently. This
+            // preserves cross-stream parallelism — if message #1 goes to stream A and message
+            // #2 goes to stream B, B's worker starts immediately even if A's hangs.
+            //
+            // Earlier code did `await _streamSerializer.EnqueueAsync; await done.Task` per
+            // message in a foreach, which serialized the entire batch by accident: a hung A
+            // message blocked B from even entering the serializer (a consumer 2026-05-05 incident —
+            // 368 inbox messages stuck because one stream's processing stalled).
+            //
+            // Per-message TaskCompletionSource preserves transport ack/nack semantics: handler
+            // success → SetResult; exception → SetException → propagates to the ASB callback
+            // for redelivery via WhenAll. WhenAll surfaces the first exception once all tasks
+            // complete (success or fault), matching the previous foreach-await semantics.
+            var pending = new List<Task>(batch.Count);
             foreach (var msg in batch) {
-              await _handleMessageAsync(msg.Envelope, msg.EnvelopeType, ct);
+              var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+              await _streamSerializer.EnqueueAsync(
+                new AsbReceivedItem(msg.Envelope, msg.EnvelopeType, _handleMessageAsync, done), ct);
+              pending.Add(done.Task);
+            }
+            if (pending.Count > 0) {
+              await Task.WhenAll(pending).WaitAsync(ct);
             }
           },
           destination,
@@ -142,6 +190,25 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
+    // Slice 3 of pump-then-process.md (Half A): drop messages whose type has NO consumer
+    // anywhere on this service — no inbox handler, no lifecycle receptor, no perspective,
+    // no tag-attribute. They cannot do useful work, so the inbox row + dispatch path are
+    // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the a consumer BFF
+    // pattern where many cross-service events flow through with no local consumer.
+    // Null registry → legacy behavior (always store) for back-compat in test harnesses.
+    // EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; we
+    // skip the gate in that case rather than misclassifying — never drop a message
+    // because of a registry-side parse miss.
+    if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)) {
+      var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
+      if (innerMessageType is not null
+          && !_receptorRegistry.HasAnyConsumer(innerMessageType)
+          && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
+        LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
+        return;
+      }
+    }
+
     var inboxActivity = _startInboxActivity(envelope, envelopeType);
 
     // Global concurrency gate — limits total concurrent handlers across all subscriptions
@@ -235,8 +302,30 @@ public partial class ServiceBusConsumerWorker(
     }
 
     foreach (var work in myWork) {
+      // Deserialize before the gate so the runtime-registry check can use the concrete
+      // payload type — the runtime registry keys by Type, not by string. Costs one extra
+      // JSON parse on the cross-service no-handler path versus the pre-fix slice-4 gate,
+      // but the alternative was the per-type runtime check missing because we had no
+      // Type to ask about. Loss is bounded: PostInbox below already deserializes
+      // unconditionally, so worst-case we go from 1 to 2 parses per message.
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+
+      // Slice 4-symmetry gate: skip PreInbox firing when neither stage has receptors —
+      // either compile-time (source-generated WhizbangReceptorRegistryQuery) OR
+      // runtime-registered via IReceptorRegistry. Without the runtime branch, services
+      // whose generated contribution emits empty arrays for the PreInbox stages would
+      // silently fail to fire runtime-registered receptors (integration-test waits,
+      // dynamic registrations). Mirrors the InboxDispatchWorker gate fix; null
+      // registries preserve legacy fire-unconditionally behavior for test harnesses.
+      var runtimeMessageType = typedEnvelope.Payload?.GetType();
+      if (_receptorRegistry is not null
+          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
+          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
+          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
+          && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
+        continue;
+      }
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = LifecycleStage.PreInboxDetached,
         EventId = null,
@@ -258,12 +347,14 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   private async Task _processInboxWorkItemsAsync(
     List<InboxWork> myWork, IWorkCoordinatorStrategy strategy, CancellationToken ct) {
+    // Slice 5 of plans/pump-then-process.md: dropped the discarded
+    // `_ = _deserializeEvent(work)` call. The result was always thrown away with a discard
+    // assignment; pure waste at high message volume. Each per-message deserialize cost
+    // ~50-200µs on a typical event. For a 350-message bulk fan-out that's 50-150ms saved.
+    // The completion-marking and failure-routing semantics are unchanged.
     await _orderedProcessor.ProcessInboxWorkAsync(
       myWork,
-      processor: async (work) => {
-        _ = _deserializeEvent(work);
-        return MessageProcessingStatus.EventStored;
-      },
+      processor: (_) => Task.FromResult(MessageProcessingStatus.EventStored),
       completionHandler: (msgId, status) => {
         strategy.QueueInboxCompletion(msgId, status);
         LogQueuedCompletion(_logger, msgId, status);
@@ -275,6 +366,7 @@ public partial class ServiceBusConsumerWorker(
       ct
     );
   }
+
 
   /// <summary>
   /// Invokes PostInbox lifecycle stages and PostLifecycle for events without perspectives.
@@ -342,6 +434,13 @@ public partial class ServiceBusConsumerWorker(
   private static async Task _invokeImmediateDetachedAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
     await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+  }
+
+  private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
+    if (_runtimeReceptorRegistry is null || messageType is null) {
+      return false;
+    }
+    return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
   }
 
   private void _fireDetachedStageAsync(
@@ -530,7 +629,6 @@ public partial class ServiceBusConsumerWorker(
       MessageType = messageTypeName
     };
 
-    // DIAGNOSTIC: Log detailed inbox message info for ServiceBus debugging
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
       inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);
 
@@ -620,10 +718,13 @@ public partial class ServiceBusConsumerWorker(
   public override async Task StopAsync(CancellationToken cancellationToken) {
     LogWorkerStoppingGracefully(_logger);
 
-    // Dispose all subscriptions
+    // Dispose all subscriptions first so no new messages enter the serializer.
     foreach (var subscription in _subscriptions) {
       subscription.Dispose();
     }
+
+    // Drain in-flight per-stream work before exiting.
+    await _streamSerializer.FlushAndStopAsync(cancellationToken).ConfigureAwait(false);
 
     await base.StopAsync(cancellationToken);
   }
@@ -772,32 +873,31 @@ public partial class ServiceBusConsumerWorker(
   )]
   static partial void LogWorkerStoppingGracefully(ILogger logger);
 
-  // Diagnostic logging
   [LoggerMessage(
     EventId = 20,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] Before FlushAsync: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus before FlushAsync: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}"
   )]
   static partial void LogBeforeFlush(ILogger logger, Guid messageId, bool isEvent, Guid? streamId);
 
   [LoggerMessage(
     EventId = 21,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] After FlushAsync: TotalInboxWork={InboxWorkCount}, TotalOutboxWork={OutboxWorkCount}, TotalPerspectiveWork={PerspectiveWorkCount}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus after FlushAsync: TotalInboxWork={InboxWorkCount}, TotalOutboxWork={OutboxWorkCount}, TotalPerspectiveWork={PerspectiveWorkCount}"
   )]
   static partial void LogAfterFlush(ILogger logger, int inboxWorkCount, int outboxWorkCount, int perspectiveWorkCount);
 
   [LoggerMessage(
     EventId = 22,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] Work returned for MessageId={MessageId}: InboxWork={InboxCount}, IsEvent={IsEvent}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus work returned for MessageId={MessageId}: InboxWork={InboxCount}, IsEvent={IsEvent}"
   )]
   static partial void LogWorkReturned(ILogger logger, Guid messageId, int inboxCount, bool isEvent);
 
   [LoggerMessage(
     EventId = 23,
-    Level = LogLevel.Information,
-    Message = "[ServiceBus DIAGNOSTIC] Created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
+    Level = LogLevel.Debug,
+    Message = "ServiceBus created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
   )]
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
 
@@ -807,6 +907,13 @@ public partial class ServiceBusConsumerWorker(
     Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
+
+  [LoggerMessage(
+    EventId = 25,
+    Level = LogLevel.Debug,
+    Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
+  )]
+  static partial void LogDroppedUnsubscribedType(ILogger logger, global::Whizbang.Core.ValueObjects.MessageId messageId, string envelopeType);
 }
 
 /// <summary>

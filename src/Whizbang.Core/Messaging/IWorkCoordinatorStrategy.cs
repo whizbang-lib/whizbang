@@ -22,6 +22,22 @@ public interface IWorkCoordinatorStrategy {
   void QueueOutboxMessage(OutboxMessage message);
 
   /// <summary>
+  /// Async overload of <see cref="QueueOutboxMessage"/>. The default implementation simply
+  /// delegates to the sync method and returns <see cref="Task.CompletedTask"/> — strategies
+  /// that don't need async semantics get this for free. Strategies that route through async
+  /// abstractions (e.g. <see cref="IOutboxBatchStrategy"/> for producer-side stream-affinity
+  /// batching) override this to perform real async work and may make the sync overload throw
+  /// to surface migration gaps.
+  /// </summary>
+  /// <param name="message">Pre-serialized outbox message to store.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>internals/outbox-batch-strategy</docs>
+  Task QueueOutboxMessageAsync(OutboxMessage message, CancellationToken cancellationToken = default) {
+    QueueOutboxMessage(message);
+    return Task.CompletedTask;
+  }
+
+  /// <summary>
   /// Queues an inbox message to be stored.
   /// Includes atomic deduplication and optional event store integration.
   /// </summary>

@@ -292,15 +292,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     }
 
-    // 4. Clear publisher in-flight state AFTER workers are idle
-    // Workers may have re-added entries during the idle drain above
-    var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    inventoryPublisher?.ClearPublishInFlightState();
-
-    var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    bffPublisher?.ClearPublishInFlightState();
+    // 4. Clear publisher in-flight state AFTER workers are idle.
+    // The new path tracks in-flight on IWorkChannelWriter (singleton across the publish pipeline);
+    // calling ClearInFlight directly avoids the per-worker wrapper the legacy publisher exposed.
+    _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+    _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
 
     Console.WriteLine("[RabbitMqFixture] Database cleaned up between tests");
   }
@@ -347,13 +343,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<InventoryDbContext> with UseNpgsql
     // - IDbContextFactory<InventoryDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture ensures the database schema is created before starting hosts,
-    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
@@ -418,15 +407,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
@@ -438,7 +418,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // Register OrderedStreamProcessor for message ordering
@@ -517,13 +496,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:bff-db" above)
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture ensures the database schema is created before starting hosts,
-    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
@@ -585,15 +557,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
@@ -605,7 +568,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // RabbitMQ consumer with test-specific routing
@@ -737,13 +699,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<OutboxPublishWorker>().FirstOrDefault();
+    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<OutboxPublishWorker>().FirstOrDefault();
     var inventoryPersp = _inventoryHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
     var bffPersp = _bffHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
 
-    // Wire one-shot idle handlers — signal fires when worker reaches idle after processing
-    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+    void WireOutboxOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
       WorkProcessingIdleHandler? h = null;
@@ -761,8 +722,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       if (w.IsIdle) { tcs.TrySetResult(true); }
     }
 
-    WireOnce(inventoryPub, tcsInventoryPub);
-    WireOnce(bffPub, tcsBffPub);
+    WireOutboxOnce(inventoryPub, tcsInventoryPub);
+    WireOutboxOnce(bffPub, tcsBffPub);
     WirePerspOnce(inventoryPersp, tcsInventoryPersp);
     WirePerspOnce(bffPersp, tcsBffPersp);
 
@@ -895,38 +856,63 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// </summary>
   public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    if (worker is null) {
-      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    // Post-Phase-H: OutboxDrainWorker is the active publish path. Subscribe to both if
+    // registered so the fixture works regardless of which worker is active.
+    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
+    var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
+    if (drainWorker is null && publishWorker is null) {
+      throw new InvalidOperationException("Neither OutboxDrainWorker nor OutboxPublishWorker registered on InventoryHost");
     }
 
     OutboxMessagePublishedHandler? handler = null;
     handler = (e) => {
       tcs.TrySetResult(e.MessageId);
-      worker.OnOutboxMessagePublished -= handler;
     };
-    worker.OnOutboxMessagePublished += handler;
+    if (drainWorker is not null) {
+      drainWorker.OnOutboxMessagePublished += handler;
+    }
+    if (publishWorker is not null) {
+      publishWorker.OnOutboxMessagePublished += handler;
+    }
 
     try {
       var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
       return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
     } finally {
-      worker.OnOutboxMessagePublished -= handler;
+      if (drainWorker is not null) {
+        drainWorker.OnOutboxMessagePublished -= handler;
+      }
+      if (publishWorker is not null) {
+        publishWorker.OnOutboxMessagePublished -= handler;
+      }
     }
   }
 
   /// <summary>
-  /// Waits for a specific number of perspective completions using the
-  /// <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
-  /// Deterministic — fires directly from the worker's processing loop.
+  /// Waits for a specific number of perspective EVENTS (not fires) to be processed using
+  /// the <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The handler fires ONCE per (perspective, stream) batch — but each fire carries an
+  /// <c>EventCount</c> that reflects how many events were processed in that batch. This
+  /// implementation SUMS EventCount so callers can specify a precise event total instead
+  /// of guessing how the worker batched them.
+  /// </para>
+  /// <para>
+  /// Example: CreateProductCommand with InitialStock &gt; 0 produces 3 events on inventory
+  /// (ProductCreated x2 + InventoryRestocked x1). Whether the worker dispatches them in 2
+  /// or 3 batches (depending on drain timing) doesn't matter — <c>expectedCompletions: 3</c>
+  /// always waits until all 3 events have actually been applied.
+  /// </para>
+  /// </remarks>
   public async Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
       string? hostFilter = null) {
 
-    var completionCount = 0;
+    var eventCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     void WireWorker(PerspectiveWorker? worker) {
@@ -936,7 +922,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
       PerspectiveEventProcessedHandler? handler = null;
       handler = (e) => {
-        var current = Interlocked.Increment(ref completionCount);
+        var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }

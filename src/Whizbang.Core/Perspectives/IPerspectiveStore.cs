@@ -26,6 +26,23 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Get the metadata of the perspective row for a stream ID.
+  /// Returns null when the row does not exist.
+  /// </summary>
+  /// <remarks>
+  /// Used by generated runners to detect which events have already been applied
+  /// (via <see cref="PerspectiveMetadata.EventId"/>) so a re-run after a worker
+  /// crash between row upsert and cursor advance does not double-apply events.
+  /// Default implementation returns null so test fakes that bypass metadata
+  /// remain compatible — the runner falls back to "apply all events".
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The metadata of the existing row, or null if no row exists</returns>
+  Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default)
+    => Task.FromResult<PerspectiveMetadata?>(null);
+
+  /// <summary>
   /// Insert or update a read model.
   /// Creates new row if id doesn't exist, updates if it does.
   /// Automatically increments version for optimistic concurrency.
@@ -65,6 +82,32 @@ public interface IPerspectiveStore<TModel> where TModel : class {
     => UpsertAsync(streamId, model, scope, cancellationToken);
 
   /// <summary>
+  /// Upsert a read model, persisting <paramref name="metadata"/> alongside it.
+  /// </summary>
+  /// <remarks>
+  /// Generated perspective runners call this overload so the row's
+  /// <see cref="PerspectiveMetadata.EventId"/> records the last applied event.
+  /// On a re-run, the runner reads that id via <see cref="GetMetadataByStreamIdAsync"/>
+  /// and skips events with id ≤ the persisted value, making projection runs
+  /// idempotent across worker crashes between row upsert and cursor advance.
+  /// Default implementation drops <paramref name="metadata"/> so test fakes keep working.
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event (EventId, EventType, Timestamp, etc.)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  Task UpsertAsync(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      CancellationToken cancellationToken = default)
+    => UpsertAsync(streamId, model, scope, forceUpdateScope, cancellationToken);
+
+  /// <summary>
   /// Insert or update a read model with physical field values.
   /// Creates new row if id doesn't exist, updates if it does.
   /// Physical field values are applied to shadow properties or split columns.
@@ -100,6 +143,21 @@ public interface IPerspectiveStore<TModel> where TModel : class {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
     => UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, cancellationToken);
+
+  /// <summary>
+  /// Upsert a read model with physical field values, persisting <paramref name="metadata"/> alongside it.
+  /// Same idempotency contract as the non-physical overload.
+  /// Default implementation drops <paramref name="metadata"/> so test fakes keep working.
+  /// </summary>
+  Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      CancellationToken cancellationToken = default)
+    => UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, cancellationToken);
 
   /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).

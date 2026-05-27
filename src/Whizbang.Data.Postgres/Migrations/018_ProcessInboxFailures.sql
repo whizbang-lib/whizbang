@@ -24,13 +24,16 @@ BEGIN
     FROM jsonb_array_elements(p_failures) as elem
   LOOP
     -- Update message with failure information and exponential backoff
+    -- Phase H step 8 slice D: do NOT bump attempts here. claim_orphaned_inbox is the
+    -- SOLE source of attempt counting. Bumping in both places would double-count every
+    -- failed cycle (claim+1 then failure+1). Backoff formula uses i.attempts (the value
+    -- AFTER claim's bump = the attempt that just failed) instead of i.attempts + 1.
     UPDATE wh_inbox i
     SET status = i.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
         error = v_failure.error_message,
         failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
-        attempts = i.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
-        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(i.attempts + 1, 10)), 10)),
+        -- Exponential backoff: 30s * 2^attempts, capped at 5 minutes
+        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(i.attempts, 10)), 10)),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE i.message_id = v_failure.msg_id;

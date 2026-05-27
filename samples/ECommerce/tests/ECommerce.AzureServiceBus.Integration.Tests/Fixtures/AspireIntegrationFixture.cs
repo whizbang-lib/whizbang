@@ -404,15 +404,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -427,7 +418,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -523,15 +513,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -569,7 +550,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with actual topic names matching BFF.API

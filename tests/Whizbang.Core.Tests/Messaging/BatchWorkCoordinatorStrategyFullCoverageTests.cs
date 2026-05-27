@@ -95,38 +95,16 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     // Act
     await sut.DisposeAsync();
 
-    // Assert — all items still flushed
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    // Assert — outbox + inbox each invoke their own store call
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
   }
 
   // ============================================================
-  // DisposeAsync: unflushed completions/failures WITH logger
-  // (ensures all 6 count fields in unflushed warning are covered)
+  // Deleted: DisposeAsync_WithLogger_CompletionsAndFailuresOnly_LogsUnflushedAsync.
+  // Queued only completions/failures; asserted coordinator was called. Post-Phase-H,
+  // completion/failure routing is channel-based — direct-coordinator path drops them
+  // by design (covered in WorkCoordinatorFlushHelperTests).
   // ============================================================
-
-  [Test]
-  public async Task DisposeAsync_WithLogger_CompletionsAndFailuresOnly_LogsUnflushedAsync() {
-    // Arrange
-    var logger = new BatchFullCoverageLogger();
-    var coordinator = new BatchFullCoverageCoordinator();
-    var instanceProvider = new BatchFullCoverageInstanceProvider();
-    var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger: logger);
-
-    // Queue only completions and failures (no outbox/inbox messages)
-    sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
-    sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored);
-    sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err");
-    sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err");
-
-    // Act
-    await sut.DisposeAsync();
-
-    // Assert
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    await Assert.That(logger.LogCount).IsGreaterThan(0);
-  }
 
   // ============================================================
   // DisposeAsync: error during flush WITHOUT logger
@@ -201,56 +179,12 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   }
 
   // ============================================================
-  // Completions-only flush
+  // Deleted: FlushAsync_CompletionsOnly_FlushesAsync,
+  //          FlushAsync_FailuresOnly_FlushesAsync.
+  // Both queued only completions/failures and asserted coordinator was called.
+  // Post-Phase-H, direct-coordinator path drops completions/failures (channel
+  // routing requires scope). Helper-level coverage in WorkCoordinatorFlushHelperTests.
   // ============================================================
-
-  [Test]
-  public async Task FlushAsync_CompletionsOnly_FlushesAsync() {
-    // Arrange
-    var coordinator = new BatchFullCoverageCoordinator();
-    var instanceProvider = new BatchFullCoverageInstanceProvider();
-    var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
-
-    sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
-    sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored);
-
-    try {
-      // Act
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      // Assert
-      await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
-
-  // ============================================================
-  // Failures-only flush
-  // ============================================================
-
-  [Test]
-  public async Task FlushAsync_FailuresOnly_FlushesAsync() {
-    // Arrange
-    var coordinator = new BatchFullCoverageCoordinator();
-    var instanceProvider = new BatchFullCoverageInstanceProvider();
-    var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
-
-    sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err");
-    sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err");
-
-    try {
-      // Act
-      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-
-      // Assert
-      await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
-    } finally {
-      await sut.DisposeAsync();
-    }
-  }
 
   // ============================================================
   // Empty flush with metrics AND logger
@@ -337,8 +271,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       // Act
       _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
-      // Assert
-      await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+      // Assert — outbox + inbox each invoke their own store call
+      await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
       await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(5);
     } finally {
       await sut.DisposeAsync();
@@ -571,13 +505,21 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      ProcessWorkBatchCallCount++;
-      _flushSignal.Release();
+      // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
         PerspectiveWork = []
       });
+    }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      _flushSignal.Release();
+      return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveCompletionAsync(
@@ -588,7 +530,11 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      _flushSignal.Release();
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -605,8 +551,15 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
-      throw new InvalidOperationException("Simulated failure");
+      // Legacy fallback (not in live path).
+      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }
+
+    public Task StoreOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      int partitionCount = 2,
+      CancellationToken cancellationToken = default) =>
+      throw new InvalidOperationException("Simulated failure");
 
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
@@ -616,7 +569,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+      throw new InvalidOperationException("Simulated failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

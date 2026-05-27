@@ -275,9 +275,15 @@ public class InMemoryEventStore : IEventStore {
 
     public IEnumerable<IMessageEnvelope> Read(long fromSequence) {
       lock (_lock) {
+        // ORDER BY EventId (UUIDv7 = chronological) matches the SQL event store contract.
+        // Sorting by Version (insertion order) would diverge from real-Postgres reads when
+        // events are appended out of UUIDv7 order (e.g., concurrent producers, late-arrival
+        // events). Downstream cursor-comparison code in PerspectiveRunner relies on this
+        // event_id-sorted retrieval to keep idempotency + cursor-inversion logic consistent
+        // with production behavior.
         return [.. _events
           .Where(e => e.Version >= fromSequence)
-          .OrderBy(e => e.Version)
+          .OrderBy(e => e.EventId)
           .Select(e => e.Envelope)];
       }
     }

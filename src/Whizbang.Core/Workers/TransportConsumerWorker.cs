@@ -56,6 +56,8 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
+  private readonly IReceptorRegistryQuery? _receptorRegistry;
+  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
 
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
@@ -105,7 +107,9 @@ public partial class TransportConsumerWorker : BackgroundService {
     MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
     IWorkChannelWriter? workChannelWriter = null,
-    Microsoft.Extensions.Options.IOptions<WorkCoordinatorPublisherOptions>? publisherOptions = null
+    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
+    IReceptorRegistryQuery? receptorRegistry = null,
+    IReceptorRegistry? runtimeReceptorRegistry = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -127,9 +131,11 @@ public partial class TransportConsumerWorker : BackgroundService {
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     _serviceName = serviceInstanceProvider?.ServiceName;
+    _receptorRegistry = receptorRegistry;
+    _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
-    _partitionCount = publisherOptions?.Value?.PartitionCount ?? new WorkCoordinatorPublisherOptions().PartitionCount;
+    _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
@@ -369,6 +375,28 @@ public partial class TransportConsumerWorker : BackgroundService {
     // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
     var inboxMessages = new List<InboxMessage>(messages.Count);
     foreach (var msg in messages) {
+      // Slice 3 of pump-then-process.md (Half A): drop messages whose inner type has NO
+      // consumer on this service BEFORE serialization runs. Mirror of the gate added to
+      // ServiceBusConsumerWorker. The post-build _filterInboxMessagesByKnownEventTypes
+      // stays as defense-in-depth — broader registry coverage here catches lifecycle
+      // receptors and tag-attribute consumers the IEventTypeProvider list misses.
+      //
+      // Gate consults BOTH the compile-time IReceptorRegistryQuery AND the runtime
+      // IReceptorRegistry. Without the runtime branch, services whose source-generated
+      // contribution lists no compile-time consumer for a type would silently drop messages
+      // even when a runtime receptor is listening (integration-test wait helpers, dynamic
+      // registrations). Worse than the lifecycle-gate version of this bug because dropping
+      // here means no inbox row gets written at all — no downstream anything can recover.
+      if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)) {
+        var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
+        if (innerMessageType is not null
+            && !_receptorRegistry.HasAnyConsumer(innerMessageType)
+            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
+          _metrics?.InboxMessagesDeduplicated.Add(1);
+          continue;
+        }
+      }
+
       var inboxMessage = _tryBuildInboxMessageFromTransport(msg, scope.ServiceProvider);
       if (inboxMessage is not null) {
         inboxMessages.Add(inboxMessage);
@@ -801,7 +829,14 @@ public partial class TransportConsumerWorker : BackgroundService {
         Hops = envelope.Hops?.ToList() ?? [],
         DispatchContext = envelope.DispatchContext
       },
-      MessageType = messageTypeName
+      MessageType = messageTypeName,
+      // Slice 26.6: propagate source identity from envelope → wh_inbox columns.
+      // Producer side populates these on publish (slice 26.6b); receive-side records
+      // exactly what the source claimed. When envelope hasn't been populated (in-process
+      // dispatch, legacy envelope before slice 26.5), defaults to Guid.Empty + 0; the
+      // SQL trigger then COALESCEs to local wh_service_config.service_id.
+      SourceServiceId = envelope.SourceServiceId,
+      SourceCommitSequence = envelope.SourceCommitSequence,
     };
   }
 

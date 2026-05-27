@@ -19,17 +19,28 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
   private const string PARAM_STREAM_ID = "p_stream_id";
   private const string PARAM_PERSPECTIVE_NAME = "p_perspective_name";
 
-  public async Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default) {
+  public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default)
+    => CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence: null, snapshotData, ct);
+
+  public async Task CreateSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid snapshotEventId,
+      long? snapshotCommitSequence,
+      JsonDocument snapshotData,
+      CancellationToken ct = default) {
     await using var connection = await dataSource.OpenConnectionAsync(ct);
 
     const string sql = """
-      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number)
+      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence)
       VALUES (@p_stream_id, @p_perspective_name, @p_snapshot_event_id, @p_snapshot_data::jsonb,
         COALESCE(
           (SELECT MAX(sequence_number) + 1 FROM wh_perspective_snapshots
-           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1))
+           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1),
+        @p_snapshot_commit_sequence)
       ON CONFLICT (stream_id, perspective_name, snapshot_event_id) DO UPDATE
       SET snapshot_data = EXCLUDED.snapshot_data,
+          snapshot_commit_sequence = COALESCE(EXCLUDED.snapshot_commit_sequence, wh_perspective_snapshots.snapshot_commit_sequence),
           created_at = NOW()
       """;
 
@@ -38,12 +49,51 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
     cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
     cmd.Parameters.AddWithValue("p_snapshot_event_id", snapshotEventId);
     cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_data", NpgsqlDbType.Jsonb) { Value = snapshotData.RootElement.GetRawText() });
+    cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_commit_sequence", NpgsqlDbType.Bigint) {
+      Value = (object?)snapshotCommitSequence ?? DBNull.Value
+    });
 
     await cmd.ExecuteNonQueryAsync(ct);
 
     if (logger?.IsEnabled(LogLevel.Debug) == true) {
       LogSnapshotCreated(logger, perspectiveName, streamId, snapshotEventId);
     }
+  }
+
+  /// <summary>
+  /// Slice 26.11: commit-sequence-anchored snapshot lookup. Replay uses this when an
+  /// inversion's commit_sequence triggers rewind — returns the latest snapshot strictly
+  /// before that commit_sequence so replay is fully deterministic across live-apply and
+  /// rewind paths.
+  /// </summary>
+  public async Task<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeCommitSequenceAsync(
+      Guid streamId, string perspectiveName, long beforeCommitSequence, CancellationToken ct = default) {
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+
+    const string sql = """
+      SELECT snapshot_event_id, snapshot_commit_sequence, snapshot_data
+      FROM wh_perspective_snapshots
+      WHERE stream_id = @p_stream_id
+        AND perspective_name = @p_perspective_name
+        AND snapshot_commit_sequence IS NOT NULL
+        AND snapshot_commit_sequence < @p_before_commit_sequence
+      ORDER BY snapshot_commit_sequence DESC
+      LIMIT 1
+      """;
+
+    await using var cmd = new NpgsqlCommand(sql, connection);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
+    cmd.Parameters.AddWithValue("p_before_commit_sequence", beforeCommitSequence);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    if (!await reader.ReadAsync(ct)) {
+      return null;
+    }
+    var snapshotEventId = reader.GetGuid(0);
+    long? snapshotCommitSequence = await reader.IsDBNullAsync(1, ct) ? null : reader.GetInt64(1);
+    var snapshotJson = reader.GetString(2);
+    return (snapshotEventId, snapshotCommitSequence, JsonDocument.Parse(snapshotJson));
   }
 
   public async Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {

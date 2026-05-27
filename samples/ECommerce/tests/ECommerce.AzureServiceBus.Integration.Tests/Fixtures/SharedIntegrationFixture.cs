@@ -271,15 +271,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
@@ -330,7 +321,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -412,15 +402,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -458,7 +439,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Register Service Bus consumer to receive events
@@ -601,11 +581,11 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
   public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
     // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
     var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
+      .OfType<OutboxPublishWorker>()
       .FirstOrDefault();
 
     var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
+      .OfType<OutboxPublishWorker>()
       .FirstOrDefault();
 
     // Get PerspectiveWorker instances (perspective materialization)

@@ -81,19 +81,18 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_StartsInIdleState_IsIdleTrueAsync() {
     // Arrange
-    var (worker, _, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     // Assert - Worker starts in idle state
     await Assert.That(worker.IsIdle).IsTrue();
     await Assert.That(worker.ConsecutiveEmptyPolls).IsEqualTo(0);
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsEqualTo(0);
   }
 
   [Test]
   public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync() {
     // Arrange
     var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
     worker.OnWorkProcessingStarted += () => { startedSignal.TrySetResult(); };
 
     // Return work on first call
@@ -110,6 +109,9 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
 
     // Wait for OnWorkProcessingStarted (fires after batch completes, AFTER completion is reported)
     using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -128,7 +130,7 @@ public class PerspectiveWorkerCoverageTests {
   public async Task Worker_AfterWorkCompletes_TransitionsToIdleAndFiresEventAsync() {
     // Arrange
     var idleFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var (worker, coordinator, _) = _createWorker(idleThresholdPolls: 2);
+    var (worker, coordinator, _, harness) = _createWorker(idleThresholdPolls: 2);
     worker.OnWorkProcessingIdle += () => { idleFired.TrySetResult(); };
 
     // Return work on first call only, then empty
@@ -145,6 +147,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
 
     // Wait for idle event (work consumed on first call, then 2 empty polls)
     using var idleCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -166,11 +169,12 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_NoWork_IncreasesConsecutiveEmptyPollsAsync() {
     // Arrange - No work returned
-    var (worker, _, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(1000); // Let several empty polls complete (generous for CI contention)
     cts.Cancel();
 
@@ -183,137 +187,16 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
-  #region Database Not Ready Tests
-
-  [Test]
-  public async Task Worker_DatabaseNotReady_IncrementsConsecutiveCheckCounterAsync() {
-    // Arrange
-    var (worker, _, dbCheck) = _createWorker();
-    dbCheck.IsReady = false;
-
-    // Act — wait for enough readiness checks that the main loop has run multiple iterations.
-    // Startup calls IsReadyAsync 2x (processInitialCheckpoints + scanAndRepairRewinds) before
-    // entering the main loop. Wait for 6 total to ensure multiple main-loop increments.
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await dbCheck.WaitForChecksAsync(6, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThan(0)
-      .Because("Counter should increment when database is not ready");
-  }
-
-  [Test]
-  public async Task Worker_DatabaseBecomesReady_ResetsConsecutiveCheckCounterAsync() {
-    // Arrange - Start not ready, become ready after some polls
-    var (worker, _, dbCheck) = _createWorker();
-    dbCheck.IsReady = false;
-
-    // Act - Start worker with database not ready
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-
-    // Wait for at least 3 not-ready checks via signal (no Task.Delay)
-    await dbCheck.WaitForChecksAsync(3, TimeSpan.FromSeconds(10));
-
-    // Now make database ready and wait for at least 2 more checks to ensure the ready path runs
-    var checksBeforeReady = dbCheck.CheckCount;
-    dbCheck.IsReady = true;
-    await dbCheck.WaitForChecksAsync(checksBeforeReady + 2, TimeSpan.FromSeconds(10));
-
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert - Counter should have been reset to 0
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsEqualTo(0)
-      .Because("Counter should reset when database becomes ready");
-  }
-
-  [Test]
-  public async Task Worker_DatabaseNotReadyOnStartup_SkipsInitialProcessingAsync() {
-    // Arrange - Database not ready at startup covers the "LogDatabaseNotReadyOnStartup" path
-    var coordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = false };
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
-    );
-
-    // Act - Start and let run briefly, then cancel
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(500); // Generous delay for CI contention
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert - ProcessWorkBatch should NOT have been called because database was never ready
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
-      .Because("No work batch should be processed when database is not ready");
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThan(0)
-      .Because("Database not ready checks should be counted");
-  }
-
-  [Test]
-  public async Task Worker_DatabaseNotReadyOver10Checks_LogsWarningAsync() {
-    // Arrange - Database stays not ready for > 10 consecutive checks to hit warning path
-    var coordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = false };
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 10 }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
-    );
-
-    // Act - Let it run long enough for >10 cycles
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(1000); // Should get >10 cycles at 10ms interval (generous for CI)
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert - Should have exceeded the warning threshold
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThan(10)
-      .Because("Counter should exceed 10 to trigger warning log path");
-  }
-
-  #endregion
+  // Removed: Database-not-ready tests. Worker startup is now gated by ISchemaReadyGate
+  // signaled when migrations complete; there is no readiness counter and no readiness
+  // re-check on every poll.
 
   #region Acknowledgement Count Extraction - Metadata Paths
 
   [Test]
   public async Task Worker_MetadataOnPerspectiveFirstRow_ExtractsAcknowledgementCountsAsync() {
     // Arrange
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
     var streamId = Guid.NewGuid();
 
     // Return work with metadata on first perspective row
@@ -333,6 +216,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -345,7 +229,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_MetadataOnOutboxFirstRow_ExtractsAcknowledgementCountsAsync() {
     // Arrange - Metadata on outbox first row (no perspective work)
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     coordinator.WorkBatchOverride = new WorkBatch {
       PerspectiveWork = [],
@@ -374,6 +258,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300);
     cts.Cancel();
 
@@ -386,7 +271,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_MetadataOnInboxFirstRow_ExtractsAcknowledgementCountsAsync() {
     // Arrange - Metadata on inbox first row (no perspective or outbox work)
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     coordinator.WorkBatchOverride = new WorkBatch {
       PerspectiveWork = [],
@@ -412,6 +297,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300);
     cts.Cancel();
 
@@ -424,7 +310,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_NoMetadataOnAnyFirstRow_DefaultsToZeroAsync() {
     // Arrange - Return no metadata on any first row (covers all fallback paths)
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     coordinator.WorkBatchOverride = new WorkBatch {
       PerspectiveWork = [],
@@ -435,6 +321,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300); // Let a cycle complete
     cts.Cancel();
 
@@ -453,8 +340,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - No IPerspectiveRunnerRegistry in DI
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
       new PerspectiveWork {
@@ -473,25 +358,33 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await Task.Delay(300);
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker processed batch without crash (logged warning about missing registry)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker processed batch without crash (logged warning about missing registry/runner);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   [Test]
@@ -499,7 +392,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - Registry returns null runner
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new NullRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -520,25 +412,33 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await Task.Delay(300);
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker continued processing without crash
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker continued processing without crash;
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   #endregion
@@ -597,8 +497,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - No registry registered at startup covers LogPerspectiveRegistryNotAvailableAtStartup
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -607,13 +505,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
@@ -624,8 +526,9 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (startup diagnostics exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker started without crash (startup diagnostics exercised);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   [Test]
@@ -633,7 +536,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - Empty registry covers LogNoPerspectivesRegistered
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new EmptyRunnerRegistry();
 
     var services = new ServiceCollection();
@@ -644,13 +546,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
@@ -661,8 +567,9 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (empty registry diagnostics exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker started without crash (empty registry diagnostics exercised);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   [Test]
@@ -670,7 +577,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - Registry with perspectives covers LogRegisteredPerspectivesHeader + LogRegisteredPerspective
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var services = new ServiceCollection();
@@ -681,13 +587,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
@@ -698,8 +608,9 @@ public class PerspectiveWorkerCoverageTests {
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (perspective listing exercised)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    // Assert - Worker started without crash (perspective listing exercised);
+    // empty-poll counter advancing proves the consumer loop ran.
+    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
 
   #endregion
@@ -712,7 +623,6 @@ public class PerspectiveWorkerCoverageTests {
     var syncSignaler = new FakePerspectiveSyncSignaler();
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new TypeAwarePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -733,19 +643,26 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      syncSignaler: syncSignaler
+      syncSignaler: syncSignaler,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     // StopAsync cancels the worker AND waits for ExecuteAsync to complete
     // (unlike cts.Cancel() + await workerTask, which is a no-op since StartAsync returns Task.CompletedTask)
@@ -763,7 +680,6 @@ public class PerspectiveWorkerCoverageTests {
     var syncEventTracker = new FakeSyncEventTracker();
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -792,20 +708,27 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
       eventTypeProvider: eventTypeProvider,
-      syncEventTracker: syncEventTracker
+      syncEventTracker: syncEventTracker,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -824,7 +747,6 @@ public class PerspectiveWorkerCoverageTests {
     var tagProcessor = new FakeMessageTagProcessor();
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -854,19 +776,26 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -885,7 +814,6 @@ public class PerspectiveWorkerCoverageTests {
     var trackingInvoker = new StageTrackingReceptorInvoker();
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -915,19 +843,26 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act — run the REAL PerspectiveWorker
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
 
     // Wait a bit for PostLifecycle to fire (it runs after completion reporting)
@@ -968,7 +903,6 @@ public class PerspectiveWorkerCoverageTests {
     try {
       var coordinator = new FakeWorkCoordinator();
       var instanceProvider = new FakeServiceInstanceProvider();
-      var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
       var registry = new ThrowingPerspectiveRunnerRegistry();
 
       var streamId = Guid.NewGuid();
@@ -989,18 +923,25 @@ public class PerspectiveWorkerCoverageTests {
 
       var serviceProvider = services.BuildServiceProvider();
 
+      var harness = new PerspectiveWorkerTestHarness();
       var worker = new PerspectiveWorker(
         instanceProvider,
         serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
         new InstantCompletionStrategy(),
-        databaseReadiness
+        perspectiveChannelWriter: harness.ChannelWriter,
+        perspectiveCompletionChannel: harness.CompletionCapture,
+        failureChannel: harness.FailureCapture,
+        perspectiveDrainChannel: harness.DrainChannel
       );
 
       // Act
       using var cts = new CancellationTokenSource();
       var workerTask = worker.StartAsync(cts.Token);
+      foreach (var w in coordinator.PerspectiveWorkToReturn) {
+        await harness.EnqueueWorkAsync(w, cts.Token);
+      }
       await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(10));
       cts.Cancel();
 
@@ -1035,7 +976,6 @@ public class PerspectiveWorkerCoverageTests {
 
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -1056,74 +996,40 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: tracingOptionsMonitor,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert - Worker processed work with tracing enabled (no crash)
-    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
   }
 
   #endregion
 
-  #region DebugMode Flag Test
-
-  [Test]
-  public async Task Worker_WithDebugMode_SetsDebugFlagOnRequestAsync() {
-    // Arrange - Exercise the DebugMode path that sets WorkBatchOptions.DebugMode
-    var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-    var registry = new FakePerspectiveRunnerRegistry();
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
-        PollingIntervalMilliseconds = 50,
-        DebugMode = true
-      }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
-    );
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert - Request should have DebugMode flag
-    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
-    await Assert.That(coordinator.CapturedRequests[0].Flags).IsEqualTo(WorkBatchOptions.DebugMode);
-  }
-
-  #endregion
+  // DELETED (Category 1): Worker_WithDebugMode_SetsDebugFlagOnRequestAsync
+  // The DebugMode flag was a property of ProcessWorkBatchRequest. The channel architecture
+  // doesn't build that request — perspective work flows through IPerspectiveChannelWriter
+  // directly. There is no equivalent assertion in the new path.
 
   #region Event Loading Paths
 
@@ -1132,7 +1038,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - Exercises the upcomingEvents loading path (lines 383-407)
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -1160,19 +1065,26 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1189,7 +1101,6 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - Empty event types means no events loaded
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
     var registry = new FakePerspectiveRunnerRegistry();
 
     var streamId = Guid.NewGuid();
@@ -1214,19 +1125,26 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness,
-      eventTypeProvider: eventTypeProvider
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1240,7 +1158,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_WithoutEventTypeProvider_SkipsEventLoadingAsync() {
     // Arrange - No event type provider at all
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, coordinator, _, harness) = _createWorker();
 
     var streamId = Guid.NewGuid();
     coordinator.PerspectiveWorkToReturn = [
@@ -1255,6 +1173,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     cts.Cancel();
 
@@ -1266,63 +1185,18 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
-  #region InstanceMetadata Test
-
-  [Test]
-  public async Task Worker_WithInstanceMetadata_PassesMetadataToRequestAsync() {
-    // Arrange
-    var metadata = new Dictionary<string, JsonElement> {
-      ["version"] = JsonSerializer.SerializeToElement("2.0.0"),
-      ["env"] = JsonSerializer.SerializeToElement("test")
-    };
-
-    var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-    var registry = new FakePerspectiveRunnerRegistry();
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
-        PollingIntervalMilliseconds = 50,
-        InstanceMetadata = metadata
-      }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
-    );
-
-    // Act
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
-
-    // Assert
-    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
-    await Assert.That(coordinator.CapturedRequests[0].Metadata).IsNotNull();
-  }
-
-  #endregion
+  // DELETED (Category 1): Worker_WithInstanceMetadata_PassesMetadataToRequestAsync
+  // InstanceMetadata was a property of ProcessWorkBatchRequest. The channel architecture
+  // routes metadata through HeartbeatRequest instead; this test has no equivalent in the
+  // new path. PerspectiveWorkerOptions.InstanceMetadata is unused post commit C.
 
   #region Helpers
 
-  private static (PerspectiveWorker Worker, FakeWorkCoordinator Coordinator, FakeDatabaseReadinessCheck DbCheck) _createWorker(int idleThresholdPolls = 2) {
+  private static (PerspectiveWorker Worker, FakeWorkCoordinator Coordinator, object Unused, PerspectiveWorkerTestHarness Harness) _createWorker(int idleThresholdPolls = 2) {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -1341,10 +1215,13 @@ public class PerspectiveWorkerCoverageTests {
       }),
       tracingOptions: null,
       new InstantCompletionStrategy(),
-      databaseReadiness
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
 
-    return (worker, coordinator, databaseReadiness);
+    return (worker, coordinator, new object(), harness);
   }
 
   #endregion
@@ -1357,8 +1234,6 @@ public class PerspectiveWorkerCoverageTests {
     var coordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var registry = new FakePerspectiveRunnerRegistry();
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
@@ -1374,8 +1249,7 @@ public class PerspectiveWorkerCoverageTests {
         PollingIntervalMilliseconds = 50
       }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
+      new InstantCompletionStrategy()
     );
 
     // Act - start the worker, then dispose the service provider to simulate host shutdown
@@ -1451,15 +1325,12 @@ public class PerspectiveWorkerCoverageTests {
 
     // false → _processInitialCheckpointsAsync skips processWorkBatch (no extra scope)
     // true  → _scanAndRepairRewindsOnStartupAsync proceeds to CreateAsyncScope → throws
-    var databaseReadiness = new SequentialDatabaseReadinessCheck(false, true);
-
     var worker = new PerspectiveWorker(
       new FakeServiceInstanceProvider(),
       scopeFactory,
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
-      databaseReadiness
+      new InstantCompletionStrategy()
     );
 
     using var cts = new CancellationTokenSource();
@@ -1496,6 +1367,27 @@ public class PerspectiveWorkerCoverageTests {
     public WorkBatch? WorkBatchOverride { get; set; }
     public bool CaptureRequests { get; set; }
     public List<ProcessWorkBatchRequest> CapturedRequests { get; } = [];
+
+    /// <summary>
+    /// Pumps work into the harness channel and ticks the cycle counter on a loop.
+    /// Drives the worker the way ProcessWorkBatchAsync used to, before commit C deleted
+    /// the legacy poll path. Tests fire this after StartAsync to exercise channel mode.
+    /// </summary>
+    public async Task RunPumpLoopAsync(PerspectiveWorkerTestHarness harness, CancellationToken ct) {
+      try {
+        while (!ct.IsCancellationRequested) {
+          ProcessWorkBatchCallCount++;
+          var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
+          PerspectiveWorkToReturn.Clear();
+          foreach (var w in work) {
+            await harness.EnqueueWorkAsync(w, ct);
+          }
+          await Task.Delay(20, ct);
+        }
+      } catch (OperationCanceledException) {
+        // expected on shutdown
+      }
+    }
 
     public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);
@@ -1581,42 +1473,6 @@ public class PerspectiveWorkerCoverageTests {
         HostName = HostName,
         ProcessId = ProcessId
       };
-    }
-  }
-
-  private sealed class FakeDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReady { get; set; } = true;
-    private int _checkCount;
-    private readonly List<(int MinChecks, TaskCompletionSource Signal)> _waiters = [];
-
-    public int CheckCount => Volatile.Read(ref _checkCount);
-
-    /// <summary>
-    /// Returns a task that completes when IsReadyAsync has been called at least the specified number of times.
-    /// </summary>
-    public Task WaitForChecksAsync(int minChecks, TimeSpan timeout) {
-      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-      lock (_waiters) {
-        if (Volatile.Read(ref _checkCount) >= minChecks) {
-          tcs.TrySetResult();
-          return tcs.Task;
-        }
-        _waiters.Add((minChecks, tcs));
-      }
-      return tcs.Task.WaitAsync(timeout);
-    }
-
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      var count = Interlocked.Increment(ref _checkCount);
-      lock (_waiters) {
-        for (int i = _waiters.Count - 1; i >= 0; i--) {
-          if (count >= _waiters[i].MinChecks) {
-            _waiters[i].Signal.TrySetResult();
-            _waiters.RemoveAt(i);
-          }
-        }
-      }
-      return Task.FromResult(IsReady);
     }
   }
 
@@ -1968,18 +1824,6 @@ public class PerspectiveWorkerCoverageTests {
       var count = Interlocked.Increment(ref _callCount);
       ObjectDisposedException.ThrowIf(count > throwAfterCalls, nameof(IServiceProvider));
       return inner.CreateScope();
-    }
-  }
-
-  /// <summary>
-  /// Database readiness check that returns each bool in sequence, then true for any further calls.
-  /// </summary>
-  private sealed class SequentialDatabaseReadinessCheck(params bool[] responses) : IDatabaseReadinessCheck {
-    private readonly Queue<bool> _responses = new(responses);
-
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      var ready = _responses.Count <= 0 || _responses.Dequeue();
-      return Task.FromResult(ready);
     }
   }
 

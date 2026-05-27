@@ -92,4 +92,28 @@ public sealed class EventStoreRecord {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
   public DateTime CreatedAt { get; set; }
+
+  /// <summary>
+  /// Slice 26 — post-commit stamp by the commit-order stamper worker. NULL until stamped.
+  /// Read order primitive for deterministic replay: events are applied in commit_sequence
+  /// order in both live and replay paths, so replaying after a snapshot reproduces the same
+  /// model state regardless of when concurrent saga writers committed.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? CommitSequence { get; set; }
+
+  /// <summary>
+  /// Slice 26 — originating service when this event was forwarded 1:1 from another service.
+  /// NULL for locally-originated events; outbox publish then COALESCEs to local
+  /// wh_service_config.service_id for the envelope's SourceServiceId.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public Guid? OriginServiceId { get; set; }
+
+  /// <summary>
+  /// Slice 26 — companion to OriginServiceId. The upstream commit_sequence preserved for
+  /// 1:1 forwarded events.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? OriginCommitSequence { get; set; }
 }

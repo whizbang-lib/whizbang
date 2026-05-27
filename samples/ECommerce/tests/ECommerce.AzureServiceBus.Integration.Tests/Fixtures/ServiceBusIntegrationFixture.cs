@@ -406,13 +406,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<InventoryDbContext> with UseNpgsql
     // - IDbContextFactory<InventoryDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture ensures the database schema is created before starting hosts,
-    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
@@ -487,15 +480,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -507,7 +491,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer for InventoryWorker
@@ -611,13 +594,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:bff-db" above)
-
-    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
-    // The fixture ensures the database schema is created before starting hosts,
-    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
-    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
-
-    // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
@@ -655,15 +631,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
-    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.AbandonStaleInstanceThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // NOTE: BFF.API has no command receptors, but AddWhizbangDispatcher is still required
     // for IReceptorInvoker registration (needed by PostPerspectiveInline lifecycle callbacks)
 
@@ -705,7 +672,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
@@ -911,6 +877,18 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       return;
     }
 
+    // Wait for prior test's workers to drain in-flight work BEFORE truncate. Otherwise
+    // a perspective worker mid-Apply against a row that gets truncated can still commit
+    // a stray UPSERT into wh_per_*, then fire OnPerspectiveEventProcessed — the next
+    // test's WaitForPerspectiveProcessingAsync handler sees those stale fires and
+    // satisfies its count without the new command's events actually applying. Mirror
+    // of RabbitMqIntegrationFixture.CleanupDatabaseAsync step 1.
+    try {
+      await WaitForWorkersIdleAsync(timeoutMilliseconds: 15000);
+    } catch (TimeoutException) {
+      Console.WriteLine("[ServiceBusFixture] Workers not idle before cleanup — proceeding with truncation");
+    }
+
     // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
     // This ensures the transport receivers are inactive while we drain stale messages
     Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");
@@ -987,14 +965,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           ", cancellationToken);
           Console.WriteLine("[ServiceBusFixture] All tables truncated.");
 
-          // Clear publisher in-flight state (prevents stale entries from blocking new messages)
-          var inventoryPublisher = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-          inventoryPublisher?.ClearPublishInFlightState();
-
-          var bffPublisher = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-              .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-          bffPublisher?.ClearPublishInFlightState();
+          // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
+          // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
+          _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+          _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
         }
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
@@ -1459,22 +1433,35 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// </summary>
   public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var worker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
-    if (worker is null) {
-      throw new InvalidOperationException("WorkCoordinatorPublisherWorker not registered on InventoryHost");
+    // Post-Phase-H: OutboxDrainWorker is the active publish path (OutboxPublishWorker
+    // defaults disabled). Both expose OnOutboxMessagePublished; subscribe to whichever
+    // is registered as IHostedService so the fixture works on either configuration.
+    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
+    var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
+    if (drainWorker is null && publishWorker is null) {
+      throw new InvalidOperationException("Neither OutboxDrainWorker nor OutboxPublishWorker registered on InventoryHost");
     }
     OutboxMessagePublishedHandler? handler = null;
     handler = (e) => {
       tcs.TrySetResult(e.MessageId);
-      worker.OnOutboxMessagePublished -= handler;
     };
-    worker.OnOutboxMessagePublished += handler;
+    if (drainWorker is not null) {
+      drainWorker.OnOutboxMessagePublished += handler;
+    }
+    if (publishWorker is not null) {
+      publishWorker.OnOutboxMessagePublished += handler;
+    }
     try {
       var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
       return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
     } finally {
-      worker.OnOutboxMessagePublished -= handler;
+      if (drainWorker is not null) {
+        drainWorker.OnOutboxMessagePublished -= handler;
+      }
+      if (publishWorker is not null) {
+        publishWorker.OnOutboxMessagePublished -= handler;
+      }
     }
   }
 
@@ -1486,7 +1473,13 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
       string? hostFilter = null) {
-    var completionCount = 0;
+    // Sum EventCount (not fire count): the handler fires ONCE per (perspective, stream)
+    // batch with EventCount = number of events processed in that batch. The caller's intent
+    // is "wait until N event-applications complete," and per-batch fires can represent 1 or
+    // many events depending on drain timing. Mirror of the fix in
+    // RabbitMqIntegrationFixture.WaitForPerspectiveProcessingAsync — see commit 4d8a28d5
+    // for the rationale and regression history.
+    var eventCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     void WireWorker(PerspectiveWorker? worker) {
       if (worker is null) {
@@ -1495,7 +1488,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
       PerspectiveEventProcessedHandler? handler = null;
       handler = (e) => {
-        var current = Interlocked.Increment(ref completionCount);
+        var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }
@@ -1526,15 +1519,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var inventoryPub = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+      .OfType<OutboxPublishWorker>().FirstOrDefault();
     var bffPub = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>().FirstOrDefault();
+      .OfType<OutboxPublishWorker>().FirstOrDefault();
     var inventoryPersp = _inventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
       .OfType<PerspectiveWorker>().FirstOrDefault();
     var bffPersp = _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
       .OfType<PerspectiveWorker>().FirstOrDefault();
 
-    void WireOnce(WorkCoordinatorPublisherWorker? w, TaskCompletionSource<bool> tcs) {
+    void WireOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
       WorkProcessingIdleHandler? h = null;

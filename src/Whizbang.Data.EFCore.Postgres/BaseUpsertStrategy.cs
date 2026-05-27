@@ -1,4 +1,9 @@
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -16,9 +21,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
   /// <summary>
   /// Groups the row identity and payload data that flow through every upsert overload
-  /// into the shared core implementation.
+  /// into the shared core implementation. <see cref="TableName"/> is forwarded so the
+  /// atomic-UPSERT path (Path 1) can issue a raw <c>INSERT … ON CONFLICT DO UPDATE</c>
+  /// against the right table without re-querying EF's model metadata.
   /// </summary>
   private readonly record struct UpsertRowArgs<TModel>(
+    string TableName,
     Guid Id,
     TModel Model,
     PerspectiveMetadata Metadata,
@@ -26,6 +34,32 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     IDictionary<string, object?>? PhysicalFieldValues,
     bool ForceUpdateScope) where TModel : class;
 
+  /// <summary>
+  /// Optional Path 1 atomic-upsert hook. When set, <see cref="_upsertCoreAsync"/> attempts
+  /// an atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> using the provided
+  /// <see cref="JsonSerializerOptions"/> to serialize <c>Data</c>, <c>Metadata</c>, and
+  /// <c>Scope</c> as JSONB. When null (or when a row carries physical-field values), the
+  /// strategy falls back to the legacy SELECT-then-INSERT/UPDATE retry path.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Consumers register a provider via their DI module — typically pointing to a
+  /// generated <c>PerspectivePersistenceJsonContext.CreateOptions(...)</c> call that
+  /// chains the consumer's <c>MessageJsonContext.Default</c> and
+  /// <c>InfrastructureJsonContext.Default</c>. The chain MUST place a context that
+  /// returns object-mode <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/>
+  /// for <c>[WhizbangId]</c> structs first, so EF Core 10's nested-object byte format
+  /// is matched (otherwise reads through EF will throw <c>InvalidOperationException:
+  /// Invalid token type</c>).
+  /// </para>
+  /// <para>
+  /// Setting this hook is process-wide and shared by every <see cref="BaseUpsertStrategy"/>
+  /// instance. The atomic path eliminates the 23505 dup-key storm slice 19's retry loop
+  /// currently catches at <c>[ERR]</c> log severity.
+  /// </para>
+  /// </remarks>
+  public static Func<JsonSerializerOptions>? PathOnePersistenceOptionsProvider { get; set; }
+
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
@@ -36,7 +70,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, null, false), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, false), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -49,7 +83,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, null, forceUpdateScope), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, forceUpdateScope), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -62,7 +96,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, false), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, false), cancellationToken);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
@@ -76,9 +110,244 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       bool forceUpdateScope,
       CancellationToken cancellationToken = default)
       where TModel : class =>
-    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope), cancellationToken);
+
+  /// <summary>
+  /// Maximum number of retries for TOCTOU duplicate-key races.
+  /// With drain-mode concurrent perspective processing, 3+ threads can race on the same row.
+  /// A single retry is insufficient — the retry itself can hit 23505 if yet another thread
+  /// inserts between the retry's SELECT and INSERT.
+  /// </summary>
+  private const int MAX_DUPLICATE_KEY_RETRIES = 3;
+
+  private static long _duplicateKeyRetriesRecovered;
+
+  /// <summary>
+  /// Process-wide counter for TOCTOU dup-key recoveries — incremented each time the retry
+  /// loop catches a 23505 and successfully recovers via UPDATE on the next pass. Exposed
+  /// for diagnostics + the concurrent-upsert regression test.
+  /// </summary>
+  /// <docs>extending/internals/event-ordering-invariant</docs>
+  public static long DuplicateKeyRetriesRecovered => Interlocked.Read(ref _duplicateKeyRetriesRecovered);
 
   private async Task _upsertCoreAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    // Path 1 atomic upsert. When configured (see PathOnePersistenceOptionsProvider) and
+    // applicable (no physical fields, table name supplied), this single round-trip replaces
+    // the SELECT-then-INSERT/UPDATE pattern and structurally eliminates the 23505 dup-key
+    // race that slice 19's retry loop was built to recover from. Returns false to signal
+    // the caller should fall back to the retry loop (config off, physical fields present,
+    // or any other unsupported case).
+    if (await _tryAtomicUpsertAsync(context, args, cancellationToken)) {
+      return;
+    }
+
+    // Slice 19: retry loop for TOCTOU dup-key races. The SELECT-then-INSERT pattern in
+    // _upsertCoreInnerAsync is not atomic; under concurrent perspective apply (slice 17
+    // parallel consumers, rewind path re-firing post-snapshot replay) two threads can both
+    // see "row absent" and both attempt INSERT. The second one hits 23505. The retry catches,
+    // clears change-tracker state, and re-enters — the second-pass SELECT now sees the
+    // first thread's committed row and the path goes UPDATE. After MAX retries the exception
+    // propagates and the caller routes the work through the failure channel.
+    for (var attempt = 0; attempt <= MAX_DUPLICATE_KEY_RETRIES; attempt++) {
+      try {
+        await _upsertCoreInnerAsync(context, args, cancellationToken);
+        if (attempt > 0) {
+          Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
+        }
+        return;
+      } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && _isDuplicateKeyException(ex)) {
+        // TOCTOU race: another thread inserted the row between our SELECT and INSERT.
+        // Clear the failed change tracker state and retry as an UPDATE.
+        context.ChangeTracker.Clear();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Attempts the Path 1 atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> against the
+  /// underlying Npgsql connection. Returns false (no-op, no SQL issued) when the path is
+  /// not applicable so the caller can fall back to the legacy retry loop.
+  /// </summary>
+  /// <remarks>
+  /// Fall-back conditions: <see cref="PathOnePersistenceOptionsProvider"/> is null,
+  /// physical-field values are present (those require shadow-property hydration through
+  /// EF's interceptor pipeline), or the caller didn't supply a non-empty table name.
+  /// </remarks>
+  private static async Task<bool> _tryAtomicUpsertAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    var optionsProvider = PathOnePersistenceOptionsProvider;
+    if (optionsProvider is null) {
+      return false;
+    }
+    if (string.IsNullOrEmpty(args.TableName)) {
+      return false;
+    }
+
+    // Defense-in-depth identifier validation. args.TableName and the keys of
+    // args.PhysicalFieldValues are NOT user input — they come from source-generated
+    // perspective infrastructure and reflect compile-time table / column definitions.
+    // But the atomic UPSERT path interpolates them into raw SQL, which Sonar S2077
+    // flags as security-sensitive and could become a real exposure if the caller is
+    // ever refactored. The regex matches the unquoted-identifier rule for PostgreSQL
+    // (letter or underscore followed by letters, digits, or underscores). Reject
+    // anything that doesn't pass — falls back to the SELECT-then-UPDATE retry path.
+    if (!_isValidSqlIdentifier(args.TableName)) {
+      return false;
+    }
+    if (args.PhysicalFieldValues is not null) {
+      foreach (var columnName in args.PhysicalFieldValues.Keys) {
+        if (!_isValidSqlIdentifier(columnName)) {
+          return false;
+        }
+      }
+    }
+
+    var options = optionsProvider();
+    var dataJson = JsonSerializer.Serialize(args.Model, options.GetTypeInfo(typeof(TModel)));
+    var metadataJson = JsonSerializer.Serialize(args.Metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
+    var scopeJson = JsonSerializer.Serialize(args.Scope, options.GetTypeInfo(typeof(PerspectiveScope)));
+
+    // forceUpdateScope toggles whether scope participates in the DO UPDATE SET clause.
+    // INSERT path always sets scope (a new row carries the caller's scope verbatim);
+    // UPDATE path preserves the existing row's scope unless the event is an IScopeEvent.
+    var scopeUpdateClause = args.ForceUpdateScope ? ", scope = EXCLUDED.scope" : string.Empty;
+
+    // Physical-field columns (vector embeddings, denormalized scalars, etc.) ride
+    // alongside the JSONB columns in the same atomic statement. Column names come from
+    // EF model metadata via the caller's dictionary; we double-quote them to handle
+    // mixed case + reserved-word collisions and bind values as ordinary parameters
+    // (Vector + scalar types are handled natively by Npgsql once UseVector is on).
+    var pfColumnsClause = string.Empty;
+    var pfValuesClause = string.Empty;
+    var pfUpdateClause = string.Empty;
+    var pfCount = args.PhysicalFieldValues?.Count ?? 0;
+    if (pfCount > 0) {
+      var pfColumns = new StringBuilder();
+      var pfValues = new StringBuilder();
+      var pfUpdates = new StringBuilder();
+      var i = 0;
+      foreach (var columnName in args.PhysicalFieldValues!.Keys) {
+        if (i > 0) {
+          pfColumns.Append(", ");
+          pfValues.Append(", ");
+          pfUpdates.Append(", ");
+        }
+        // Double-quote the column to preserve case and dodge keyword collisions.
+        var quoted = "\"" + columnName.Replace("\"", "\"\"") + "\"";
+        pfColumns.Append(quoted);
+        pfValues.Append("@pf_").Append(i);
+        pfUpdates.Append(quoted).Append(" = EXCLUDED.").Append(quoted);
+        i++;
+      }
+      pfColumnsClause = ", " + pfColumns;
+      pfValuesClause = ", " + pfValues;
+      pfUpdateClause = ", " + pfUpdates;
+    }
+
+    // Resolve schema from the EF Core model (set via HasDefaultSchema on the DbContext) and
+    // schema-qualify the raw-SQL target. Without this, multi-tenant deployments that put
+    // perspective tables in a service-specific schema ("bff", "inventory", ...) get
+    // 42P01 "relation does not exist" because raw SQL doesn't honor EF's default schema —
+    // the connection's search_path determines what unqualified names resolve to, and that
+    // isn't set per-service in all deployments. PerspectiveRow<TModel> is the EF entity
+    // registered for the perspective table; its schema comes from HasDefaultSchema().
+    var entityType = context.Model.FindEntityType(typeof(PerspectiveRow<TModel>));
+    var schema = entityType?.GetSchema();
+    var qualifiedTable = string.IsNullOrEmpty(schema)
+      ? args.TableName
+      : $"\"{schema}\".{args.TableName}";
+
+    var sql = $@"
+        INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, version{pfColumnsClause})
+        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @now, @now, 1{pfValuesClause})
+        ON CONFLICT (id) DO UPDATE SET
+          data = EXCLUDED.data,
+          metadata = EXCLUDED.metadata,
+          updated_at = EXCLUDED.updated_at,
+          version = {qualifiedTable}.version + 1{scopeUpdateClause}{pfUpdateClause}";
+
+    var connection = context.Database.GetDbConnection();
+    var openedHere = false;
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync(cancellationToken);
+      openedHere = true;
+    }
+    try {
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = sql;
+      // Honor an ambient EF transaction so the atomic upsert participates in it.
+      var currentTx = context.Database.CurrentTransaction;
+      if (currentTx is not null) {
+        cmd.Transaction = currentTx.GetDbTransaction();
+      }
+      cmd.Parameters.Add(new NpgsqlParameter("id", args.Id));
+      cmd.Parameters.Add(new NpgsqlParameter("data", dataJson));
+      cmd.Parameters.Add(new NpgsqlParameter("metadata", metadataJson));
+      cmd.Parameters.Add(new NpgsqlParameter("scope", scopeJson));
+      cmd.Parameters.Add(new NpgsqlParameter("now", DateTime.UtcNow));
+      if (pfCount > 0) {
+        var i = 0;
+        foreach (var value in args.PhysicalFieldValues!.Values) {
+          // value is what the consumer's source generator already coerced to the
+          // EF-mapped CLR type (Vector for embedding columns, string/decimal/etc.
+          // for scalars). Null values bind as DBNull so nullable columns work.
+          cmd.Parameters.Add(new NpgsqlParameter("pf_" + i, value ?? (object)DBNull.Value));
+          i++;
+        }
+      }
+      await cmd.ExecuteNonQueryAsync(cancellationToken);
+      return true;
+    } finally {
+      if (openedHere && connection.State == System.Data.ConnectionState.Open) {
+        await connection.CloseAsync();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Detects PostgreSQL unique-constraint violation (23505) inside a DbUpdateException.
+  /// </summary>
+  private static bool _isDuplicateKeyException(DbUpdateException ex) {
+    for (var inner = ex.InnerException; inner != null; inner = inner.InnerException) {
+      // Npgsql.PostgresException exposes SqlState; check via reflection-free duck typing
+      if (inner is Npgsql.PostgresException pg && pg.SqlState == "23505") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Defense-in-depth check for SQL identifiers (table + column names) interpolated into
+  /// the atomic UPSERT raw SQL. PostgreSQL unquoted identifier rule: letter or underscore
+  /// followed by letters, digits, or underscores. Hand-rolled (no regex) to avoid any
+  /// regex-timeout concern and to keep the check zero-allocation on the hot path.
+  /// </summary>
+  private static bool _isValidSqlIdentifier(string s) {
+    if (string.IsNullOrEmpty(s) || s.Length > 63) {
+      return false; // PG identifier max is 63 bytes
+    }
+    var first = s[0];
+    if (!((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_')) {
+      return false;
+    }
+    for (var i = 1; i < s.Length; i++) {
+      var c = s[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async Task _upsertCoreInnerAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)

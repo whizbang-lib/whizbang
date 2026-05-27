@@ -107,8 +107,9 @@ public class PerspectiveApplyExactlyOnceTests {
     // Act — drive the worker. Wait for TWO cycles: cycle 2 starting means cycle 1 finished
     // (drain branch + standard branch + completion reporting all drained). No timing-based waits.
     using var cts = new CancellationTokenSource();
-    var worker = _createWorker(coordinator, registry, eventStore);
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
@@ -196,8 +197,9 @@ public class PerspectiveApplyExactlyOnceTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var worker = _createWorker(coordinator, registry, eventStore);
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
@@ -276,8 +278,9 @@ public class PerspectiveApplyExactlyOnceTests {
     var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
 
     using var cts = new CancellationTokenSource();
-    var worker = _createWorker(coordinator, registry, eventStore);
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore);
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
@@ -528,18 +531,13 @@ public class PerspectiveApplyExactlyOnceTests {
     ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-  }
-
-  private static PerspectiveWorker _createWorker(
+  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
       IWorkCoordinator coordinator,
       IPerspectiveRunnerRegistry registry,
       IEventStore eventStore) {
     var instanceProvider = new _fakeInstanceProvider();
-    var databaseReadiness = new _fakeDatabaseReadiness();
     var strategy = new InstantCompletionStrategy();
+    var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
@@ -551,13 +549,17 @@ public class PerspectiveApplyExactlyOnceTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    return new PerspectiveWorker(
+    var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
-      eventTypeProvider: registry);
+      eventTypeProvider: registry,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel);
+    return (worker, harness);
   }
 }

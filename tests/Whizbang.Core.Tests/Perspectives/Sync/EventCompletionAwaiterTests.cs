@@ -292,4 +292,97 @@ public class EventCompletionAwaiterTests {
     await Assert.That(result).IsTrue()
       .Because("Events that were never tracked are considered completed");
   }
+
+  // ==========================================================================
+  // "Fully applied" invariant — locks the contract that distinguishes
+  // IEventCompletionAwaiter from IPerspectiveSyncAwaiter.
+  // ==========================================================================
+
+  /// <summary>
+  /// Sanity-check: the awaiter MUST NOT return after a single subscribing perspective
+  /// processes the event. If one event has N subscribing perspectives, the wait stays
+  /// blocked until ALL N have called MarkProcessedByPerspective. This is the contract
+  /// that callers rely on when they want "event fully applied" semantics — and it's
+  /// what distinguishes <see cref="IEventCompletionAwaiter"/> from
+  /// <see cref="IPerspectiveSyncAwaiter"/> (which waits for ONE perspective only).
+  /// </summary>
+  /// <remarks>
+  /// Regression-locks the failure mode that surfaced as flaky tests on PR #204
+  /// (work-pump-decomposition): a test relying on a counter of perspective "fires"
+  /// can be satisfied early if one event-application increments the counter past the
+  /// threshold while another subscriber is still processing. The right primitive is
+  /// "wait until no perspective is still tracking the event", which this test pins.
+  /// </remarks>
+  [Test]
+  public async Task WaitForEventsAsync_OneEventThreeSubscribers_OnlyReturnsAfterAllThreeApplyAsync() {
+    // Arrange — one event with three subscribing perspectives (e.g., ProductCreatedEvent
+    // subscribed to by ProductCatalog + InventoryLevels + AnalyticsView).
+    var tracker = new SyncEventTracker();
+    var awaiter = new EventCompletionAwaiter(tracker);
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(string), eventId, streamId, "ProductCatalog");
+    tracker.TrackEvent(typeof(string), eventId, streamId, "InventoryLevels");
+    tracker.TrackEvent(typeof(string), eventId, streamId, "AnalyticsView");
+
+    var waitTask = awaiter.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5));
+
+    // Act — apply on subscriber 1; wait MUST stay blocked.
+    tracker.MarkProcessedByPerspective([eventId], "ProductCatalog");
+    await Task.Delay(50);
+    await Assert.That(waitTask.IsCompleted).IsFalse()
+      .Because("Wait must not signal after just ONE of three subscribers applied — the event is only PARTIALLY applied.");
+
+    // Apply on subscriber 2; wait MUST still stay blocked.
+    tracker.MarkProcessedByPerspective([eventId], "InventoryLevels");
+    await Task.Delay(50);
+    await Assert.That(waitTask.IsCompleted).IsFalse()
+      .Because("Wait must not signal after two of three subscribers applied — the event is still partial.");
+
+    // Apply on subscriber 3; NOW the wait completes.
+    tracker.MarkProcessedByPerspective([eventId], "AnalyticsView");
+
+    var result = await waitTask;
+    await Assert.That(result).IsTrue()
+      .Because("Once all three subscribers have applied the event, the wait must return true.");
+  }
+
+  /// <summary>
+  /// Cross-perspective ordering doesn't matter: applying perspectives in any order
+  /// produces the same "fully applied" signal. Locks that the tracker's "no remaining
+  /// perspective" check is set-based, not order-based.
+  /// </summary>
+  [Test]
+  public async Task WaitForEventsAsync_OneEventTwoSubscribers_OrderOfApplyDoesNotMatterAsync() {
+    // Run twice with reversed apply order. Both runs must produce the same outcome.
+    foreach (var reverseOrder in new[] { false, true }) {
+      var tracker = new SyncEventTracker();
+      var awaiter = new EventCompletionAwaiter(tracker);
+      var eventId = Guid.NewGuid();
+      var streamId = Guid.NewGuid();
+
+      tracker.TrackEvent(typeof(string), eventId, streamId, "A");
+      tracker.TrackEvent(typeof(string), eventId, streamId, "B");
+
+      var waitTask = awaiter.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5));
+
+      if (reverseOrder) {
+        tracker.MarkProcessedByPerspective([eventId], "B");
+        await Task.Delay(50);
+        await Assert.That(waitTask.IsCompleted).IsFalse()
+          .Because($"reverse={reverseOrder}: still partial after B");
+        tracker.MarkProcessedByPerspective([eventId], "A");
+      } else {
+        tracker.MarkProcessedByPerspective([eventId], "A");
+        await Task.Delay(50);
+        await Assert.That(waitTask.IsCompleted).IsFalse()
+          .Because($"reverse={reverseOrder}: still partial after A");
+        tracker.MarkProcessedByPerspective([eventId], "B");
+      }
+
+      await Assert.That(await waitTask).IsTrue()
+        .Because($"reverse={reverseOrder}: wait returns true once both applied");
+    }
+  }
 }

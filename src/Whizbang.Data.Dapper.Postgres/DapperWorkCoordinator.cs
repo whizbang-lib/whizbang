@@ -51,420 +51,14 @@ public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null,
-  int commandTimeoutSeconds = 5
+  int commandTimeoutSeconds = 5,
+  WorkCoordinatorGate? gate = null
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
   private readonly int _commandTimeoutSeconds = commandTimeoutSeconds;
-
-  public async Task<WorkBatch> ProcessWorkBatchAsync(
-    ProcessWorkBatchRequest request,
-    CancellationToken cancellationToken = default
-  ) {
-    if (_logger is not null) {
-      LogProcessingWorkBatch(_logger, request.InstanceId, request.ServiceName, request.HostName, request.ProcessId,
-        request.OutboxCompletions.Length, request.OutboxFailures.Length,
-        request.InboxCompletions.Length, request.InboxFailures.Length,
-        request.NewOutboxMessages.Length, request.NewInboxMessages.Length, request.Flags);
-    }
-
-    var commandDefinition = _buildCommandDefinition(request, cancellationToken);
-
-    return await PostgresDeadlockRetry.ExecuteAsync(async () => {
-      await using var connection = new NpgsqlConnection(_connectionString);
-
-      // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
-      // Notices are only generated when WorkBatchOptions.DebugMode is set in SQL function
-      connection.Notice += _onNotice;
-
-      await connection.OpenAsync(cancellationToken);
-
-      var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
-
-      return _categorizeResults(resultList);
-    }, logger: _logger, cancellationToken: cancellationToken);
-  }
-
-  /// <summary>
-  /// Builds the CommandDefinition for the process_work_batch SQL function call.
-  /// </summary>
-  private CommandDefinition _buildCommandDefinition(
-    ProcessWorkBatchRequest request,
-    CancellationToken cancellationToken
-  ) {
-    var serializedData = _serializeWorkBatchData(request);
-    var now = DateTimeOffset.UtcNow;
-
-    const string sql = @"
-      SELECT * FROM process_work_batch(
-        @p_instance_id::uuid,
-        @p_service_name::varchar,
-        @p_host_name::varchar,
-        @p_process_id::int,
-        @p_metadata::jsonb,
-        @p_now::timestamptz,
-        @p_lease_duration_seconds::int,
-        @p_partition_count::int,
-        @p_outbox_completions::jsonb,
-        @p_inbox_completions::jsonb,
-        @p_perspective_event_completions::jsonb,
-        @p_perspective_completions::jsonb,
-        @p_outbox_failures::jsonb,
-        @p_inbox_failures::jsonb,
-        @p_perspective_event_failures::jsonb,
-        @p_perspective_failures::jsonb,
-        @p_new_outbox_messages::jsonb,
-        @p_new_inbox_messages::jsonb,
-        @p_new_perspective_events::jsonb,
-        @p_renew_outbox_lease_ids::jsonb,
-        @p_renew_inbox_lease_ids::jsonb,
-        @p_renew_perspective_event_lease_ids::jsonb,
-        @p_flags::int,
-        @p_stale_threshold_seconds::int,
-        @p_sync_inquiries::jsonb,
-        @p_max_streams::int
-      )";
-
-    var parameters = new {
-      p_instance_id = request.InstanceId,
-      p_service_name = request.ServiceName,
-      p_host_name = request.HostName,
-      p_process_id = request.ProcessId,
-      p_metadata = serializedData.Metadata,
-      p_now = now,
-      p_lease_duration_seconds = request.LeaseSeconds,
-      p_partition_count = request.PartitionCount,
-      p_outbox_completions = serializedData.OutboxCompletions,
-      p_inbox_completions = serializedData.InboxCompletions,
-      p_perspective_event_completions = serializedData.PerspectiveEventCompletions,
-      p_perspective_completions = serializedData.PerspectiveCompletions,  // Checkpoint-level completions
-      p_outbox_failures = serializedData.OutboxFailures,
-      p_inbox_failures = serializedData.InboxFailures,
-      p_perspective_event_failures = "[]",  // Not used - perspective events managed internally
-      p_perspective_failures = serializedData.PerspectiveFailures,  // Checkpoint-level failures
-      p_new_outbox_messages = serializedData.NewOutboxMessages,
-      p_new_inbox_messages = serializedData.NewInboxMessages,
-      p_new_perspective_events = "[]",
-      p_renew_outbox_lease_ids = serializedData.RenewOutboxLeaseIds,
-      p_renew_inbox_lease_ids = serializedData.RenewInboxLeaseIds,
-      p_renew_perspective_event_lease_ids = "[]",
-      p_flags = (int)request.Flags,
-      p_stale_threshold_seconds = request.AbandonStaleInstanceThresholdSeconds,
-      p_sync_inquiries = serializedData.SyncInquiries,
-      p_max_streams = request.MaxStreamsPerBatch
-    };
-
-    return new CommandDefinition(
-      sql,
-      parameters,
-      commandTimeout: _commandTimeoutSeconds,
-      cancellationToken: cancellationToken
-    );
-  }
-
-  /// <summary>
-  /// Executes the work batch query with structured exception handling and logging.
-  /// </summary>
-  private async Task<List<WorkBatchRow>> _executeWorkBatchQueryAsync(
-    NpgsqlConnection connection,
-    CommandDefinition commandDefinition,
-    ProcessWorkBatchRequest request
-  ) {
-    try {
-      var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
-      return [.. results];
-    } catch (NpgsqlException ex) when (ex.InnerException is TimeoutException || ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase)) {
-      if (_logger is not null) {
-        LogWorkBatchTimedOut(_logger, _commandTimeoutSeconds, request.InstanceId, request.ServiceName, ex);
-      }
-      throw;
-    } catch (OperationCanceledException ex) {
-      if (_logger is not null) {
-        LogWorkBatchCancelled(_logger, request.InstanceId, request.ServiceName, ex);
-      }
-      throw;
-    } catch (Exception ex) {
-      if (_logger is not null) {
-        LogWorkBatchFailed(_logger, request.InstanceId, request.ServiceName, ex);
-      }
-      throw;
-    }
-  }
-
-  /// <summary>
-  /// Categorizes work batch rows by source type into the appropriate work lists.
-  /// </summary>
-  private WorkBatch _categorizeResults(List<WorkBatchRow> resultList) {
-    var outboxWork = new List<OutboxWork>();
-    var inboxWork = new List<InboxWork>();
-    var perspectiveWork = new List<PerspectiveWork>();
-    var perspectiveStreamIds = new HashSet<Guid>();
-    var syncInquiryResults = new List<SyncInquiryResult>();
-
-    foreach (var r in resultList) {
-      switch (r.source) {
-        case "outbox":
-          outboxWork.Add(_mapOutboxWork(r));
-          break;
-        case "inbox":
-          inboxWork.Add(_mapInboxWork(r));
-          break;
-        case "perspective_stream":
-          // Drain mode: SQL returns one row per distinct stream (no per-event detail)
-          if (r.work_stream_id.HasValue) {
-            perspectiveStreamIds.Add(r.work_stream_id.Value);
-          }
-          break;
-        case "perspective":
-          // Legacy mode: per-event rows with perspective_name
-          perspectiveWork.Add(_mapPerspectiveWork(r));
-          if (r.work_stream_id.HasValue) {
-            perspectiveStreamIds.Add(r.work_stream_id.Value);
-          }
-          break;
-        case "sync_result":
-          syncInquiryResults.Add(_mapSyncInquiryResult(r));
-          break;
-      }
-    }
-
-    if (_logger is not null) {
-      LogWorkBatchProcessed(_logger, outboxWork.Count, inboxWork.Count, perspectiveWork.Count, syncInquiryResults.Count);
-    }
-
-    return new WorkBatch {
-      OutboxWork = outboxWork,
-      InboxWork = inboxWork,
-      PerspectiveWork = perspectiveWork,
-      PerspectiveStreamIds = [.. perspectiveStreamIds],
-      SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
-    };
-  }
-
-  /// <summary>
-  /// Maps a WorkBatchRow with source "sync_result" to a SyncInquiryResult.
-  /// </summary>
-  private SyncInquiryResult _mapSyncInquiryResult(WorkBatchRow r) {
-    return new SyncInquiryResult {
-      InquiryId = r.work_id!.Value,
-      StreamId = r.work_stream_id ?? Guid.Empty,
-      PendingCount = r.partition_number ?? 0,
-      ProcessedCount = r.status,
-      PendingEventIds = _parsePendingEventIds(r.message_data),
-      ProcessedEventIds = _parseProcessedEventIds(r.metadata)
-    };
-  }
-
-  private OutboxWork _mapOutboxWork(WorkBatchRow r) {
-    if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
-      throw new InvalidOperationException($"Outbox work {r.work_id} missing message_type or message_data");
-    }
-
-    var envelope = _deserializeEnvelope(r.message_type, r.message_data);
-    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
-
-    var messageType = !string.IsNullOrWhiteSpace(r.message_type)
-      ? r.message_type
-      : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
-
-    return new OutboxWork {
-      MessageId = r.work_id!.Value,
-      Destination = r.destination!,
-      Envelope = jsonEnvelope,
-      EnvelopeType = r.envelope_type!,
-      MessageType = messageType,
-      StreamId = r.work_stream_id,
-      PartitionNumber = r.partition_number,
-      Attempts = r.attempts,
-      Status = (MessageProcessingStatus)r.status,
-      Flags = _buildFlags(r.is_newly_stored, r.is_orphaned)
-    };
-  }
-
-  private InboxWork _mapInboxWork(WorkBatchRow r) {
-    if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
-      throw new InvalidOperationException($"Inbox work {r.work_id} missing message_type or message_data");
-    }
-
-    var envelope = _deserializeEnvelope(r.message_type, r.message_data);
-    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
-
-    return new InboxWork {
-      MessageId = r.work_id!.Value,
-      Envelope = jsonEnvelope,
-      MessageType = r.message_type,
-      StreamId = r.work_stream_id,
-      PartitionNumber = r.partition_number,
-      Attempts = r.attempts,
-      Status = (MessageProcessingStatus)r.status,
-      Flags = _buildFlags(r.is_newly_stored, r.is_orphaned)
-    };
-  }
-
-  private static PerspectiveWork _mapPerspectiveWork(WorkBatchRow r) {
-    return new PerspectiveWork {
-      WorkId = r.work_id ?? Guid.Empty,  // NULL in stream assignment model (drain mode) — worker uses PerspectiveStreamIds instead
-      StreamId = r.work_stream_id ?? throw new InvalidOperationException("Perspective work must have StreamId"),
-      PerspectiveName = r.perspective_name ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
-      LastProcessedEventId = null,
-      Status = (PerspectiveProcessingStatus)r.status,
-      PartitionNumber = r.partition_number,
-      Flags = _buildFlags(r.is_newly_stored, r.is_orphaned)
-    };
-  }
-
-  private static WorkBatchOptions _buildFlags(bool isNewlyStored, bool isOrphaned) {
-    var flags = WorkBatchOptions.None;
-    if (isNewlyStored) {
-      flags |= WorkBatchOptions.NewlyStored;
-    }
-    if (isOrphaned) {
-      flags |= WorkBatchOptions.Orphaned;
-    }
-    return flags;
-  }
-
-  private string _serializeCompletions(MessageCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-
-    // Use JsonSerializer with registered type info
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  private string _serializeFailures(MessageFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-
-    // Use JsonSerializer with registered type info
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
-  }
-
-  private string _serializeNewOutboxMessages(OutboxMessage[] messages) {
-    if (messages.Length == 0) {
-      return "[]";
-    }
-
-    // Use JsonSerializer with registered type info
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for OutboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
-    var json = JsonSerializer.Serialize(messages, typeInfo);
-
-    // Log the first message for debugging
-    if (messages.Length > 0 && _logger is not null) {
-      var firstMessage = messages[0];
-      var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
-      LogSerializingOutboxMessage(_logger, firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType, firstMessage.Envelope.Hops?.Count ?? 0);
-      LogOutboxMessageJson(_logger, jsonPreview);
-    }
-
-    return json;
-  }
-
-  private string _serializeNewInboxMessages(InboxMessage[] messages) {
-    if (messages.Length == 0) {
-      return "[]";
-    }
-
-    // Use JsonSerializer with registered type info
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for InboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(messages, typeInfo);
-  }
-
-  private string _serializeMetadata(Dictionary<string, JsonElement>? metadata) {
-    if (metadata == null || metadata.Count == 0) {
-      return "{}";  // Return empty JSON object instead of null (matches NOT NULL constraint)
-    }
-
-    // Use JsonSerializer with registered type info
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(metadata, typeInfo);
-  }
-
-  private string _serializeLeaseRenewals(Guid[] messageIds) {
-    if (messageIds.Length == 0) {
-      return "[]";
-    }
-
-    // Use JsonSerializer with registered type info
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(messageIds, typeInfo);
-  }
-
-  private string _serializePerspectiveEventCompletions(PerspectiveEventCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveEventCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveEventCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  private string _serializePerspectiveFailures(PerspectiveCursorFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
-  }
-
-  private string _serializeSyncInquiries(SyncInquiry[]? inquiries) {
-    if (inquiries == null || inquiries.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(SyncInquiry[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for SyncInquiry[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(inquiries, typeInfo);
-  }
-
-  /// <summary>
-  /// Deserializes envelope from database envelope_type and envelope_data columns.
-  /// Envelopes are always deserialized as MessageEnvelope&lt;JsonElement&gt; to support covariant casting to IMessageEnvelope&lt;object&gt;.
-  /// </summary>
-  private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
-    // Log the envelope data for debugging
-    if (_logger is not null) {
-      LogDeserializingEnvelope(_logger, envelopeTypeName, envelopeDataJson);
-    }
-
-    // Always deserialize as MessageEnvelope<JsonElement> to support covariance casting to IMessageEnvelope<object>
-    // (JsonElement is a value type, but the envelope interface is covariant and can be cast to object)
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageEnvelope<JsonElement>. Ensure it is registered via JsonContextRegistry.");
-
-    // Deserialize the complete envelope as MessageEnvelope<JsonElement>
-    var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
-      ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
-
-    // Log result for debugging
-    if (_logger is not null) {
-      LogDeserializedEnvelope(_logger, envelope.MessageId.Value, envelope.Hops?.Count ?? 0);
-    }
-
-    return envelope;
-  }
+  private readonly WorkCoordinatorGate? _gate = gate;
 
   /// <summary>
   /// Reports perspective cursor completion directly (out-of-band).
@@ -536,6 +130,146 @@ public partial class DapperWorkCoordinator(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  public async Task StoreOutboxMessagesAsync(
+    OutboxMessage[] messages,
+    int partitionCount,
+    CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return;
+    }
+
+    var json = _serializeNewOutboxMessages(messages);
+
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var connection = new NpgsqlConnection(_connectionString);
+      await connection.OpenAsync(cancellationToken);
+
+      var now = DateTimeOffset.UtcNow;
+      await connection.ExecuteAsync(
+        "SELECT * FROM store_outbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
+        new {
+          messages = json,
+          now,
+          partitionCount
+        });
+    }, logger: _logger, cancellationToken: cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public async Task<int> CleanupCompletedStreamsAsync(
+    IReadOnlyList<Guid> streamIds,
+    CancellationToken cancellationToken = default) {
+    if (streamIds is null || streamIds.Count == 0) {
+      return 0;
+    }
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT cleanup_completed_streams(@streamIds)",
+      new { streamIds = streamIds.ToArray() });
+  }
+
+  private string _serializeCompletions(MessageCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string _serializeFailures(MessageFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
+  }
+
+  private string _serializeNewOutboxMessages(OutboxMessage[] messages) {
+    if (messages.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for OutboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(messages, typeInfo);
+  }
+
+  private string _serializeNewInboxMessages(InboxMessage[] messages) {
+    if (messages.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for InboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(messages, typeInfo);
+  }
+
+  private string _serializeMetadata(Dictionary<string, JsonElement>? metadata) {
+    if (metadata == null || metadata.Count == 0) {
+      return "{}";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(metadata, typeInfo);
+  }
+
+  private string _serializeLeaseRenewals(Guid[] messageIds) {
+    if (messageIds.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(messageIds, typeInfo);
+  }
+
+  private string _serializePerspectiveEventCompletions(PerspectiveEventCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveEventCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveEventCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string _serializePerspectiveFailures(PerspectiveCursorFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
+  }
+
+  private string _serializeSyncInquiries(SyncInquiry[]? inquiries) {
+    if (inquiries == null || inquiries.Length == 0) {
+      return "[]";
+    }
+
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(SyncInquiry[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for SyncInquiry[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(inquiries, typeInfo);
+  }
+
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
@@ -590,13 +324,14 @@ public partial class DapperWorkCoordinator(
   /// </summary>
   public async Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
+    bool debugMode,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
     return await connection.QuerySingleAsync<int>(
-      "SELECT complete_perspective_events(@p_event_work_ids)",
-      new { p_event_work_ids = workItemIds });
+      "SELECT complete_perspective_events(@p_event_work_ids, @p_debug_mode)",
+      new { p_event_work_ids = workItemIds, p_debug_mode = debugMode });
   }
 
   /// <summary>
@@ -626,6 +361,194 @@ public partial class DapperWorkCoordinator(
       EventWorkId = r.out_event_work_id
     })];
   }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      return Array.Empty<OutboxBatchRow>();
+    }
+
+    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<OutboxBatchRowDto>(
+      "SELECT * FROM fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+
+    return [.. rows.Select(r => new OutboxBatchRow {
+      MessageId = r.message_id,
+      StreamId = r.stream_id,
+      Destination = r.destination,
+      MessageType = r.message_type,
+      EnvelopeType = r.envelope_type,
+      EventData = r.event_data,
+      Metadata = r.metadata,
+      Scope = r.scope,
+      Status = r.status,
+      Attempts = r.attempts,
+      PartitionNumber = r.partition_number,
+      IsEvent = r.is_event
+    })];
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
+    IReadOnlyList<Guid> streamIds,
+    Guid instanceId,
+    int maxPerStream = 100,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      return Array.Empty<InboxBatchRow>();
+    }
+
+    var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<InboxBatchRowDto>(
+      "SELECT * FROM fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream)",
+      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream });
+
+    return [.. rows.Select(r => new InboxBatchRow {
+      MessageId = r.message_id,
+      StreamId = r.stream_id,
+      HandlerName = r.handler_name,
+      MessageType = r.message_type,
+      EventData = r.event_data,
+      Metadata = r.metadata,
+      Scope = r.scope,
+      Status = r.status,
+      Attempts = r.attempts,
+      PartitionNumber = r.partition_number,
+      IsEvent = r.is_event
+    })];
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<PendingPerspectiveEvent>> FetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id)",
+      new { p_stream_id = streamId, p_perspective_name = perspectiveName, p_instance_id = instanceId });
+
+    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id))];
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<PendingPerspectiveEvent>> ClaimAndFetchPendingPerspectiveEventsAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid instanceId,
+    TimeSpan leaseDuration,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(perspectiveName);
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var now = DateTime.UtcNow;
+    var leaseExpiry = now + leaseDuration;
+
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM claim_and_fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, @p_now)",
+      new {
+        p_stream_id = streamId,
+        p_perspective_name = perspectiveName,
+        p_instance_id = instanceId,
+        p_lease_expiry = leaseExpiry,
+        p_now = now,
+      });
+
+    return [.. rows.Select(r => new PendingPerspectiveEvent(r.out_event_work_id, r.out_event_id))];
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
+    IReadOnlyList<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return Array.Empty<StreamEventData>();
+    }
+
+    var idArr = eventIds is Guid[] arr ? arr : [.. eventIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var rows = await connection.QueryAsync<EventBodyRowDto>(
+      "SELECT * FROM fetch_events_by_ids(@p_event_ids)",
+      new { p_event_ids = idArr });
+
+    return [.. rows.Select(r => new StreamEventData {
+      StreamId = r.out_stream_id,
+      EventId = r.out_event_id,
+      EventType = r.out_event_type,
+      EventData = r.out_event_data,
+      Metadata = r.out_metadata,
+      Scope = r.out_scope,
+      EventWorkId = Guid.Empty
+    })];
+  }
+
+#pragma warning disable CA1707, IDE1006, S1144 // Dapper DTO with snake_case to match SQL function output columns.
+  private sealed class OutboxBatchRowDto {
+    public Guid message_id { get; set; }
+    public Guid? stream_id { get; set; }
+    public string? destination { get; set; }
+    public string message_type { get; set; } = string.Empty;
+    public string? envelope_type { get; set; }
+    public string event_data { get; set; } = string.Empty;
+    public string metadata { get; set; } = string.Empty;
+    public string? scope { get; set; }
+    public int status { get; set; }
+    public int attempts { get; set; }
+    public int? partition_number { get; set; }
+    public bool is_event { get; set; }
+  }
+
+  private sealed class InboxBatchRowDto {
+    public Guid message_id { get; set; }
+    public Guid? stream_id { get; set; }
+    public string handler_name { get; set; } = string.Empty;
+    public string message_type { get; set; } = string.Empty;
+    public string event_data { get; set; } = string.Empty;
+    public string metadata { get; set; } = string.Empty;
+    public string? scope { get; set; }
+    public int status { get; set; }
+    public int attempts { get; set; }
+    public int? partition_number { get; set; }
+    public bool is_event { get; set; }
+  }
+
+  private sealed class PendingPerspectiveEventDto {
+    public Guid out_event_work_id { get; set; }
+    public Guid out_event_id { get; set; }
+  }
+
+  private sealed class EventBodyRowDto {
+    public Guid out_stream_id { get; set; }
+    public Guid out_event_id { get; set; }
+    public string out_event_type { get; set; } = string.Empty;
+    public string out_event_data { get; set; } = string.Empty;
+    public string? out_metadata { get; set; }
+    public string? out_scope { get; set; }
+  }
+#pragma warning restore CA1707, IDE1006, S1144
 
   /// <summary>
   /// Gets the current checkpoint for a perspective stream.
@@ -871,6 +794,277 @@ public partial class DapperWorkCoordinator(
     Message = "process_work_batch failed for instance {InstanceId} ({ServiceName})"
   )]
   static partial void LogWorkBatchFailed(ILogger logger, Guid instanceId, string serviceName, Exception ex);
+
+  #endregion
+
+  #region Phase B: focused IWorkCoordinator methods
+
+  /// <inheritdoc />
+  public async Task RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var metadataJson = request.Metadata is { } meta ? meta.GetRawText() : "{}";
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb)",
+      new { request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, Metadata = metadataJson });
+  }
+
+  /// <inheritdoc />
+  public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ids);
+    if (ids.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT complete_outbox_published(@Ids, @DebugMode)", new { Ids = idArray, DebugMode = debugMode });
+  }
+
+  /// <inheritdoc />
+  public async Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(cursors);
+    ArgumentNullException.ThrowIfNull(eventWorkIds);
+    if (cursors.Count == 0 && eventWorkIds.Count == 0) {
+      return;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var cursorsJson = cursors.Count == 0 ? "[]" : _serializePerspectiveCompletions([.. cursors]);
+    var idArray = eventWorkIds is Guid[] earr ? earr : [.. eventWorkIds];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
+      new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode });
+  }
+
+  /// <inheritdoc />
+  public async Task ReportFailuresAsync(
+    WorkCategory category,
+    IReadOnlyList<MessageFailure> failures,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(failures);
+    if (failures.Count == 0) {
+      return;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var failuresJson = _serializeFailures([.. failures]);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT report_failures(@Category, @Failures::jsonb)",
+      new { Category = category.ToSqlCategory(), Failures = failuresJson });
+  }
+
+  /// <inheritdoc />
+  public async Task<int> RenewLeasesAsync(
+    WorkCategory category,
+    IReadOnlyList<Guid> ids,
+    int leaseSeconds = 300,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(ids);
+    if (ids.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var idArray = ids is Guid[] arr ? arr : [.. ids];
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    return await connection.ExecuteScalarAsync<int>(
+      "SELECT renew_leases(@Category, @Ids, @LeaseSeconds)",
+      new { Category = category.ToSqlCategory(), Ids = idArray, LeaseSeconds = leaseSeconds });
+  }
+
+  /// <inheritdoc />
+  public async Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var payload = _buildHandlerCommitPayload(request);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT commit_handler_result(@Payload::jsonb)", new { Payload = payload });
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
+    IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(requests);
+    if (requests.Count == 0) {
+      return Array.Empty<HandlerBatchResult>();
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < requests.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append(_buildHandlerCommitPayload(requests[i]));
+    }
+    sb.Append(']');
+    var batchJson = sb.ToString();
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var rows = await connection.QueryAsync<HandlerBatchRow>(
+      "SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM commit_handler_batch(@Results::jsonb)",
+      new { Results = batchJson });
+    return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
+  }
+
+  /// <inheritdoc />
+  public async Task FlushCompletionsAsync(FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var outboxIds = request.OutboxIds is null ? Array.Empty<Guid>()
+      : (request.OutboxIds is Guid[] a ? a : [.. request.OutboxIds]);
+    var perspIds = request.PerspectiveEventWorkIds is null ? Array.Empty<Guid>()
+      : (request.PerspectiveEventWorkIds is Guid[] p ? p : [.. request.PerspectiveEventWorkIds]);
+    var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
+      ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
+    var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await connection.ExecuteAsync(
+      "SELECT flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
+      new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson });
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
+    IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inquiries);
+    if (inquiries.Count == 0) {
+      return Array.Empty<SyncInquiryResult>();
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var json = _buildInquiriesJson(inquiries);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var rows = await connection.QueryAsync<SyncInquiryRow>(
+      "SELECT inquiry_id AS InquiryId, stream_id AS StreamId, pending_count AS PendingCount, processed_count AS ProcessedCount FROM resolve_sync_inquiries(@Inq::jsonb)",
+      new { Inq = json });
+    return [.. rows.Select(r => new SyncInquiryResult {
+      InquiryId = r.InquiryId,
+      StreamId = r.StreamId,
+      PendingCount = r.PendingCount,
+      ProcessedCount = r.ProcessedCount
+    })];
+  }
+
+  /// <inheritdoc />
+  public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(request);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    // Phase C lands the full envelope-deserializing path. For now Dapper backend
+    // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
+    var rows = await connection.QueryAsync<ClaimWorkRow>(
+      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease)",
+      new {
+        Id = request.InstanceId,
+        Svc = request.ServiceName,
+        Host = request.HostName,
+        Pid = request.ProcessId,
+        Max = request.MaxStreams,
+        Part = request.PartitionCount,
+        Lease = request.LeaseSeconds
+      });
+    var perspectiveStreamIds = new List<Guid>();
+    var sawOutboxOrInbox = false;
+    foreach (var r in rows) {
+      if (r.Source == "perspective_stream" && r.StreamId.HasValue) {
+        perspectiveStreamIds.Add(r.StreamId.Value);
+      } else if (r.Source is "outbox" or "inbox") {
+        sawOutboxOrInbox = true;
+      }
+    }
+    if (sawOutboxOrInbox) {
+      throw new NotImplementedException(
+        "DapperWorkCoordinator.ClaimWorkAsync: full envelope deserialization for outbox/inbox lands in Phase C polish. " +
+        "Use ProcessWorkBatchAsync until then.");
+    }
+    return new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      PerspectiveStreamIds = perspectiveStreamIds
+    };
+  }
+
+  // --- helpers shared by the new methods ---
+
+  private string _buildHandlerCommitPayload(HandlerCommitRequest request) {
+    var sb = new System.Text.StringBuilder("{");
+    sb.Append("\"handler_id\":\"").Append(request.HandlerId).Append('"');
+    sb.Append(",\"instance_id\":\"").Append(request.InstanceId).Append('"');
+    sb.Append(",\"service_name\":\"").Append(_jsonEscape(request.ServiceName)).Append('"');
+    sb.Append(",\"host_name\":\"").Append(_jsonEscape(request.HostName)).Append('"');
+    sb.Append(",\"process_id\":").Append(request.ProcessId);
+    sb.Append(",\"partition_count\":").Append(request.PartitionCount);
+    sb.Append(",\"debug_mode\":").Append(request.DebugMode ? "true" : "false");
+    sb.Append(",\"inbox_completion\":{")
+      .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
+      .Append("\"Status\":").Append(request.InboxCompletion.Status)
+      .Append('}');
+    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? Array.Empty<OutboxMessage>();
+    sb.Append(",\"new_outbox_messages\":").Append(_serializeNewOutboxMessages(newOutboxArr));
+    var newInboxArr = request.NewInboxMessages?.ToArray() ?? Array.Empty<InboxMessage>();
+    sb.Append(",\"new_inbox_messages\":").Append(_serializeNewInboxMessages(newInboxArr));
+    sb.Append('}');
+    return sb.ToString();
+  }
+
+  private string _buildFailuresByCategoryJson(IReadOnlyList<CategoryFailures>? failures) {
+    if (failures is null || failures.Count == 0) {
+      return "[]";
+    }
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < failures.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append("{\"Category\":\"").Append(failures[i].Category.ToSqlCategory()).Append("\",")
+        .Append("\"Items\":").Append(_serializeFailures([.. failures[i].Items])).Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  private static string _buildInquiriesJson(IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries) {
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < inquiries.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      var inq = inquiries[i];
+      sb.Append("{\"InquiryId\":\"").Append(inq.InquiryId).Append("\",")
+        .Append("\"StreamId\":\"").Append(inq.StreamId).Append("\",")
+        .Append("\"PerspectiveName\":\"").Append(_jsonEscape(inq.PerspectiveName)).Append("\",")
+        .Append("\"DiscoverPendingFromOutbox\":").Append(inq.DiscoverPendingFromOutbox ? "true" : "false").Append(',')
+        .Append("\"IncludePendingEventIds\":").Append(inq.IncludePendingEventIds ? "true" : "false").Append(',')
+        .Append("\"IncludeProcessedEventIds\":").Append(inq.IncludeProcessedEventIds ? "true" : "false");
+      sb.Append('}');
+    }
+    sb.Append(']');
+    return sb.ToString();
+  }
+
+  private static string _jsonEscape(string s) =>
+    s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+  private sealed record HandlerBatchRow(Guid HandlerId, bool Success, string? ErrorMessage);
+  private sealed record SyncInquiryRow(Guid InquiryId, Guid StreamId, int PendingCount, int ProcessedCount);
+  private sealed record ClaimWorkRow(string Source, Guid? WorkId, Guid? StreamId);
 
   #endregion
 }

@@ -113,10 +113,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "public",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should NOT have schema prefix for public
-    await Assert.That(result).IsEqualTo("process_work_batch");
+    await Assert.That(result).IsEqualTo("claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -125,10 +125,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should NOT have leading dot
-    await Assert.That(result).IsEqualTo("process_work_batch");
+    await Assert.That(result).IsEqualTo("claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -137,10 +137,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "   ",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should NOT have leading dot
-    await Assert.That(result).IsEqualTo("process_work_batch");
+    await Assert.That(result).IsEqualTo("claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 
@@ -149,10 +149,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Arrange & Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "inventory",
-      "process_work_batch");
+      "claim_work");
 
     // Assert - Should have quoted schema prefix
-    await Assert.That(result).IsEqualTo("\"inventory\".process_work_batch");
+    await Assert.That(result).IsEqualTo("\"inventory\".claim_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 

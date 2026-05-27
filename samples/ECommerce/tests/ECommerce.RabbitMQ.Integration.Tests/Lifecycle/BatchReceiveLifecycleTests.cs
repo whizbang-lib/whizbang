@@ -65,9 +65,10 @@ public class BatchReceiveLifecycleTests {
       InitialStock = 3
     };
 
-    // Act — dispatch, wait for perspectives on remote service
+    // Act — dispatch, wait for 3 perspective events on inventory
+    // (ProductCreated x2 + InventoryRestocked x1 from InitialStock > 0).
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -96,7 +97,7 @@ public class BatchReceiveLifecycleTests {
 
     // Act — send 3 commands with brief gaps to avoid overwhelming CI runners
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 120000, hostFilter: "inventory");
+      expectedCompletions: 9, timeoutMilliseconds: 120000, hostFilter: "inventory");
 
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);

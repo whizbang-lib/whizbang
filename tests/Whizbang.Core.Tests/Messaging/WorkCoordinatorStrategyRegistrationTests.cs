@@ -363,6 +363,106 @@ public class WorkCoordinatorStrategyRegistrationTests {
       .Because("Batch strategy should be wrapped in NonDisposingStrategyAdapter");
   }
 
+  // ========================================
+  // STREAM-AFFINITY WRAP TESTS (Half B, slice 10)
+  // Lock the invariant: when an IOutboxBatchStrategy is registered, the resolved
+  // IWorkCoordinatorStrategy MUST be wrapped in StreamAffinityWorkCoordinatorStrategy so
+  // outbox writes route through the per-stream sliding-window batcher. Without this wrap,
+  // the dispatcher's per-message Insert path silently bypasses Half B's saga-fan-out
+  // optimization — exactly the throughput regression we shipped Half B to fix.
+  // ========================================
+
+  [Test]
+  public async Task WrapWithStreamAffinity_NoOutboxBatchStrategyRegistered_ReturnsInnerUnchangedAsync() {
+    var services = _buildServiceCollection(new WorkCoordinatorOptions());
+    await using var sp = services.BuildServiceProvider();
+    var inner = WorkCoordinatorStrategyFactory.Create(WorkCoordinatorStrategy.Scoped, sp);
+
+    var result = WorkCoordinatorStrategyFactory.WrapWithStreamAffinity(inner, sp);
+
+    await Assert.That(result).IsSameReferenceAs(inner)
+      .Because("Without IOutboxBatchStrategy registered, the wrap is a no-op so test fixtures and opt-out scenarios keep working unchanged.");
+  }
+
+  [Test]
+  public async Task WrapWithStreamAffinity_OutboxBatchStrategyRegistered_ReturnsStreamAffinityWrapperAsync() {
+    var services = _buildServiceCollection(new WorkCoordinatorOptions());
+    services.AddSingleton<IOutboxBatchStrategy, RegFakeOutboxBatchStrategy>();
+    await using var sp = services.BuildServiceProvider();
+    var inner = WorkCoordinatorStrategyFactory.Create(WorkCoordinatorStrategy.Scoped, sp);
+
+    var result = WorkCoordinatorStrategyFactory.WrapWithStreamAffinity(inner, sp);
+
+    await Assert.That(result).IsTypeOf<StreamAffinityWorkCoordinatorStrategy>()
+      .Because("With IOutboxBatchStrategy registered, the wrap is load-bearing — it routes outbox writes through the per-stream batcher.");
+  }
+
+  [Test]
+  public async Task GeneratorPattern_OutboxBatchStrategyRegistered_ResolvedStrategyIsStreamAffinityAsync() {
+    // Lock the snippet behavior: WrapWithStreamAffinity must be applied at the DI registration
+    // site (not only inside Create), so Interval/Batch singletons that bypass the factory's
+    // switch ALSO get wrapped. Without this, sagas using Interval/Batch lose the per-stream
+    // batching optimization silently.
+    foreach (var strategy in Enum.GetValues<WorkCoordinatorStrategy>()) {
+      var options = new WorkCoordinatorOptions {
+        Strategy = strategy,
+        IntervalMilliseconds = 5000,
+        BatchSize = 100
+      };
+      var services = _buildGeneratorRegistrationPattern(options);
+      services.AddSingleton<IOutboxBatchStrategy, RegFakeOutboxBatchStrategy>();
+      await using var sp = services.BuildServiceProvider();
+
+      await using var scope = sp.CreateAsyncScope();
+      var resolved = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+
+      await Assert.That(resolved).IsTypeOf<StreamAffinityWorkCoordinatorStrategy>()
+        .Because($"Strategy {strategy}: resolved IWorkCoordinatorStrategy must be wrapped in StreamAffinity when IOutboxBatchStrategy is registered.");
+
+      // Cleanup: dispose the singleton when applicable
+      if (strategy == WorkCoordinatorStrategy.Interval) {
+        await sp.GetRequiredService<IntervalWorkCoordinatorStrategy>().DisposeAsync();
+      } else if (strategy == WorkCoordinatorStrategy.Batch) {
+        await sp.GetRequiredService<BatchWorkCoordinatorStrategy>().DisposeAsync();
+      }
+    }
+  }
+
+  [Test]
+  public async Task ResolvedStrategy_StreamAffinityWrapper_IsCastableToIWorkFlusherAsync() {
+    // Smoking-gun for the a consumer 5/7/2026 incident: WhizbangFlushMiddleware does
+    //   (IWorkFlusher)sp.GetRequiredService<IWorkCoordinatorStrategy>()
+    // at request boundary. Before this lock, the StreamAffinity wrapper didn't implement
+    // IWorkFlusher and the cast threw InvalidCastException on every HTTP request.
+    var services = _buildGeneratorRegistrationPattern(new WorkCoordinatorOptions { Strategy = WorkCoordinatorStrategy.Scoped });
+    services.AddSingleton<IOutboxBatchStrategy, RegFakeOutboxBatchStrategy>();
+    await using var sp = services.BuildServiceProvider();
+
+    await using var scope = sp.CreateAsyncScope();
+    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+
+    await Assert.That(strategy).IsAssignableTo<IWorkFlusher>()
+      .Because("Resolved strategy MUST be IWorkFlusher-castable: end-of-request flush middleware does the cast unconditionally.");
+  }
+
+  [Test]
+  public async Task ResolvedStrategy_QueueOutboxMessageAsync_RoutesToBatchStrategyAsync() {
+    // Smoking-gun regression test: outbox writes via the resolved strategy MUST land in the
+    // batcher's AppendAsync, not in the inner strategy's per-message path. If a future
+    // refactor removes the StreamAffinity wrap, this test fails immediately.
+    var services = _buildGeneratorRegistrationPattern(new WorkCoordinatorOptions { Strategy = WorkCoordinatorStrategy.Scoped });
+    var fakeBatch = new RegFakeOutboxBatchStrategy();
+    services.AddSingleton<IOutboxBatchStrategy>(fakeBatch);
+    await using var sp = services.BuildServiceProvider();
+
+    await using var scope = sp.CreateAsyncScope();
+    var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+    await strategy.QueueOutboxMessageAsync(_createTestOutboxMessage()).ConfigureAwait(false);
+
+    await Assert.That(fakeBatch.AppendCallCount).IsEqualTo(1)
+      .Because("Outbox writes through the resolved strategy must reach the batch strategy exactly once.");
+  }
+
   [Test]
   public async Task GeneratorPattern_AllEnumValuesHandled_DoesNotThrowAsync() {
     // Arrange - Validate all enum values are handled (no ArgumentOutOfRangeException)
@@ -463,7 +563,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // scope disposal from destroying the shared singleton instance.
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {
       var options = sp.GetRequiredService<WorkCoordinatorOptions>();
-      return options.Strategy switch {
+      IWorkCoordinatorStrategy inner = options.Strategy switch {
         WorkCoordinatorStrategy.Interval =>
           new NonDisposingStrategyAdapter(
             sp.GetRequiredService<IntervalWorkCoordinatorStrategy>()),
@@ -472,6 +572,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
             sp.GetRequiredService<BatchWorkCoordinatorStrategy>()),
         _ => WorkCoordinatorStrategyFactory.Create(options.Strategy, sp)
       };
+      return WorkCoordinatorStrategyFactory.WrapWithStreamAffinity(inner, sp);
     });
   }
 
@@ -603,6 +704,16 @@ public class WorkCoordinatorStrategyRegistrationTests {
       EnvelopeType = "TestEnvelope",
       MessageType = "TestMessage"
     };
+  }
+
+  private sealed class RegFakeOutboxBatchStrategy : IOutboxBatchStrategy {
+    public int AppendCallCount { get; private set; }
+    public ValueTask AppendAsync(OutboxMessage message, CancellationToken cancellationToken = default) {
+      AppendCallCount++;
+      return ValueTask.CompletedTask;
+    }
+    public Task FlushAndStopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
   }
 
   private sealed class RegFakeInstanceProvider : IServiceInstanceProvider {

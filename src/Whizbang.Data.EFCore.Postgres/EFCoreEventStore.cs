@@ -218,6 +218,20 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   }
 
   /// <summary>
+  /// Slice 26.11 — resolves the commit_sequence stamped on a given event_id. Cheap
+  /// single-row query used at snapshot creation time so the snapshot anchors on
+  /// commit_sequence for deterministic rewind.
+  /// </summary>
+  public async Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
+    var record = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .Where(e => e.Id == eventId)
+      .Select(e => new { e.CommitSequence })
+      .FirstOrDefaultAsync(cancellationToken);
+    return record?.CommitSequence;
+  }
+
+  /// <summary>
   /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// </summary>
@@ -248,17 +262,25 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       typeMap[type.Name] = type;
     }
 
-    // Query events from the specified event ID onwards
+    // Query events from the specified event ID onwards. Slice 26: deterministic replay
+    // order = commit_sequence ASC NULLS LAST, then event_id. Unstamped rows (NULL
+    // commit_sequence) fall to the tail and still get processed; for the common case
+    // where the stamper has caught up, replay order matches live-apply commit-completion
+    // order regardless of UUIDv7 generation timing.
     var query = fromEventId == null
       ? _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId)
-          .OrderBy(e => e.Id)
+          .OrderBy(e => e.CommitSequence == null)
+          .ThenBy(e => e.CommitSequence)
+          .ThenBy(e => e.Id)
           .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
-          .OrderBy(e => e.Id)
+          .OrderBy(e => e.CommitSequence == null)
+          .ThenBy(e => e.CommitSequence)
+          .ThenBy(e => e.Id)
           .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {

@@ -82,11 +82,6 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 // Register OrderedStreamProcessor for message ordering in transport consumer workers
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
-// Configure WorkCoordinatorPublisherOptions from appsettings.json
-// Use AddOptions().Bind() for AOT compatibility (instead of Configure<T>())
-builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
-  .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
-
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
 // - NpgsqlDataSource with JSON serialization configured
@@ -177,9 +172,8 @@ builder.Services.AddSingleton(consumerOptions);
 builder.Services.AddHostedService<TransportConsumerWorker>();
 
 // Outbox publisher worker - publishes pending messages from outbox to Service Bus
-// Options configured via appsettings.json "WorkCoordinatorPublisher" section
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-
+// Options configured via appsettings.json "WorkCoordinatorPublisher" section.
+// ClaimWorker into PerspectiveOnly mode so the two pollers don't race.
 // Configure PerspectiveWorkerOptions from appsettings.json
 builder.Services.AddOptions<PerspectiveWorkerOptions>()
   .Bind(builder.Configuration.GetSection("PerspectiveWorker"));

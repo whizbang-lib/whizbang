@@ -73,12 +73,29 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   // Factory Methods
   // ========================================
 
+  // Synchronizes Medo.Uuid7.NewUuid7() across threads. Medo's per-process counter
+  // is not strictly monotonic under contention — concurrent callers can observe
+  // interleaved sub-ms tail bytes, producing lex-non-monotonic UUIDv7 IDs. We saw
+  // this manifest as cursor-inversion + rewind storms on a consumer BFF perspectives
+  // when a receptor returned a list of events generated in parallel. Holding
+  // a lock around the call serializes ID issuance so monotonicity holds.
+  private static readonly object _medoLock = new();
+
   /// <summary>
   /// Creates a new UUIDv7 using Medo.Uuid7 with sub-millisecond precision.
   /// This is the preferred method for generating new IDs in Whizbang.
   /// </summary>
-  public static TrackedGuid NewMedo() =>
-      new(Uuid7.NewUuid7().ToGuid(), GuidMetadataExtensions.MEDO_V7);
+  /// <remarks>
+  /// Calls are serialized through a process-wide lock to guarantee strict
+  /// monotonicity across concurrent threads. Without this lock, concurrent
+  /// generation produces lex-non-monotonic IDs that break downstream cursor
+  /// ordering invariants in event sourcing.
+  /// </remarks>
+  public static TrackedGuid NewMedo() {
+    lock (_medoLock) {
+      return new(Uuid7.NewUuid7().ToGuid(), GuidMetadataExtensions.MEDO_V7);
+    }
+  }
 
   /// <summary>
   /// Creates a new UUIDv7 using Microsoft's Guid.CreateVersion7().

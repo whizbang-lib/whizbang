@@ -134,45 +134,19 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "..", "..", "..", "..", "..",
       "src", "Whizbang.Data.Postgres", "Migrations");
 
-    var functionFiles = new[] {
-      "000_MigrationTracking.sql",
-      "001_CreateComputePartitionFunction.sql",
-      "002_CreateAcquireReceptorProcessingFunction.sql",
-      "003_CreateCompleteReceptorProcessingFunction.sql",
-      "004_CreateAcquirePerspectiveCheckpointFunction.sql",
-      "005_CreateCompletePerspectiveCheckpointFunction.sql",
-      "006_CreateNormalizeEventTypeFunction.sql",
-      "007_CreateActiveStreamsTable.sql",
-      "008_CreateMessageAssociationRegistry.sql",
-      "009_CreatePerspectiveEventsTable.sql",
-      "010_RegisterInstanceHeartbeat.sql",
-      "011_CleanupStaleInstances.sql",
-      "012_CalculateInstanceRank.sql",
-      "013_ProcessOutboxCompletions.sql",
-      "014_ProcessInboxCompletions.sql",
-      "015_ProcessPerspectiveEventCompletions.sql",
-      "016_UpdatePerspectiveCheckpoints.sql",
-      "017_ProcessOutboxFailures.sql",
-      "018_ProcessInboxFailures.sql",
-      "019_ProcessPerspectiveEventFailures.sql",
-      "020_StoreOutboxMessages.sql",
-      "021_StoreInboxMessages.sql",
-      "022_StorePerspectiveEvents.sql",
-      "023_CleanupCompletedStreams.sql",
-      "024_ClaimOrphanedOutbox.sql",
-      "025_ClaimOrphanedInbox.sql",
-      "026_ClaimOrphanedReceptorWork.sql",
-      "027_ClaimOrphanedPerspectiveEvents.sql",
-      "028_EventStorageErrorTracking.sql",
-      "029_ProcessWorkBatch.sql",
-      "030_ReconcilePerspectiveRegistry.sql",
-      "036_DeregisterInstance.sql",
-      "037_CompletePerspectiveEvents.sql",
-      "038_GetStreamEvents.sql",
-      "039_CreateMessageTypeRegistryTable.sql",
-      "040_ReconcileMessageTypeRegistry.sql",
-      "041_RecomputePartitionNumbers.sql"
-    };
+    // Discover all migration files dynamically — avoids the bit-rot that hardcoded lists
+    // accumulate as old migrations are deleted (002/003/004 were removed earlier; this
+    // list previously referenced them and broke any test that tried to use the base
+    // class). Sort by filename: PostgreSQL migration ordering is conventionally
+    // alphanumeric on the prefix (000_*, 001_*, ...), and any same-prefix collision is
+    // also handled deterministically by Ordinal sort.
+    var functionFiles = Directory
+      .GetFiles(migrationPath, "*.sql")
+      .Select(Path.GetFileName)
+      .Where(name => name is not null)
+      .Cast<string>()
+      .OrderBy(name => name, StringComparer.Ordinal)
+      .ToArray();
 
     foreach (var functionFile in functionFiles) {
       var functionFilePath = Path.Combine(migrationPath, functionFile);

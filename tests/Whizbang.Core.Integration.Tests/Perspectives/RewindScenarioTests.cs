@@ -88,7 +88,7 @@ public class RewindScenarioTests {
     var spy = new _recordingReceptorInvoker();
     var eventTypeProvider = new _fakeEventTypeProvider();
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -98,6 +98,7 @@ public class RewindScenarioTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -182,7 +183,7 @@ public class RewindScenarioTests {
     var spy = new _recordingReceptorInvoker();
     var eventTypeProvider = new _fakeEventTypeProvider();
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -192,6 +193,7 @@ public class RewindScenarioTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     // Wait enough cycles for cycle 2's work batch to be delivered and processed.
     await coordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
@@ -279,7 +281,7 @@ public class RewindScenarioTests {
     var spy = new _recordingReceptorInvoker();
     var eventTypeProvider = new _fakeEventTypeProvider();
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -289,6 +291,7 @@ public class RewindScenarioTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForAllArrivalsProcessedAsync(TimeSpan.FromSeconds(20));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -367,7 +370,7 @@ public class RewindScenarioTests {
       events,
       isNew: new HashSet<Guid> { eventIds[0], eventIds[1], eventIds[2] });
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -377,6 +380,7 @@ public class RewindScenarioTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -446,7 +450,7 @@ public class RewindScenarioTests {
 
     var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[24] };
     var spy = new _recordingReceptorInvoker();
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -456,6 +460,7 @@ public class RewindScenarioTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -509,7 +514,7 @@ public class RewindScenarioTests {
 
     var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[14] };
     var spy = new _recordingReceptorInvoker();
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -519,6 +524,7 @@ public class RewindScenarioTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -567,7 +573,7 @@ public class RewindScenarioTests {
     // Each cycle's rewind sees a single is_new event (the trigger for that cycle).
     var reader = new _cyclicReplayReader(events, coordinator);
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -577,6 +583,7 @@ public class RewindScenarioTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForAllRewindsAsync(TimeSpan.FromSeconds(15));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -627,7 +634,7 @@ public class RewindScenarioTests {
 
     var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[4] };
     var spy = new _recordingReceptorInvoker();
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -637,6 +644,7 @@ public class RewindScenarioTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -693,7 +701,7 @@ public class RewindScenarioTests {
 
     var runner = new _rewindTrackingRunner { RewindResultEventId = eventIds[7] };
     var spy = new _recordingReceptorInvoker();
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       coordinator,
       new _singleRunnerRegistry(runner, perspectiveName),
       receptorInvoker: spy,
@@ -703,6 +711,7 @@ public class RewindScenarioTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -742,7 +751,7 @@ public class RewindScenarioTests {
     return list;
   }
 
-  private static PerspectiveWorker _createWorker(
+  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
     IWorkCoordinator coordinator,
     IPerspectiveRunnerRegistry registry,
     IReceptorInvoker? receptorInvoker = null,
@@ -751,10 +760,10 @@ public class RewindScenarioTests {
     IPerspectiveReplayReader? replayReader = null) {
 
     var instanceProvider = new _fakeInstanceProvider();
-    var databaseReadiness = new _fakeDatabaseReadiness();
     // Use Instant strategy so completion flows through to the coordinator immediately,
     // making cursor-state transitions deterministic between cycles.
     IPerspectiveCompletionStrategy strategy = new InstantCompletionStrategy();
+    var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
@@ -775,14 +784,18 @@ public class RewindScenarioTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    return new PerspectiveWorker(
+    var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
-      eventTypeProvider: eventTypeProvider);
+      eventTypeProvider: eventTypeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel);
+    return (worker, harness);
   }
 
   // ==================== Test Fakes ====================
@@ -1335,9 +1348,5 @@ public class RewindScenarioTests {
     public int ProcessId { get; } = 12345;
     ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
-  }
-
-  private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 }

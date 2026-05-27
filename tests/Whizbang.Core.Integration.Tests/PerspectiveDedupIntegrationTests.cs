@@ -50,11 +50,12 @@ public class PerspectiveDedupIntegrationTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
 
     // Act — run for 5+ cycles to give ample opportunity for duplicate processing
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -92,11 +93,12 @@ public class PerspectiveDedupIntegrationTests {
     coordinator.InitialWork = workItems;
     coordinator.RedeliverAfterInitial = true;
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Generous deadlines — completes in <1s locally, but CI parallel load can
     // slip the 100-call drain past a tight budget.
     await runner.WaitForCallCountAsync(100, TimeSpan.FromSeconds(30));
@@ -132,11 +134,12 @@ public class PerspectiveDedupIntegrationTests {
     };
 
     // Use batched strategy (completions deferred to next cycle)
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, useBatchedStrategy: true);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, useBatchedStrategy: true);
 
     // Act — run 3 cycles (cycle 1 processes, cycles 2-3 should dedup even though DB hasn't acked)
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -170,11 +173,12 @@ public class PerspectiveDedupIntegrationTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, timeProvider: fakeTime);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, timeProvider: fakeTime);
 
     // Act — cycle 1 processes, cycle 2 sends completions
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
 
     // Wait for retention to be activated (InFlight → Retained) before advancing time.
@@ -213,11 +217,12 @@ public class PerspectiveDedupIntegrationTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, timeProvider: fakeTime);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, timeProvider: fakeTime);
 
     // Phase 1: Process + InFlight
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
 
     // Wait for retention to be activated (InFlight → Retained) before advancing time
@@ -260,11 +265,12 @@ public class PerspectiveDedupIntegrationTests {
       }]);
     }
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner));
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner));
 
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(5, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -290,10 +296,11 @@ public class PerspectiveDedupIntegrationTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: true);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: true);
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -317,10 +324,11 @@ public class PerspectiveDedupIntegrationTests {
       PartitionNumber = 1
     };
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: false);
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: false);
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
     cts.Cancel();
@@ -365,7 +373,7 @@ public class PerspectiveDedupIntegrationTests {
     var workCoordinator = new SequentialWorkCoordinator();
     workCoordinator.WorkPerCycle.Add(workItems);
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       workCoordinator, registry,
       lifecycleCoordinator: lifecycleCoordinator,
       receptorInvoker: postLifecycleSpy,
@@ -374,6 +382,7 @@ public class PerspectiveDedupIntegrationTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(workCoordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
 
     // Wait for the coordinator WhenAll gate to fire PostLifecycleInline — deterministic signal, no timing bet.
@@ -419,7 +428,7 @@ public class PerspectiveDedupIntegrationTests {
     var runner = new FixedEventIdRunner(eventId);
     var registry = new MultiPerspectiveRunnerRegistry(perspectiveNames, runner);
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       workCoordinator, registry,
       lifecycleCoordinator: lifecycleCoordinator,
       receptorInvoker: postLifecycleSpy,
@@ -428,6 +437,7 @@ public class PerspectiveDedupIntegrationTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(workCoordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
     await workCoordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
 
@@ -471,7 +481,7 @@ public class PerspectiveDedupIntegrationTests {
     var runner = new FixedEventIdRunner(eventId);
     var registry = new MultiPerspectiveRunnerRegistry([perspectiveName], runner);
 
-    var worker = _createWorker(
+    var (worker, harness) = _createWorker(
       workCoordinator, registry,
       lifecycleCoordinator: lifecycleCoordinator,
       receptorInvoker: postLifecycleSpy,
@@ -480,6 +490,7 @@ public class PerspectiveDedupIntegrationTests {
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(workCoordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(1, TimeSpan.FromSeconds(5));
 
     // Deterministic wait for PostLifecycleInline — no Task.Delay timing bet.
@@ -513,10 +524,11 @@ public class PerspectiveDedupIntegrationTests {
     }
     coordinator.WorkPerCycle.Add(batchWork);
 
-    var worker = _createWorker(coordinator, new SingleRunnerRegistry(runner));
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner));
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(10, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -530,7 +542,7 @@ public class PerspectiveDedupIntegrationTests {
 
   // ==================== Helpers ====================
 
-  private static PerspectiveWorker _createWorker(
+  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
     IWorkCoordinator coordinator,
     IPerspectiveRunnerRegistry registry,
     IProcessedEventCacheObserver? observer = null,
@@ -541,10 +553,10 @@ public class PerspectiveDedupIntegrationTests {
     IEventStore? eventStore = null,
     IEventTypeProvider? eventTypeProvider = null) {
     var instanceProvider = new _fakeInstanceProvider();
-    var databaseReadiness = new _fakeDatabaseReadiness();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
       : new InstantCompletionStrategy();
+    var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
@@ -565,17 +577,21 @@ public class PerspectiveDedupIntegrationTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    return new PerspectiveWorker(
+    var worker = new PerspectiveWorker(
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       strategy,
-      databaseReadiness,
       eventTypeProvider: eventTypeProvider,
       processedEventCacheObserver: observer,
-      timeProvider: timeProvider
+      timeProvider: timeProvider,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel
     );
+    return (worker, harness);
   }
 
   // ==================== Test Fakes ====================
@@ -807,11 +823,6 @@ public class PerspectiveDedupIntegrationTests {
     ServiceInstanceInfo IServiceInstanceProvider.ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
-
-  private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-  }
-
   // ==================== Lifecycle Integration Test Fakes ====================
 
   /// <summary>

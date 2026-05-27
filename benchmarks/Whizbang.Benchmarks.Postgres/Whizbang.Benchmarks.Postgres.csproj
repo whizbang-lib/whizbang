@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <!-- Benchmark: Performance tests against real Postgres testcontainer. Run separately. -->
+    <WhizbangTestType>Benchmark</WhizbangTestType>
+    <!-- BenchmarkDotNet style accommodations -->
+    <NoWarn>$(NoWarn);CA1707;CA1822;CA1051;CA1001;CA2012;CA1805;TUnit0034</NoWarn>
+    <!-- Whizbang.Testing pulls TUnit in transitively; this project is a BDN runner, not a test -->
+    <IsTestProject>false</IsTestProject>
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

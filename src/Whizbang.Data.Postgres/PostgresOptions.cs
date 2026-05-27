@@ -61,4 +61,17 @@ public class PostgresOptions {
   public int CommandTimeoutSeconds { get; set; } = 5;
 
   #endregion
+
+  #region Concurrency Cap
+
+  /// <summary>
+  /// Defense-in-depth cap on concurrent <c>IWorkCoordinator</c> calls per process.
+  /// Prevents runaway pool draw if Npgsql config drifts. When the cap is hit, callers wait
+  /// on a semaphore rather than erroring. Set to 0 to disable the cap entirely.
+  /// Default: 50 (matches the recommended Npgsql Maximum Pool Size).
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/configuration-reference#max-in-flight-commands</docs>
+  public int MaxInFlightCommands { get; set; } = 50;
+
+  #endregion
 }
