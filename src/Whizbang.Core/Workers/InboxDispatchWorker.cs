@@ -257,37 +257,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
         "PreInbox", useLongRunningForDetached: false, ct, detachedCancellationToken: stoppingToken);
 
-      // DIAGNOSTIC: trace the post-PreInbox path to find why PostInbox never fires in the
-      // InboxStages_FireInCorrectOrder failure. RabbitMQ Integration CI shows PreInboxInline
-      // signals successfully but the next three stages never reach HandleAsync — narrowing
-      // down whether the gap is the EnqueueAsync, the PostInbox call site, or something else.
-#pragma warning disable CA1848
-      _logger.LogWarning("DIAG inbox-dispatch {MessageId}: PreInbox returned, building commit request", work.MessageId);
-#pragma warning restore CA1848
-
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
       var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
-
-#pragma warning disable CA1848
-      _logger.LogWarning("DIAG inbox-dispatch {MessageId}: enqueueing commit (ct cancelled? {CtCancelled})", work.MessageId, ct.IsCancellationRequested);
-#pragma warning restore CA1848
-
       await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
-
-#pragma warning disable CA1848
-      _logger.LogWarning("DIAG inbox-dispatch {MessageId}: commit enqueued, calling PostInbox", work.MessageId);
-#pragma warning restore CA1848
 
       // PostInbox lands AFTER event storage. Use LongRunning for the Detached stage so it can't be
       // starved by PerspectiveWorker drain churn.
       await _invokeInboxLifecycleStageAsync(
         work, typedEnvelope, scope, receptorInvoker, LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
         "PostInbox", useLongRunningForDetached: true, ct, detachedCancellationToken: stoppingToken);
-
-#pragma warning disable CA1848
-      _logger.LogWarning("DIAG inbox-dispatch {MessageId}: PostInbox returned", work.MessageId);
-#pragma warning restore CA1848
 
       // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
       // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
