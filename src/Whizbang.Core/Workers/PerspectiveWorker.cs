@@ -1078,6 +1078,7 @@ public partial class PerspectiveWorker(
   /// for the WhenAll PostAllPerspectives gate, then executes each applicable perspective runner
   /// in its own DI scope.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Per-stream orchestration coordinates the WhenAll lifecycle tracker registration + per-perspective scoped runner invocation + refetch gate. Splitting would force passing the batch context + tracker handles across helper boundaries and obscure the ordering invariants.")]
   private async Task _processDrainModeStreamAsync(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
@@ -1278,6 +1279,7 @@ public partial class PerspectiveWorker(
   /// and flushes the supporting trackers/signalers/metrics. Keeps the pre-report and post-report
   /// completed-only blocks separate to preserve the observable ordering of the original monolith.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single-perspective dispatch handles cooldown filtering + cursor inversion rewind + forward apply + failure routing + completion flush enqueue in one site. Splitting risks reordering the cache-mark / completion-enqueue / lifecycle-signal sequence; the comment block ahead of each section already documents the rationale.")]
   private async Task _runDrainModePerspectiveAsync(
       Guid streamId,
       string perspectiveName,

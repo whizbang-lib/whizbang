@@ -95,6 +95,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   /// <inheritdoc />
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Worker ExecuteAsync orchestrates schema-ready gate, drain channel polling, per-stream dispatch, and shutdown propagation — the branches are tightly coupled and inlining them keeps the lease/in-flight invariants visible at one site.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.MaxPerStream);
 
@@ -343,6 +344,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// Mirrors <see cref="InboxDispatchWorker._invokeInboxLifecycleStageAsync"/>. Wrapped in
   /// try/catch so a misbehaving receptor cannot block publish or completion.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Lifecycle invocation handles the detached-vs-inline branch matrix + receptor resolution + envelope reuse fallback inline so the receptor-isolation try/catch stays at one site.")]
   private async Task _invokeOutboxLifecycleStageAsync(
       OutboxWork work,
       IMessageEnvelope? typedEnvelope,

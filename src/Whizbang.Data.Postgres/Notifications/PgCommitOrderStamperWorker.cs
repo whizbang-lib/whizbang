@@ -73,6 +73,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   public event Action<int>? OnStampCompleted;
 
   /// <inheritdoc />
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Stamper drives the full leader-election + NOTIFY-driven wake + back-pressured stamping protocol. Splitting would require sharing the lock-conn lifetime + leader-state semaphore across helpers and lose the visible try/finally structure.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (_stamperOptions.DisableStamper) {
       LogDisabled(_logger);

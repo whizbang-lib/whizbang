@@ -1445,6 +1445,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reader hydration covers the schema-shape drift between deployed migrations (older column set vs newer columns: commit_sequence + scope + envelope_type all have try-GetOrdinal fallbacks). The branches mirror migration adoption sequencing.")]
   public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
