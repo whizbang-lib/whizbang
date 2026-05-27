@@ -280,26 +280,59 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Register all four lifecycle waits BEFORE dispatching. Each helper internally registers
-    // its receptor synchronously up to its first await, so by the time we dispatch all four
-    // are armed. The helper's timeout scales with WHIZBANG_TEST_TIMEOUT_MULTIPLIER.
-    // Filter by ProductId so each receptor only signals on OUR event — without filter, a stale
-    // event from the prior test could satisfy any of these waits.
+    // Inline TCS + manual receptor construction (instead of the WaitFor* helpers) so the
+    // failure path can introspect each receptor's InvocationCount + LastMessage on timeout —
+    // identifies whether the stage didn't fire at all (count == 0, LastMessage == null) vs
+    // fired but filtered out (count == 0, LastMessage != null) vs some other condition.
+    // Keep the messageFilter for stale-event safety; same filter for all four receptors.
     Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
-    var preInlineTask = fixture.BffHost.WaitForPreInboxInlineAsync<ProductCreatedEvent>(messageFilter: filter);
-    var preAsyncTask = fixture.BffHost.WaitForPreInboxDetachedAsync<ProductCreatedEvent>(messageFilter: filter);
-    var postAsyncTask = fixture.BffHost.WaitForPostInboxDetachedAsync<ProductCreatedEvent>(messageFilter: filter);
-    var postInlineTask = fixture.BffHost.WaitForPostInboxInlineAsync<ProductCreatedEvent>(messageFilter: filter);
+    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion, expectedStage: LifecycleStage.PreInboxInline, messageFilter: filter);
+    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion, expectedStage: LifecycleStage.PreInboxDetached, messageFilter: filter);
+    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion, expectedStage: LifecycleStage.PostInboxDetached, messageFilter: filter);
+    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion, expectedStage: LifecycleStage.PostInboxInline, messageFilter: filter);
 
-    await fixture.Dispatcher.SendAsync(command);
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
+    registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
 
-    // Wait for all four. If any helper times out, its TimeoutException identifies the missing stage.
-    await Task.WhenAll(preInlineTask, preAsyncTask, postAsyncTask, postInlineTask);
+    try {
+      await fixture.Dispatcher.SendAsync(command);
 
-    await Assert.That((await preInlineTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await preAsyncTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await postAsyncTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await postInlineTask).InvocationCount).IsEqualTo(1);
+      try {
+        var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(120_000);
+        await Task.WhenAll(
+          preInlineCompletion.Task,
+          preAsyncCompletion.Task,
+          postAsyncCompletion.Task,
+          postInlineCompletion.Task
+        ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+      } catch (TimeoutException) {
+        static string _describe(string stage, TaskCompletionSource<bool> tcs, GenericLifecycleCompletionReceptor<ProductCreatedEvent> r)
+          => $"{stage}: signaled={tcs.Task.IsCompleted}, invocations={r.InvocationCount}, lastMessageSeen={(r.LastMessage is not null ? "yes" : "no")}";
+        throw new TimeoutException(
+          "Inbox lifecycle stages did not all fire. " +
+          _describe("PreInboxInline", preInlineCompletion, preInlineReceptor) + "; " +
+          _describe("PreInboxDetached", preAsyncCompletion, preAsyncReceptor) + "; " +
+          _describe("PostInboxDetached", postAsyncCompletion, postAsyncReceptor) + "; " +
+          _describe("PostInboxInline", postInlineCompletion, postInlineReceptor));
+      }
+
+      await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
+      await Assert.That(preAsyncReceptor.InvocationCount).IsEqualTo(1);
+      await Assert.That(postAsyncReceptor.InvocationCount).IsEqualTo(1);
+      await Assert.That(postInlineReceptor.InvocationCount).IsEqualTo(1);
+    } finally {
+      registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
+      registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
+    }
   }
 
   /// <summary>
