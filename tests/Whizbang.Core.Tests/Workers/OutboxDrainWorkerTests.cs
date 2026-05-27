@@ -573,4 +573,114 @@ public class OutboxDrainWorkerTests {
     await Assert.That(failure.All.Count).IsEqualTo(0)
       .Because("A lifecycle-receptor failure is not a publish failure.");
   }
+
+  private sealed class NeverHasReceptorsRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasAnyConsumer(string messageType) => false;
+  }
+
+  /// <summary>
+  /// When the registry reports no receptors for the gated Outbox stages, lifecycle
+  /// invocation short-circuits BEFORE creating a scope. Locks the fast-path: publish
+  /// still happens, receptor invoker is never called.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_NoReceptorsRegistered_LifecycleShortCircuits_PublishStillFiresAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var invoker = new CapturingReceptorInvoker();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton<IReceptorInvoker>(invoker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish,
+      lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
+      receptorRegistry: new NeverHasReceptorsRegistry(),
+      runtimeReceptorRegistry: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(publish.Published.Count).IsEqualTo(1)
+      .Because("Publish must still happen when no receptors are registered for the gated Outbox stages.");
+    await Assert.That(invoker.Invocations.Count).IsEqualTo(0)
+      .Because("With registry reporting no receptors for the stage, the worker must short-circuit before invoking the receptor invoker.");
+  }
+
+  /// <summary>
+  /// An OutboxBatchRow with an empty/null destination represents an event-store-only
+  /// message — those rows exist for event store persistence only and MUST NOT fire
+  /// transport-side lifecycle stages. Locks that destination-empty rows bypass the
+  /// lifecycle invocation entirely.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_EmptyDestination_SkipsLifecycle_PublishStillFiresAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new FakeWorkCoordinator();
+    var row = _row(msgId, streamId);
+    coord.RowsByStream[streamId] = [row with { Destination = string.Empty }];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy { TargetCount = 1 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var invoker = new CapturingReceptorInvoker();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    services.AddSingleton<IReceptorInvoker>(invoker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish,
+      lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
+      receptorRegistry: new AlwaysHasReceptorsRegistry(),
+      runtimeReceptorRegistry: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(invoker.Invocations.Count).IsEqualTo(0)
+      .Because("Empty-destination (event-store-only) messages must not fire transport-side lifecycle stages.");
+  }
 }
