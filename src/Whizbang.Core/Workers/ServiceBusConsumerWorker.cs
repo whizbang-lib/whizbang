@@ -201,7 +201,9 @@ public partial class ServiceBusConsumerWorker(
     // because of a registry-side parse miss.
     if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
-      if (innerMessageType is not null && !_receptorRegistry.HasAnyConsumer(innerMessageType)) {
+      if (innerMessageType is not null
+          && !_receptorRegistry.HasAnyConsumer(innerMessageType)
+          && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
         return;
       }
