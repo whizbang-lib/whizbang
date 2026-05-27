@@ -61,7 +61,7 @@ public class BatchReceiveLifecycleTests {
 
     // Act — dispatch command, wait for perspectives to process on remote service
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -120,7 +120,7 @@ public class BatchReceiveLifecycleTests {
 
     // Act
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
