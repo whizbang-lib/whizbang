@@ -117,6 +117,25 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       => hasAnyConsumer?.Invoke(messageType) ?? false;
   }
 
+  /// <summary>
+  /// Runtime-registry double. Only <see cref="GetReceptorsFor"/> is exercised by the
+  /// dispatch gate — the Register/Unregister overloads throw if a test reaches them,
+  /// since none of the lifecycle-gating tests should be touching runtime registration
+  /// from the registry side.
+  /// </summary>
+  private sealed class FakeRuntimeReceptorRegistry(
+      Func<Type, LifecycleStage, IReadOnlyList<ReceptorInfo>>? getReceptorsFor = null) : IReceptorRegistry {
+    private static readonly IReadOnlyList<ReceptorInfo> _empty = Array.Empty<ReceptorInfo>();
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage)
+      => getReceptorsFor?.Invoke(messageType, stage) ?? _empty;
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage
+      => throw new NotSupportedException("Test double — register receptors via the GetReceptorsFor delegate.");
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage
+      => throw new NotSupportedException("Test double — register receptors via the GetReceptorsFor delegate.");
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
   private static InboxWork _makeWork(string messageType) {
     var msgId = (Guid)TrackedGuid.NewMedo();
     var streamId = (Guid)TrackedGuid.NewMedo();
@@ -168,7 +187,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     }
   }
 
-  private static WorkerHarness _buildWorker(IReceptorRegistryQuery? registry) {
+  private static WorkerHarness _buildWorker(IReceptorRegistryQuery? registry, IReceptorRegistry? runtimeRegistry = null) {
     var instance = new FakeInstanceProvider();
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
@@ -189,7 +208,8 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
       lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      runtimeReceptorRegistry: runtimeRegistry);
 
     return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, deserializer);
   }
@@ -500,6 +520,49 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)).IsTrue()
       .Because("With a registered detached receptor, the spawn must still happen.");
     await Assert.That(harness.Invoker.HasStage(LifecycleStage.PostInboxDetached)).IsTrue();
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task Process_RuntimeReceptorRegistered_ButCompileTimeEmpty_FiresLifecycleAsync() {
+    // Regression lock for the integration-test failure where PreInboxDetached on
+    // ECommerce BFF.API never fired for ProductCreatedEvent: the BFF's source-generated
+    // compile-time WhizbangReceptorRegistryQuery contribution emits EMPTY arrays for
+    // PreInboxDetached / PreInboxInline (BFF has no compile-time lifecycle receptors —
+    // only a perspective consumer). The dispatch worker's HasReceptors gate consulted
+    // ONLY that compile-time view, so it returned early and the runtime-registered
+    // test completion receptor never fired. Wait helper timed out at 2m 15s.
+    //
+    // IReceptorRegistry.GetReceptorsFor's contract is explicit: "Returns compile-time
+    // entries concatenated with any runtime-registered entries." The gate MUST consult
+    // the runtime registry too, or every runtime registration silently breaks. This is
+    // the same class of bug as [[feedback_fast_return_must_signal_lifecycle]] —
+    // an optimization that skips firing a lifecycle stage.
+    var compileTime = new FakeReceptorRegistry(hasReceptors: (_, _) => false);
+    var runtime = new FakeRuntimeReceptorRegistry(getReceptorsFor: (type, stage) =>
+      stage == LifecycleStage.PreInboxDetached
+        ? [new ReceptorInfo(
+            MessageType: type,
+            ReceptorId: "test-runtime-receptor",
+            InvokeAsync: (_, _, _, _, _) => ValueTask.FromResult<object?>(null))]
+        : Array.Empty<ReceptorInfo>());
+    await using var harness = _buildWorker(compileTime, runtime);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+
+    var work = _makeWork("Runtime.Only.Event, Test");
+    await harness.Inbox.WriteAsync(work, cts.Token);
+
+    await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+    while (!harness.Invoker.HasStage(LifecycleStage.PreInboxDetached) && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
+
+    await Assert.That(harness.Invoker.HasStage(LifecycleStage.PreInboxDetached)).IsTrue()
+      .Because("Gate must consult the runtime registry too — without this, every runtime-registered receptor (integration test waits, dynamic registrations) silently fails to fire.");
+
     await cts.CancelAsync();
   }
 
