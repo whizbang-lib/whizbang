@@ -65,9 +65,15 @@ public class BatchReceiveLifecycleTests {
       InitialStock = 3
     };
 
-    // Act — dispatch, wait for perspectives on remote service
+    // Act — dispatch, wait for perspectives on remote service.
+    // CreateProductCommand with InitialStock > 0 fires 3 perspective events on inventory:
+    //   ProductCreatedEvent -> ProductCatalogPerspective (1)
+    //   ProductCreatedEvent -> InventoryLevelsPerspective (1)
+    //   InventoryRestockedEvent -> InventoryLevelsPerspective (1)
+    // Waiting for 2 leaves the 3rd in-flight and produced a race-flake when the late
+    // event satisfied a subsequent test step's perspective wait prematurely.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -94,9 +100,11 @@ public class BatchReceiveLifecycleTests {
       InitialStock = i + 1
     }).ToList();
 
-    // Act — send 3 commands with brief gaps to avoid overwhelming CI runners
+    // Act — send 3 commands with brief gaps to avoid overwhelming CI runners.
+    // Each CreateProductCommand with InitialStock > 0 fires 3 perspective events
+    // on inventory (ProductCreated x2 + InventoryRestocked x1). 3 commands x 3 = 9.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 120000, hostFilter: "inventory");
+      expectedCompletions: 9, timeoutMilliseconds: 120000, hostFilter: "inventory");
 
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
