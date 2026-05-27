@@ -65,7 +65,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 10
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -117,7 +117,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 20
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -170,7 +170,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 15
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -223,7 +223,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 30
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -277,7 +277,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 5
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -357,7 +357,7 @@ public class UpdateProductWorkflowTests {
     };
     // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 

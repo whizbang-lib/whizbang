@@ -64,7 +64,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -88,7 +88,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -116,7 +116,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -140,7 +140,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 60000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 60000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -168,7 +168,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -192,7 +192,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -216,7 +216,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing (covers both PostPerspective stages)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -244,7 +244,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -269,7 +269,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 90000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -334,7 +334,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing (all stages fire in order)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -368,7 +368,7 @@ public class PerspectiveLifecycleTests {
     // Act - Use hook to wait for perspective processing
     // If perspectives complete, all stages have fired in correct order
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -396,7 +396,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 

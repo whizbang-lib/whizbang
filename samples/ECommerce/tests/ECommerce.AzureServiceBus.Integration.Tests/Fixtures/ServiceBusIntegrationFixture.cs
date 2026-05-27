@@ -1461,7 +1461,13 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
       string? hostFilter = null) {
-    var completionCount = 0;
+    // Sum EventCount (not fire count): the handler fires ONCE per (perspective, stream)
+    // batch with EventCount = number of events processed in that batch. The caller's intent
+    // is "wait until N event-applications complete," and per-batch fires can represent 1 or
+    // many events depending on drain timing. Mirror of the fix in
+    // RabbitMqIntegrationFixture.WaitForPerspectiveProcessingAsync — see commit 4d8a28d5
+    // for the rationale and regression history.
+    var eventCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     void WireWorker(PerspectiveWorker? worker) {
       if (worker is null) {
@@ -1470,7 +1476,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
       PerspectiveEventProcessedHandler? handler = null;
       handler = (e) => {
-        var current = Interlocked.Increment(ref completionCount);
+        var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }
