@@ -58,7 +58,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var instanceId = (Guid)TrackedGuid.NewMedo();
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-a", "host-a", 42));
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var svc = await conn.ExecuteScalarAsync<string>(
       "SELECT service_name FROM wh_service_instances WHERE instance_id = @id",
@@ -83,7 +83,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-b", "host-b", 1));
     await c.DeregisterInstanceAsync(instanceId);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var count = await conn.ExecuteScalarAsync<long>(
       "SELECT COUNT(*) FROM wh_service_instances WHERE instance_id = @id",
@@ -156,7 +156,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var c = _build();
     await c.StoreOutboxMessagesAsync([], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var count = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_outbox");
     await Assert.That(count).IsEqualTo(0L);
@@ -170,7 +170,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
 
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var count = await conn.ExecuteScalarAsync<long>(
       "SELECT COUNT(*) FROM wh_outbox WHERE message_id = @m", new { m = msgId });
@@ -193,7 +193,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var affected = await c.CompleteOutboxPublishedAsync([msgId], debugMode: false);
     await Assert.That(affected).IsGreaterThanOrEqualTo(1);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var count = await conn.ExecuteScalarAsync<long>(
       "SELECT COUNT(*) FROM wh_outbox WHERE message_id = @m", new { m = msgId });
@@ -208,7 +208,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
 
     await c.CompleteOutboxPublishedAsync([msgId], debugMode: true);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var publishedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT published_at FROM wh_outbox WHERE message_id = @m", new { m = msgId });
@@ -309,7 +309,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.NewMedo();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(
       "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
@@ -365,7 +365,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.NewMedo();
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(
       "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '1 second' WHERE message_id = @m",

@@ -18,7 +18,7 @@ public class SignalRTokenRefreshNotifierTests {
     await notifier.NotifyAsync("user-42", "permissions-changed");
 
     var count = sent.Count;
-    var (UserId, Method, Args) = sent[0];
+    var (UserId, Method, _) = sent[0];
     var method = Method;
     var userId = UserId;
     await Assert.That(count).IsEqualTo(1);
@@ -35,7 +35,7 @@ public class SignalRTokenRefreshNotifierTests {
 
     await notifier.NotifyAsync("user-42", "tenant-renamed");
 
-    var (UserId, Method, Args) = sent[0];
+    var (_, _, Args) = sent[0];
     var payload = (TokenRefreshPayload)Args[0]!;
     var reason = payload.Reason;
     var ts = payload.Timestamp;
