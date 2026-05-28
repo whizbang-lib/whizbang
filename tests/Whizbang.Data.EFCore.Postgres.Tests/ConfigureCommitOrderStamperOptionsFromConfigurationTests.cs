@@ -37,7 +37,7 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   [Test]
   public async Task PollingInterval_ParsesUnderInvariantCultureAsync() {
     var bound = _bind(new Dictionary<string, string?> {
-      ["Whizbang:Notifications:Stamper:PollingInterval"] = "00:00:01.5",
+      ["Whizbang:Database:Stamper:PollingInterval"] = "00:00:01.5",
     });
     await Assert.That(bound.PollingInterval).IsEqualTo(System.TimeSpan.FromSeconds(1.5));
   }
@@ -45,7 +45,7 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   [Test]
   public async Task LeaderElectionRetry_ParsesUnderInvariantCultureAsync() {
     var bound = _bind(new Dictionary<string, string?> {
-      ["Whizbang:Notifications:Stamper:LeaderElectionRetry"] = "00:00:30",
+      ["Whizbang:Database:Stamper:LeaderElectionRetry"] = "00:00:30",
     });
     await Assert.That(bound.LeaderElectionRetry).IsEqualTo(System.TimeSpan.FromSeconds(30));
   }
@@ -53,7 +53,7 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   [Test]
   public async Task BatchSize_ParsesIntAsync() {
     var bound = _bind(new Dictionary<string, string?> {
-      ["Whizbang:Notifications:Stamper:BatchSize"] = "2048",
+      ["Whizbang:Database:Stamper:BatchSize"] = "2048",
     });
     await Assert.That(bound.BatchSize).IsEqualTo(2048);
   }
@@ -61,7 +61,7 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   [Test]
   public async Task DisableStamper_ParsesBoolAsync() {
     var bound = _bind(new Dictionary<string, string?> {
-      ["Whizbang:Notifications:Stamper:DisableStamper"] = "true",
+      ["Whizbang:Database:Stamper:DisableStamper"] = "true",
     });
     await Assert.That(bound.DisableStamper).IsTrue();
   }
@@ -69,7 +69,7 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   [Test]
   public async Task AdvisoryLockKey_ParsesLongAsync() {
     var bound = _bind(new Dictionary<string, string?> {
-      ["Whizbang:Notifications:Stamper:AdvisoryLockKey"] = "9223372036854775000",
+      ["Whizbang:Database:Stamper:AdvisoryLockKey"] = "9223372036854775000",
     });
     await Assert.That(bound.AdvisoryLockKey).IsEqualTo(9223372036854775000L);
   }
