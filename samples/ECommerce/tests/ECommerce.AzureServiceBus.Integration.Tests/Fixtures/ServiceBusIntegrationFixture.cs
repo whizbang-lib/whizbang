@@ -1468,10 +1468,17 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Waits for a specific number of perspective completions using the
   /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
   /// </summary>
+  /// <param name="expectedCompletions">Total event-applications to wait for.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  /// <param name="streamId">When non-null, only count events for this stream id. Recommended
+  /// for every workflow test — otherwise stale events from prior tests' in-flight processing
+  /// can satisfy the wait early (the perpetual UpdateProduct_PriceOnly flake's root cause).</param>
   public async Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null) {
+      string? hostFilter = null,
+      Guid? streamId = null) {
     // Sum EventCount (not fire count): the handler fires ONCE per (perspective, stream)
     // batch with EventCount = number of events processed in that batch. The caller's intent
     // is "wait until N event-applications complete," and per-batch fires can represent 1 or
@@ -1486,6 +1493,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       }
 
       void handler(PerspectiveEventProcessedEvent e) {
+        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
+        // events keep firing on the worker after cleanup; without this filter their
+        // EventCount satisfied the wait before THIS test's command had committed.
+        if (streamId.HasValue && e.StreamId != streamId.Value) {
+          return;
+        }
         var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
