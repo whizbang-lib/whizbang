@@ -57,8 +57,9 @@ public class BatchReceiveLifecycleTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
+    var productId = ProductId.New();
     var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
+      ProductId = productId,
       Name = "RabbitMQ Batch Test",
       Description = "Testing batch receive end-to-end over RabbitMQ",
       Price = 29.99m,
@@ -67,8 +68,11 @@ public class BatchReceiveLifecycleTests {
 
     // Act — dispatch, wait for 3 perspective events on inventory
     // (ProductCreated x2 + InventoryRestocked x1 from InitialStock > 0).
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 90000, hostFilter: "inventory");
+    // Deterministic helper: fails fast if no progress for 10s rather than waiting the full
+    // ceiling; logs observed stream id + cross-stream count to distinguish flake from
+    // genuine pipeline breakage.
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
+      expectedCompletions: 3, streamId: productId.Value, absoluteTimeoutMs: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 

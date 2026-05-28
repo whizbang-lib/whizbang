@@ -262,8 +262,10 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 50
     };
     // 3 perspective events for non-zero stock.
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Deterministic wait: fails fast if no progress for 10s with diagnostic counts.
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
+      expectedCompletions: 3, streamId: _testProdLargeRestock.Value,
+      absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -273,8 +275,9 @@ public class RestockInventoryWorkflowTests {
       ProductId = _testProdLargeRestock,
       QuantityToAdd = 10000
     };
-    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
+      expectedCompletions: 1, streamId: _testProdLargeRestock.Value,
+      absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
