@@ -173,7 +173,7 @@ public class UpdateProductWorkflowTests {
     // seen). Stream-id filter also eliminates cross-test contamination.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
       expectedCompletions: 3, streamId: _testProdUpdatePrice.Value,
-      absoluteTimeoutMs: 45000, hostFilter: "inventory");
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -188,7 +188,7 @@ public class UpdateProductWorkflowTests {
     };
     var updateTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
       expectedCompletions: 1, streamId: _testProdUpdatePrice.Value,
-      absoluteTimeoutMs: 45000, hostFilter: "inventory");
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
     await fixture.WaitForWorkersIdleAsync();
