@@ -1571,6 +1571,80 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
   }
 
+  /// <summary>
+  /// Deterministic-progress variant of <see cref="WaitForPerspectiveProcessingAsync"/>.
+  /// Fails fast with structured diagnostics (matched event count, cross-stream fires,
+  /// idle ms vs threshold, ceiling) when no matching-stream perspective event has fired
+  /// for <paramref name="noProgressIdleMs"/> (default 10 s). When events are flowing the
+  /// helper stays patient up to <paramref name="absoluteTimeoutMs"/>. Mirror of the
+  /// RabbitMqIntegrationFixture helper — distinguishes flake from genuine pipeline
+  /// breakage immediately rather than running out the full configured timeout.
+  /// </summary>
+  public async Task WaitForPerspectiveProcessingDeterministicAsync(
+      int expectedCompletions,
+      Guid streamId,
+      int noProgressIdleMs = 10000,
+      int absoluteTimeoutMs = 60000,
+      string? hostFilter = null) {
+    var eventCount = 0;
+    var observedStreamCount = 0;
+    var lastProgressTicks = Environment.TickCount64;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var handlers = new List<(PerspectiveWorker worker, PerspectiveEventProcessedHandler handler)>();
+
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) {
+        return;
+      }
+
+      void handler(PerspectiveEventProcessedEvent e) {
+        Interlocked.Increment(ref observedStreamCount);
+        if (e.StreamId != streamId) {
+          return;
+        }
+        Interlocked.Exchange(ref lastProgressTicks, Environment.TickCount64);
+        var current = Interlocked.Add(ref eventCount, e.EventCount);
+        if (current >= expectedCompletions) {
+          tcs.TrySetResult(true);
+        }
+      }
+
+      worker.OnPerspectiveEventProcessed += handler;
+      handlers.Add((worker, handler));
+    }
+
+    if (hostFilter is null or "inventory") {
+      WireWorker(InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault());
+    }
+    if (hostFilter is null or "bff") {
+      WireWorker(BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault());
+    }
+
+    using var watchdogCts = new CancellationTokenSource();
+    var watchdog = Task.Run(async () => {
+      while (!tcs.Task.IsCompleted && !watchdogCts.IsCancellationRequested) {
+        try { await Task.Delay(1000, watchdogCts.Token).ConfigureAwait(false); } catch (OperationCanceledException) { return; }
+        var idleMs = Environment.TickCount64 - Interlocked.Read(ref lastProgressTicks);
+        if (idleMs > noProgressIdleMs) {
+          tcs.TrySetException(new TimeoutException(
+            $"Perspective processing stalled — got {Volatile.Read(ref eventCount)}/{expectedCompletions} matching events for stream {streamId:N} after observing {Volatile.Read(ref observedStreamCount)} cross-stream fires, idle for {idleMs}ms (no-progress threshold {noProgressIdleMs}ms, ceiling {absoluteTimeoutMs}ms)."));
+          return;
+        }
+      }
+    }, watchdogCts.Token);
+
+    try {
+      await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(Whizbang.Testing.TestTimeouts.Scale(absoluteTimeoutMs))).ConfigureAwait(false);
+    } finally {
+      watchdogCts.Cancel();
+      foreach (var (worker, handler) in handlers) {
+        worker.OnPerspectiveEventProcessed -= handler;
+      }
+    }
+  }
+
   public async ValueTask DisposeAsync() {
     // CRITICAL: Wait for all pending work to complete before stopping hosts
     // This prevents in-flight perspective materialization from being canceled mid-transaction
