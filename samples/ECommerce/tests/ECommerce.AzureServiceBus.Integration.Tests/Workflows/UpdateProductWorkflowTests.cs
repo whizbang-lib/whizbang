@@ -175,7 +175,7 @@ public class UpdateProductWorkflowTests {
     // that previously hit the 45 s ceiling with no diagnostic.
     var createTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
       expectedCompletions: 3, streamId: _testProdUpdatePrice.Value,
-      absoluteTimeoutMs: 45000, hostFilter: "inventory");
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -190,7 +190,7 @@ public class UpdateProductWorkflowTests {
     };
     var updateTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
       expectedCompletions: 1, streamId: _testProdUpdatePrice.Value,
-      absoluteTimeoutMs: 45000, hostFilter: "inventory");
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
 

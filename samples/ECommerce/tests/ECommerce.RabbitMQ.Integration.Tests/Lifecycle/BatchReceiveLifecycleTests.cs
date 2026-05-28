@@ -71,8 +71,14 @@ public class BatchReceiveLifecycleTests {
     // Deterministic helper: fails fast if no progress for 10s rather than waiting the full
     // ceiling; logs observed stream id + cross-stream count to distinguish flake from
     // genuine pipeline breakage.
+    // noProgressIdleMs raised to 30 s: rabbit CI legitimately takes 15-25 s between the
+    // synchronous receptor-emit (ProductCreated → 2 perspective applies, ~2 s) and the
+    // cascaded InventoryRestocked apply hitting the worker. 10 s was too aggressive and
+    // caught a normal-but-slow path as if it were a stall. 30 s still fails fast on real
+    // breakage with the same structured diagnostic; the absolute ceiling stays at 90 s.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
-      expectedCompletions: 3, streamId: productId.Value, absoluteTimeoutMs: 90000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: productId.Value,
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 90000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 

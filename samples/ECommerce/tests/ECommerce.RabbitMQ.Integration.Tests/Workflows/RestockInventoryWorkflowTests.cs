@@ -265,7 +265,7 @@ public class RestockInventoryWorkflowTests {
     // Deterministic wait: fails fast if no progress for 10s with diagnostic counts.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
       expectedCompletions: 3, streamId: _testProdLargeRestock.Value,
-      absoluteTimeoutMs: 45000, hostFilter: "inventory");
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -277,7 +277,7 @@ public class RestockInventoryWorkflowTests {
     };
     perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
       expectedCompletions: 1, streamId: _testProdLargeRestock.Value,
-      absoluteTimeoutMs: 45000, hostFilter: "inventory");
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
