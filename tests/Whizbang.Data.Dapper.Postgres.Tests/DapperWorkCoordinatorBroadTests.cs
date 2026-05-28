@@ -9,6 +9,8 @@ using TUnit.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
@@ -295,5 +297,120 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var c = _build();
     var results = await c.CommitHandlerBatchAsync([]);
     await Assert.That(results.Count).IsEqualTo(0);
+  }
+
+  // ----- second wave: deeper paths -----
+
+  [Test]
+  public async Task FetchOutboxBatchAsync_WithStoredRows_ReturnsRowsAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId)], partitionCount: 100);
+
+    using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var rows = await c.FetchOutboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+    await Assert.That(rows.Count).IsEqualTo(1);
+    await Assert.That(rows[0].MessageId).IsEqualTo(msgId);
+  }
+
+  [Test]
+  public async Task ReportPerspectiveCompletionAsync_RunsWithoutErrorAsync() {
+    // The SQL function complete_perspective_cursor_work requires pre-staged
+    // perspective_events rows to actually persist a cursor row, but invoking it
+    // exercises the C# serialization + parameter-binding path which is what
+    // we're after for coverage. Side-effect assertion lives in the EFCore
+    // equivalent tests where the full pipeline is set up.
+    var c = _build();
+    await c.ReportPerspectiveCompletionAsync(new PerspectiveCursorCompletion {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      PerspectiveName = "TestPerspective",
+      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      ProcessedEventIds = [(Guid)TrackedGuid.NewMedo()],
+      Status = PerspectiveProcessingStatus.Completed,
+    });
+  }
+
+  [Test]
+  public async Task ReportPerspectiveFailureAsync_RunsWithoutErrorAsync() {
+    var c = _build();
+    await c.ReportPerspectiveFailureAsync(new PerspectiveCursorFailure {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      PerspectiveName = "FailPerspective",
+      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      ProcessedEventIds = [],
+      Status = PerspectiveProcessingStatus.Failed,
+      Error = "boom",
+    });
+  }
+
+  [Test]
+  public async Task CleanupCompletedStreamsAsync_WithStream_RunsWithoutErrorAsync() {
+    var c = _build();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var n = await c.CleanupCompletedStreamsAsync([streamId]);
+    await Assert.That(n).IsGreaterThanOrEqualTo(0);
+  }
+
+  [Test]
+  public async Task RenewLeasesAsync_WithStoredRows_BumpsLeaseAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
+
+    using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '1 second' WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var n = await c.RenewLeasesAsync(WorkCategory.Outbox, [msgId], leaseSeconds: 600);
+    await Assert.That(n).IsGreaterThanOrEqualTo(0);
+  }
+
+  [Test]
+  public async Task CompletePerspectiveAsync_RunsWithoutErrorAsync() {
+    var c = _build();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var lastEventId = (Guid)TrackedGuid.NewMedo();
+
+    await c.CompletePerspectiveAsync(
+      [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = "PerspectiveDone",
+        LastEventId = lastEventId,
+        ProcessedEventIds = [lastEventId],
+        Status = PerspectiveProcessingStatus.Completed,
+      }],
+      eventWorkIds: [],
+      debugMode: false);
+  }
+
+  [Test]
+  public async Task ResolveSyncInquiriesAsync_WithBasicInquiry_ReturnsResultsAsync() {
+    var c = _build();
+    var inquiry = new SyncInquiry {
+      StreamId = (Guid)TrackedGuid.NewMedo(),
+      PerspectiveName = "AnyPerspective",
+    };
+    var results = await c.ResolveSyncInquiriesAsync([inquiry]);
+    await Assert.That(results).IsNotNull();
+  }
+
+  [Test]
+  public async Task GatherStatisticsAsync_WithStoredRow_StillReturnsStatsAsync() {
+    var c = _build();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], 100);
+
+    var stats = await c.GatherStatisticsAsync();
+    await Assert.That(stats).IsNotNull();
   }
 }

@@ -30,16 +30,11 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// </remarks>
 /// <docs>operations/workers/perspective-worker#rewind-replay</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/EFCorePerspectiveReplayReaderTests.cs</tests>
-public sealed class EFCorePerspectiveReplayReader<TDbContext> : IPerspectiveReplayReader
+public sealed class EFCorePerspectiveReplayReader<TDbContext>(TDbContext context, IEventStore eventStore) : IPerspectiveReplayReader
   where TDbContext : DbContext {
 
-  private readonly TDbContext _context;
-  private readonly IEventStore _eventStore;
-
-  public EFCorePerspectiveReplayReader(TDbContext context, IEventStore eventStore) {
-    _context = context ?? throw new ArgumentNullException(nameof(context));
-    _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
-  }
+  private readonly TDbContext _context = context ?? throw new ArgumentNullException(nameof(context));
+  private readonly IEventStore _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
 
   /// <inheritdoc/>
   public IAsyncEnumerable<ReplayEventEnvelope> ReadReplayEventsAsync(

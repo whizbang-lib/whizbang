@@ -863,11 +863,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     void WireWorker(PerspectiveWorker? worker) {
       if (worker is null) { return; }
-      PerspectiveEventProcessedHandler? handler = null;
-      handler = (e) => {
+      void handler(PerspectiveEventProcessedEvent e) {
         var current = Interlocked.Increment(ref completionCount);
         if (current >= expectedCompletions) { tcs.TrySetResult(true); }
-      };
+      }
+
       worker.OnPerspectiveEventProcessed += handler;
     }
     if (hostFilter is null or "inventory") {
@@ -904,14 +904,14 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       try {
         // Truncate all Whizbang tables in the shared database
         // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-        using (var scope = _inventoryHost!.Services.CreateScope()) {
-          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+        using var scope = _inventoryHost!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-          // Truncate Whizbang core tables, perspective tables, and checkpoints
-          // CASCADE ensures all dependent data is cleared
-          // Use DO block to gracefully handle case where tables don't exist
-          // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
-          await dbContext.Database.ExecuteSqlRawAsync(@"
+        // Truncate Whizbang core tables, perspective tables, and checkpoints
+        // CASCADE ensures all dependent data is cleared
+        // Use DO block to gracefully handle case where tables don't exist
+        // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
+        await dbContext.Database.ExecuteSqlRawAsync(@"
             DO $$
             BEGIN
               -- Truncate core infrastructure tables (INVENTORY schema)
@@ -935,7 +935,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
                 NULL;
             END $$;
           ", cancellationToken);
-        }
 
         return; // Success, exit retry loop
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {

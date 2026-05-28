@@ -52,9 +52,9 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert
-    var dedupTask = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
-    await Assert.That(dedupTask.TaskName).IsNotNull();
-    await Assert.That(dedupTask.RowsAffected).IsGreaterThanOrEqualTo(1);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
+    await Assert.That(TaskName).IsNotNull();
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_message_deduplication WHERE message_id = '{oldId}'");
@@ -117,8 +117,8 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert
-    var dedupTask = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
-    await Assert.That(dedupTask.RowsAffected).IsEqualTo(3);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
+    await Assert.That(RowsAffected).IsEqualTo(3);
   }
 
   [Test]
@@ -130,10 +130,10 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — task should return 0 rows affected, no error
-    var dedupTask = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
-    await Assert.That(dedupTask.TaskName).IsNotNull();
-    await Assert.That(dedupTask.RowsAffected).IsEqualTo(0);
-    await Assert.That(dedupTask.Status).IsEqualTo("ok");
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
+    await Assert.That(TaskName).IsNotNull();
+    await Assert.That(RowsAffected).IsEqualTo(0);
+    await Assert.That(Status).IsEqualTo("ok");
   }
 
   // ================================================================
@@ -153,9 +153,9 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert
-    var stuckTask = results.FirstOrDefault(r => r.TaskName == "purge_stuck_inbox");
-    await Assert.That(stuckTask.TaskName).IsNotNull();
-    await Assert.That(stuckTask.RowsAffected).IsGreaterThanOrEqualTo(1);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_stuck_inbox");
+    await Assert.That(TaskName).IsNotNull();
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_inbox WHERE message_id = '{stuckId}'");
@@ -231,8 +231,8 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — Task 2 (purge_completed_inbox) should have deleted it, NOT Task 5
-    var completedTask = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
-    await Assert.That(completedTask.RowsAffected).IsGreaterThanOrEqualTo(1);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_inbox WHERE message_id = '{processedId}'");
@@ -295,10 +295,10 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — task reports 1 row deleted.
-    var task6 = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
-    await Assert.That(task6.TaskName).IsNotNull();
-    await Assert.That(task6.RowsAffected).IsEqualTo(1L);
-    await Assert.That(task6.Status).IsEqualTo("ok");
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(TaskName).IsNotNull();
+    await Assert.That(RowsAffected).IsEqualTo(1L);
+    await Assert.That(Status).IsEqualTo("ok");
 
     // Abandoned row is gone.
     var abandoned = await conn.ExecuteScalarAsync<long>(
@@ -336,8 +336,8 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — row survives because the owner still heartbeats.
-    var task6 = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
-    await Assert.That(task6.RowsAffected).IsEqualTo(0L);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_active_streams WHERE stream_id = '{streamId}'");
@@ -353,10 +353,10 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — task is present with ok status and 0 rows.
-    var task6 = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
-    await Assert.That(task6.TaskName).IsNotNull();
-    await Assert.That(task6.RowsAffected).IsEqualTo(0L);
-    await Assert.That(task6.Status).IsEqualTo("ok");
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    await Assert.That(TaskName).IsNotNull();
+    await Assert.That(RowsAffected).IsEqualTo(0L);
+    await Assert.That(Status).IsEqualTo("ok");
   }
 
   // ================================================================
@@ -381,8 +381,8 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
-    await Assert.That(task.RowsAffected).IsEqualTo(0L);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
+    await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_outbox WHERE message_id = '{msgId}'");
@@ -403,8 +403,8 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
-    await Assert.That(task.RowsAffected).IsEqualTo(0L);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
+    await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_inbox WHERE message_id = '{msgId}'");
@@ -426,8 +426,8 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_perspective_events");
-    await Assert.That(task.RowsAffected).IsEqualTo(0L);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_perspective_events");
+    await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = '{workId}'");
@@ -450,8 +450,8 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var task = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
-    await Assert.That(task.RowsAffected).IsGreaterThanOrEqualTo(1);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
       $"SELECT COUNT(*) FROM wh_outbox WHERE message_id = '{msgId}'");

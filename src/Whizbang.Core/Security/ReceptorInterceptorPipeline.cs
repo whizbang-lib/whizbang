@@ -20,16 +20,12 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ReceptorInterceptorPipelineTests.cs</tests>
-public sealed class ReceptorInterceptorPipeline {
-  private readonly IReadOnlyList<IReceptorInterceptor> _interceptors;
-
-  /// <summary>
-  /// Creates a pipeline from the supplied interceptors. Empty input is a no-op pipeline
-  /// that always allows.
-  /// </summary>
-  public ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor> interceptors) {
-    _interceptors = [.. interceptors];
-  }
+/// <remarks>
+/// Creates a pipeline from the supplied interceptors. Empty input is a no-op pipeline
+/// that always allows.
+/// </remarks>
+public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor> interceptors) {
+  private readonly IReadOnlyList<IReceptorInterceptor> _interceptors = [.. interceptors];
 
   /// <summary>
   /// Runs interceptors in order, short-circuiting on the first denial. Fastest path —

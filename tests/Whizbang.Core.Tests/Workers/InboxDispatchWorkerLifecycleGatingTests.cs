@@ -125,7 +125,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   /// </summary>
   private sealed class FakeRuntimeReceptorRegistry(
       Func<Type, LifecycleStage, IReadOnlyList<ReceptorInfo>>? getReceptorsFor = null) : IReceptorRegistry {
-    private static readonly IReadOnlyList<ReceptorInfo> _empty = Array.Empty<ReceptorInfo>();
+    private static readonly IReadOnlyList<ReceptorInfo> _empty = [];
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage)
       => getReceptorsFor?.Invoke(messageType, stage) ?? _empty;
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage

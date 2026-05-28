@@ -187,7 +187,7 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
     await connection.OpenAsync();
     var rows = await connection.QueryAsync<RegistryRow>(
       "SELECT type_id AS TypeId, clr_type_name AS ClrTypeName, pinned_id AS PinnedId, kind AS Kind, updated_at AS UpdatedAt FROM wh_message_type_registry ORDER BY clr_type_name");
-    return rows.ToList();
+    return [.. rows];
   }
 
   private sealed record RegistryRow(Guid TypeId, string ClrTypeName, Guid? PinnedId, string Kind, DateTimeOffset UpdatedAt);
@@ -197,7 +197,7 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
   }
 
   private sealed class CapturingLogger<T> : ILogger<T> {
-    public List<string> Messages { get; } = new();
+    public List<string> Messages { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {

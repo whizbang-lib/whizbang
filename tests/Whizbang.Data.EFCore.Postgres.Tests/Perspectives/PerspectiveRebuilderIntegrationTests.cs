@@ -641,7 +641,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     }
 
     // If receptors WERE registered (future test perspective), the mode must be Rebuild.
-    foreach (var (stage, mode) in captured) {
+    foreach (var (_, mode) in captured) {
       await Assert.That(mode).IsEqualTo(ProcessingMode.Rebuild);
     }
   }

@@ -52,6 +52,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
+  private const string PARAM_INSTANCE_ID = "p_instance_id";
 
   private readonly TDbContext _dbContext = _initDbContext(dbContext);
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -259,10 +260,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var functionName = BuildSchemaQualifiedName(schema, "flush_completions");
 
     var outboxIds = request.OutboxIds is null || request.OutboxIds.Count == 0
-      ? Array.Empty<Guid>()
+      ? []
       : (request.OutboxIds is Guid[] arr ? arr : [.. request.OutboxIds]);
     var perspIds = request.PerspectiveEventWorkIds is null || request.PerspectiveEventWorkIds.Count == 0
-      ? Array.Empty<Guid>()
+      ? []
       : (request.PerspectiveEventWorkIds is Guid[] parr ? parr : [.. request.PerspectiveEventWorkIds]);
 
     var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
@@ -305,7 +306,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(inquiries);
     if (inquiries.Count == 0) {
-      return Array.Empty<SyncInquiryResult>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
@@ -490,7 +491,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(requests);
     if (requests.Count == 0) {
-      return Array.Empty<HandlerBatchResult>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
@@ -546,9 +547,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
       .Append('}');
-    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? Array.Empty<OutboxMessage>();
+    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? [];
     sb.Append(",\"new_outbox_messages\":").Append(_serializeNewOutboxMessages(newOutboxArr));
-    var newInboxArr = request.NewInboxMessages?.ToArray() ?? Array.Empty<InboxMessage>();
+    var newInboxArr = request.NewInboxMessages?.ToArray() ?? [];
     sb.Append(",\"new_inbox_messages\":").Append(_serializeNewInboxMessages(newInboxArr));
     sb.Append('}');
     return sb.ToString();
@@ -716,7 +717,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var now = DateTime.UtcNow;
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        new object[] { json, now, partitionCount },
+        [json, now, partitionCount],
         cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
@@ -745,7 +746,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var now = DateTime.UtcNow;
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        new object[] { json, now, partitionCount },
+        [json, now, partitionCount],
         cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
@@ -969,11 +970,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified table names built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor hydration warms the
     // commit_sequence half of PerspectiveCursorCache (see GetPerspectiveCursorsBatchAsync).
-    var sql = $"SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, " +
-              $"c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence " +
-              $"FROM {tableName} c " +
-              $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id " +
-              $"WHERE c.stream_id = {{0}} AND c.perspective_name = {{1}}";
+    var sql = "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
+            + "c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence "
+            + $"FROM {tableName} c "
+            + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
+            + "WHERE c.stream_id = {0} AND c.perspective_name = {1}";
 #pragma warning restore S2077
 
     var result = await _dbContext.Database
@@ -1024,11 +1025,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // falls back to event_id (UUIDv7 lex) comparison and re-introduces same-millisecond
     // generation-vs-commit-order false positives (a consumer run 11 surfaced 1,403 such logs).
     cmd.CommandText =
-      $"SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, " +
-      $"c.rewind_trigger_event_id, e.commit_sequence " +
-      $"FROM {tableName} c " +
-      $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id " +
-      $"WHERE c.stream_id = ANY(@p_stream_ids)";
+        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
+      + "c.rewind_trigger_event_id, e.commit_sequence "
+      + $"FROM {tableName} c "
+      + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
+      + "WHERE c.stream_id = ANY(@p_stream_ids)";
 #pragma warning restore S2077
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
@@ -1375,7 +1376,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids)";
 #pragma warning restore S2077
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streamIds
@@ -1444,6 +1445,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reader hydration covers the schema-shape drift between deployed migrations (older column set vs newer columns: commit_sequence + scope + envelope_type all have try-GetOrdinal fallbacks). The branches mirror migration adoption sequencing.")]
   public async Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
     Guid instanceId,
@@ -1451,7 +1453,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<OutboxBatchRow>();
+      return [];
     }
 
     var schema = GetSchemaWithFallback(
@@ -1469,7 +1471,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
 
     var results = new List<OutboxBatchRow>();
@@ -1524,7 +1526,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<InboxBatchRow>();
+      return [];
     }
 
     var schema = GetSchemaWithFallback(
@@ -1542,7 +1544,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
 
     var results = new List<InboxBatchRow>();
@@ -1588,7 +1590,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
     cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 
     var results = new List<PendingPerspectiveEvent>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -1627,7 +1629,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, @p_now)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
     cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
-    cmd.Parameters.Add(new NpgsqlParameter("p_instance_id", instanceId));
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_lease_expiry", leaseExpiry));
     cmd.Parameters.Add(new NpgsqlParameter("p_now", now));
 
@@ -1647,7 +1649,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventIds);
     if (eventIds.Count == 0) {
-      return Array.Empty<StreamEventData>();
+      return [];
     }
 
     var schema = GetSchemaWithFallback(

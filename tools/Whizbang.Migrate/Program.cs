@@ -61,7 +61,7 @@ public static class Program {
         Projections = martenResult.Projections,
         EventStoreUsages = martenResult.EventStoreUsages,
         DIRegistrations = martenResult.DIRegistrations,
-        Warnings = wolverineResult.Warnings.Concat(martenResult.Warnings).ToList()
+        Warnings = [.. wolverineResult.Warnings, .. martenResult.Warnings]
       };
 
       if (format == "json") {

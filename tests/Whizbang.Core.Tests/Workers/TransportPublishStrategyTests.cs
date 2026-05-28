@@ -101,7 +101,7 @@ public class TransportPublishStrategyTests {
       }
 
       // Default: all succeed
-      return items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true }).ToList();
+      return [.. items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true })];
     }
 
     public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
@@ -934,7 +934,7 @@ public class TransportPublishStrategyTests {
         throw new InvalidOperationException("Transport unavailable for orders");
       }
       return Task.FromResult<IReadOnlyList<BulkPublishItemResult>>(
-        items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true }).ToList());
+        [.. items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true })]);
     };
 
     var ordersEvent = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");

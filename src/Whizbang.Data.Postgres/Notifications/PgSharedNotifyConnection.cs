@@ -255,6 +255,7 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   }
 
   /// <inheritdoc />
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Notify-loop runs the full LISTEN connection lifecycle: resolution, connect, re-listen all topics on reconnect, error-then-backoff, channel-dispatch fanout. The branches are tightly coupled to a single connection lifetime that cannot be split without leaking the connection across helpers.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (_options.DisableNotifications || _options.SignalingMode == WorkSignalingMode.Polling) {
       LogDisabledByMode(_logger);

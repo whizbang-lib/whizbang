@@ -170,7 +170,8 @@ public class UpdateProductWorkflowTests {
       InitialStock = 15
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory",
+      streamId: _testProdUpdatePrice.Value);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -184,7 +185,8 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     var updateTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory",
+      streamId: _testProdUpdatePrice.Value);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
 

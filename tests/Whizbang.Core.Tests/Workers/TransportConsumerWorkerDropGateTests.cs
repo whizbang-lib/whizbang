@@ -80,7 +80,7 @@ public class TransportConsumerWorkerDropGateTests {
   /// because the drop-gate tests never construct receptors through this path.
   /// </summary>
   private sealed class FakeRuntimeReceptorRegistry(Func<string, bool>? hasAnyRuntimeReceptors = null) : IReceptorRegistry {
-    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => Array.Empty<ReceptorInfo>();
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage
       => throw new NotSupportedException("Drop-gate tests use the HasAnyRuntimeReceptors delegate; no real receptor registration.");
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage

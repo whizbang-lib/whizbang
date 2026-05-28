@@ -205,7 +205,7 @@ public class OutboxDrainWorkerTests {
     var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
 
     var coord = new ConsumingFakeWorkCoordinator();
-    coord.RowsByStream[streamId] = msgs.Select(m => _row(m, streamId)).ToList();
+    coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
 
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
@@ -251,7 +251,7 @@ public class OutboxDrainWorkerTests {
     var msgs = Enumerable.Range(0, 50).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
 
     var coord = new FakeWorkCoordinator();  // does NOT consume rows on fetch
-    coord.RowsByStream[streamId] = msgs.Select(m => _row(m, streamId)).ToList();
+    coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
 
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();

@@ -10,19 +10,13 @@ namespace ECommerce.BFF.API.GraphQL;
 /// GraphQL mutations for data seeding operations.
 /// Used for development seeding and admin-triggered production seeding.
 /// </summary>
-public class SeedMutations {
-  private readonly IDispatcher _dispatcher;
-  private readonly IProductCatalogLens _productLens;
-  private readonly ILogger<SeedMutations> _logger;
-
-  public SeedMutations(
-    IDispatcher dispatcher,
-    IProductCatalogLens productLens,
-    ILogger<SeedMutations> logger) {
-    _dispatcher = dispatcher;
-    _productLens = productLens;
-    _logger = logger;
-  }
+public class SeedMutations(
+  IDispatcher dispatcher,
+  IProductCatalogLens productLens,
+  ILogger<SeedMutations> logger) {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly IProductCatalogLens _productLens = productLens;
+  private readonly ILogger<SeedMutations> _logger = logger;
 
   /// <summary>
   /// Seeds 12 products matching the frontend mock data.

@@ -62,8 +62,8 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
     _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
-      _ => _ = _runIdleSweepAsync(),
-      state: null,
+      static state => ((SlidingWindowOutboxBatchStrategy)state!)._fireAndForgetIdleSweep(),
+      state: this,
       dueTime: _options.IdleSweepInterval,
       period: _options.IdleSweepInterval);
   }
@@ -176,6 +176,11 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
       "SlidingWindowOutboxBatchStrategy: bulk flush of {BatchSize} message(s) for stream {StreamKey} failed. Dispatcher re-emission will recover.",
       batchSize, streamKey);
 #pragma warning restore CA1848
+  }
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
+  private void _fireAndForgetIdleSweep() {
+    _ = _runIdleSweepAsync();
   }
 
   private sealed class StreamBuffer(Guid key, Channel<OutboxMessage> channel, DateTimeOffset createdAt) {

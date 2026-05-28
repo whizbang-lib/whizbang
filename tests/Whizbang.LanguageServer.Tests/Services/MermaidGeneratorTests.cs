@@ -57,7 +57,7 @@ public class MermaidGeneratorTests {
   public async Task Generate_CommandShape_UsesParallelogramAsync() {
     // Arrange & Act
     var result = _sut.Generate("DoSomething", isCommand: true, isEvent: false,
-        new List<(string, string)>(), new List<(string, string)>(), new List<string>());
+        new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert — command uses /text\ shape
     await Assert.That(result).Contains("[/DoSomething\\]");
@@ -67,7 +67,7 @@ public class MermaidGeneratorTests {
   public async Task Generate_EventShape_UsesCircleAsync() {
     // Arrange & Act
     var result = _sut.Generate("SomethingHappened", isCommand: false, isEvent: true,
-        new List<(string, string)>(), new List<(string, string)>(), new List<string>());
+        new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert — event uses ((text)) shape
     await Assert.That(result).Contains("((SomethingHappened))");
@@ -77,7 +77,7 @@ public class MermaidGeneratorTests {
   public async Task Generate_NoDispatchersOrReceptors_ProducesMinimalDiagramAsync() {
     // Arrange & Act
     var result = _sut.Generate("OrphanMessage", isCommand: false, isEvent: false,
-        new List<(string, string)>(), new List<(string, string)>(), new List<string>());
+        new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert
     await Assert.That(result).Contains("graph LR");
@@ -94,7 +94,7 @@ public class MermaidGeneratorTests {
 
     // Act
     var result = _sut.Generate("Msg", isCommand: true, isEvent: false,
-        dispatchers, new List<(string, string)>(), new List<string>());
+        dispatchers, new List<(string, string)>(), []);
 
     // Assert — should show just the class, not "SomeClass."
     await Assert.That(result).Contains("SomeClass");
@@ -105,7 +105,7 @@ public class MermaidGeneratorTests {
   public async Task Generate_SpecialCharactersInName_SanitizesIdAsync() {
     // Arrange & Act
     var result = _sut.Generate("Whizbang.Core.Events<T>", isCommand: false, isEvent: true,
-        new List<(string, string)>(), new List<(string, string)>(), new List<string>());
+        new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert — ID should not contain . < > characters
     await Assert.That(result).Contains("Whizbang_Core_Events_T_");
@@ -138,7 +138,7 @@ public class MermaidGeneratorTests {
 
     // Act
     var result = _sut.Generate("Msg", isCommand: true, isEvent: false,
-        dispatchers, new List<(string, string)>(), new List<string>());
+        dispatchers, new List<(string, string)>(), []);
 
     // Assert
     await Assert.That(result).Contains("D0 --> Msg");

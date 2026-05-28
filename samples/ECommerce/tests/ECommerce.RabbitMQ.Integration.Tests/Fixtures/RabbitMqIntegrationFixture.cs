@@ -707,8 +707,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     void WireOutboxOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      WorkProcessingIdleHandler? h = null;
-      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+
       w.OnWorkProcessingIdle += h;
       if (w.IsIdle) { tcs.TrySetResult(true); } // re-check after subscribe (race window)
     }
@@ -716,8 +716,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      WorkProcessingIdleHandler? h = null;
-      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+
       w.OnWorkProcessingIdle += h;
       if (w.IsIdle) { tcs.TrySetResult(true); }
     }
@@ -865,10 +865,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       throw new InvalidOperationException("Neither OutboxDrainWorker nor OutboxPublishWorker registered on InventoryHost");
     }
 
-    OutboxMessagePublishedHandler? handler = null;
-    handler = (e) => {
+    void handler(OutboxMessagePublishedEvent e) {
       tcs.TrySetResult(e.MessageId);
-    };
+    }
+
     if (drainWorker is not null) {
       drainWorker.OnOutboxMessagePublished += handler;
     }
@@ -910,7 +910,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null) {
+      string? hostFilter = null,
+      Guid? streamId = null) {
 
     var eventCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -920,13 +921,20 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         return;
       }
 
-      PerspectiveEventProcessedHandler? handler = null;
-      handler = (e) => {
+      void handler(PerspectiveEventProcessedEvent e) {
+        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
+        // events keep firing on the worker after cleanup; without this filter their
+        // EventCount satisfied the wait before THIS test's command had committed.
+        // Mirror of the ASB fixture fix.
+        if (streamId.HasValue && e.StreamId != streamId.Value) {
+          return;
+        }
         var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }
-      };
+      }
+
       worker.OnPerspectiveEventProcessed += handler;
     }
 
@@ -944,6 +952,89 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
     await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+  }
+
+  /// <summary>
+  /// Deterministic-progress variant of <see cref="WaitForPerspectiveProcessingAsync"/>.
+  /// Fails fast with a structured diagnostic when no perspective events have arrived for
+  /// <paramref name="noProgressIdleMs"/> (default 10 s). When events are flowing the helper
+  /// stays patient up to <paramref name="absoluteTimeoutMs"/>; when the pipeline stalls the
+  /// test errors with the actual counts + idle time so flakes are immediately distinguishable
+  /// from genuine pipeline breakage.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This addresses the timeout-only flake mode where transport / consumer / worker get
+  /// stuck and the test waits the full configured timeout (a minute or two) before failing
+  /// with no signal as to which stage stalled. The progress gate caps idle waits at a few
+  /// seconds and reports the exact event count + stream id observed so the CI log surfaces
+  /// the failure stage immediately. The absolute ceiling still applies — if events are
+  /// arriving slowly the test waits, but never longer than the ceiling.
+  /// </para>
+  /// </remarks>
+  public async Task WaitForPerspectiveProcessingDeterministicAsync(
+      int expectedCompletions,
+      Guid streamId,
+      int noProgressIdleMs = 10000,
+      int absoluteTimeoutMs = 60000,
+      string? hostFilter = null) {
+    var eventCount = 0;
+    var observedStreamCount = 0;
+    var lastProgressTicks = Environment.TickCount64;
+    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var handlers = new List<(PerspectiveWorker worker, PerspectiveEventProcessedHandler handler)>();
+
+    void WireWorker(PerspectiveWorker? worker) {
+      if (worker is null) {
+        return;
+      }
+
+      void handler(PerspectiveEventProcessedEvent e) {
+        Interlocked.Increment(ref observedStreamCount);
+        if (e.StreamId != streamId) {
+          return;
+        }
+        Interlocked.Exchange(ref lastProgressTicks, Environment.TickCount64);
+        var current = Interlocked.Add(ref eventCount, e.EventCount);
+        if (current >= expectedCompletions) {
+          tcs.TrySetResult(true);
+        }
+      }
+
+      worker.OnPerspectiveEventProcessed += handler;
+      handlers.Add((worker, handler));
+    }
+
+    if (hostFilter is null or "inventory") {
+      WireWorker(InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault());
+    }
+    if (hostFilter is null or "bff") {
+      WireWorker(BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<PerspectiveWorker>().FirstOrDefault());
+    }
+
+    using var watchdogCts = new CancellationTokenSource();
+    var watchdog = Task.Run(async () => {
+      while (!tcs.Task.IsCompleted && !watchdogCts.IsCancellationRequested) {
+        try { await Task.Delay(1000, watchdogCts.Token).ConfigureAwait(false); } catch (OperationCanceledException) { return; }
+        var idleMs = Environment.TickCount64 - Interlocked.Read(ref lastProgressTicks);
+        if (idleMs > noProgressIdleMs) {
+          tcs.TrySetException(new TimeoutException(
+            $"Perspective processing stalled — got {Volatile.Read(ref eventCount)}/{expectedCompletions} matching events for stream {streamId:N} after observing {Volatile.Read(ref observedStreamCount)} cross-stream fires, idle for {idleMs}ms (no-progress threshold {noProgressIdleMs}ms, ceiling {absoluteTimeoutMs}ms)."));
+          return;
+        }
+      }
+    }, watchdogCts.Token);
+
+    try {
+      await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(Whizbang.Testing.TestTimeouts.Scale(absoluteTimeoutMs))).ConfigureAwait(false);
+    } finally {
+      watchdogCts.Cancel();
+      foreach (var (worker, handler) in handlers) {
+        worker.OnPerspectiveEventProcessed -= handler;
+      }
+    }
   }
 
   public async ValueTask DisposeAsync() {

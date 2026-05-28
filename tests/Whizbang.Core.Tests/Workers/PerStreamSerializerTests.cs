@@ -44,7 +44,7 @@ public class PerStreamSerializerTests {
     await sut.EnqueueAsync(i3);
     await sut.FlushAndStopAsync();
 
-    await Assert.That(seen).IsEquivalentTo(new[] { i1.MessageId, i2.MessageId, i3.MessageId });
+    await Assert.That(seen).IsEquivalentTo([i1.MessageId, i2.MessageId, i3.MessageId]);
   }
 
   // ===== Different streams parallel =====
@@ -106,7 +106,7 @@ public class PerStreamSerializerTests {
     await sut.EnqueueAsync(i3);
     await sut.FlushAndStopAsync();
 
-    await Assert.That(seen).IsEquivalentTo(new[] { i1.MessageId, i2.MessageId, i3.MessageId });
+    await Assert.That(seen).IsEquivalentTo([i1.MessageId, i2.MessageId, i3.MessageId]);
   }
 
   // ===== Sort-on-drain: brief enqueue race resolves to message-id order =====
@@ -141,7 +141,7 @@ public class PerStreamSerializerTests {
 
     await sut.FlushAndStopAsync();
 
-    await Assert.That(seen).IsEquivalentTo(new[] { i1.MessageId, i2.MessageId, i3.MessageId });
+    await Assert.That(seen).IsEquivalentTo([i1.MessageId, i2.MessageId, i3.MessageId]);
   }
 
   // ===== Shutdown drains pending =====

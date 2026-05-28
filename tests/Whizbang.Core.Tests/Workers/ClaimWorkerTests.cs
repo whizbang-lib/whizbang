@@ -29,7 +29,7 @@ public class ClaimWorkerTests {
   }
 
   private sealed class FakeCoordinator : IWorkCoordinator {
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly System.Collections.Generic.Dictionary<int, TaskCompletionSource> _callWatchers = [];
     private int _orderCounter;
     public TaskCompletionSource FirstCallSignal { get; } = new();

@@ -94,7 +94,7 @@ public class ReceptorInterceptorPipelineTests {
     var a = new DenyingInterceptor(DeniedAction.DropQuiet);
     var b = new DenyingInterceptor(DeniedAction.DeadLetter);
     var p = new ReceptorInterceptorPipeline([a, b]);
-    var result = await p.EvaluateAllAsync(typeof(StubReceptor), null!, null);
+    _ = await p.EvaluateAllAsync(typeof(StubReceptor), null!, null);
     var aCalls = a.CallCount;
     var bCalls = b.CallCount;
     await Assert.That(aCalls).IsEqualTo(1);

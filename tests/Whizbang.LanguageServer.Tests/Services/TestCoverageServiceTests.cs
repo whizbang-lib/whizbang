@@ -6,17 +6,17 @@ public class TestCoverageServiceTests {
   private static TestCoverageService _createSutWithSampleData() {
     var sut = new TestCoverageService();
     var data = new Dictionary<string, IReadOnlyList<TestCoverageEntry>> {
-      ["Whizbang.Core.IDispatcher"] = new List<TestCoverageEntry> {
+      ["Whizbang.Core.IDispatcher"] = [
         new() { TestFile = "DispatcherTests.cs", TestMethod = "Dispatch_SendsMessageAsync", TestClass = "DispatcherTests", LinkSource = "convention" },
         new() { TestFile = "DispatcherTests.cs", TestMethod = "Dispatch_ThrowsOnNullAsync", TestClass = "DispatcherTests", LinkSource = "convention" },
         new() { TestFile = "DispatcherTests.cs", TestMethod = "Dispatch_RoutesToCorrectHandlerAsync", TestClass = "DispatcherTests", LinkSource = "convention" },
         new() { TestFile = "IntegrationTests.cs", TestMethod = "FullPipeline_DispatchesAsync", TestClass = "IntegrationTests", LinkSource = "tag" },
         new() { TestFile = "IntegrationTests.cs", TestMethod = "FullPipeline_RetriesAsync", TestClass = "IntegrationTests", LinkSource = "tag" },
-      },
-      ["Whizbang.Core.IReceptor"] = new List<TestCoverageEntry> {
+      ],
+      ["Whizbang.Core.IReceptor"] = [
         new() { TestFile = "ReceptorTests.cs", TestMethod = "Handle_ProcessesMessageAsync", TestClass = "ReceptorTests", LinkSource = "convention" },
         new() { TestFile = "ReceptorTests.cs", TestMethod = "Handle_RejectsInvalidAsync", TestClass = "ReceptorTests", LinkSource = "convention" },
-      },
+      ],
     };
     sut.SetData(data);
     return sut;
@@ -119,9 +119,9 @@ public class TestCoverageServiceTests {
 
     // Act -- replace with new data
     var newData = new Dictionary<string, IReadOnlyList<TestCoverageEntry>> {
-      ["Whizbang.Core.IPerspective"] = new List<TestCoverageEntry> {
+      ["Whizbang.Core.IPerspective"] = [
         new() { TestFile = "PerspectiveTests.cs", TestMethod = "Apply_WorksAsync", TestClass = "PerspectiveTests" },
-      },
+      ],
     };
     sut.SetData(newData);
 

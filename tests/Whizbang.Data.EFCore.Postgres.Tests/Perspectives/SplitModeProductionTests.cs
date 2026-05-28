@@ -1221,7 +1221,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
       Category = default!,
       Price = default,
       ParentId = default,
-      Embeddings = embeddings != null ? Array.Empty<float>() : null,
+      Embeddings = embeddings != null ? [] : null,
       // JSONB-only fields keep their values
       Name = name,
       Description = description,

@@ -20,7 +20,7 @@ public class MutationEndpointLifecycleTests {
     var command = new TrackingCommand { Value = "test" };
 
     // Act
-    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
+    _ = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(executionOrder).Count().IsEqualTo(3);
@@ -52,7 +52,7 @@ public class MutationEndpointLifecycleTests {
     var command = new NotifiableCommand { OrderId = Guid.NewGuid() };
 
     // Act
-    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
+    _ = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(notifications).Count().IsEqualTo(1);
@@ -359,7 +359,7 @@ public class ContextSharingMutationEndpoint : RestMutationEndpointBase<ContextCo
   public async ValueTask<ContextResult> TestExecuteAsync(ContextCommand cmd, CancellationToken ct) {
     var context = new MutationContext(ct);
     await OnBeforeExecuteAsync(cmd, context, ct);
-    var result = await DispatchCommandAsync(cmd, ct);
+    _ = await DispatchCommandAsync(cmd, ct);
 
     // Create final result with context data
     var finalResult = new ContextResult {

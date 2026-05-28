@@ -46,6 +46,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="options">Optional transport configuration</param>
   /// <param name="logger">Optional logger instance</param>
   /// <param name="adminClient">Optional admin client for auto-provisioning infrastructure</param>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Transport composes the ServiceBus client + admin client + multiple registries; each is independent and optional, bundling would obscure DI registration intent.")]
   public AzureServiceBusTransport(
     ServiceBusClient client,
     JsonSerializerOptions jsonOptions,

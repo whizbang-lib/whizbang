@@ -111,11 +111,11 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
       return;
     }
 
-    if (TimeSpan.TryParse(section["PollingInterval"], out var poll)) {
+    if (TimeSpan.TryParse(section["PollingInterval"], System.Globalization.CultureInfo.InvariantCulture, out var poll)) {
       options.PollingInterval = poll;
     }
 
-    if (TimeSpan.TryParse(section["LeaderElectionRetry"], out var retry)) {
+    if (TimeSpan.TryParse(section["LeaderElectionRetry"], System.Globalization.CultureInfo.InvariantCulture, out var retry)) {
       options.LeaderElectionRetry = retry;
     }
 

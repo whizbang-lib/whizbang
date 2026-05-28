@@ -12,11 +12,11 @@ namespace ECommerce.PaymentWorker;
 /// - Model configuration in OnModelCreating
 /// </summary>
 [WhizbangDbContext]
-public partial class PaymentDbContext : DbContext {
+public partial class PaymentDbContext(DbContextOptions<PaymentDbContext> options) : DbContext(options) {
+
 #pragma warning disable IL2026 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL2046 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL3050 // EF Core uses dynamic code generation - AOT support experimental in EF10, stable in EF12
-  public PaymentDbContext(DbContextOptions<PaymentDbContext> options) : base(options) { }
 #pragma warning restore IL3050
 #pragma warning restore IL2046
 #pragma warning restore IL2026

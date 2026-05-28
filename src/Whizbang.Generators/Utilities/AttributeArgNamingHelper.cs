@@ -50,10 +50,10 @@ public static class AttributeArgNamingHelper {
   }
 
   private static string _toPascal(string s) =>
-    char.IsUpper(s[0]) ? s : char.ToUpperInvariant(s[0]) + s.Substring(1);
+    char.IsUpper(s[0]) ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
   private static string _toCamel(string s) =>
-    char.IsLower(s[0]) ? s : char.ToLowerInvariant(s[0]) + s.Substring(1);
+    char.IsLower(s[0]) ? s : char.ToLowerInvariant(s[0]) + s[1..];
 
   private static string _splitOnBoundaries(string s, char separator, bool upper) {
     // Walk the string, inserting `separator` before each uppercase letter that begins a new

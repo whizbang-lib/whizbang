@@ -66,13 +66,11 @@ public sealed partial class PgAppSignalChannel(
       return;
     }
     var stillHasHandlers = topicSub.RemoveHandler(handler);
-    if (!stillHasHandlers) {
-      // Last handler for this topic — drop the underlying LISTEN by disposing the
-      // shared-conn subscription. The next Subscribe for this topic will re-create
-      // a fresh TopicSubscription.
-      if (_byTopic.TryRemove(topic, out var removed)) {
-        removed.Dispose();
-      }
+    // Last handler for this topic — drop the underlying LISTEN by disposing the
+    // shared-conn subscription. The next Subscribe for this topic will re-create
+    // a fresh TopicSubscription.
+    if (!stillHasHandlers && _byTopic.TryRemove(topic, out var removed)) {
+      removed.Dispose();
     }
   }
 

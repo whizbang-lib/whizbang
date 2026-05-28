@@ -368,7 +368,7 @@ public class RewindScenarioTests {
     // Events 3, 4 (indices for events "4" and "5") were already processed.
     var replayReader = new _scriptedReplayReader(
       events,
-      isNew: new HashSet<Guid> { eventIds[0], eventIds[1], eventIds[2] });
+      isNew: [eventIds[0], eventIds[1], eventIds[2]]);
 
     var (worker, harness) = _createWorker(
       coordinator,
@@ -640,7 +640,7 @@ public class RewindScenarioTests {
       receptorInvoker: spy,
       eventStore: new _rangeFilteringEventStore { EventsPerStream = { [streamId] = [.. events] } },
       eventTypeProvider: new _fakeEventTypeProvider(),
-      replayReader: new _scriptedReplayReader(events, new HashSet<Guid> { eventIds[2] }));
+      replayReader: new _scriptedReplayReader(events, [eventIds[2]]));
 
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
@@ -812,7 +812,7 @@ public class RewindScenarioTests {
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _cycleWaiters = new();
 
     public int CycleCount => _cycleCount;
-    public Dictionary<(Guid StreamId, string PerspectiveName), PerspectiveCursorInfo> CursorPerStream { get; } = new();
+    public Dictionary<(Guid StreamId, string PerspectiveName), PerspectiveCursorInfo> CursorPerStream { get; } = [];
     /// <summary>One list per cycle, in order. Cycles beyond this return empty work.</summary>
     public List<List<PerspectiveWork>> WorkPerCycle { get; } = [];
 

@@ -146,7 +146,7 @@ public class LeaseDispatchExecutorTests {
     // disposes (via `await using` inside the executor). Registration disposal stops the
     // callback-fire on subsequent CT cancellation.
     var fcOces = new System.Collections.Concurrent.ConcurrentBag<Exception>();
-    EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs> handler = (_, e) => {
+    void handler(object? _, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e) {
       // The bug surfaces as TaskCanceledException thrown from Task.Delay's internal
       // cancellation handling. That throw originates in BCL code (Task.Delay / DelayPromise),
       // not in user code, so we can't filter by the executor's frame. Count all
@@ -155,7 +155,7 @@ public class LeaseDispatchExecutorTests {
       if (e.Exception is TaskCanceledException) {
         fcOces.Add(e.Exception);
       }
-    };
+    }
     AppDomain.CurrentDomain.FirstChanceException += handler;
     try {
       // Run 50 successful dispatches in sequence. Each disposes its lease at end-of-scope.
@@ -178,8 +178,8 @@ public class LeaseDispatchExecutorTests {
     var time = _provider();
     using var lease = _newLease(time);
 
-    Func<Task> nullLease = () => LeaseDispatchExecutor.RunWithLeaseAsync(null!, _ => Task.CompletedTask);
-    Func<Task> nullDispatch = () => LeaseDispatchExecutor.RunWithLeaseAsync(lease, null!);
+    Task nullLease() => LeaseDispatchExecutor.RunWithLeaseAsync(null!, _ => Task.CompletedTask);
+    Task nullDispatch() => LeaseDispatchExecutor.RunWithLeaseAsync(lease, null!);
 
     await Assert.That(nullLease).Throws<ArgumentNullException>();
     await Assert.That(nullDispatch).Throws<ArgumentNullException>();

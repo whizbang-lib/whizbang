@@ -520,7 +520,7 @@ public class SecurityIntegrationTests {
 
       // Note: This test verifies the getter behavior, but GetSecurityFromAmbient
       // specifically casts to ImmutableScopeContext. Let's check what happens:
-      var ambientSecurity = CascadeContext.GetSecurityFromAmbient();
+      _ = CascadeContext.GetSecurityFromAmbient();
 
       // GetSecurityFromAmbient only returns security if CurrentContext is ImmutableScopeContext
       // with ShouldPropagate=true. MessageContext.ScopeContext may or may not be ImmutableScopeContext.
@@ -1164,7 +1164,7 @@ public class SecurityIntegrationTests {
       """;
 
     // Act: Deserialize using the same JSON options as EFCoreEventStore
-    var options = new System.Text.Json.JsonSerializerOptions {
+    _ = new System.Text.Json.JsonSerializerOptions {
       PropertyNameCaseInsensitive = true,
       Converters = { new Whizbang.Core.ValueObjects.MessageIdJsonConverter() }
     };

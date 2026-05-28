@@ -34,16 +34,12 @@ namespace ECommerce.BFF.API.Audit;
 /// });
 /// </code>
 /// </example>
-public sealed class AuditTagHook : IMessageTagHook<AuditEventAttribute> {
-  private readonly ILogger<AuditTagHook> _logger;
-
-  /// <summary>
-  /// Creates a new audit tag hook.
-  /// </summary>
-  /// <param name="logger">Logger for audit output</param>
-  public AuditTagHook(ILogger<AuditTagHook> logger) {
-    _logger = logger;
-  }
+/// <remarks>
+/// Creates a new audit tag hook.
+/// </remarks>
+/// <param name="logger">Logger for audit output</param>
+public sealed class AuditTagHook(ILogger<AuditTagHook> logger) : IMessageTagHook<AuditEventAttribute> {
+  private readonly ILogger<AuditTagHook> _logger = logger;
 
   /// <summary>
   /// Logs an audited event for real-time monitoring.

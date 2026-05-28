@@ -285,7 +285,7 @@ public class InboxLifecycleTests {
     // identifies whether the stage didn't fire at all (count == 0, LastMessage == null) vs
     // fired but filtered out (count == 0, LastMessage != null) vs some other condition.
     // Keep the messageFilter for stale-event safety; same filter for all four receptors.
-    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
     var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

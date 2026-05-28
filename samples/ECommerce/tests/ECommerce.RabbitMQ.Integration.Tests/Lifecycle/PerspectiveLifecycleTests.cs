@@ -270,7 +270,7 @@ public class PerspectiveLifecycleTests {
     // receptor synchronously up to its first await, so by the time we dispatch both are armed.
     // The helper's timeout scales with WHIZBANG_TEST_TIMEOUT_MULTIPLIER.
     const int perStageTimeoutMs = 60_000;
-    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
     var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
     var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
 
@@ -392,7 +392,7 @@ public class PerspectiveLifecycleTests {
     // 120s per helper: under heavy parallel load (12k+ tests), the RabbitMQ → BFF inbox-dispatch
     // chain plus perspective worker can occasionally exceed the 45s default.
     const int perStageTimeoutMs = 120_000;
-    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
     var preInlineTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
     var preAsyncTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);
     var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(timeoutMilliseconds: perStageTimeoutMs, messageFilter: filter);

@@ -14,21 +14,16 @@ namespace Whizbang.Core.Resilience;
 /// This slows runaway loops without permanently blocking the stream.
 /// </remarks>
 /// <docs>resilience/stream-rate-limiter</docs>
-public sealed partial class StreamRateLimiter {
-  private readonly StreamRateLimiterOptions _options;
-  private readonly ILogger _logger;
+/// <remarks>
+/// Creates a new stream rate limiter with the specified options.
+/// </remarks>
+public sealed partial class StreamRateLimiter(StreamRateLimiterOptions options, ILogger<StreamRateLimiter>? logger = null) {
+  private readonly StreamRateLimiterOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StreamRateLimiter>.Instance;
   private readonly ConcurrentDictionary<Guid, StreamState> _streams = new();
   private int _callCount;
 
   private record struct StreamState(int Count, DateTimeOffset WindowStart, DateTimeOffset? CooldownUntil);
-
-  /// <summary>
-  /// Creates a new stream rate limiter with the specified options.
-  /// </summary>
-  public StreamRateLimiter(StreamRateLimiterOptions options, ILogger<StreamRateLimiter>? logger = null) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StreamRateLimiter>.Instance;
-  }
 
   /// <summary>
   /// Returns true if the stream is within limits. Returns false if throttled.

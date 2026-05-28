@@ -164,7 +164,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       result.Add($"{kvp.Key} = {literal}");
     }
 
-    return result.ToArray();
+    return [.. result];
   }
 
   /// <summary>
@@ -225,7 +225,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       }
       result.Add($"{propertyName} = {literal}");
     }
-    return result.ToArray();
+    return [.. result];
   }
 
   /// <summary>

@@ -185,7 +185,7 @@ public class InboxDrainWorkerTests {
     var msgs = Enumerable.Range(0, 250).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
 
     var coord = new ConsumingFakeWorkCoordinator();
-    coord.RowsByStream[streamId] = msgs.Select(m => _row(m, streamId)).ToList();
+    coord.RowsByStream[streamId] = [.. msgs.Select(m => _row(m, streamId))];
 
     var drain = new FakeInboxDrainChannel();
     var inbox = new CapturingInboxChannel { TargetCount = 250 };

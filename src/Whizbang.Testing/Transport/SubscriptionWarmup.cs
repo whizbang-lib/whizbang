@@ -79,7 +79,7 @@ public static class SubscriptionWarmup {
     );
 
     // Combined handler that dispatches to both awaiters
-    Func<IMessageEnvelope, string?, CancellationToken, Task> combinedHandler = async (envelope, envelopeType, ct) => {
+    async Task combinedHandler(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
       // Check for warmup message
       if (envelope is IMessageEnvelope<TPayload> typed) {
         var content = contentSelector(typed.Payload);
@@ -90,7 +90,7 @@ public static class SubscriptionWarmup {
 
       // Also check for test message
       await testAwaiter.Handler(envelope, envelopeType, ct);
-    };
+    }
 
     return (warmupAwaiter, testAwaiter, combinedHandler);
   }

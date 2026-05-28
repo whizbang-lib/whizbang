@@ -53,8 +53,8 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
     }
 
     await coordinator.FlushCompletionsAsync(new FlushCompletionsRequest(
-      OutboxIds: new Guid[] { outboxMsgId },
-      PerspectiveEventWorkIds: new Guid[] { perspectiveWorkId }));
+      OutboxIds: [outboxMsgId],
+      PerspectiveEventWorkIds: [perspectiveWorkId]));
 
     // Production-mode complete_outbox_published DELETEs the row outright; assert it's gone.
     await using (var v = conn.CreateCommand()) {
@@ -116,13 +116,13 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    var results = await coordinator.ResolveSyncInquiriesAsync(new[] {
+    var results = await coordinator.ResolveSyncInquiriesAsync([
       new SyncInquiry {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         DiscoverPendingFromOutbox = true
       }
-    });
+    ]);
 
     await Assert.That(results.Count).IsEqualTo(1);
     await Assert.That(results[0].StreamId).IsEqualTo((Guid)streamId);
@@ -134,7 +134,7 @@ public class EFCoreFlushAndSyncTests : EFCoreTestBase {
   public async Task ResolveSyncInquiriesAsync_EmptyList_ReturnsEmptyAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = Coord(dbContext);
-    var results = await coordinator.ResolveSyncInquiriesAsync(Array.Empty<SyncInquiry>());
+    var results = await coordinator.ResolveSyncInquiriesAsync([]);
     await Assert.That(results.Count).IsEqualTo(0);
   }
 }
