@@ -173,9 +173,7 @@ public class SlidingWindowApplyBatchStrategyTests {
     var streamId = _idProvider.NewGuid();
     var keepFlushBusy = new TaskCompletionSource();
     var sut = new SlidingWindowApplyBatchStrategy(
-      flush: async (_, _, _) => {
-        await keepFlushBusy.Task.ConfigureAwait(false);
-      },
+      flush: async (_, _, _) => await keepFlushBusy.Task.ConfigureAwait(false),
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),

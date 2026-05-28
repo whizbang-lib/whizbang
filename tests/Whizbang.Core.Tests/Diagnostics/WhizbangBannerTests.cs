@@ -17,14 +17,14 @@ public class WhizbangBannerTests {
 
   [Test]
   public async Task Print_DisabledFlag_WritesNothingAsync() {
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
     WhizbangBanner.Print(sw, enabled: false);
     await Assert.That(sw.ToString()).IsEqualTo(string.Empty);
   }
 
   [Test]
   public async Task Print_ToTextWriter_WritesPlainOrAnsiBannerAsync() {
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
     WhizbangBanner.Print(sw);
     var output = sw.ToString();
     // Either the plain banner or the ANSI banner is non-empty.

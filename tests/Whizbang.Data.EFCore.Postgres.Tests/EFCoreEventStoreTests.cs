@@ -814,7 +814,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
   [Test]
   public async Task Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync() {
     // Act & Assert
-    EFCoreEventStore<WorkCoordinationDbContext> action() => new EFCoreEventStore<WorkCoordinationDbContext>(null!);
+    EFCoreEventStore<WorkCoordinationDbContext> action() => new(null!);
     await Assert.That(action).ThrowsExactly<ArgumentNullException>();
   }
 
