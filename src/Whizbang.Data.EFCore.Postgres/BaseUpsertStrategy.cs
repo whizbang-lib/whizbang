@@ -191,6 +191,17 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       return false;
     }
 
+    // Atomic UPSERT is `INSERT … ON CONFLICT DO UPDATE` issued via raw Npgsql commands;
+    // it cannot run against any other EF Core provider (InMemoryDatabase, Sqlite test
+    // doubles, etc.). Bail out so the SELECT-then-UPDATE fallback path takes over for
+    // those providers. Without this guard the path triggers whenever the
+    // ModuleInitializer-set static `PathOnePersistenceOptionsProvider` is non-null,
+    // making cross-test state leak into non-Postgres unit tests (Postgres-specific
+    // perspective store wired against InMemoryDb fixtures fails on the JSONB raw SQL).
+    if (!_isNpgsqlProvider(context)) {
+      return false;
+    }
+
     // Defense-in-depth identifier validation. args.TableName and the keys of
     // args.PhysicalFieldValues are NOT user input — they come from source-generated
     // perspective infrastructure and reflect compile-time table / column definitions.
@@ -329,6 +340,19 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// followed by letters, digits, or underscores. Hand-rolled (no regex) to avoid any
   /// regex-timeout concern and to keep the check zero-allocation on the hot path.
   /// </summary>
+  /// <summary>
+  /// Returns true when the DbContext is wired to the Npgsql provider. The atomic UPSERT
+  /// path issues raw `INSERT … ON CONFLICT DO UPDATE` SQL that only PostgreSQL supports;
+  /// other providers (InMemoryDatabase, Sqlite) must fall back to the SELECT-then-UPDATE
+  /// retry path. The provider name comes from EF Core's `Database.ProviderName` and
+  /// matches the assembly name of the active provider package.
+  /// </summary>
+  private static bool _isNpgsqlProvider(DbContext context) {
+    var providerName = context.Database.ProviderName;
+    return providerName is not null
+      && providerName.Contains("Npgsql", StringComparison.Ordinal);
+  }
+
   private static bool _isValidSqlIdentifier(string s) {
     if (string.IsNullOrEmpty(s) || s.Length > 63) {
       return false; // PG identifier max is 63 bytes
