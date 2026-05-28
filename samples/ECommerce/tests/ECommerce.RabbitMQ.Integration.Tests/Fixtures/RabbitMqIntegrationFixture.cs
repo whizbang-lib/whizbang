@@ -910,7 +910,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   public async Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null) {
+      string? hostFilter = null,
+      Guid? streamId = null) {
 
     var eventCount = 0;
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -921,6 +922,13 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
 
       void handler(PerspectiveEventProcessedEvent e) {
+        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
+        // events keep firing on the worker after cleanup; without this filter their
+        // EventCount satisfied the wait before THIS test's command had committed.
+        // Mirror of the ASB fixture fix.
+        if (streamId.HasValue && e.StreamId != streamId.Value) {
+          return;
+        }
         var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
