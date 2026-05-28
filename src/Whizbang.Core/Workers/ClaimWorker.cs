@@ -285,7 +285,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // (do not let the adaptive backoff stretch out to PollingMaxIntervalMilliseconds —
     // that would silently increase latency to up to 10 s while NOTIFY is broken).
     // When the gate isn't wired (null), preserve the pre-slice-33 behavior.
-    if (_signalingGate is not null && !_signalingGate.IsAvailable) {
+    if (_signalingGate?.IsAvailable == false) {
       return baseMs;
     }
     var maxMs = _options.PollingMaxIntervalMilliseconds;
