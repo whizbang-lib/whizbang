@@ -469,4 +469,55 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     await Assert.That(sql).DoesNotContain("\"\".wh_inbox");
   }
 
+  /// <summary>
+  /// Locks the idempotent-upgrade contract: every column is also emitted as an
+  /// `ALTER TABLE ADD COLUMN IF NOT EXISTS` after the `CREATE TABLE IF NOT EXISTS`,
+  /// so existing databases get any newly-declared columns backfilled before
+  /// downstream index / migration SQL references them. Regression lock for the
+  /// `42703: column "snapshot_commit_sequence" does not exist` failure mode.
+  /// </summary>
+  [Test]
+  public async Task BuildCreateTable_EmitsAlterTableAddColumnIfNotExistsPerColumnAsync() {
+    var table = new TableDefinition(
+      Name: "demo",
+      Columns: [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("payload", WhizbangDataType.JSON, Nullable: false),
+        new ColumnDefinition("added_later", WhizbangDataType.BIG_INT, Nullable: true),
+      ]
+    );
+
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, "wh_");
+
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_demo");
+    await Assert.That(sql).Contains("ALTER TABLE wh_demo ADD COLUMN IF NOT EXISTS id UUID NOT NULL");
+    await Assert.That(sql).Contains("ALTER TABLE wh_demo ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL");
+    await Assert.That(sql).Contains("ALTER TABLE wh_demo ADD COLUMN IF NOT EXISTS added_later BIGINT NULL");
+  }
+
+  /// <summary>
+  /// Idempotent column backfill must not re-assert PRIMARY KEY (Postgres rejects
+  /// adding a duplicate PK constraint on an existing table). The backfill helper
+  /// reuses the composite-PK suppression path to strip inline PK from each
+  /// ADD COLUMN statement.
+  /// </summary>
+  [Test]
+  public async Task BuildCreateTable_AddColumnIfNotExists_OmitsInlinePrimaryKeyAsync() {
+    var table = new TableDefinition(
+      Name: "demo_pk",
+      Columns: [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+      ]
+    );
+
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, "wh_");
+
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_demo_pk");
+    // The CREATE TABLE keeps inline PRIMARY KEY.
+    await Assert.That(sql).Contains("id UUID NOT NULL PRIMARY KEY");
+    // The ALTER TABLE ADD COLUMN must NOT re-assert PRIMARY KEY.
+    await Assert.That(sql).Contains("ALTER TABLE wh_demo_pk ADD COLUMN IF NOT EXISTS id UUID NOT NULL");
+    await Assert.That(sql).DoesNotContain("ADD COLUMN IF NOT EXISTS id UUID NOT NULL PRIMARY KEY");
+  }
+
 }
