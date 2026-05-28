@@ -205,6 +205,45 @@ public class RecordTypesConstructionTests {
   }
 
   [Test]
+  public async Task ProcessingUnitOfWork_FullInitialization_ExposesAllFieldsAsync() {
+    var unitId = (Guid)TrackedGuid.NewMedo();
+    var uow = new ProcessingUnitOfWork {
+      UnitId = unitId,
+      WorkItems = [new object(), new object()],
+      CreatedAt = DateTimeOffset.UtcNow,
+      Completions = [],
+      Failures = [],
+    };
+    await Assert.That(uow.UnitId).IsEqualTo(unitId);
+    await Assert.That(uow.WorkItems.Count).IsEqualTo(2);
+    await Assert.That(uow.Completions.Count).IsEqualTo(0);
+    await Assert.That(uow.Failures.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ServiceInstanceMetadata_AllInits_RoundTripAsync() {
+    var metadata = new ServiceInstanceMetadata {
+      Version = "1.2.3",
+      Environment = "production",
+      Region = "us-east-1",
+      Custom = new Dictionary<string, string> { ["build"] = "abc123" },
+    };
+    await Assert.That(metadata.Version).IsEqualTo("1.2.3");
+    await Assert.That(metadata.Environment).IsEqualTo("production");
+    await Assert.That(metadata.Region).IsEqualTo("us-east-1");
+    await Assert.That(metadata.Custom!["build"]).IsEqualTo("abc123");
+  }
+
+  [Test]
+  public async Task ServiceInstanceMetadata_AllNullDefaultsAsync() {
+    var metadata = new ServiceInstanceMetadata();
+    await Assert.That(metadata.Version).IsNull();
+    await Assert.That(metadata.Environment).IsNull();
+    await Assert.That(metadata.Region).IsNull();
+    await Assert.That(metadata.Custom).IsNull();
+  }
+
+  [Test]
   public async Task ReceptorProcessingRecord_FullInitialization_RoundTripsAllPropertiesAsync() {
     var eventId = (Guid)TrackedGuid.NewMedo();
     var record = new ReceptorProcessingRecord {
