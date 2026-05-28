@@ -122,4 +122,75 @@ public class SlidingWindowApplyBatchStrategyTests {
     await Assert.That(async () => await sut.AppendAsync(_idProvider.NewGuid()))
       .Throws<ObjectDisposedException>();
   }
+
+  /// <summary>
+  /// Covers the idle-sweep timer callback path (static lambda → _fireAndForgetIdleSweep →
+  /// _runIdleSweepAsync). A tight IdleSweepInterval ensures the timer fires at least once
+  /// during the wait, and a tight IdleEvictionWindow ensures the inactive buffer is
+  /// evicted.
+  /// </summary>
+  [Test]
+  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync() {
+    var flushed = new ConcurrentBag<Guid>();
+    var streamId = _idProvider.NewGuid();
+    var flushedSignal = new TaskCompletionSource();
+
+    await using var sut = new SlidingWindowApplyBatchStrategy(
+      flush: (sid, _, _) => {
+        flushed.Add(sid);
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowApplyOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        MaxWait = TimeSpan.FromMilliseconds(50),
+        MaxSize = 100,
+        IdleSweepInterval = TimeSpan.FromMilliseconds(20),
+        IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
+      });
+
+    await sut.AppendAsync(streamId);
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    // Wait long enough for the idle sweep timer to fire at least once with an empty
+    // LastActivity > cutoff predicate. The sweep timer reads _streams from the active
+    // map and evicts inactive entries; the buffer added above will be evicted once
+    // its LastActivity falls below IdleEvictionWindow.
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+    while (sut.ActiveStreamCount > 0 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(20);
+    }
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Triggers the `await _stopCts.CancelAsync()` branch in FlushAndStopAsync. Forcing a
+  /// blocked worker keeps `Task.WhenAll` waiting until the caller's cancellation token
+  /// fires, which exercises the OCE catch + CancelAsync path.
+  /// </summary>
+  [Test]
+  public async Task FlushAndStopAsync_CallerCancelled_CancelsStopCtsAsync() {
+    var streamId = _idProvider.NewGuid();
+    var keepFlushBusy = new TaskCompletionSource();
+    var sut = new SlidingWindowApplyBatchStrategy(
+      flush: async (_, _, _) => {
+        await keepFlushBusy.Task.ConfigureAwait(false);
+      },
+      options: new SlidingWindowApplyOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        MaxWait = TimeSpan.FromMilliseconds(50),
+      });
+
+    await sut.AppendAsync(streamId);
+    await Task.Delay(60);  // let the flush start
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+    try {
+      await sut.FlushAndStopAsync(cts.Token);
+    } catch (OperationCanceledException) {
+      // expected when WaitAsync surfaces the cancellation
+    }
+    // Release the stuck flush so the worker can drain.
+    keepFlushBusy.TrySetResult();
+  }
 }
