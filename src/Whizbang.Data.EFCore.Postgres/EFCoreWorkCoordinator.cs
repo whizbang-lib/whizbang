@@ -970,11 +970,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077 // Schema-qualified table names built from validated schema constant; parameters use EF Core positional placeholders ({0}, {1})
     // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor hydration warms the
     // commit_sequence half of PerspectiveCursorCache (see GetPerspectiveCursorsBatchAsync).
-    var sql = $"SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, " +
-              $"c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence " +
-              $"FROM {tableName} c " +
-              $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id " +
-              $"WHERE c.stream_id = {{0}} AND c.perspective_name = {{1}}";
+    var sql = "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
+            + "c.rewind_trigger_event_id, e.commit_sequence AS last_commit_sequence "
+            + $"FROM {tableName} c "
+            + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
+            + "WHERE c.stream_id = {0} AND c.perspective_name = {1}";
 #pragma warning restore S2077
 
     var result = await _dbContext.Database
@@ -1025,11 +1025,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // falls back to event_id (UUIDv7 lex) comparison and re-introduces same-millisecond
     // generation-vs-commit-order false positives (JDX run 11 surfaced 1,403 such logs).
     cmd.CommandText =
-      $"SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, " +
-      $"c.rewind_trigger_event_id, e.commit_sequence " +
-      $"FROM {tableName} c " +
-      $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id " +
-      $"WHERE c.stream_id = ANY(@p_stream_ids)";
+        "SELECT c.stream_id, c.perspective_name, c.last_event_id, c.status, "
+      + "c.rewind_trigger_event_id, e.commit_sequence "
+      + $"FROM {tableName} c "
+      + $"LEFT JOIN {eventStoreTable} e ON e.event_id = c.last_event_id "
+      + "WHERE c.stream_id = ANY(@p_stream_ids)";
 #pragma warning restore S2077
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
