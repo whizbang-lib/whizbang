@@ -1469,7 +1469,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestInboxMessage(sut);
 
     // Act
-    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);

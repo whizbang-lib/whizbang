@@ -4,16 +4,10 @@ using Whizbang.LanguageServer.Services;
 
 namespace Whizbang.LanguageServer.Handlers;
 
-public sealed class StatusHandler {
-  private readonly SymbolResolver _symbolResolver;
-  private readonly TestCoverageService _testCoverageService;
-  private readonly DebugSessionManager _debugSessionManager;
-
-  public StatusHandler(SymbolResolver symbolResolver, TestCoverageService testCoverageService, DebugSessionManager debugSessionManager) {
-    _symbolResolver = symbolResolver;
-    _testCoverageService = testCoverageService;
-    _debugSessionManager = debugSessionManager;
-  }
+public sealed class StatusHandler(SymbolResolver symbolResolver, TestCoverageService testCoverageService, DebugSessionManager debugSessionManager) {
+  private readonly SymbolResolver _symbolResolver = symbolResolver;
+  private readonly TestCoverageService _testCoverageService = testCoverageService;
+  private readonly DebugSessionManager _debugSessionManager = debugSessionManager;
 
   public StatusInfo Handle() {
     var allSymbols = _symbolResolver.GetAllSymbols();

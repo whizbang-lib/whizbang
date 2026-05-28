@@ -814,7 +814,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
   [Test]
   public async Task Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync() {
     // Act & Assert
-    var action = () => new EFCoreEventStore<WorkCoordinationDbContext>(null!);
+    EFCoreEventStore<WorkCoordinationDbContext> action() => new EFCoreEventStore<WorkCoordinationDbContext>(null!);
     await Assert.That(action).ThrowsExactly<ArgumentNullException>();
   }
 
@@ -839,7 +839,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     // Act & Assert
-    var action = () => eventStore.AppendAsync<OrderCreatedEvent>(Guid.NewGuid(), (MessageEnvelope<OrderCreatedEvent>)null!);
+    Task action() => eventStore.AppendAsync<OrderCreatedEvent>(Guid.NewGuid(), (MessageEnvelope<OrderCreatedEvent>)null!);
     await Assert.That(action).ThrowsExactly<ArgumentNullException>();
   }
 
@@ -850,7 +850,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     // Act & Assert
-    var action = () => eventStore.AppendAsync<OrderCreatedEvent>(Guid.NewGuid(), (OrderCreatedEvent)null!);
+    Task action() => eventStore.AppendAsync<OrderCreatedEvent>(Guid.NewGuid(), (OrderCreatedEvent)null!);
     await Assert.That(action).ThrowsExactly<ArgumentNullException>();
   }
 

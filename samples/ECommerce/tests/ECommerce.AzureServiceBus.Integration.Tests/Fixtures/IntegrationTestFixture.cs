@@ -312,13 +312,13 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-      // Truncate Whizbang core tables and all perspective tables
-      // CASCADE ensures all dependent data is cleared
-      // Use DO block to gracefully handle case where tables don't exist
-      await dbContext.Database.ExecuteSqlRawAsync(@"
+    // Truncate Whizbang core tables and all perspective tables
+    // CASCADE ensures all dependent data is cleared
+    // Use DO block to gracefully handle case where tables don't exist
+    await dbContext.Database.ExecuteSqlRawAsync(@"
         DO $$
         BEGIN
           TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_events, inventory.wh_message_deduplication CASCADE;
@@ -328,7 +328,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
             NULL;
         END $$;
       ", cancellationToken);
-    }
   }
 
   public async ValueTask DisposeAsync() {

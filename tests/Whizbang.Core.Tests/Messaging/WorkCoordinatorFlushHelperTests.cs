@@ -487,7 +487,7 @@ public class WorkCoordinatorFlushHelperTests {
   private sealed class CountingFailureChannel : IFailureChannel {
     public int EnqueueCount;
     public List<WorkCategory> Categories { get; } = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       lock (_lock) {

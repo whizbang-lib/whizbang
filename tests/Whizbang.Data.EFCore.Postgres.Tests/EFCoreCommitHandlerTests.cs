@@ -58,7 +58,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
       ProcessId: 1,
       PartitionCount: 10000,
       InboxCompletion: new HandlerInboxCompletion(inboxId, Status: 4),
-      NewOutboxMessages: new[] { MakeOutbox(emittedId, streamId) }));
+      NewOutboxMessages: [MakeOutbox(emittedId, streamId)]));
 
     await using (var verify = conn.CreateCommand()) {
       verify.CommandText = "SELECT processed_at IS NOT NULL FROM wh_inbox WHERE message_id = @msg";
@@ -117,7 +117,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
   public async Task CommitHandlerBatchAsync_EmptyList_ReturnsEmptyResultAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = Coord(dbContext);
-    var results = await coordinator.CommitHandlerBatchAsync(Array.Empty<HandlerCommitRequest>());
+    var results = await coordinator.CommitHandlerBatchAsync([]);
     await Assert.That(results.Count).IsEqualTo(0);
   }
 }

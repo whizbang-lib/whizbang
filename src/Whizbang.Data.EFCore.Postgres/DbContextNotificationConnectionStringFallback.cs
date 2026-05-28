@@ -23,7 +23,7 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
   private readonly Type _dbContextType;
   private string? _cached;
   private bool _resolved;
-  private readonly object _gate = new();
+  private readonly Lock _gate = new();
 
   /// <summary>
   /// Creates a fallback that resolves the connection string from the registered DbContext of

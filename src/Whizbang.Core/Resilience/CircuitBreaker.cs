@@ -22,29 +22,23 @@ namespace Whizbang.Core.Resilience;
 /// </para>
 /// </remarks>
 /// <docs>resilience/circuit-breaker</docs>
+/// <remarks>
+/// Creates a new circuit breaker with the specified options.
+/// </remarks>
 #pragma warning disable CA1001 // CircuitBreaker is long-lived (app lifetime); disposing the semaphore is unnecessary
-public sealed partial class CircuitBreaker<TResult> {
+public sealed partial class CircuitBreaker<TResult>(CircuitBreakerOptions options, ILogger? logger = null) {
 #pragma warning restore CA1001
-  private readonly CircuitBreakerOptions _options;
-  private readonly ILogger _logger;
+  private readonly CircuitBreakerOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   private readonly SemaphoreSlim _lock = new(1, 1);
 
   private CircuitBreakerState _state = CircuitBreakerState.Closed;
   private int _consecutiveFailures;
   private int _consecutiveOpens;
-  private double _currentCooldownSeconds;
+  private double _currentCooldownSeconds = options.InitialCooldownSeconds;
   private DateTimeOffset _circuitOpenedAt;
   private DateTimeOffset? _lastSuccessAt;
   private TResult? _cachedResult;
-
-  /// <summary>
-  /// Creates a new circuit breaker with the specified options.
-  /// </summary>
-  public CircuitBreaker(CircuitBreakerOptions options, ILogger? logger = null) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
-    _currentCooldownSeconds = options.InitialCooldownSeconds;
-  }
 
   /// <summary>
   /// Current state of the circuit breaker.

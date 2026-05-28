@@ -255,7 +255,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     sut.QueueInboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "err2");
 
     // Act
-    var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+    _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert (outbox + inbox each trigger their own store call)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);

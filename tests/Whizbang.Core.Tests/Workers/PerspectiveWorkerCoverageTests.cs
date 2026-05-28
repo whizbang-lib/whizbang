@@ -81,7 +81,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_StartsInIdleState_IsIdleTrueAsync() {
     // Arrange
-    var (worker, coordinator, _, harness) = _createWorker();
+    var (worker, _, _, _) = _createWorker();
 
     // Assert - Worker starts in idle state
     await Assert.That(worker.IsIdle).IsTrue();

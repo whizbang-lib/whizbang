@@ -10,17 +10,12 @@ namespace Whizbang.Core.Messaging;
 /// Singleton. Disabled if <see cref="MaxConcurrent"/> is &lt;= 0.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-public sealed class WorkCoordinatorGate : IDisposable {
-  private readonly SemaphoreSlim? _semaphore;
+/// <remarks>Creates a gate with the given concurrency limit. 0 means unbounded (disabled).</remarks>
+public sealed class WorkCoordinatorGate(int maxConcurrent) : IDisposable {
+  private readonly SemaphoreSlim? _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
 
   /// <summary>Maximum concurrent calls. 0 disables the cap.</summary>
-  public int MaxConcurrent { get; }
-
-  /// <summary>Creates a gate with the given concurrency limit. 0 means unbounded (disabled).</summary>
-  public WorkCoordinatorGate(int maxConcurrent) {
-    MaxConcurrent = maxConcurrent;
-    _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
-  }
+  public int MaxConcurrent { get; } = maxConcurrent;
 
   /// <summary>
   /// Acquire a slot. Returns a disposable that releases on dispose.

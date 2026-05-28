@@ -466,22 +466,22 @@ public class RouteTests {
   public async Task None_InTuple_CanBeMixedWithEventsAsync() {
     // Arrange - Discriminated union tuple: success or failure
     var successEvent = new TestEvent("Success");
-    var tuple = (success: successEvent, failure: Route.None());
+    var (success, failure) = (successEvent, Route.None());
 
     // Assert - Both elements exist in tuple
-    await Assert.That(tuple.success).IsEqualTo(successEvent);
-    await Assert.That(tuple.failure).IsTypeOf<RoutedNone>();
+    await Assert.That(success).IsEqualTo(successEvent);
+    await Assert.That(failure).IsTypeOf<RoutedNone>();
   }
 
   [Test]
   public async Task None_InTuple_AlternativePathAsync() {
     // Arrange - Discriminated union: failure path
     var failureEvent = new TestEvent("Failure");
-    var tuple = (success: Route.None(), failure: failureEvent);
+    var (success, failure) = (Route.None(), failureEvent);
 
     // Assert
-    await Assert.That(tuple.success).IsTypeOf<RoutedNone>();
-    await Assert.That(tuple.failure).IsEqualTo(failureEvent);
+    await Assert.That(success).IsTypeOf<RoutedNone>();
+    await Assert.That(failure).IsEqualTo(failureEvent);
   }
 
   #endregion

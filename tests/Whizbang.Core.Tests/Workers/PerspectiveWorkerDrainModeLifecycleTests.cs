@@ -46,7 +46,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     private readonly ConcurrentBag<(Guid EventId, LifecycleStage Stage)> _invocations = [];
 
     public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
-      _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage).ToList();
+      [.. _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage)];
 
     public int InvocationCount => _invocations.Count;
 
@@ -458,7 +458,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
       LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
     };
-    var (worker, coordinator, _, _, invoker, lc, harness) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
@@ -529,8 +529,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var typedEvents = new List<MessageEnvelope<IEvent>> {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
-
-    var (worker, coordinator, _, _, invoker, lc, harness) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -564,7 +563,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
       LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
     };
-    var (worker, coordinator, _, _, invoker, lc, harness) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
@@ -602,7 +601,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       LifecycleStage.PrePerspectiveDetached, LifecycleStage.PrePerspectiveInline,
       LifecycleStage.PostPerspectiveInline, LifecycleStage.PostPerspectiveDetached
     };
-    var (worker, coordinator, _, _, invoker, lc, harness) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId], allStages);
 
     // Act
@@ -636,8 +635,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var typedEvents = new List<MessageEnvelope<IEvent>> {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
-
-    var (worker, coordinator, _, _, invoker, lc, harness) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act
@@ -667,8 +665,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var typedEvents = new List<MessageEnvelope<IEvent>> {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
-
-    var (worker, coordinator, _, _, invoker, lc, harness) = _createWorkerWithLifecycle(
+    var (worker, coordinator, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     // Act — should NOT throw duplicate key exception
@@ -689,7 +686,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   private sealed class GatedReceptorInvoker(LifecycleStage gatedStage, TaskCompletionSource gate, TaskCompletionSource started) : IReceptorInvoker {
     private readonly ConcurrentBag<(Guid EventId, LifecycleStage Stage)> _invocations = [];
     public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
-      _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage).ToList();
+      [.. _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage)];
     public bool HasStage(LifecycleStage stage) => _invocations.Any(i => i.Stage == stage);
 
     public async ValueTask InvokeAsync(

@@ -57,7 +57,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
       await _insertInboxRowAsync(connection, ids[i], streamId, instanceId, receivedAt: times[i]);
     }
 
-    var fetched = await _fetchInboxBatchAsync(connection, new[] { streamId }, instanceId, maxPerStream: 100);
+    var fetched = await _fetchInboxBatchAsync(connection, [streamId], instanceId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(3);
     await Assert.That(fetched[0].MessageId).IsEqualTo(ids[0]);
@@ -84,7 +84,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     await _insertInboxRowAsync(connection, mineMessage, streamId, meId);
     await _insertInboxRowAsync(connection, theirMessage, streamId, otherId);
 
-    var fetched = await _fetchInboxBatchAsync(connection, new[] { streamId }, meId, maxPerStream: 100);
+    var fetched = await _fetchInboxBatchAsync(connection, [streamId], meId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(1);
     await Assert.That(fetched[0].MessageId).IsEqualTo(mineMessage);
@@ -107,7 +107,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     await _insertInboxRowAsync(connection, unprocessed, streamId, instanceId);
     await _insertInboxRowAsync(connection, alreadyProcessed, streamId, instanceId, processedAt: DateTimeOffset.UtcNow);
 
-    var fetched = await _fetchInboxBatchAsync(connection, new[] { streamId }, instanceId, maxPerStream: 100);
+    var fetched = await _fetchInboxBatchAsync(connection, [streamId], instanceId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(1);
     await Assert.That(fetched[0].MessageId).IsEqualTo(unprocessed);
@@ -129,7 +129,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
       await _insertInboxRowAsync(connection, Guid.NewGuid(), streamId, instanceId);
     }
 
-    var fetched = await _fetchInboxBatchAsync(connection, new[] { streamId }, instanceId, maxPerStream: 3);
+    var fetched = await _fetchInboxBatchAsync(connection, [streamId], instanceId, maxPerStream: 3);
 
     await Assert.That(fetched.Count).IsEqualTo(3);
   }

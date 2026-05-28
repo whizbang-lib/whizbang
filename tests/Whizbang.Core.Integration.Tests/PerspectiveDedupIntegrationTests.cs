@@ -981,7 +981,7 @@ public class PerspectiveDedupIntegrationTests {
       _knownNames.Contains(perspectiveName) ? _runner : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
-      _knownNames.Select(name => new PerspectiveRegistrationInfo(name, $"global::{name}", "global::Test.Model", ["global::Test.Event"])).ToList();
+      [.. _knownNames.Select(name => new PerspectiveRegistrationInfo(name, $"global::{name}", "global::Test.Model", ["global::Test.Event"]))];
 
     public IReadOnlyList<Type> GetEventTypes() => [];
 

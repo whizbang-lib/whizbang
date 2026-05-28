@@ -46,5 +46,5 @@ public sealed class RawReceptorRegistry : IRawReceptorRegistry {
   }
 
   /// <inheritdoc />
-  public IReadOnlyCollection<string> RegisteredTypeNames => _byNormalizedName.Keys.ToImmutableArray();
+  public IReadOnlyCollection<string> RegisteredTypeNames => [.. _byNormalizedName.Keys];
 }

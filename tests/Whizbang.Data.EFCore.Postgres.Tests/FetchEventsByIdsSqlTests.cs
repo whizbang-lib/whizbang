@@ -51,7 +51,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     await _insertEventStoreRowAsync(connection, event1, streamId, "TypeA", "{\"v\":1}", version: 1);
     await _insertEventStoreRowAsync(connection, event2, streamId, "TypeB", "{\"v\":2}", version: 2);
 
-    var rows = await _fetchAsync(connection, new[] { event1, event2, event3 });
+    var rows = await _fetchAsync(connection, [event1, event2, event3]);
 
     await Assert.That(rows.Count).IsEqualTo(3);
     await Assert.That(rows[0].EventId).IsEqualTo(event1);
@@ -68,7 +68,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    var rows = await _fetchAsync(connection, new[] { (Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo() });
+    var rows = await _fetchAsync(connection, [(Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo()]);
 
     await Assert.That(rows.Count).IsEqualTo(0);
   }
@@ -86,7 +86,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     var missing = (Guid)TrackedGuid.NewMedo();
     await _insertEventStoreRowAsync(connection, existing, streamId, "Type", "{\"v\":1}");
 
-    var rows = await _fetchAsync(connection, new[] { existing, missing });
+    var rows = await _fetchAsync(connection, [existing, missing]);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     await Assert.That(rows[0].EventId).IsEqualTo(existing);
@@ -107,7 +107,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
       metadata: "{\"hop\":1}",
       scope: "{\"tenant\":\"t1\"}");
 
-    var rows = await _fetchAsync(connection, new[] { eventId });
+    var rows = await _fetchAsync(connection, [eventId]);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     await Assert.That(rows[0].StreamId).IsEqualTo(streamId);

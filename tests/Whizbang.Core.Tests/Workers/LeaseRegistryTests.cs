@@ -95,7 +95,7 @@ public class LeaseRegistryTests {
     using var second = _newHandle(time, WorkCategory.Inbox, workId);
     registry.Register(first);
 
-    Action act = () => registry.Register(second);
+    void act() => registry.Register(second);
 
     await Assert.That(act).Throws<InvalidOperationException>()
       .Because("a stream-pinned lease must be uniquely registered per (category, work_id) — a duplicate signals a bug in the dispatch worker");

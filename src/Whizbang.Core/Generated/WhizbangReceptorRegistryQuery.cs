@@ -71,7 +71,7 @@ public static class WhizbangReceptorRegistryQuery {
   private static string _normalizeTypeName(string typeName) {
     // Strip assembly qualifier (everything after first ", ")
     var commaIdx = typeName.IndexOf(", ", System.StringComparison.Ordinal);
-    var nameOnly = commaIdx >= 0 ? typeName.Substring(0, commaIdx) : typeName;
+    var nameOnly = commaIdx >= 0 ? typeName[..commaIdx] : typeName;
     // Convert CLR nested-type separator (+) to C# display format (.)
     return nameOnly.Contains('+') ? nameOnly.Replace('+', '.') : nameOnly;
   }

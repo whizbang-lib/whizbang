@@ -260,10 +260,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var functionName = BuildSchemaQualifiedName(schema, "flush_completions");
 
     var outboxIds = request.OutboxIds is null || request.OutboxIds.Count == 0
-      ? Array.Empty<Guid>()
+      ? []
       : (request.OutboxIds is Guid[] arr ? arr : [.. request.OutboxIds]);
     var perspIds = request.PerspectiveEventWorkIds is null || request.PerspectiveEventWorkIds.Count == 0
-      ? Array.Empty<Guid>()
+      ? []
       : (request.PerspectiveEventWorkIds is Guid[] parr ? parr : [.. request.PerspectiveEventWorkIds]);
 
     var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
@@ -306,7 +306,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     IReadOnlyList<Whizbang.Core.Perspectives.Sync.SyncInquiry> inquiries, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(inquiries);
     if (inquiries.Count == 0) {
-      return Array.Empty<SyncInquiryResult>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
@@ -491,7 +491,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(requests);
     if (requests.Count == 0) {
-      return Array.Empty<HandlerBatchResult>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
@@ -547,9 +547,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
       .Append('}');
-    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? Array.Empty<OutboxMessage>();
+    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? [];
     sb.Append(",\"new_outbox_messages\":").Append(_serializeNewOutboxMessages(newOutboxArr));
-    var newInboxArr = request.NewInboxMessages?.ToArray() ?? Array.Empty<InboxMessage>();
+    var newInboxArr = request.NewInboxMessages?.ToArray() ?? [];
     sb.Append(",\"new_inbox_messages\":").Append(_serializeNewInboxMessages(newInboxArr));
     sb.Append('}');
     return sb.ToString();
@@ -717,7 +717,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var now = DateTime.UtcNow;
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        new object[] { json, now, partitionCount },
+        [json, now, partitionCount],
         cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
@@ -746,7 +746,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var now = DateTime.UtcNow;
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        new object[] { json, now, partitionCount },
+        [json, now, partitionCount],
         cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
@@ -1453,7 +1453,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<OutboxBatchRow>();
+      return [];
     }
 
     var schema = GetSchemaWithFallback(
@@ -1526,7 +1526,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<InboxBatchRow>();
+      return [];
     }
 
     var schema = GetSchemaWithFallback(
@@ -1649,7 +1649,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventIds);
     if (eventIds.Count == 0) {
-      return Array.Empty<StreamEventData>();
+      return [];
     }
 
     var schema = GetSchemaWithFallback(

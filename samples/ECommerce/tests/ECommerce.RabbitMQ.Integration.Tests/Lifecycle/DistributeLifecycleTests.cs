@@ -325,7 +325,7 @@ public class DistributeLifecycleTests {
     // 5 distribute stages can occasionally exceed the 45s default.
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     const int perStageTimeoutMs = 120_000;
-    Func<ProductCreatedEvent, bool> filter = e => e.ProductId == command.ProductId.Value;
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
     var preInlineTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
     var preAsyncTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
     var distributeAsyncTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);

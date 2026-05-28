@@ -44,18 +44,14 @@ public sealed record CodeDocsEntry {
 /// to resolve a symbol name to its full info including docs URL, source file,
 /// test count, and message registry data.
 /// </summary>
-public sealed class SymbolResolver {
-  private readonly string _docsBaseUrl;
+public sealed class SymbolResolver(string docsBaseUrl) {
+  private readonly string _docsBaseUrl = docsBaseUrl.TrimEnd('/');
 
   private IReadOnlyList<MessageRegistryEntry> _registryData = [];
   private IReadOnlyDictionary<string, VscodeFeedEntry> _vscodeFeedData =
       new Dictionary<string, VscodeFeedEntry>();
   private IReadOnlyDictionary<string, CodeDocsEntry> _codeDocsMapData =
       new Dictionary<string, CodeDocsEntry>();
-
-  public SymbolResolver(string docsBaseUrl) {
-    _docsBaseUrl = docsBaseUrl.TrimEnd('/');
-  }
 
   /// <summary>
   /// Sets the message registry data source.

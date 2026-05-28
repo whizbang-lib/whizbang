@@ -166,9 +166,9 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     }
 
     await Assert.That(results.Count).IsEqualTo(3);
-    var failing = results.SingleOrDefault(r => r.handlerId == failingHandlerId);
-    await Assert.That(failing.success).IsFalse();
-    await Assert.That(failing.error).IsNotNull();
+    var (handlerId, success, error) = results.SingleOrDefault(r => r.handlerId == failingHandlerId);
+    await Assert.That(success).IsFalse();
+    await Assert.That(error).IsNotNull();
     await Assert.That(results.Where(r => r.handlerId != failingHandlerId).All(r => r.success)).IsTrue();
 
     // Verify SAVEPOINT isolation: handlers 0 and 2 applied; handler 1 (failing) did NOT.

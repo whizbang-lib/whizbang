@@ -28,13 +28,9 @@ namespace Whizbang.Core.Attributes;
 /// </code>
 /// </para>
 /// </remarks>
+/// <remarks>Constructs the attribute with the supplied convention.</remarks>
 [AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
-public sealed class AttributeArgNamingAttribute : Attribute {
+public sealed class AttributeArgNamingAttribute(AttributeArgNamingConvention convention) : Attribute {
   /// <summary>The naming convention applied to constructor parameter names.</summary>
-  public AttributeArgNamingConvention Convention { get; }
-
-  /// <summary>Constructs the attribute with the supplied convention.</summary>
-  public AttributeArgNamingAttribute(AttributeArgNamingConvention convention) {
-    Convention = convention;
-  }
+  public AttributeArgNamingConvention Convention { get; } = convention;
 }
