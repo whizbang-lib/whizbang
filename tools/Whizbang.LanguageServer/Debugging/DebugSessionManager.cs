@@ -1,3 +1,4 @@
+
 namespace Whizbang.LanguageServer.Debugging;
 
 /// <summary>
@@ -10,7 +11,7 @@ public sealed class DebugSessionManager : IDisposable {
   private TimeSpan _totalPausedTime = TimeSpan.Zero;
   private int _pauseCount;
   private bool _disposed;
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
 
   /// <summary>Gets whether the session is currently paused at a breakpoint.</summary>
   public bool IsPaused {

@@ -97,7 +97,7 @@ public sealed class MigrationProjectManager {
       string repoPath,
       CancellationToken ct = default) {
     var allProjects = await ListProjectsAsync(ct);
-    return allProjects.Where(p => p.RepoPath == repoPath).ToList();
+    return [.. allProjects.Where(p => p.RepoPath == repoPath)];
   }
 
   /// <summary>

@@ -12,11 +12,11 @@ namespace ECommerce.InventoryWorker;
 /// AOT-compatible: All configuration is done via source generators, no reflection needed.
 /// </summary>
 [WhizbangDbContext(Schema = "inventory")]
-public partial class InventoryDbContext : DbContext {
+public partial class InventoryDbContext(DbContextOptions<InventoryDbContext> options) : DbContext(options) {
+
 #pragma warning disable IL2026 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL2046 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL3050 // EF Core uses dynamic code generation - AOT support experimental in EF10, stable in EF12
-  public InventoryDbContext(DbContextOptions<InventoryDbContext> options) : base(options) { }
 #pragma warning restore IL3050
 #pragma warning restore IL2046
 #pragma warning restore IL2026

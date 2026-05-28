@@ -38,7 +38,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var received = await _captureNotificationsAsync(conn, new[] { owner }, async () => {
+    var received = await _captureNotificationsAsync(conn, [owner], async () => {
       await _callNotifyInstanceOwnersAsync(conn, "outbox", streamId);
     });
 
@@ -59,7 +59,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _upsertActiveStreamAsync(conn, stream1, partitionNumber: 0, owner);
     await _upsertActiveStreamAsync(conn, stream2, partitionNumber: 0, owner);
 
-    var received = await _captureNotificationsAsync(conn, new[] { owner }, async () => {
+    var received = await _captureNotificationsAsync(conn, [owner], async () => {
       await _callNotifyInstanceOwnersAsync(conn, "outbox", stream1, stream2);
     });
 
@@ -84,7 +84,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _upsertActiveStreamAsync(conn, streamA2, partitionNumber: 0, ownerA);
     await _upsertActiveStreamAsync(conn, streamB1, partitionNumber: 0, ownerB);
 
-    var received = await _captureNotificationsAsync(conn, new[] { ownerA, ownerB }, async () => {
+    var received = await _captureNotificationsAsync(conn, [ownerA, ownerB], async () => {
       await _callNotifyInstanceOwnersAsync(conn, "perspective", streamA1, streamA2, streamB1);
     });
 
@@ -105,7 +105,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     // unknownStream is NOT in wh_active_streams.
 
-    var received = await _captureNotificationsAsync(conn, new[] { owner }, async () => {
+    var received = await _captureNotificationsAsync(conn, [owner], async () => {
       await _callNotifyInstanceOwnersAsync(conn, "inbox", unknownStream);
     });
 
@@ -125,7 +125,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     // (post-cleanup_stale_instances state — pre-slice-6-fix a consumer baseline).
     await _upsertActiveStreamAsync(conn, orphanStream, partitionNumber: 0, ownerInstanceId: null);
 
-    var received = await _captureNotificationsAsync(conn, new[] { owner }, async () => {
+    var received = await _captureNotificationsAsync(conn, [owner], async () => {
       await _callNotifyInstanceOwnersAsync(conn, "outbox", orphanStream);
     });
 
@@ -146,7 +146,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var received = await _captureNotificationsAsync(conn, new[] { owner }, async () => {
+    var received = await _captureNotificationsAsync(conn, [owner], async () => {
       await _callNotifyInstanceOwnersAsync(conn, "inbox", streamId);
     });
 
@@ -177,9 +177,9 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
       Guid[] ownersToListen,
       Func<Task> emit) {
     var received = new List<(string, string)>();
-    NotificationEventHandler handler = (sender, args) => {
+    void handler(object sender, NpgsqlNotificationEventArgs args) {
       received.Add((args.Channel, args.Payload));
-    };
+    }
     conn.Notification += handler;
     try {
       foreach (var owner in ownersToListen) {

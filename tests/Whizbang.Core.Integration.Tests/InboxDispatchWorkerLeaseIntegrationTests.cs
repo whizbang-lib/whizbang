@@ -161,14 +161,14 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
   [Test]
   public async Task DetachedLifecycleStage_DoesNotThrowFirstChanceOceWhenLeaseDisposesAsync() {
     var firstChanceOces = new ConcurrentBag<Exception>();
-    EventHandler<FirstChanceExceptionEventArgs> handler = (_, e) => {
+    void handler(object? _, FirstChanceExceptionEventArgs e) {
       // Filter to TaskCanceledException whose stack involves the InboxDispatchWorker pipeline.
       // Without the filter, concurrent test-infrastructure OCEs (TUnit's own machinery) pollute
       // the count.
       if (e.Exception is TaskCanceledException && (e.Exception.StackTrace?.Contains("Whizbang.Core.Workers", StringComparison.Ordinal) ?? false)) {
         firstChanceOces.Add(e.Exception);
       }
-    };
+    }
     AppDomain.CurrentDomain.FirstChanceException += handler;
     try {
       // Build a minimal but real InboxDispatchWorker pipeline: real lifecycle deserializer +

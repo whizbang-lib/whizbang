@@ -856,13 +856,13 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-      // Truncate Whizbang core tables, perspective tables, and checkpoints
-      // CASCADE ensures all dependent data is cleared
-      // Use DO block to gracefully handle case where tables don't exist
-      await dbContext.Database.ExecuteSqlRawAsync(@"
+    // Truncate Whizbang core tables, perspective tables, and checkpoints
+    // CASCADE ensures all dependent data is cleared
+    // Use DO block to gracefully handle case where tables don't exist
+    await dbContext.Database.ExecuteSqlRawAsync(@"
         DO $$
         BEGIN
           -- Truncate core infrastructure tables
@@ -879,7 +879,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
             NULL;
         END $$;
       ", cancellationToken);
-    }
   }
 
   public async ValueTask DisposeAsync() {

@@ -79,7 +79,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   // this manifest as cursor-inversion + rewind storms on a consumer BFF perspectives
   // when a receptor returned a list of events generated in parallel. Holding
   // a lock around the call serializes ID issuance so monotonicity holds.
-  private static readonly object _medoLock = new();
+  private static readonly Lock _medoLock = new();
 
   /// <summary>
   /// Creates a new UUIDv7 using Medo.Uuid7 with sub-millisecond precision.

@@ -26,7 +26,7 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coord = Coord(dbContext);
 
-    var result = await coord.FetchOutboxBatchAsync(Array.Empty<Guid>(), instanceId: Guid.NewGuid(), maxPerStream: 100);
+    var result = await coord.FetchOutboxBatchAsync([], instanceId: Guid.NewGuid(), maxPerStream: 100);
 
     await Assert.That(result.Count).IsEqualTo(0);
   }
@@ -66,7 +66,7 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    var rows = await coord.FetchOutboxBatchAsync(new[] { streamId }, instanceId, maxPerStream: 100);
+    var rows = await coord.FetchOutboxBatchAsync([streamId], instanceId, maxPerStream: 100);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     var row = rows[0];
@@ -89,7 +89,7 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coord = Coord(dbContext);
 
-    var result = await coord.FetchInboxBatchAsync(Array.Empty<Guid>(), instanceId: Guid.NewGuid(), maxPerStream: 100);
+    var result = await coord.FetchInboxBatchAsync([], instanceId: Guid.NewGuid(), maxPerStream: 100);
 
     await Assert.That(result.Count).IsEqualTo(0);
   }
@@ -129,7 +129,7 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    var rows = await coord.FetchInboxBatchAsync(new[] { streamId }, instanceId, maxPerStream: 100);
+    var rows = await coord.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 100);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     var row = rows[0];

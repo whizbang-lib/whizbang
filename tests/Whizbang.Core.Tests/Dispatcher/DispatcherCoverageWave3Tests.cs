@@ -297,7 +297,7 @@ public class DispatcherCoverageWave3Tests {
     var command = new W3Command("test");
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
-    var context = MessageContext.Create(correlationId, causationId);
+    _ = MessageContext.Create(correlationId, causationId);
 
     // Act
     var receipt = await dispatcher.SendAsync<W3Command>(command);
@@ -542,7 +542,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_WithOptions_SyncInvokerFallback_ReturnsResultAsync() {
     // Arrange - only sync invoker, no async invoker
-    SyncReceptorInvoker<object> syncInvoker = msg => new W3Result(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new W3Result(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new W3Command("sync-options");
     var options = new DispatchOptions();
@@ -558,7 +558,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_WithOptions_Void_SyncInvokerFallback_CompletesAsync() {
     // Arrange - only void sync invoker, no async
     var invoked = false;
-    VoidSyncReceptorInvoker syncInvoker = msg => { invoked = true; };
+    void syncInvoker(object msg) { invoked = true; }
     var dispatcher = _createDispatcher(voidSyncInvoker: syncInvoker);
     var command = new W3Command("void-sync-options");
     var options = new DispatchOptions();
@@ -573,7 +573,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_WithOptions_Void_AnyInvokerFallback_CompletesAsync() {
     // Arrange - only anyInvoker, no void or sync
-    Func<object, ValueTask<object?>> anyInvoker = msg =>
+    ValueTask<object?> anyInvoker(object msg) =>
       new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-fallback-options");
@@ -687,7 +687,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeWithReceiptAsync_SyncFallback_ReturnsResultAndReceiptAsync() {
     // Arrange - sync invoker only
-    SyncReceptorInvoker<object> syncInvoker = msg => new W3Result(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new W3Result(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new W3Command("receipt-sync");
 
@@ -754,7 +754,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeWithReceiptAsync_WithOptions_SyncFallback_ReturnsResultAsync() {
     // Arrange - sync invoker only with options path
-    SyncReceptorInvoker<object> syncInvoker = msg => new W3Result(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new W3Result(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new W3Command("receipt-sync-options");
     var options = new DispatchOptions();
@@ -922,10 +922,10 @@ public class DispatcherCoverageWave3Tests {
   public async Task CascadeMessageAsync_LocalMode_WithPublisher_InvokesPublisherAsync() {
     // Arrange
     var publisherInvoked = false;
-    Func<object, IMessageEnvelope?, CancellationToken, Task> publisher = (msg, env, ct) => {
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
       publisherInvoked = true;
       return Task.CompletedTask;
-    };
+    }
     var dispatcher = _createDispatcher(
       untypedPublisher: publisher,
       handleMessageType: typeof(W3Event));
@@ -962,10 +962,10 @@ public class DispatcherCoverageWave3Tests {
   public async Task CascadeMessageAsync_BothMode_CompletesWithoutErrorAsync() {
     // Arrange
     var publisherInvoked = false;
-    Func<object, IMessageEnvelope?, CancellationToken, Task> publisher = (msg, env, ct) => {
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
       publisherInvoked = true;
       return Task.CompletedTask;
-    };
+    }
     var dispatcher = _createDispatcher(
       untypedPublisher: publisher,
       handleMessageType: typeof(W3Event));
@@ -982,10 +982,10 @@ public class DispatcherCoverageWave3Tests {
   public async Task CascadeMessageAsync_NoneMode_CompletesWithoutDispatchAsync() {
     // Arrange
     var publisherInvoked = false;
-    Func<object, IMessageEnvelope?, CancellationToken, Task> publisher = (msg, env, ct) => {
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
       publisherInvoked = true;
       return Task.CompletedTask;
-    };
+    }
     var dispatcher = _createDispatcher(
       untypedPublisher: publisher,
       handleMessageType: typeof(W3Event));
@@ -1006,7 +1006,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_VoidSync_FastPath_InvokesSynchronouslyAsync() {
     // Arrange - void sync invoker, no trace store, no sync attributes
     var invoked = false;
-    VoidSyncReceptorInvoker syncInvoker = msg => { invoked = true; };
+    void syncInvoker(object msg) { invoked = true; }
     var dispatcher = _createDispatcher(voidSyncInvoker: syncInvoker);
     var command = new W3Command("sync-fast");
 
@@ -1021,10 +1021,10 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_VoidAnyInvokerFallback_CompletesAsync() {
     // Arrange - only anyInvoker, no void or sync invoker
     var anyInvoked = false;
-    Func<object, ValueTask<object?>> anyInvoker = msg => {
+    ValueTask<object?> anyInvoker(object msg) {
       anyInvoked = true;
       return new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
-    };
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-fallback");
 
@@ -1038,7 +1038,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_VoidAnyInvokerFallback_NullResult_CompletesAsync() {
     // Arrange - anyInvoker returns null
-    Func<object, ValueTask<object?>> anyInvoker = msg =>
+    ValueTask<object?> anyInvoker(object msg) =>
       new ValueTask<object?>((object?)null);
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-null");
@@ -1112,7 +1112,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_GenericVoid_CompletesSuccessfullyAsync() {
     // Arrange
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new W3Command("typed-void");
 
@@ -1127,7 +1127,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_GenericVoid_WithContext_CompletesSuccessfullyAsync() {
     // Arrange
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new W3Command("typed-void-ctx");
     var context = MessageContext.New();
@@ -1155,7 +1155,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_GenericVoid_SyncFallback_CompletesAsync() {
     // Arrange - only void sync invoker, no async void invoker
     var invoked = false;
-    VoidSyncReceptorInvoker syncInvoker = msg => { invoked = true; };
+    void syncInvoker(object msg) { invoked = true; }
     var dispatcher = _createDispatcher(voidSyncInvoker: syncInvoker);
     var command = new W3Command("typed-void-sync");
 
@@ -1170,10 +1170,10 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_GenericVoid_AnyInvokerFallback_CompletesAsync() {
     // Arrange - only anyInvoker, no void or sync
     var anyInvoked = false;
-    Func<object, ValueTask<object?>> anyInvoker = msg => {
+    ValueTask<object?> anyInvoker(object msg) {
       anyInvoked = true;
       return new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
-    };
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("typed-void-any");
 
@@ -1373,7 +1373,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_ReceptorThrows_PropagatesExceptionAsync() {
     // Arrange
-    ReceptorInvoker<object> failingInvoker = msg =>
+    ValueTask<object> failingInvoker(object msg) =>
       throw new InvalidOperationException("receptor failed");
     var dispatcher = _createDispatcher(invoker: failingInvoker);
     var command = new W3Command("fail");
@@ -1387,7 +1387,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task SendAsync_ReceptorThrows_PropagatesExceptionAsync() {
     // Arrange
-    ReceptorInvoker<object> failingInvoker = msg =>
+    ValueTask<object> failingInvoker(object msg) =>
       throw new InvalidOperationException("send failed");
     var dispatcher = _createDispatcher(invoker: failingInvoker);
     var command = new W3Command("fail-send");
@@ -1401,7 +1401,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task SendAsync_Generic_ReceptorThrows_PropagatesExceptionAsync() {
     // Arrange
-    ReceptorInvoker<object> failingInvoker = msg =>
+    ValueTask<object> failingInvoker(object msg) =>
       throw new InvalidOperationException("generic send failed");
     var dispatcher = _createDispatcher(invoker: failingInvoker);
     var command = new W3Command("fail-generic-send");
@@ -1599,7 +1599,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_Result_AnyInvokerFallback_ExtractsResultAsync() {
     // Arrange - only anyInvoker, no typed invoker
-    Func<object, ValueTask<object?>> anyInvoker = msg =>
+    ValueTask<object?> anyInvoker(object msg) =>
       new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("rpc-extract");
@@ -1704,7 +1704,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_Void_WithRoutedMessage_UnwrapsAndDispatchesAsync() {
     // Arrange
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new W3Command("routed-void");
     var routed = Route.Local(command);
@@ -1754,7 +1754,7 @@ public class DispatcherCoverageWave3Tests {
   public async Task LocalInvokeAsync_Void_NoContext_CompletesAsync() {
     // Arrange
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new W3Command("void-no-ctx");
 
@@ -1800,7 +1800,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_Result_SyncFallback_ReturnsResultAsync() {
     // Arrange - only sync invoker, no async
-    SyncReceptorInvoker<object> syncInvoker = msg => new W3Result(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new W3Result(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new W3Command("sync-fallback");
 

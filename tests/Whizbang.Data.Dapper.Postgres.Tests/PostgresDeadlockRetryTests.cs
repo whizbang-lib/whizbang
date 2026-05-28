@@ -46,13 +46,13 @@ public class PostgresDeadlockRetryTests {
   [Test]
   public async Task ExecuteAsync_DeadlockExhaustsAttempts_ThrowsOriginalExceptionAsync() {
     var callCount = 0;
-    var act = async () => {
+    async Task act() {
       await PostgresDeadlockRetry.ExecuteAsync(async () => {
         callCount++;
         await Task.CompletedTask;
         throw _createDeadlockException();
       }, maxAttempts: 3);
-    };
+    }
 
     await Assert.That(act).ThrowsExactly<PostgresException>();
     await Assert.That(callCount).IsEqualTo(3);
@@ -61,13 +61,13 @@ public class PostgresDeadlockRetryTests {
   [Test]
   public async Task ExecuteAsync_NonDeadlockException_DoesNotRetryAsync() {
     var callCount = 0;
-    var act = async () => {
+    async Task act() {
       await PostgresDeadlockRetry.ExecuteAsync(async () => {
         callCount++;
         await Task.CompletedTask;
         throw _createOtherPostgresException();
       });
-    };
+    }
 
     await Assert.That(act).ThrowsExactly<PostgresException>();
     await Assert.That(callCount).IsEqualTo(1);
@@ -94,7 +94,7 @@ public class PostgresDeadlockRetryTests {
     using var cts = new CancellationTokenSource();
     var callCount = 0;
 
-    var act = async () => {
+    async Task act() {
       await PostgresDeadlockRetry.ExecuteAsync(async () => {
         callCount++;
         if (callCount == 1) {
@@ -103,7 +103,7 @@ public class PostgresDeadlockRetryTests {
         }
         await Task.CompletedTask;
       }, cancellationToken: cts.Token);
-    };
+    }
 
     await Assert.That(act).Throws<OperationCanceledException>();
     await Assert.That(callCount).IsEqualTo(1);
@@ -112,13 +112,13 @@ public class PostgresDeadlockRetryTests {
   [Test]
   public async Task ExecuteAsync_NonPostgresException_DoesNotRetryAsync() {
     var callCount = 0;
-    var act = async () => {
+    async Task act() {
       await PostgresDeadlockRetry.ExecuteAsync(async () => {
         callCount++;
         await Task.CompletedTask;
         throw new InvalidOperationException("not a postgres error");
       });
-    };
+    }
 
     await Assert.That(act).ThrowsExactly<InvalidOperationException>();
     await Assert.That(callCount).IsEqualTo(1);

@@ -60,7 +60,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
       await _insertOutboxRowAsync(connection, ids[i], streamId, instanceId, createdAt: times[i]);
     }
 
-    var fetched = await _fetchOutboxBatchAsync(connection, new[] { streamId }, instanceId, maxPerStream: 100);
+    var fetched = await _fetchOutboxBatchAsync(connection, [streamId], instanceId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(3);
     await Assert.That(fetched[0].MessageId).IsEqualTo(ids[0]);
@@ -87,7 +87,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     await _insertOutboxRowAsync(connection, mineMessage, streamId, meId);
     await _insertOutboxRowAsync(connection, theirMessage, streamId, otherId);
 
-    var fetched = await _fetchOutboxBatchAsync(connection, new[] { streamId }, meId, maxPerStream: 100);
+    var fetched = await _fetchOutboxBatchAsync(connection, [streamId], meId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(1);
     await Assert.That(fetched[0].MessageId).IsEqualTo(mineMessage);
@@ -110,7 +110,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     await _insertOutboxRowAsync(connection, unpublished, streamId, instanceId);
     await _insertOutboxRowAsync(connection, alreadyPublished, streamId, instanceId, publishedAt: DateTimeOffset.UtcNow);
 
-    var fetched = await _fetchOutboxBatchAsync(connection, new[] { streamId }, instanceId, maxPerStream: 100);
+    var fetched = await _fetchOutboxBatchAsync(connection, [streamId], instanceId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(1);
     await Assert.That(fetched[0].MessageId).IsEqualTo(unpublished);
@@ -132,7 +132,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
       await _insertOutboxRowAsync(connection, Guid.NewGuid(), streamId, instanceId);
     }
 
-    var fetched = await _fetchOutboxBatchAsync(connection, new[] { streamId }, instanceId, maxPerStream: 3);
+    var fetched = await _fetchOutboxBatchAsync(connection, [streamId], instanceId, maxPerStream: 3);
 
     await Assert.That(fetched.Count).IsEqualTo(3);
   }
@@ -154,7 +154,7 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     await _insertOutboxRowAsync(connection, Guid.NewGuid(), streamA, instanceId);
     await _insertOutboxRowAsync(connection, Guid.NewGuid(), streamB, instanceId);
 
-    var fetched = await _fetchOutboxBatchAsync(connection, new[] { streamA, streamB }, instanceId, maxPerStream: 100);
+    var fetched = await _fetchOutboxBatchAsync(connection, [streamA, streamB], instanceId, maxPerStream: 100);
 
     await Assert.That(fetched.Count).IsEqualTo(3);
   }

@@ -128,7 +128,7 @@ public class InMemoryEventStoreReadOrderingChangeLevelTests {
     await foreach (var env in store.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       ids.Add(env.MessageId.Value);
     }
-    await Assert.That(ids.SequenceEqual(new[] { id })).IsTrue();
+    await Assert.That(ids.SequenceEqual([id])).IsTrue();
   }
 
   /// <summary>

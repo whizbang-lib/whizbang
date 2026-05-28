@@ -1303,7 +1303,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     cmd.CommandText = migration033!.Sql;
     cmd.CommandTimeout = 30;
 
-    var action = () => cmd.ExecuteNonQueryAsync();
+    Task<int> action() => cmd.ExecuteNonQueryAsync();
     await Assert.That(action).ThrowsNothing();
   }
 }

@@ -1076,7 +1076,7 @@ public class SyncEventTrackerTests {
     tracker.CleanupStaleEntries(TimeSpan.Zero);
 
     // The waiter should complete (signaled by cleanup) rather than waiting 30 seconds
-    var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));
+    _ = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));
     await Assert.That(waitTask.IsCompleted).IsTrue()
       .Because("Cleanup should signal waiters so they don't hang");
   }

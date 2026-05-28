@@ -3,12 +3,8 @@ using Whizbang.LanguageServer.Services;
 
 namespace Whizbang.LanguageServer.Handlers;
 
-public sealed class SearchHandler {
-  private readonly SearchService _searchService;
-
-  public SearchHandler(SearchService searchService) {
-    _searchService = searchService;
-  }
+public sealed class SearchHandler(SearchService searchService) {
+  private readonly SearchService _searchService = searchService;
 
   public IReadOnlyList<SearchResult> Handle(SearchDocsParams request) {
     if (string.IsNullOrWhiteSpace(request.Query)) {

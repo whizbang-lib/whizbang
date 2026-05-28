@@ -3,14 +3,9 @@ using Whizbang.LanguageServer.Services;
 
 namespace Whizbang.LanguageServer.Handlers;
 
-public sealed class FlowDiagramHandler {
-  private readonly SymbolResolver _symbolResolver;
-  private readonly MermaidGenerator _mermaidGenerator;
-
-  public FlowDiagramHandler(SymbolResolver symbolResolver, MermaidGenerator mermaidGenerator) {
-    _symbolResolver = symbolResolver;
-    _mermaidGenerator = mermaidGenerator;
-  }
+public sealed class FlowDiagramHandler(SymbolResolver symbolResolver, MermaidGenerator mermaidGenerator) {
+  private readonly SymbolResolver _symbolResolver = symbolResolver;
+  private readonly MermaidGenerator _mermaidGenerator = mermaidGenerator;
 
   public FlowDiagramResult Handle(GenerateFlowDiagramParams request) {
     var symbolInfo = _symbolResolver.Resolve(request.MessageType);

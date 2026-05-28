@@ -31,7 +31,7 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     // All tests use the same topics (topic-00)
     const string topicName = "topic-00";
     const string subscriptionName = "sub-00-a";
-    var connectionString = _fixture.ConnectionString;
+    _ = _fixture.ConnectionString;
 
     Console.WriteLine("[SANITY TEST] Starting Azure Service Bus Emulator sanity test...");
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
@@ -112,7 +112,7 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     // All tests use the same topics (topic-01)
     const string topicName = "topic-01";
     const string subscriptionName = "sub-01-a";
-    var connectionString = _fixture.ConnectionString;
+    _ = _fixture.ConnectionString;
 
     Console.WriteLine("[SANITY TEST] Testing second generic topic...");
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");

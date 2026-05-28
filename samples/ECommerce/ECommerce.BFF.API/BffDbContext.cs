@@ -15,11 +15,11 @@ namespace ECommerce.BFF.API;
 /// AOT-compatible: All configuration is done via source generators, no reflection needed.
 /// </summary>
 [WhizbangDbContext(Schema = "bff")]
-public partial class BffDbContext : DbContext {
+public partial class BffDbContext(DbContextOptions<BffDbContext> options) : DbContext(options) {
+
 #pragma warning disable IL2026 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL2046 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL3050 // EF Core uses dynamic code generation - AOT support experimental in EF10, stable in EF12
-  public BffDbContext(DbContextOptions<BffDbContext> options) : base(options) { }
 #pragma warning restore IL3050
 #pragma warning restore IL2046
 #pragma warning restore IL2026

@@ -2765,7 +2765,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var typeSymbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct) as INamedTypeSymbol;
     if (typeSymbol is null || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
-      return ImmutableArray<JsonMessageTypeInfo>.Empty;
+      return [];
     }
 
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();

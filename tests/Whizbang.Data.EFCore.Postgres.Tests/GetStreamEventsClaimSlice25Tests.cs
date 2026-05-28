@@ -48,7 +48,7 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
     // Insert perspective_event with instance_id=NULL and no lease (orphaned).
     await _insertOrphanedPerspectiveEventAsync(connection, workId, streamId, perspectiveName, eventId);
 
-    var rows = await _getStreamEventsAsync(connection, instanceId, new[] { streamId });
+    var rows = await _getStreamEventsAsync(connection, instanceId, [streamId]);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     await Assert.That(rows[0].EventId).IsEqualTo(eventId);
@@ -80,7 +80,7 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
     await _insertPerspectiveEventWithLeaseAsync(connection, workId, streamId, perspectiveName, eventId,
       otherInstance, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1));
 
-    var rows = await _getStreamEventsAsync(connection, ourInstance, new[] { streamId });
+    var rows = await _getStreamEventsAsync(connection, ourInstance, [streamId]);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     var leased = await _getInstanceForRowAsync(connection, workId);
@@ -110,7 +110,7 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
     await _insertPerspectiveEventWithLeaseAsync(connection, workId, streamId, perspectiveName, eventId,
       otherInstance, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));  // valid lease
 
-    var rows = await _getStreamEventsAsync(connection, ourInstance, new[] { streamId });
+    var rows = await _getStreamEventsAsync(connection, ourInstance, [streamId]);
 
     // We don't get the row back — it's still validly leased to the other instance.
     await Assert.That(rows.Count).IsEqualTo(0);
@@ -136,12 +136,12 @@ public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
 
     // First call: orphan → claimed → attempts goes 0 → 1
     await _insertOrphanedPerspectiveEventAsync(connection, workId, streamId, perspectiveName, eventId);
-    await _getStreamEventsAsync(connection, ourInstance, new[] { streamId });
+    await _getStreamEventsAsync(connection, ourInstance, [streamId]);
     var attempts1 = await _getAttemptsForRowAsync(connection, workId);
     await Assert.That(attempts1).IsEqualTo(1);
 
     // Second call: same instance re-leasing → attempts MUST stay at 1
-    await _getStreamEventsAsync(connection, ourInstance, new[] { streamId });
+    await _getStreamEventsAsync(connection, ourInstance, [streamId]);
     var attempts2 = await _getAttemptsForRowAsync(connection, workId);
     await Assert.That(attempts2).IsEqualTo(1);
   }

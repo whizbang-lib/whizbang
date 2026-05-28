@@ -36,10 +36,10 @@ public sealed class SearchService : IDisposable {
 
     using (var writer = new IndexWriter(_directory, config)) {
       foreach (var doc in documents) {
-        var luceneDoc = new Document();
-
-        // slug: stored, not indexed
-        luceneDoc.Add(new StoredField("slug", doc.Slug));
+        var luceneDoc = new Document {
+          // slug: stored, not indexed
+          new StoredField("slug", doc.Slug)
+        };
 
         // title: stored, indexed, boosted 3x
         var titleField = new TextField("title", doc.Title, Field.Store.YES) {
@@ -74,7 +74,7 @@ public sealed class SearchService : IDisposable {
     _reverseSynonymMap.Clear();
 
     foreach (var (key, values) in synonyms) {
-      _synonymMap[key] = values.ToList();
+      _synonymMap[key] = [.. values];
       foreach (var value in values) {
         _reverseSynonymMap[value] = key;
       }
@@ -157,7 +157,7 @@ public sealed class SearchService : IDisposable {
       }
     }
 
-    return seenSlugs.Values.ToList();
+    return [.. seenSlugs.Values];
   }
 
   private string _expandQuery(string query) {

@@ -707,8 +707,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     void WireOutboxOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      WorkProcessingIdleHandler? h = null;
-      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+
       w.OnWorkProcessingIdle += h;
       if (w.IsIdle) { tcs.TrySetResult(true); } // re-check after subscribe (race window)
     }
@@ -716,8 +716,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      WorkProcessingIdleHandler? h = null;
-      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+
       w.OnWorkProcessingIdle += h;
       if (w.IsIdle) { tcs.TrySetResult(true); }
     }
@@ -865,10 +865,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       throw new InvalidOperationException("Neither OutboxDrainWorker nor OutboxPublishWorker registered on InventoryHost");
     }
 
-    OutboxMessagePublishedHandler? handler = null;
-    handler = (e) => {
+    void handler(OutboxMessagePublishedEvent e) {
       tcs.TrySetResult(e.MessageId);
-    };
+    }
+
     if (drainWorker is not null) {
       drainWorker.OnOutboxMessagePublished += handler;
     }
@@ -920,13 +920,13 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         return;
       }
 
-      PerspectiveEventProcessedHandler? handler = null;
-      handler = (e) => {
+      void handler(PerspectiveEventProcessedEvent e) {
         var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }
-      };
+      }
+
       worker.OnPerspectiveEventProcessed += handler;
     }
 

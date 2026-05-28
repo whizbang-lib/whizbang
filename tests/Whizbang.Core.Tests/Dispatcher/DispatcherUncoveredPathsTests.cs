@@ -874,7 +874,7 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task SendAsync_WithOptions_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange
-    ReceptorInvoker<object> throwingInvoker = msg =>
+    ValueTask<object> throwingInvoker(object msg) =>
       throw new InvalidOperationException("receptor-error");
     var dispatcher = _createDispatcher(invoker: throwingInvoker);
     var command = new TestCommand("error-test");
@@ -889,7 +889,7 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task SendAsync_Generic_WithOptions_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange
-    ReceptorInvoker<object> throwingInvoker = msg =>
+    ValueTask<object> throwingInvoker(object msg) =>
       throw new InvalidOperationException("generic-receptor-error");
     var dispatcher = _createDispatcher(invoker: throwingInvoker);
     var command = new TestCommand("generic-error-test");
@@ -908,7 +908,7 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_Typed_WithCastFallback_InvokerThrowsNonCastException_PropagatesAsync() {
     // Arrange
-    ReceptorInvoker<object> throwingInvoker = msg =>
+    ValueTask<object> throwingInvoker(object msg) =>
       throw new InvalidOperationException("non-cast-error");
     var dispatcher = _createDispatcher(invoker: throwingInvoker);
     var command = new TestCommand("cast-fallback-error");
@@ -922,7 +922,7 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_GenericTyped_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange - exercises _localInvokeWithTracingAsyncInternalAsync error path
-    ReceptorInvoker<object> throwingInvoker = msg =>
+    ValueTask<object> throwingInvoker(object msg) =>
       throw new InvalidOperationException("generic-typed-error");
     var dispatcher = _createDispatcher(invoker: throwingInvoker);
     var command = new TestCommand("generic-typed-error-test");
@@ -936,7 +936,7 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_GenericVoidTyped_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange - exercises _localInvokeVoidWithTracingAsyncInternalAsync error path
-    VoidReceptorInvoker throwingInvoker = msg =>
+    ValueTask throwingInvoker(object msg) =>
       throw new InvalidOperationException("generic-void-error");
     var dispatcher = _createDispatcher(voidInvoker: throwingInvoker);
     var command = new TestCommand("generic-void-error-test");
@@ -950,7 +950,7 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_VoidWithSyncAndTracing_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange - exercises _localInvokeVoidWithSyncAndTracingAsync error path
-    VoidReceptorInvoker throwingInvoker = msg =>
+    ValueTask throwingInvoker(object msg) =>
       throw new InvalidOperationException("void-sync-tracing-error");
     var traceStore = new StubTraceStore();
     var dispatcher = _createDispatcher(
@@ -1345,7 +1345,7 @@ public class DispatcherUncoveredPathsTests {
     // Arrange
     var traceStore = new StubTraceStore();
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(
       traceStore: traceStore,
       voidInvoker: voidInvoker);
@@ -1395,7 +1395,7 @@ public class DispatcherUncoveredPathsTests {
         ReceptorId: "test-immediate",
         InvokeAsync: (sp, msg, env, caller, ct) => ValueTask.FromResult<object?>(null)
       ));
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(
       receptorRegistry: registry,
       voidInvoker: voidInvoker);
@@ -1421,7 +1421,7 @@ public class DispatcherUncoveredPathsTests {
         ReceptorId: "test-post-lifecycle",
         InvokeAsync: (sp, msg, env, caller, ct) => ValueTask.FromResult<object?>(null)
       ));
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(
       receptorRegistry: registry,
       voidInvoker: voidInvoker);
@@ -1499,7 +1499,7 @@ public class DispatcherUncoveredPathsTests {
   public async Task LocalInvokeAsync_Void_RoutedLocal_UnwrapsAndInvokesAsync() {
     // Arrange
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var routed = Route.Local(new TestCommand("routed-void-invoke"));
 
