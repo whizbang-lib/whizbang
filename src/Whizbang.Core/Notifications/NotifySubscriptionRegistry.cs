@@ -65,7 +65,7 @@ public sealed class NotifySubscriptionRegistry {
   }
 
   /// <summary>Snapshot of every channel currently being LISTENed.</summary>
-  public IReadOnlyCollection<string> AllChannels() => _byChannel.Keys.ToArray();
+  public IReadOnlyCollection<string> AllChannels() => [.. _byChannel.Keys];
 
   /// <summary>
   /// Subscribers for a channel (or empty when nothing's registered). Returned as an

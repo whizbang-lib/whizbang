@@ -75,7 +75,7 @@ public class PerspectiveWorkerOrderingTests {
   public async Task GroupAndDedupe_EmptyInput_ReturnsEmptyDictionaryAsync() {
     var rawByEventId = Array.Empty<StreamEventData>().ToLookup(r => r.EventId);
     var result = PerspectiveWorker._groupAndDedupeDrainModeEventsByStream(
-      new List<MessageEnvelope<IEvent>>(), rawByEventId);
+      [], rawByEventId);
 
     await Assert.That(result).IsEmpty();
   }

@@ -113,7 +113,7 @@ public partial class ReceptorInvocationsRoundtripTests {
 
     // System.Text.Json's default settings serialize null as "null". We explicitly want the
     // field NOT to appear in the wire payload to keep envelopes lean.
-    var hasRin = jsonString.Contains("\"rin\"", StringComparison.Ordinal);
+    _ = jsonString.Contains("\"rin\"", StringComparison.Ordinal);
     var rehydrated = (MessageEnvelope<JsonElement>)JsonSerializer.Deserialize(jsonString, options.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)))!;
 
     // Either the field is elided (preferred) or it's null — both are acceptable as long as

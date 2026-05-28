@@ -216,7 +216,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     // load actions tied to `draft-job-name`, `draft-job-skills`, etc.) never receive a signal
     // and the canvas sits with empty data even though the projections in OTHER services
     // have committed. This was the JDX 2026-05-03 saga-loader-stuck symptom.
-    var (worker, inbox, handlerCommit, invoker) = _buildWorker(registeredPerspectives: []);
+    var (worker, inbox, _, invoker) = _buildWorker(registeredPerspectives: []);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

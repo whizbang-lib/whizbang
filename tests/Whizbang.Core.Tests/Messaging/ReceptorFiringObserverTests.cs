@@ -117,9 +117,9 @@ public class ReceptorFiringObserverTests {
 
       await Assert.That(observer.Firings.Count).IsEqualTo(1);
       await Assert.That(observer.Completed.Count).IsEqualTo(1);
-      var firing = observer.Firings.First();
-      await Assert.That(firing.ReceptorId).IsEqualTo("Rx");
-      await Assert.That(firing.Stage).IsEqualTo(LifecycleStage.PostInboxInline);
+      var (ReceptorId, Stage) = observer.Firings.First();
+      await Assert.That(ReceptorId).IsEqualTo("Rx");
+      await Assert.That(Stage).IsEqualTo(LifecycleStage.PostInboxInline);
     }
   }
 

@@ -37,7 +37,7 @@ public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
   private PgAppSignalChannel _newChannel(WhizbangNotificationOptions? options = null) {
     var opts = options ?? new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
+    _ = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
     // Slice 33.5 — Publish-only callers can pass a no-op shared connection since Publish
     // doesn't route through it. Receive-side tests below use a real PgSharedNotifyConnection.
     var noOpShared = new NoOpSharedConnection();

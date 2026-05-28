@@ -48,7 +48,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// </summary>
   [Test]
   public async Task SqlFilter_WithPlusInSubject_ShouldMatchLikePatternAsync() {
-    var connectionString = _fixture.ConnectionString;
+    _ = _fixture.ConnectionString;
 
     Console.WriteLine("[MANUAL TEST] Testing SqlFilter LIKE pattern with '+' character in Subject...");
     Console.WriteLine($"[MANUAL TEST] Topic: {TOPIC_NAME}");
@@ -119,7 +119,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// </summary>
   [Test]
   public async Task SqlFilter_WithDotInSubject_ShouldMatchLikePatternAsync() {
-    var connectionString = _fixture.ConnectionString;
+    _ = _fixture.ConnectionString;
 
     Console.WriteLine("[MANUAL TEST] Control test: SqlFilter LIKE pattern with '.' only (no '+')...");
 
@@ -175,7 +175,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// </summary>
   [Test]
   public async Task SqlFilter_WithMultiplePlusInSubject_ShouldMatchLikePatternAsync() {
-    var connectionString = _fixture.ConnectionString;
+    _ = _fixture.ConnectionString;
 
     Console.WriteLine("[MANUAL TEST] Testing multiple '+' characters in Subject...");
 
@@ -227,7 +227,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// </summary>
   [Test]
   public async Task SqlFilter_WithNonMatchingSubject_ShouldNotReceiveAsync() {
-    var connectionString = _fixture.ConnectionString;
+    _ = _fixture.ConnectionString;
 
     Console.WriteLine("[MANUAL TEST] Negative test: Non-matching subject should NOT be received...");
 

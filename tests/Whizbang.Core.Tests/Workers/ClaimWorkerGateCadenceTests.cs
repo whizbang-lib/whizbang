@@ -40,7 +40,7 @@ public class ClaimWorkerGateCadenceTests {
   }
 
   private sealed class TickRecordingCoordinator : IWorkCoordinator {
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     public List<DateTimeOffset> ClaimCallTimes { get; } = [];
     public TaskCompletionSource FirstCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

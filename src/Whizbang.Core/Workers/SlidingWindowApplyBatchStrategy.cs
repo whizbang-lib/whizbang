@@ -60,8 +60,8 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
-      _ => _ = _runIdleSweepAsync(),
-      state: null,
+      static state => ((SlidingWindowApplyBatchStrategy)state!)._fireAndForgetIdleSweep(),
+      state: this,
       dueTime: _options.IdleSweepInterval,
       period: _options.IdleSweepInterval);
   }
@@ -90,9 +90,14 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
+  }
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
+  private void _fireAndForgetIdleSweep() {
+    _ = _runIdleSweepAsync();
   }
 
   /// <inheritdoc />
@@ -175,7 +180,6 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
 
   private sealed class StreamBuffer(Guid key, Channel<Guid> channel, DateTimeOffset createdAt) {
     public Guid Key { get; } = key;
-    public ChannelReader<Guid> Reader => channel.Reader;
     public ChannelWriter<Guid> Writer => channel.Writer;
     public DateTimeOffset LastActivity { get; set; } = createdAt;
     public Task Worker { get; set; } = Task.CompletedTask;

@@ -699,7 +699,7 @@ public interface IWorkCoordinator {
     Guid instanceId,
     int maxPerStream = 100,
     CancellationToken cancellationToken = default)
-    => Task.FromResult<IReadOnlyList<OutboxBatchRow>>(Array.Empty<OutboxBatchRow>());
+    => Task.FromResult<IReadOnlyList<OutboxBatchRow>>([]);
 
   /// <summary>
   /// Per-stream-id payload fetch for the InboxDrainWorker. Mirror of
@@ -711,7 +711,7 @@ public interface IWorkCoordinator {
     Guid instanceId,
     int maxPerStream = 100,
     CancellationToken cancellationToken = default)
-    => Task.FromResult<IReadOnlyList<InboxBatchRow>>(Array.Empty<InboxBatchRow>());
+    => Task.FromResult<IReadOnlyList<InboxBatchRow>>([]);
 
   /// <summary>
   /// Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 2). Returns
@@ -732,7 +732,7 @@ public interface IWorkCoordinator {
     string perspectiveName,
     Guid instanceId,
     CancellationToken cancellationToken = default)
-    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
+    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>([]);
 
   /// <summary>
   /// Slice 25: atomic per-stream claim+fetch. Claims (or re-leases) ALL eligible pending
@@ -759,7 +759,7 @@ public interface IWorkCoordinator {
     Guid instanceId,
     TimeSpan leaseDuration,
     CancellationToken cancellationToken = default)
-    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>(Array.Empty<PendingPerspectiveEvent>());
+    => Task.FromResult<IReadOnlyList<PendingPerspectiveEvent>>([]);
 
   /// <summary>
   /// Scoped event-body fetch from <c>wh_event_store</c> by event_id list (Phase H step 7 slice 4).
@@ -775,7 +775,7 @@ public interface IWorkCoordinator {
   Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
     IReadOnlyList<Guid> eventIds,
     CancellationToken cancellationToken = default)
-    => Task.FromResult<IReadOnlyList<StreamEventData>>(Array.Empty<StreamEventData>());
+    => Task.FromResult<IReadOnlyList<StreamEventData>>([]);
 
   /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,

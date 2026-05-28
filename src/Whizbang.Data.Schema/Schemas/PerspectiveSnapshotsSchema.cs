@@ -18,35 +18,35 @@ public static class PerspectiveSnapshotsSchema {
     Name: "perspective_snapshots",
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
-        Name: "stream_id",
+        Name: Columns.STREAM_ID,
         DataType: WhizbangDataType.UUID,
         Nullable: false,
         PrimaryKey: true
       ),
       new ColumnDefinition(
-        Name: "perspective_name",
+        Name: Columns.PERSPECTIVE_NAME,
         DataType: WhizbangDataType.STRING,
         Nullable: false,
         PrimaryKey: true
       ),
       new ColumnDefinition(
-        Name: "snapshot_event_id",
+        Name: Columns.SNAPSHOT_EVENT_ID,
         DataType: WhizbangDataType.UUID,
         Nullable: false,
         PrimaryKey: true
       ),
       new ColumnDefinition(
-        Name: "snapshot_data",
+        Name: Columns.SNAPSHOT_DATA,
         DataType: WhizbangDataType.JSON,
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "sequence_number",
+        Name: Columns.SEQUENCE_NUMBER,
         DataType: WhizbangDataType.BIG_INT,
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "created_at",
+        Name: Columns.CREATED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
@@ -55,7 +55,7 @@ public static class PerspectiveSnapshotsSchema {
       // by the runner template via IEventStore.GetCommitSequenceAsync. Mig 048 backfills
       // schema (ALTER + index) on existing JDX databases.
       new ColumnDefinition(
-        Name: "snapshot_commit_sequence",
+        Name: Columns.SNAPSHOT_COMMIT_SEQUENCE,
         DataType: WhizbangDataType.BIG_INT,
         Nullable: true
       )
@@ -63,13 +63,18 @@ public static class PerspectiveSnapshotsSchema {
     Indexes: [
       new IndexDefinition(
         Name: "idx_perspective_snapshots_lookup",
-        Columns: ["stream_id", "perspective_name", "sequence_number"]
+        Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SEQUENCE_NUMBER]
       ),
       new IndexDefinition(
         Name: "idx_perspective_snapshots_commit_sequence",
-        Columns: ["stream_id", "perspective_name", "snapshot_commit_sequence"],
-        WhereClause: "snapshot_commit_sequence IS NOT NULL"
+        Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SNAPSHOT_COMMIT_SEQUENCE],
+        WhereClause: $"{Columns.SNAPSHOT_COMMIT_SEQUENCE} IS NOT NULL"
       )
+      // This partial index works against the snapshot_commit_sequence column added
+      // in migration 048. Existing databases that pre-date that migration get the
+      // column backfilled by PostgresSchemaBuilder.BuildCreateTable's per-column
+      // `ALTER TABLE ADD COLUMN IF NOT EXISTS` pass that runs BEFORE the CREATE
+      // INDEX, so the index creation is safe on both fresh and upgraded DBs.
     ]
   );
 

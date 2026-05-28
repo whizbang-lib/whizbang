@@ -62,6 +62,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IMessageDiscardPolicy? _discardPolicy;
 
   /// <summary>Constructor.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
   public InboxDispatchWorker(
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
@@ -102,6 +103,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <inheritdoc />
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Worker ExecuteAsync orchestrates the full inbox dispatch lifecycle (claim, deserialize, dispatch, lifecycle stages, commit, retry); splitting would obscure the loop's invariants around lease ownership and cancellation propagation.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.MaxInboxAttempts ?? -1);
 
@@ -325,6 +327,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // WorkCoordinatorPublisherWorker._invokeInboxLifecycleStagesAsync)
   // ============================================================
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Lifecycle stage invocation requires the full set of stage descriptors + ambient context; bundling would obscure call-site intent.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Lifecycle invocation handles the full detached-vs-inline branch matrix + receptor resolution + envelope reuse fallback; the branches are interrelated and splitting would force passing the typed envelope through helper boundaries.")]
   private async Task _invokeInboxLifecycleStageAsync(
       InboxWork work,
       IMessageEnvelope? typedEnvelope,

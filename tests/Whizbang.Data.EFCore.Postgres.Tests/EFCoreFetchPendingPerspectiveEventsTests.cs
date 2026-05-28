@@ -85,7 +85,7 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coord = Coord(dbContext);
 
-    var result = await coord.FetchEventsByIdsAsync(Array.Empty<Guid>());
+    var result = await coord.FetchEventsByIdsAsync([]);
 
     await Assert.That(result.Count).IsEqualTo(0);
   }
@@ -112,7 +112,7 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    var rows = await coord.FetchEventsByIdsAsync(new[] { eventId });
+    var rows = await coord.FetchEventsByIdsAsync([eventId]);
 
     await Assert.That(rows.Count).IsEqualTo(1);
     await Assert.That(rows[0].StreamId).IsEqualTo(streamId);

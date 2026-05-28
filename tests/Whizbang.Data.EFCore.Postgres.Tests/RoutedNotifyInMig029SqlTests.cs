@@ -53,7 +53,7 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     // Listen on owner's channel + global wh_work as a regression sentinel —
     // after slice 27 the global channel must NOT receive these payloads.
     var received = await _captureNotificationsAsync(conn,
-      ownerChannels: new[] { owner },
+      ownerChannels: [owner],
       alsoListenGlobal: true,
       emit: async () => await _commitHandlerResultAsync(conn, requestJson));
 
@@ -99,7 +99,7 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
         """);
 
     var received = await _captureNotificationsAsync(conn,
-      ownerChannels: new[] { owner, nonOwner },
+      ownerChannels: [owner, nonOwner],
       alsoListenGlobal: false,
       emit: async () => await _commitHandlerResultAsync(conn, requestJson));
 
@@ -133,7 +133,7 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
       """;
 
     var received = await _captureNotificationsAsync(conn,
-      ownerChannels: new[] { owner, nonOwner },
+      ownerChannels: [owner, nonOwner],
       alsoListenGlobal: true,
       emit: async () => await _completePerspectiveAsync(conn, cursorsJson));
 
@@ -172,7 +172,7 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
       """;
 
     var received = await _captureNotificationsAsync(conn,
-      ownerChannels: new[] { observer },
+      ownerChannels: [observer],
       alsoListenGlobal: true,
       emit: async () => await _completePerspectiveAsync(conn, cursorsJson));
 
@@ -228,9 +228,9 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
       bool alsoListenGlobal,
       Func<Task> emit) {
     var received = new List<(string, string)>();
-    NotificationEventHandler handler = (sender, args) => {
+    void handler(object sender, NpgsqlNotificationEventArgs args) {
       received.Add((args.Channel, args.Payload));
-    };
+    }
     conn.Notification += handler;
     try {
       foreach (var owner in ownerChannels) {

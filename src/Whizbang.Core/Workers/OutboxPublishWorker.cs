@@ -26,66 +26,48 @@ namespace Whizbang.Core.Workers;
 /// Picks bulk vs singular path from <see cref="IMessagePublishStrategy.SupportsBulkPublish"/>.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/outbox-publish</docs>
-public sealed partial class OutboxPublishWorker : BackgroundService {
+/// <remarks>
+/// Constructor. <paramref name="publishStrategy"/> is optional so this worker can be
+/// resolved by hosts that don't have a transport registered (e.g., DI-validation tests).
+/// When the strategy is null, <see cref="ExecuteAsync"/> logs a warning and exits — equivalent
+/// to <see cref="OutboxPublishWorkerOptions.Enabled"/> being false.
+/// </remarks>
+public sealed partial class OutboxPublishWorker(
+  IServiceScopeFactory scopeFactory,
+  IWorkChannelWriter workChannelWriter,
+  IOutboxCompletionChannel outboxCompletionChannel,
+  IFailureChannel failureChannel,
+  ILeaseRenewalChannel leaseRenewalChannel,
+  ISchemaReadyGate schemaReadyGate,
+  IOptions<OutboxPublishWorkerOptions> options,
+  ILogger<OutboxPublishWorker> logger,
+  IMessagePublishStrategy? publishStrategy = null,
+  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
+  IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
+  IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
+  LeaseRegistry? leaseRegistry = null,
+  TimeProvider? timeProvider = null) : BackgroundService {
   private const string LIFECYCLE_PRE_OUTBOX_ASYNC = "Lifecycle PreOutboxDetached";
   private const string LIFECYCLE_PRE_OUTBOX_INLINE = "Lifecycle PreOutboxInline";
   private const string LIFECYCLE_POST_OUTBOX_ASYNC = "Lifecycle PostOutboxDetached";
   private const string LIFECYCLE_POST_OUTBOX_INLINE = "Lifecycle PostOutboxInline";
 
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IMessagePublishStrategy? _publishStrategy;
-  private readonly IWorkChannelWriter _workChannelWriter;
-  private readonly IOutboxCompletionChannel _outboxCompletionChannel;
-  private readonly IFailureChannel _failureChannel;
-  private readonly ILeaseRenewalChannel _leaseRenewalChannel;
-  private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly OutboxPublishWorkerOptions _options;
-  private readonly ILogger<OutboxPublishWorker> _logger;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
-  private readonly LeaseHandleOptions _leaseHandleOptions;
-  private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions;
-  private readonly LeaseRegistry? _leaseRegistry;
-  private readonly TimeProvider _timeProvider;
-
-  /// <summary>
-  /// Constructor. <paramref name="publishStrategy"/> is optional so this worker can be
-  /// resolved by hosts that don't have a transport registered (e.g., DI-validation tests).
-  /// When the strategy is null, <see cref="ExecuteAsync"/> logs a warning and exits — equivalent
-  /// to <see cref="OutboxPublishWorkerOptions.Enabled"/> being false.
-  /// </summary>
-  public OutboxPublishWorker(
-    IServiceScopeFactory scopeFactory,
-    IWorkChannelWriter workChannelWriter,
-    IOutboxCompletionChannel outboxCompletionChannel,
-    IFailureChannel failureChannel,
-    ILeaseRenewalChannel leaseRenewalChannel,
-    ISchemaReadyGate schemaReadyGate,
-    IOptions<OutboxPublishWorkerOptions> options,
-    ILogger<OutboxPublishWorker> logger,
-    IMessagePublishStrategy? publishStrategy = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null,
-    IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
-    IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
-    LeaseRegistry? leaseRegistry = null,
-    TimeProvider? timeProvider = null) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _publishStrategy = publishStrategy;
-    _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
-    _outboxCompletionChannel = outboxCompletionChannel ?? throw new ArgumentNullException(nameof(outboxCompletionChannel));
-    _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
-    _leaseRenewalChannel = leaseRenewalChannel ?? throw new ArgumentNullException(nameof(leaseRenewalChannel));
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-    _tracingOptions = tracingOptions;
-    _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
-    _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
-    _leaseRegistry = leaseRegistry;
-    _timeProvider = timeProvider ?? TimeProvider.System;
-  }
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IMessagePublishStrategy? _publishStrategy = publishStrategy;
+  private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
+  private readonly IOutboxCompletionChannel _outboxCompletionChannel = outboxCompletionChannel ?? throw new ArgumentNullException(nameof(outboxCompletionChannel));
+  private readonly IFailureChannel _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
+  private readonly ILeaseRenewalChannel _leaseRenewalChannel = leaseRenewalChannel ?? throw new ArgumentNullException(nameof(leaseRenewalChannel));
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly OutboxPublishWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILogger<OutboxPublishWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
+  private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
+  private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
+  private readonly LeaseRegistry? _leaseRegistry = leaseRegistry;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <summary>
   /// Event raised after a message is successfully published to transport. Mirrors the legacy

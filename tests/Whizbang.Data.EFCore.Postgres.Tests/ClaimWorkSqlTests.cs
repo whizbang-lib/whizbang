@@ -651,7 +651,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
 
     await using var reader2 = await check.ExecuteReaderAsync();
     while (await reader2.ReadAsync()) {
-      var funcName = reader2.GetString(0);
+      _ = reader2.GetString(0);
       var calls = reader2.GetInt64(1);
       await Assert.That(calls).IsEqualTo(0L);
     }

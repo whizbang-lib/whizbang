@@ -23,19 +23,13 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
 #pragma warning disable S2743 // Static diagnostic flag is intentionally per-generic-type (reads same env var)
-public sealed class EFCoreEventStore<TDbContext> : IEventStore
+public sealed class EFCoreEventStore<TDbContext>(
+  TDbContext context,
+  JsonSerializerOptions? jsonOptions = null) : IEventStore
   where TDbContext : DbContext {
 
-  private readonly TDbContext _context;
-  private readonly JsonSerializerOptions _jsonOptions;
-
-
-  public EFCoreEventStore(
-    TDbContext context,
-    JsonSerializerOptions? jsonOptions = null) {
-    _context = context ?? throw new ArgumentNullException(nameof(context));
-    _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
-  }
+  private readonly TDbContext _context = context ?? throw new ArgumentNullException(nameof(context));
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
 
   /// <summary>
   /// Appends an event to the specified stream.

@@ -56,7 +56,7 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
   public async Task CompleteOutboxPublishedAsync_EmptyList_ReturnsZeroAndNoSqlAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = Coord(dbContext);
-    var updated = await coordinator.CompleteOutboxPublishedAsync(Array.Empty<Guid>(), debugMode: false);
+    var updated = await coordinator.CompleteOutboxPublishedAsync([], debugMode: false);
     await Assert.That(updated).IsEqualTo(0);
   }
 
@@ -82,8 +82,8 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
     }
 
     await coordinator.CompletePerspectiveAsync(
-      cursors: Array.Empty<PerspectiveCursorCompletion>(),
-      eventWorkIds: new[] { workId },
+      cursors: [],
+      eventWorkIds: [workId],
       debugMode: false);
 
     await using var verify = conn.CreateCommand();
@@ -113,14 +113,14 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
       await ins.ExecuteNonQueryAsync();
     }
 
-    await coordinator.ReportFailuresAsync(WorkCategory.Outbox, new[] {
+    await coordinator.ReportFailuresAsync(WorkCategory.Outbox, [
       new MessageFailure {
         MessageId = msgId,
         CompletedStatus = MessageProcessingStatus.Stored,
         Error = "transport publish exploded",
         Reason = MessageFailureReason.Unknown
       }
-    });
+    ]);
 
     // Phase H step 8 — claim_orphaned_* is the sole attempt counter; ReportFailures
     // records the error + releases the lease but doesn't bump attempts. The initial
@@ -166,7 +166,7 @@ public class EFCoreFlusherMethodsTests : EFCoreTestBase {
       initial = Convert.ToDateTime(await read.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    var updated = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, new[] { msgId });
+    var updated = await coordinator.RenewLeasesAsync(WorkCategory.Outbox, [msgId]);
 
     await Assert.That(updated).IsEqualTo(1);
 

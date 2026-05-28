@@ -24,7 +24,7 @@ public class SystemTypeConverterRegistrationTests {
     try {
       types = coreAssembly.GetTypes();
     } catch (ReflectionTypeLoadException ex) {
-      types = ex.Types.OfType<Type>().ToArray();
+      types = [.. ex.Types.OfType<Type>()];
     }
 
     var systemTypeConverters = types

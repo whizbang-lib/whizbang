@@ -101,10 +101,9 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
         while (await reader.ReadAsync()) { /* drain */ }
       }
 
-      await using (var commit = conn.CreateCommand()) {
-        commit.CommandText = "COMMIT";
-        await commit.ExecuteNonQueryAsync();
-      }
+      await using var commit = conn.CreateCommand();
+      commit.CommandText = "COMMIT";
+      await commit.ExecuteNonQueryAsync();
     });
 
     await Assert.That(received).Count().IsEqualTo(1)
@@ -167,11 +166,11 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
   private static async Task<List<string>> _captureNotificationsAsync(
       NpgsqlConnection conn, string channel, Func<Task> emit) {
     var received = new List<string>();
-    NotificationEventHandler handler = (sender, args) => {
+    void handler(object sender, NpgsqlNotificationEventArgs args) {
       if (string.Equals(args.Channel, channel, StringComparison.Ordinal)) {
         received.Add(args.Payload);
       }
-    };
+    }
     conn.Notification += handler;
     try {
       await using (var listen = conn.CreateCommand()) {

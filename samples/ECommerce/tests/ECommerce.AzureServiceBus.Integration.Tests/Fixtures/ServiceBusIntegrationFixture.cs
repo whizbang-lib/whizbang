@@ -930,46 +930,45 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     const int maxRetries = 3;
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        using (var scope = _inventoryHost!.Services.CreateScope()) {
-          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+        using var scope = _inventoryHost!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-          // Each schema group gets its own DO block so that a missing table in one group
-          // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
-          // entire BEGIN...END block's savepoint).
-          Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
-          await dbContext.Database.ExecuteSqlRawAsync(@"
+        // Each schema group gets its own DO block so that a missing table in one group
+        // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
+        // entire BEGIN...END block's savepoint).
+        Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
+        await dbContext.Database.ExecuteSqlRawAsync(@"
             DO $$ BEGIN
               TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
             EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
 
-          Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
-          await dbContext.Database.ExecuteSqlRawAsync(@"
+        Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
+        await dbContext.Database.ExecuteSqlRawAsync(@"
             DO $$ BEGIN
               TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
             EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
 
-          Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
-          await dbContext.Database.ExecuteSqlRawAsync(@"
+        Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
+        await dbContext.Database.ExecuteSqlRawAsync(@"
             DO $$ BEGIN
               TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
             EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
 
-          Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
-          await dbContext.Database.ExecuteSqlRawAsync(@"
+        Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
+        await dbContext.Database.ExecuteSqlRawAsync(@"
             DO $$ BEGIN
               TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
             EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
-          Console.WriteLine("[ServiceBusFixture] All tables truncated.");
+        Console.WriteLine("[ServiceBusFixture] All tables truncated.");
 
-          // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
-          // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
-          _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
-          _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
-        }
+        // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
+        // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
+        _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+        _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
         // 40P01 = deadlock_detected — workers still hold locks, retry after delay
@@ -1442,10 +1441,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     if (drainWorker is null && publishWorker is null) {
       throw new InvalidOperationException("Neither OutboxDrainWorker nor OutboxPublishWorker registered on InventoryHost");
     }
-    OutboxMessagePublishedHandler? handler = null;
-    handler = (e) => {
+    void handler(OutboxMessagePublishedEvent e) {
       tcs.TrySetResult(e.MessageId);
-    };
+    }
+
     if (drainWorker is not null) {
       drainWorker.OnOutboxMessagePublished += handler;
     }
@@ -1469,10 +1468,17 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Waits for a specific number of perspective completions using the
   /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
   /// </summary>
+  /// <param name="expectedCompletions">Total event-applications to wait for.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  /// <param name="streamId">When non-null, only count events for this stream id. Recommended
+  /// for every workflow test — otherwise stale events from prior tests' in-flight processing
+  /// can satisfy the wait early (the perpetual UpdateProduct_PriceOnly flake's root cause).</param>
   public async Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null) {
+      string? hostFilter = null,
+      Guid? streamId = null) {
     // Sum EventCount (not fire count): the handler fires ONCE per (perspective, stream)
     // batch with EventCount = number of events processed in that batch. The caller's intent
     // is "wait until N event-applications complete," and per-batch fires can represent 1 or
@@ -1486,13 +1492,19 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         return;
       }
 
-      PerspectiveEventProcessedHandler? handler = null;
-      handler = (e) => {
+      void handler(PerspectiveEventProcessedEvent e) {
+        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
+        // events keep firing on the worker after cleanup; without this filter their
+        // EventCount satisfied the wait before THIS test's command had committed.
+        if (streamId.HasValue && e.StreamId != streamId.Value) {
+          return;
+        }
         var current = Interlocked.Add(ref eventCount, e.EventCount);
         if (current >= expectedCompletions) {
           tcs.TrySetResult(true);
         }
-      };
+      }
+
       worker.OnPerspectiveEventProcessed += handler;
     }
     if (hostFilter is null or "inventory") {
@@ -1530,8 +1542,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     void WireOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      WorkProcessingIdleHandler? h = null;
-      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+
       w.OnWorkProcessingIdle += h;
       if (w.IsIdle) { tcs.TrySetResult(true); }
     }
@@ -1539,8 +1551,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
       if (w is null) { tcs.TrySetResult(true); return; }
       if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      WorkProcessingIdleHandler? h = null;
-      h = () => { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; };
+      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+
       w.OnWorkProcessingIdle += h;
       if (w.IsIdle) { tcs.TrySetResult(true); }
     }

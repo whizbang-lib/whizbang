@@ -38,10 +38,14 @@ public class SlidingWindowBatcherTests {
   /// </summary>
   [Test]
   public async Task ReadBatches_ThreeArrivalsWithinSlidingWindow_FlushesAsOneBatchAsync() {
+    // CI under load: Task.Delay(20ms) often actually waits much longer than 20ms because the
+    // scheduler is busy. Use a generous sliding window (500ms) so all 3 writes land before the
+    // window expires, even on slow hosts. The MaxWait is bumped proportionally so the
+    // assertion path doesn't blocked-poll a tighter budget than the sliding window.
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 100,
-      SlidingWindow = TimeSpan.FromMilliseconds(80),
-      MaxWait = TimeSpan.FromSeconds(2)
+      SlidingWindow = TimeSpan.FromMilliseconds(500),
+      MaxWait = TimeSpan.FromSeconds(5)
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
@@ -57,9 +61,9 @@ public class SlidingWindowBatcherTests {
     await ch.Writer.WriteAsync(2);
     await Task.Delay(20);
     await ch.Writer.WriteAsync(3);
-    // No more arrivals — sliding window (80ms) will expire ~80ms after the third arrival.
+    // No more arrivals — sliding window (500ms) will expire ~500ms after the third arrival.
 
-    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await consumeTask; } catch (OperationCanceledException) { }
 

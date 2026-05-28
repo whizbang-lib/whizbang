@@ -164,11 +164,11 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<SlidingWindowOutboxOptions>();
     services.AddOptions<SlidingWindowInboxOptions>();
 
-    // Producer-side stream-affinity batcher (Half B of pump-then-process). Singleton; the
+    // Producer-side stream-affinity batcher — half B of pump-then-process. Singleton; the
     // flush callback resolves IWorkCoordinator from a fresh DI scope per batch so the
-    // strategy itself can outlive any one request scope. Default = sliding-window batcher;
-    // override via AddWhizbangOutboxStrategy<TStrategy>() — see ImmediateOutboxBatchStrategy
-    // for the no-batching alternative.
+    // strategy itself can outlive any one request scope. Default is the sliding-window
+    // batcher; override via the AddWhizbangOutboxStrategy generic extension — see
+    // ImmediateOutboxBatchStrategy for the no-batching alternative.
     services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
     services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
@@ -179,11 +179,11 @@ public static class WorkerPipelineExtensions {
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
 
-    // Receive-boundary inbox batcher (Half A of pump-then-process). Mirror of the outbox
-    // registration above — flush callback resolves IWorkCoordinator from a fresh DI scope
+    // Receive-boundary inbox batcher — half A of pump-then-process. Mirror of the outbox
+    // registration above. Flush callback resolves IWorkCoordinator from a fresh DI scope
     // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher;
-    // override via AddWhizbangInboxStrategy<TStrategy>() for the immediate passthrough or a
-    // custom implementation.
+    // override via the AddWhizbangInboxStrategy generic extension for the immediate
+    // passthrough or a custom implementation.
     services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
     services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>(),

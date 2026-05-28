@@ -211,6 +211,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
   // ===== Emission =====
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Generator emission walks every (receptor, perspective) pair and renders the routing branches inline; splitting would require building intermediate models for each branch shape, which costs incremental-cache parity.")]
   private static void _emitRegistryQuery(
       SourceProductionContext context,
       ImmutableArray<ReceptorRegistryEntry?> receptors,

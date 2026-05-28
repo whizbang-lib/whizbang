@@ -90,7 +90,7 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
     var results = new List<ReplayEventEnvelope>();
     await foreach (var env in reader.ReadReplayEventsAsync(
         streamId, PerspectiveName, fromVersionExclusive: 0,
-        new[] { typeof(ActionTestCreatedEvent) }, CancellationToken.None)) {
+        [typeof(ActionTestCreatedEvent)], CancellationToken.None)) {
       results.Add(env);
     }
 
@@ -121,7 +121,7 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
     var results = new List<ReplayEventEnvelope>();
     await foreach (var env in reader.ReadReplayEventsAsync(
         streamId, PerspectiveName, fromVersionExclusive: 0,
-        new[] { typeof(ActionTestCreatedEvent) }, CancellationToken.None)) {
+        [typeof(ActionTestCreatedEvent)], CancellationToken.None)) {
       results.Add(env);
     }
 
@@ -162,7 +162,7 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
     var results = new List<ReplayEventEnvelope>();
     await foreach (var env in reader.ReadReplayEventsAsync(
         streamId, PerspectiveName, fromVersionExclusive: 0,
-        new[] { typeof(ActionTestCreatedEvent) }, CancellationToken.None)) {
+        [typeof(ActionTestCreatedEvent)], CancellationToken.None)) {
       results.Add(env);
     }
 

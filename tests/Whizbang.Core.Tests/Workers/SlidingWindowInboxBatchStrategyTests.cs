@@ -230,8 +230,11 @@ public class SlidingWindowInboxBatchStrategyTests {
         return Task.CompletedTask;
       },
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(80),
-        MaxWait = TimeSpan.FromMilliseconds(500),
+        // CI under load: Task.Delay(20ms) often actually waits longer than 20ms because the
+        // scheduler is busy. Use a generous sliding window (500ms) so all 3 appends land
+        // before the window expires, even on slow hosts. MaxWait bumped proportionally.
+        SlidingWindow = TimeSpan.FromMilliseconds(500),
+        MaxWait = TimeSpan.FromSeconds(3),
         MaxSize = 100,
       });
 
@@ -247,7 +250,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Task.Delay(20);
     await sut.AppendAsync(m2);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
@@ -286,6 +289,40 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(captured.Count).IsEqualTo(1);
     await Assert.That(captured[0].Length).IsEqualTo(2);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Covers the idle-sweep timer callback (static lambda → _fireAndForgetIdleSweep →
+  /// _runIdleSweepAsync). A tight IdleSweepInterval ensures the timer fires at least once
+  /// during the wait, and a tight IdleEvictionWindow ensures the inactive buffer is
+  /// evicted.
+  /// </summary>
+  [Test]
+  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync() {
+    var flushedSignal = new TaskCompletionSource();
+    var streamId = _idProvider.NewGuid();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (_, _) => {
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        MaxWait = TimeSpan.FromMilliseconds(50),
+        MaxSize = 100,
+        IdleSweepInterval = TimeSpan.FromMilliseconds(20),
+        IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
+      });
+
+    await sut.AppendAsync(_makeMessage(streamId));
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+    while (sut.ActiveStreamCount > 0 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(20);
+    }
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
   }
 
   // ===== helpers =====

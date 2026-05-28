@@ -118,7 +118,7 @@ public static class TenantContextDetector {
       MostCommon = sortedProperties.FirstOrDefault(),
       HasTenantContext = sortedProperties.Count > 0 || allMartenPatterns.Count > 0,
       UsesMartenTenantFeatures = allMartenPatterns.Count > 0,
-      MartenTenantPatterns = allMartenPatterns.ToList()
+      MartenTenantPatterns = [.. allMartenPatterns]
     };
   }
 

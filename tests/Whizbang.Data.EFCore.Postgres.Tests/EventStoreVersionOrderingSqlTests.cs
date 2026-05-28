@@ -183,7 +183,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       await _insertOutboxEventAsync(conn, id, stream, instanceId, createdAt: nowOldest);
     }
 
-    await _callEmitEventStoreChainAsync(conn, instanceId, ids.Select(x => x.Id).ToArray());
+    await _callEmitEventStoreChainAsync(conn, instanceId, [.. ids.Select(x => x.Id)]);
 
     var versionsA = await _readVersionsAsync(conn, streamA);
     var versionsB = await _readVersionsAsync(conn, streamB);

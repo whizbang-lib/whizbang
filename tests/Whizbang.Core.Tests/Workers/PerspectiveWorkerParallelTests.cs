@@ -321,9 +321,8 @@ public sealed class PerspectiveWorkerParallelTests {
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
       var all = normalPerspectiveNames.Concat([throwingPerspectiveName]);
-      return all.Select(n =>
-        new PerspectiveRegistrationInfo(n, $"global::{n}", "global::Test.FakeModel", ["global::Test.FakeEvent"]))
-        .ToList();
+      return [.. all.Select(n =>
+        new PerspectiveRegistrationInfo(n, $"global::{n}", "global::Test.FakeModel", ["global::Test.FakeEvent"]))];
     }
 
     public IReadOnlyList<Type> GetEventTypes() => [];

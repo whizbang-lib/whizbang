@@ -19,14 +19,14 @@ namespace Whizbang.Core.Tests.Workers;
 public class InboxDispatchSkipGateTests {
 
   private sealed class TestRegistry : IReceptorRegistryQuery {
-    public HashSet<string> Consumed { get; } = new();
+    public HashSet<string> Consumed { get; } = [];
     public bool HasReceptors(LifecycleStage stage, string messageType) => Consumed.Contains(messageType);
     public bool HasInboxHandler(string messageType) => Consumed.Contains(messageType);
     public bool HasAnyConsumer(string messageType) => Consumed.Contains(messageType);
   }
 
   private sealed class RecordingLogger : ILogger {
-    public List<(LogLevel Level, string Message)> Entries { get; } = new();
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullDisposable.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {

@@ -370,7 +370,7 @@ public partial class DapperWorkCoordinator(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<OutboxBatchRow>();
+      return [];
     }
 
     var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
@@ -405,7 +405,7 @@ public partial class DapperWorkCoordinator(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<InboxBatchRow>();
+      return [];
     }
 
     var streamArr = streamIds is Guid[] arr ? arr : [.. streamIds];
@@ -483,7 +483,7 @@ public partial class DapperWorkCoordinator(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventIds);
     if (eventIds.Count == 0) {
-      return Array.Empty<StreamEventData>();
+      return [];
     }
 
     var idArr = eventIds is Guid[] arr ? arr : [.. eventIds];
@@ -899,7 +899,7 @@ public partial class DapperWorkCoordinator(
     IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(requests);
     if (requests.Count == 0) {
-      return Array.Empty<HandlerBatchResult>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var sb = new System.Text.StringBuilder("[");
@@ -923,9 +923,9 @@ public partial class DapperWorkCoordinator(
   public async Task FlushCompletionsAsync(FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var outboxIds = request.OutboxIds is null ? Array.Empty<Guid>()
+    var outboxIds = request.OutboxIds is null ? []
       : (request.OutboxIds is Guid[] a ? a : [.. request.OutboxIds]);
-    var perspIds = request.PerspectiveEventWorkIds is null ? Array.Empty<Guid>()
+    var perspIds = request.PerspectiveEventWorkIds is null ? []
       : (request.PerspectiveEventWorkIds is Guid[] p ? p : [.. request.PerspectiveEventWorkIds]);
     var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
       ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
@@ -943,7 +943,7 @@ public partial class DapperWorkCoordinator(
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(inquiries);
     if (inquiries.Count == 0) {
-      return Array.Empty<SyncInquiryResult>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var json = _buildInquiriesJson(inquiries);
@@ -1016,9 +1016,9 @@ public partial class DapperWorkCoordinator(
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
       .Append('}');
-    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? Array.Empty<OutboxMessage>();
+    var newOutboxArr = request.NewOutboxMessages?.ToArray() ?? [];
     sb.Append(",\"new_outbox_messages\":").Append(_serializeNewOutboxMessages(newOutboxArr));
-    var newInboxArr = request.NewInboxMessages?.ToArray() ?? Array.Empty<InboxMessage>();
+    var newInboxArr = request.NewInboxMessages?.ToArray() ?? [];
     sb.Append(",\"new_inbox_messages\":").Append(_serializeNewInboxMessages(newInboxArr));
     sb.Append('}');
     return sb.ToString();

@@ -105,7 +105,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         Logger.LogDebug("[TAG PROCESSOR] Using scope factory to create scope");
       }
       await using var serviceScope = _scopeFactory.CreateAsyncScope();
-      Func<Type, object?> scopedResolver = type => serviceScope.ServiceProvider.GetService(type);
+      object? scopedResolver(Type type) => serviceScope.ServiceProvider.GetService(type);
       var tagCtx = new TagProcessingContext(message, messageType, stage, scope);
       await _processAllTagsAsync(tagCtx, scopedResolver, ct);
     } else {

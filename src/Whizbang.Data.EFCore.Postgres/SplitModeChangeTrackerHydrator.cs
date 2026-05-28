@@ -46,7 +46,7 @@ public static class SplitModeChangeTrackerHydrator {
   /// Uses <see cref="ConditionalWeakTable{TKey,TValue}"/> so entries are automatically
   /// cleaned up when the DbContext is garbage collected.
   /// </summary>
-  private static readonly ConditionalWeakTable<DbContext, object> _hooked = new();
+  private static readonly ConditionalWeakTable<DbContext, object> _hooked = [];
 
   /// <summary>
   /// Registers a hydrator for a Split-mode perspective model.

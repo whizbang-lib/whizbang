@@ -1078,6 +1078,7 @@ public partial class PerspectiveWorker(
   /// for the WhenAll PostAllPerspectives gate, then executes each applicable perspective runner
   /// in its own DI scope.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Per-stream orchestration coordinates the WhenAll lifecycle tracker registration + per-perspective scoped runner invocation + refetch gate. Splitting would force passing the batch context + tracker handles across helper boundaries and obscure the ordering invariants.")]
   private async Task _processDrainModeStreamAsync(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
@@ -1128,24 +1129,24 @@ public partial class PerspectiveWorker(
           if (filteredEvents.Count == 0) {
             continue;
           }
-          // Slice 30 defensive: an OCE bubbling out of _runDrainModePerspectiveAsync (e.g.,
-          // shutdown cancellation, both ct + lease.Token cancelled so its own catch filter
-          // doesn't match) MUST NOT abort the loop for other perspectives on this stream.
-          // The single perspective's lease-handle catch already routes failure-mode OCEs;
-          // anything that bubbles is either expected shutdown propagation or an unhandled
-          // edge case — neither should poison sibling perspectives.
+          // Slice 30 defensive: an OCE bubbling out of the drain-mode perspective method
+          // — for example shutdown cancellation with both ct + lease.Token cancelled so its
+          // own catch filter does not match — must not abort the loop for other perspectives
+          // on this stream. The single perspective's lease-handle catch already routes
+          // failure-mode OCEs; anything that bubbles is either expected shutdown propagation
+          // or an unhandled edge case, neither of which should poison sibling perspectives.
           try {
             await _runDrainModePerspectiveAsync(
               streamId, perspectiveName, filteredEvents, currentContext, ct);
           } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             // Worker shutdown — propagate out of the loop, Parallel.ForEachAsync handles it.
             throw;
-          } catch (OperationCanceledException) {
+          } catch (OperationCanceledException ex) {
             // Lease-handle OCE that wasn't caught by _runDrainModePerspectiveAsync's filter.
             // Log + continue with next perspective; the row's lease will expire and
             // claim_orphaned will re-issue.
 #pragma warning disable CA1848
-            _logger.LogWarning("Drain mode: unhandled OCE from {Perspective} on stream {StreamId} — skipping to next perspective", perspectiveName, streamId);
+            _logger.LogWarning(ex, "Drain mode: unhandled OCE from {Perspective} on stream {StreamId} — skipping to next perspective", perspectiveName, streamId);
 #pragma warning restore CA1848
           }
         }
@@ -1278,6 +1279,7 @@ public partial class PerspectiveWorker(
   /// and flushes the supporting trackers/signalers/metrics. Keeps the pre-report and post-report
   /// completed-only blocks separate to preserve the observable ordering of the original monolith.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single-perspective dispatch handles cooldown filtering + cursor inversion rewind + forward apply + failure routing + completion flush enqueue in one site. Splitting risks reordering the cache-mark / completion-enqueue / lifecycle-signal sequence; the comment block ahead of each section already documents the rationale.")]
   private async Task _runDrainModePerspectiveAsync(
       Guid streamId,
       string perspectiveName,
@@ -1368,24 +1370,14 @@ public partial class PerspectiveWorker(
           // Slice 26.11: look up the violator's commit_sequence so RewindAndRunAsync can
           // use the commit-sequence-anchored snapshot path for full determinism. Falls
           // back to event_id-anchored snapshot when the violator wasn't stamped yet.
-          long? anchorCommitSequence = null;
-          foreach (var raw in batchContext.RawByEventId[inversionAnchor.Value]) {
-            if (raw.CommitSequence.HasValue) {
-              anchorCommitSequence = raw.CommitSequence;
-              break;
-            }
-          }
+          long? anchorCommitSequence = batchContext.RawByEventId[inversionAnchor.Value]
+            .Select(raw => raw.CommitSequence)
+            .FirstOrDefault(seq => seq.HasValue);
           // Slice 26.16 instrumentation: emit detailed inversion diagnostics so we can
           // classify the residual ~400 inversions per JDX import. Captures whether the
           // commit_sequence detector or the event_id fallback fired, the gap, and the
           // partition counts so we can spot cooldown misses.
-          long? pendingSeq = null;
-          foreach (var raw in batchContext.RawByEventId[inversionAnchor.Value]) {
-            if (raw.CommitSequence.HasValue) {
-              pendingSeq = raw.CommitSequence;
-              break;
-            }
-          }
+          long? pendingSeq = anchorCommitSequence;
           LogInversionDiagnostics(
             _logger,
             streamId,
@@ -1615,6 +1607,7 @@ public partial class PerspectiveWorker(
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Inversion diagnostics: stream={StreamId} perspective={PerspectiveName} anchor={AnchorEventId} cursorEventId={CachedCursor} pendingSeq={PendingSeq} cursorSeq={CursorSeq} cooled={CooledCount} fresh={FreshCount}")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source generator needs one parameter per placeholder; the structure mirrors the log template.")]
   private static partial void LogInversionDiagnostics(
     ILogger logger,
     Guid streamId,
@@ -1826,12 +1819,11 @@ public partial class PerspectiveWorker(
     // events in order and reports the last). Falls back to keeping the prior cursor when
     // the lookup is null (e.g., result.LastEventId not in rawByEventId, or no stamped row).
     if (result.LastEventId != Guid.Empty) {
-      long? lastSeq = null;
-      foreach (var raw in batchContext.RawByEventId[result.LastEventId]) {
-        if (raw.CommitSequence.HasValue && (lastSeq is null || raw.CommitSequence.Value > lastSeq.Value)) {
-          lastSeq = raw.CommitSequence;
-        }
-      }
+      var lastSeq = batchContext.RawByEventId[result.LastEventId]
+        .Where(raw => raw.CommitSequence.HasValue)
+        .Select(raw => (long?)raw.CommitSequence!.Value)
+        .DefaultIfEmpty(null)
+        .Max();
       if (lastSeq.HasValue) {
         _cursorCache.SetCommitSequence(streamCtx.StreamId, streamCtx.PerspectiveName, lastSeq);
       }

@@ -35,9 +35,9 @@ public partial class HeartbeatWorker(
     // the multi-assembly [ModuleInitializer] pattern populated correctly. If the
     // contribution count or receptor-type count is zero, the receive-boundary drop-gate
     // will silently drop every message and chat / cascades will not work.
-    var snap = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetDiagnosticSnapshot();
+    var (Contributions, AnyConsumerTypes, InboxHandlerTypes, StageTypeCount) = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetDiagnosticSnapshot();
     LogReceptorRegistrySnapshot(_logger,
-      snap.Contributions, snap.AnyConsumerTypes, snap.InboxHandlerTypes, snap.StageTypeCount);
+      Contributions, AnyConsumerTypes, InboxHandlerTypes, StageTypeCount);
 
     if (!_options.Enabled) {
       LogDisabled(_logger);

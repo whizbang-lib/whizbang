@@ -1139,7 +1139,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static List<(DbContextInfo DbContext, List<PerspectiveModelInfo> Models)> _groupPerspectivesByDbContext(
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts) {
-    return dbContexts.Select(dbContext => {
+    return [.. dbContexts.Select(dbContext => {
       var matchingPerspectives = perspectives.IsEmpty
           ? []
           : perspectives
@@ -1148,7 +1148,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
               .Select(g => g.First())
               .ToList();
       return (DbContext: dbContext, Models: matchingPerspectives);
-    }).ToList();
+    })];
   }
 
   /// <summary>Loads the shared infra + perspective registration snippets from

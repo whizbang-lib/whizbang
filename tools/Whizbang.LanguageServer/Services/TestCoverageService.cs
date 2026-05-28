@@ -5,8 +5,8 @@ namespace Whizbang.LanguageServer.Services;
 /// Supports exact and partial (EndsWith) symbol matching plus reverse lookup.
 /// </summary>
 public sealed class TestCoverageService {
-  private Dictionary<string, List<TestCoverageEntry>> _codeToTests = new();
-  private Dictionary<string, List<string>> _testsToCode = new();
+  private Dictionary<string, List<TestCoverageEntry>> _codeToTests = [];
+  private Dictionary<string, List<string>> _testsToCode = [];
 
   /// <summary>
   /// Replaces all coverage data with the provided mapping.

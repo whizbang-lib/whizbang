@@ -75,8 +75,8 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
-      _ => _ = _runIdleSweepAsync(),
-      state: null,
+      static state => ((SlidingWindowInboxBatchStrategy)state!)._fireAndForgetIdleSweep(),
+      state: this,
       dueTime: _options.IdleSweepInterval,
       period: _options.IdleSweepInterval);
   }
@@ -193,9 +193,13 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
 #pragma warning restore CA1848
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
+  private void _fireAndForgetIdleSweep() {
+    _ = _runIdleSweepAsync();
+  }
+
   private sealed class StreamBuffer(Guid key, Channel<InboxMessage> channel, DateTimeOffset createdAt) {
     public Guid Key { get; } = key;
-    public ChannelReader<InboxMessage> Reader => channel.Reader;
     public ChannelWriter<InboxMessage> Writer => channel.Writer;
     public DateTimeOffset LastActivity { get; set; } = createdAt;
     public Task Worker { get; set; } = Task.CompletedTask;
