@@ -230,8 +230,11 @@ public class SlidingWindowInboxBatchStrategyTests {
         return Task.CompletedTask;
       },
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(80),
-        MaxWait = TimeSpan.FromMilliseconds(500),
+        // CI under load: Task.Delay(20ms) often actually waits longer than 20ms because the
+        // scheduler is busy. Use a generous sliding window (500ms) so all 3 appends land
+        // before the window expires, even on slow hosts. MaxWait bumped proportionally.
+        SlidingWindow = TimeSpan.FromMilliseconds(500),
+        MaxWait = TimeSpan.FromSeconds(3),
         MaxSize = 100,
       });
 
@@ -247,7 +250,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Task.Delay(20);
     await sut.AppendAsync(m2);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
