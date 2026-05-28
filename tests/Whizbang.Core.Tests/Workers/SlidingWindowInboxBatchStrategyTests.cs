@@ -288,6 +288,40 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// Covers the idle-sweep timer callback (static lambda → _fireAndForgetIdleSweep →
+  /// _runIdleSweepAsync). A tight IdleSweepInterval ensures the timer fires at least once
+  /// during the wait, and a tight IdleEvictionWindow ensures the inactive buffer is
+  /// evicted.
+  /// </summary>
+  [Test]
+  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync() {
+    var flushedSignal = new TaskCompletionSource();
+    var streamId = _idProvider.NewGuid();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (_, _) => {
+        flushedSignal.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        MaxWait = TimeSpan.FromMilliseconds(50),
+        MaxSize = 100,
+        IdleSweepInterval = TimeSpan.FromMilliseconds(20),
+        IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
+      });
+
+    await sut.AppendAsync(_makeMessage(streamId));
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+    while (sut.ActiveStreamCount > 0 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(20);
+    }
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+  }
+
   // ===== helpers =====
 
   private InboxMessage _makeMessage(Guid? streamId = null) {
