@@ -91,6 +91,22 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
 
     sb.AppendLine(");");
 
+    // Backfill missing columns on existing tables. CREATE TABLE IF NOT EXISTS is a
+    // no-op when the table is already there, so any columns added to the schema
+    // after the table's original deployment wouldn't otherwise exist. Emitting
+    // ALTER TABLE ADD COLUMN IF NOT EXISTS for every column keeps the schema build
+    // idempotent: fresh databases get the columns from CREATE TABLE; existing ones
+    // get added columns here. Index creation that follows can safely reference any
+    // column the schema declares.
+    foreach (var column in table.Columns) {
+      // Inline PRIMARY KEY is part of CREATE TABLE only; ADD COLUMN that re-asserts
+      // PRIMARY KEY against an existing table would error. The composite PK branch
+      // already suppresses inline PRIMARY KEY for the CREATE; this is the same
+      // pattern for the backfill path.
+      var addColumnDef = _buildColumnDefinition(column, suppressInlinePrimaryKey: true);
+      sb.AppendLine($"ALTER TABLE {qualifiedTableName} ADD COLUMN IF NOT EXISTS {addColumnDef};");
+    }
+
     return sb.ToString();
   }
 

@@ -70,6 +70,11 @@ public static class PerspectiveSnapshotsSchema {
         Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SNAPSHOT_COMMIT_SEQUENCE],
         WhereClause: $"{Columns.SNAPSHOT_COMMIT_SEQUENCE} IS NOT NULL"
       )
+      // This partial index works against the snapshot_commit_sequence column added
+      // in migration 048. Existing databases that pre-date that migration get the
+      // column backfilled by PostgresSchemaBuilder.BuildCreateTable's per-column
+      // `ALTER TABLE ADD COLUMN IF NOT EXISTS` pass that runs BEFORE the CREATE
+      // INDEX, so the index creation is safe on both fresh and upgraded DBs.
     ]
   );
 
