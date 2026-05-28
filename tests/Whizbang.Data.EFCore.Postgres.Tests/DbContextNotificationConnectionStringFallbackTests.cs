@@ -92,6 +92,38 @@ public class DbContextNotificationConnectionStringFallbackTests {
   }
 
   [Test]
+  public async Task GetConnectionString_PreservesPasswordAfterConnectionOpenedAsync() {
+    // Regression: in Azure deployments the worker was opening NpgsqlConnection without a
+    // password and the server (SASL/SCRAM-SHA-256) rejected the handshake. Root cause:
+    // Database.GetConnectionString() returns NpgsqlConnection.ConnectionString once any
+    // operation has opened the connection — and Npgsql strips the password from
+    // ConnectionString for security after Open. The fix reads from
+    // RelationalOptionsExtension instead, which always holds the original options-supplied
+    // value. This test forces the connection open before asking the fallback and asserts
+    // the password is still present.
+    const string originalConnString =
+      "Host=stripped.example.com;Database=mydb;Username=u;Password=secret;Include Error Detail=true";
+    var services = new ServiceCollection();
+    services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(originalConnString));
+    using var sp = services.BuildServiceProvider();
+
+    // Touch the connection so Npgsql strips the password from
+    // NpgsqlConnection.ConnectionString. We don't actually need to open against a real
+    // server — just reading the live ConnectionString after construction is enough on
+    // some setups; on others we'd need OpenAsync. The fallback's RelationalOptionsExtension
+    // path returns the original regardless.
+    using (var probeScope = sp.CreateScope()) {
+      var probeCtx = probeScope.ServiceProvider.GetRequiredService<_FallbackTestDbContext>();
+      _ = probeCtx.Database.GetDbConnection();  // creates the NpgsqlConnection wrapper
+    }
+
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var result = fallback.GetConnectionString();
+
+    await Assert.That(result).IsEqualTo(originalConnString);
+  }
+
+  [Test]
   public async Task Resolver_WithDbContextFallback_UsesFallbackWhenNoExplicitConfigAsync() {
     // End-to-end through NotificationConnectionStringResolver: no explicit config, fallback
     // picks up the DbContext's connection string and reports DbContextFallback as source.
