@@ -155,19 +155,22 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
   /// Neither <see cref="NpgsqlConnection.ConnectionString"/> nor
   /// <c>NpgsqlDataSource.ConnectionString</c> retains credentials — Npgsql
   /// keeps them only internally for SCRAM auth. The fix is for the notification
-  /// workers to accept an <see cref="NpgsqlDataSource"/> via DI and call
-  /// <c>OpenConnectionAsync</c> on it directly, bypassing any string-based
-  /// resolution. This test locks that contract on
-  /// <see cref="PgCommitOrderStamperWorker"/>.
+  /// workers to accept an <see cref="INotificationDataSource"/> via DI and
+  /// call <c>OpenConnectionAsync</c> on the wrapped data source directly,
+  /// bypassing any string-based resolution. The marker interface keeps the
+  /// notification workers from auto-grabbing EF Core's own
+  /// <see cref="NpgsqlDataSource"/> (whose small pool gets exhausted under
+  /// dual-purpose use).
   /// </summary>
   [Test]
-  public async Task PgCommitOrderStamperWorker_OpensViaDataSourceWhenDIRegisteredAsync() {
+  public async Task NotificationDataSource_OpensConnectionWithCredentialsAsync() {
     var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    INotificationDataSource notificationDataSource = new NotificationDataSource(dataSource);
 
-    // Open a connection through the data source — same call the worker uses.
-    // Pre-fix, the worker would have built an NpgsqlConnection from a
-    // credential-stripped string and OpenAsync would fail with SCRAM.
-    await using var conn = await dataSource.OpenConnectionAsync();
+    // Open a connection through the wrapped data source — same call path the
+    // workers take. Pre-fix, the worker would have built an NpgsqlConnection
+    // from a credential-stripped string and OpenAsync would fail with SCRAM.
+    await using var conn = await notificationDataSource.DataSource.OpenConnectionAsync();
     await Assert.That(conn.State).IsEqualTo(System.Data.ConnectionState.Open);
 
     await using var probe = new NpgsqlCommand("SELECT 1", conn);
