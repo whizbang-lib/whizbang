@@ -63,20 +63,20 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     ILogger<PgSharedNotifyConnection>? logger = null,
     INotificationConnectionStringFallback? connectionStringFallback = null,
     TimeProvider? timeProvider = null,
-    NpgsqlDataSource? dataSource = null) {
+    INotificationDataSource? notificationDataSource = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _logger = logger ?? NullLogger<PgSharedNotifyConnection>.Instance;
     _connectionStringFallback = connectionStringFallback;
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _dataSource = dataSource;
+    _dataSource = notificationDataSource?.DataSource;
   }
 
-  // Optional: when registered in DI (via .AddSingleton(dataSource)), prefer
-  // opening connections through the data source — only path that works under
-  // UseNpgsql(NpgsqlDataSource) since Npgsql strips credentials from every
-  // public ConnectionString surface.
+  // Opt-in via INotificationDataSource (not bare NpgsqlDataSource — that
+  // would catch EF Core's own data source and exhaust its small pool).
+  // Only path that works under UseNpgsql(NpgsqlDataSource) since Npgsql strips
+  // credentials from every public ConnectionString surface.
   private readonly NpgsqlDataSource? _dataSource;
 
   /// <inheritdoc />
