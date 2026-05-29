@@ -88,6 +88,18 @@ public sealed partial class PgCommitOrderStamperWorker(
 
     LogStarted(_logger, resolution.Source);
 
+    // Production triage: Azure SCRAM-SHA-256 failures look identical regardless of which
+    // resolution branch produced the password-less string. Log the source + which
+    // credential markers we DID get, so operators can tell at a glance whether the
+    // problem is:
+    //   - config (the configured ConnectionStrings:<key>{-direct} entry lacks a password)
+    //   - fallback (DbContext path returned a password-less string — e.g., Whizbang
+    //     version pre-dates the RelationalOptionsExtension fix, or the DbContext was
+    //     configured with NpgsqlDataSource which doesn't expose the original string)
+    //   - explicit option (WhizbangNotificationOptions.DirectConnectionString missing password)
+    var summary = _summarizeCredentialMarkers(resolution.ConnectionString);
+    LogConnectionDiagnostics(_logger, resolution.Source, summary.HasUsername, summary.HasPassword);
+
     // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
     // worker lifetime. Even when this pod is not the leader, the subscription is harmless:
     // the wake semaphore saturates at maxCount of 1 and the stamping loop never starts,
@@ -214,6 +226,39 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker iteration failed: {Reason}")]
   static partial void LogIterationError(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information,
+    Message = "PgCommitOrderStamperWorker connection diagnostics — Source={Source}, has Username={HasUsername}, has Password={HasPassword}. If HasPassword=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a password — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
+  static partial void LogConnectionDiagnostics(
+    ILogger logger,
+    NotificationConnectionStringResolver.ResolutionSource source,
+    bool hasUsername,
+    bool hasPassword);
+
+  /// <summary>
+  /// Reports which credential markers are present in <paramref name="connectionString"/>
+  /// — used purely for the startup diagnostic; never logs the values themselves.
+  /// </summary>
+  private static (bool HasUsername, bool HasPassword) _summarizeCredentialMarkers(string? connectionString) {
+    if (string.IsNullOrEmpty(connectionString)) {
+      return (HasUsername: false, HasPassword: false);
+    }
+    // Crude but adequate for a one-shot diagnostic: case-insensitive substring match for
+    // the Npgsql-recognized credential keys (Password / Pwd / Username / User Id).
+    // Misses connection-string-builder cases where the key was set programmatically but
+    // not via the string itself — but for the JDX failure mode (resolution returns a
+    // bare string), this catches the actual problem.
+    var s = connectionString.AsSpan();
+    var hasUsername =
+      s.Contains("Username=", StringComparison.OrdinalIgnoreCase) ||
+      s.Contains("User Id=", StringComparison.OrdinalIgnoreCase) ||
+      s.Contains("UserId=", StringComparison.OrdinalIgnoreCase) ||
+      s.Contains("User ID=", StringComparison.OrdinalIgnoreCase);
+    var hasPassword =
+      s.Contains("Password=", StringComparison.OrdinalIgnoreCase) ||
+      s.Contains("Pwd=", StringComparison.OrdinalIgnoreCase);
+    return (hasUsername, hasPassword);
+  }
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
   static partial void LogStopped(ILogger logger);
