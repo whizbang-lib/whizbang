@@ -105,14 +105,14 @@ public class DbContextNotificationConnectionStringFallbackTests {
       "Host=stripped.example.com;Database=mydb;Username=u;Password=secret;Include Error Detail=true";
     var services = new ServiceCollection();
     services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(originalConnString));
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     // Touch the connection so Npgsql strips the password from
     // NpgsqlConnection.ConnectionString. We don't actually need to open against a real
     // server — just reading the live ConnectionString after construction is enough on
     // some setups; on others we'd need OpenAsync. The fallback's RelationalOptionsExtension
     // path returns the original regardless.
-    using (var probeScope = sp.CreateScope()) {
+    await using (var probeScope = sp.CreateAsyncScope()) {
       var probeCtx = probeScope.ServiceProvider.GetRequiredService<_FallbackTestDbContext>();
       _ = probeCtx.Database.GetDbConnection();  // creates the NpgsqlConnection wrapper
     }

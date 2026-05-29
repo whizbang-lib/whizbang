@@ -275,6 +275,14 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     }
 
     LogResolvedConnection(_logger, resolution.Source);
+
+    // Production triage: log credential markers so operators can tell at a glance
+    // whether an Azure SCRAM-SHA-256 disconnect comes from a missing-password
+    // resolution vs. a transient network/auth issue. Same diagnostic as
+    // PgCommitOrderStamperWorker.
+    var (hasUsername, hasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
+    LogConnectionDiagnostics(_logger, resolution.Source, hasUsername, hasSecret);
+
     var connectionString = resolution.ConnectionString;
     var attempt = 0;
 
@@ -504,4 +512,12 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
     Message = "PgSharedNotifyConnection subscriber callback threw on channel {Channel}; other subscribers continue")]
   static partial void LogSubscriberCallbackFailed(ILogger logger, string channel, Exception ex);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Information,
+    Message = "PgSharedNotifyConnection connection diagnostics — Source={Source}, has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
+  static partial void LogConnectionDiagnostics(
+    ILogger logger,
+    NotificationConnectionStringResolver.ResolutionSource source,
+    bool hasUsername,
+    bool hasSecret);
 }
