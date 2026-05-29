@@ -139,4 +139,70 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
     await stamperConn.OpenAsync();
     await Assert.That(stamperConn.State).IsEqualTo(System.Data.ConnectionState.Open);
   }
+
+  /// <summary>
+  /// a consumer production failure mode: when the DbContext is configured with
+  /// <c>UseNpgsql(NpgsqlDataSource)</c> (the recommended path for Azure Postgres
+  /// with credential rotation / Managed Identity), the
+  /// <see cref="RelationalOptionsExtension.ConnectionString"/> path returns null
+  /// and the fallback falls through to <c>Database.GetConnectionString()</c>
+  /// which is the password-stripped live string. Layer 3 (read
+  /// <see cref="NpgsqlConnection.Settings"/> from the DbContext's underlying
+  /// NpgsqlConnection) must surface the original credential-bearing string.
+  /// </summary>
+  /// <summary>
+  /// <c>UseNpgsql(NpgsqlDataSource)</c> is a consumer's production configuration.
+  /// Neither <see cref="NpgsqlConnection.ConnectionString"/> nor
+  /// <c>NpgsqlDataSource.ConnectionString</c> retains credentials — Npgsql
+  /// keeps them only internally for SCRAM auth. The fix is for the notification
+  /// workers to accept an <see cref="NpgsqlDataSource"/> via DI and call
+  /// <c>OpenConnectionAsync</c> on it directly, bypassing any string-based
+  /// resolution. This test locks that contract on
+  /// <see cref="PgCommitOrderStamperWorker"/>.
+  /// </summary>
+  [Test]
+  public async Task PgCommitOrderStamperWorker_OpensViaDataSourceWhenDIRegisteredAsync() {
+    var dataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+
+    // Open a connection through the data source — same call the worker uses.
+    // Pre-fix, the worker would have built an NpgsqlConnection from a
+    // credential-stripped string and OpenAsync would fail with SCRAM.
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await Assert.That(conn.State).IsEqualTo(System.Data.ConnectionState.Open);
+
+    await using var probe = new NpgsqlCommand("SELECT 1", conn);
+    var result = await probe.ExecuteScalarAsync();
+    await Assert.That(result).IsEqualTo(1);
+
+    await dataSource.DisposeAsync();
+  }
+
+  /// <summary>
+  /// <c>UseNpgsql(NpgsqlConnection)</c> overload: as long as EF Core hasn't
+  /// opened the connection yet, the connection's <c>ConnectionString</c> still
+  /// carries credentials. The fallback's Layer 2 reads them. Locks that path.
+  /// </summary>
+  [Test]
+  public async Task FallbackConnectionString_HandlesUseNpgsqlConnectionOverload_PreOpenAsync() {
+    var sharedConn = new NpgsqlConnection(ConnectionString);
+    var services = new ServiceCollection();
+    services.AddDbContext<WorkCoordinationDbContext>(o => o.UseNpgsql(sharedConn));
+    await using var sp = services.BuildServiceProvider();
+
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(WorkCoordinationDbContext));
+    var resolved = NotificationConnectionStringResolver.Resolve(
+      new WhizbangNotificationOptions(),
+      new ConfigurationBuilder().Build(),
+      fallback);
+
+    await Assert.That(resolved.Source).IsEqualTo(NotificationConnectionStringResolver.ResolutionSource.DbContextFallback);
+    await Assert.That(resolved.ConnectionString).IsNotNull();
+
+    // The credential-preservation contract: the resolved string must open against SCRAM.
+    await using var freshConn = new NpgsqlConnection(resolved.ConnectionString);
+    await freshConn.OpenAsync();
+    await Assert.That(freshConn.State).IsEqualTo(System.Data.ConnectionState.Open);
+
+    await sharedConn.DisposeAsync();
+  }
 }

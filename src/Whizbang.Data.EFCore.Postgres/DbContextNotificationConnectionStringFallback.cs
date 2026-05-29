@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Whizbang.Core.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -55,21 +56,7 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
       using var scope = _serviceProvider.CreateScope();
       var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
       try {
-        // IMPORTANT: read from RelationalOptionsExtension, NOT from Database.GetConnectionString().
-        //
-        // Database.GetConnectionString() returns RelationalConnection.ConnectionString, which
-        // after the first connection has been opened comes from the live NpgsqlConnection. For
-        // security, Npgsql strips the password from NpgsqlConnection.ConnectionString as soon
-        // as the connection opens — so any caller asking Database.GetConnectionString() AFTER
-        // the database initializer or any prior DbContext use gets back a string with
-        // "Password=" missing. The LISTEN/NOTIFY worker then opens with no password and Azure
-        // rejects the handshake with SASL/SCRAM-SHA-256.
-        //
-        // RelationalOptionsExtension holds the original options-supplied connection string,
-        // password intact, regardless of whether any connection has been opened.
-        var ext = dbContext.GetService<IDbContextOptions>()
-          .Extensions.OfType<RelationalOptionsExtension>().FirstOrDefault();
-        _cached = ext?.ConnectionString ?? dbContext.Database.GetConnectionString();
+        _cached = _resolveCredentialBearingConnectionString(dbContext);
       } catch (InvalidOperationException) {
         // Non-relational provider (e.g., InMemory) — GetConnectionString throws. Treat as
         // "no fallback available" so the listener/stamper falls back to disabled rather than
@@ -79,5 +66,88 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
       _resolved = true;
       return _cached;
     }
+  }
+
+  /// <summary>
+  /// Tries to surface the original credential-bearing connection string from the
+  /// DbContext, regardless of which <c>UseNpgsql(...)</c> overload configured it.
+  /// </summary>
+  /// <remarks>
+  /// <para>Layered resolution — first hit wins:</para>
+  /// <list type="number">
+  /// <item>
+  ///   <description>
+  ///   <see cref="RelationalOptionsExtension.ConnectionString"/> — populated by
+  ///   <c>UseNpgsql(string)</c>. The string is the original options-supplied
+  ///   value and never gets stripped, so this path is the simplest and most
+  ///   common.
+  ///   </description>
+  /// </item>
+  /// <item>
+  ///   <description>
+  ///   The Npgsql data source via
+  ///   <c>NpgsqlOptionsExtension.DataSource</c> — populated by
+  ///   <c>UseNpgsql(NpgsqlDataSource)</c>. The data source returns a fresh
+  ///   <see cref="NpgsqlConnection"/> whose <see cref="NpgsqlConnection.ConnectionString"/>
+  ///   carries the original credentials (no Open has happened on that
+  ///   connection instance yet, so Npgsql hasn't stripped them).
+  ///   Also probed via <see cref="IServiceProvider"/> in case the consumer
+  ///   registered the data source as a singleton.
+  ///   </description>
+  /// </item>
+  /// <item>
+  ///   <description>
+  ///   <see cref="RelationalOptionsExtension.Connection"/> as
+  ///   <see cref="NpgsqlConnection"/> — populated by
+  ///   <c>UseNpgsql(NpgsqlConnection)</c>. Best-effort: if the connection has
+  ///   not yet been opened, its <c>ConnectionString</c> still carries credentials;
+  ///   once opened, Npgsql strips them and we can't recover. Consumers using
+  ///   this overload in production are encouraged to set
+  ///   <c>WhizbangNotificationOptions.ConnectionStringKey</c> for a config-only
+  ///   bypass.
+  ///   </description>
+  /// </item>
+  /// <item>
+  ///   <description>
+  ///   <see cref="RelationalDatabaseFacadeExtensions.GetConnectionString"/> —
+  ///   last resort. After <c>OpenAsync</c> the live string is stripped of
+  ///   credentials, but pre-Open it still has them. Kept as a backstop for
+  ///   non-Npgsql relational providers a downstream consumer may have configured.
+  ///   </description>
+  /// </item>
+  /// </list>
+  /// </remarks>
+  private static string? _resolveCredentialBearingConnectionString(DbContext dbContext) {
+    var ext = dbContext.GetService<IDbContextOptions>()
+      .Extensions.OfType<RelationalOptionsExtension>().FirstOrDefault();
+
+    // Layer 1 — UseNpgsql(string).
+    if (!string.IsNullOrEmpty(ext?.ConnectionString)) {
+      return ext.ConnectionString;
+    }
+
+    // Layer 2 — UseNpgsql(NpgsqlConnection). Pre-Open, the connection's
+    // ConnectionString still carries credentials (Npgsql only strips them
+    // once OpenAsync completes). Recovers the password for that overload as
+    // long as the fallback runs before EF Core has used the connection.
+    if (ext?.Connection is NpgsqlConnection extConn &&
+        !string.IsNullOrEmpty(extConn.ConnectionString)) {
+      return extConn.ConnectionString;
+    }
+
+    // Layer 3 — last resort.
+    //
+    // NOTE: There is no string-based recovery path for
+    // `UseNpgsql(NpgsqlDataSource)`. Both NpgsqlConnection.ConnectionString and
+    // NpgsqlDataSource.ConnectionString strip credentials — the data source
+    // retains them only internally for SCRAM auth. Consumers configured with
+    // the DataSource overload must either:
+    //   (a) register the NpgsqlDataSource as a DI singleton — both
+    //       PgCommitOrderStamperWorker and PgSharedNotifyConnection accept an
+    //       optional NpgsqlDataSource and will call OpenConnectionAsync on it
+    //       directly, bypassing any string-based resolution; or
+    //   (b) set WhizbangNotificationOptions.ConnectionStringKey to short-circuit
+    //       this fallback at the resolver layer.
+    return dbContext.Database.GetConnectionString();
   }
 }
