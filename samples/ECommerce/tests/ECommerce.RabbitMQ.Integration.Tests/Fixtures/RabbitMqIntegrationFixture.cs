@@ -1071,19 +1071,34 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       hosts.Add(BffHost);
     }
 
+    // IPerspectiveSyncAwaiter is registered as Scoped — resolving it from the
+    // root provider trips ValidateScopes when DI is built with strict mode
+    // (which is the default in production hosts and was apparently enabled in
+    // this fixture's hosts after recent refactors). Open a scope per host so
+    // the resolution is valid. The awaiter's pending-events tracker is a
+    // singleton internally, so per-scope resolution doesn't lose state across
+    // these calls.
+    var scopes = new List<IServiceScope>();
     var waits = new List<Task>();
-    foreach (var host in hosts) {
-      var awaiter = host.Services.GetService<Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>();
-      if (awaiter is null) {
-        continue;
+    try {
+      foreach (var host in hosts) {
+        var scope = host.Services.CreateScope();
+        scopes.Add(scope);
+        var awaiter = scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>();
+        if (awaiter is null) {
+          continue;
+        }
+        foreach (var perspectiveType in perspectiveTypes) {
+          waits.Add(awaiter.WaitForStreamAsync(
+            perspectiveType, streamId, eventTypes: null, timeout: timeout));
+        }
       }
-      foreach (var perspectiveType in perspectiveTypes) {
-        waits.Add(awaiter.WaitForStreamAsync(
-          perspectiveType, streamId, eventTypes: null, timeout: timeout));
+      await Task.WhenAll(waits).ConfigureAwait(false);
+    } finally {
+      foreach (var scope in scopes) {
+        scope.Dispose();
       }
     }
-
-    await Task.WhenAll(waits).ConfigureAwait(false);
   }
 
   public async ValueTask DisposeAsync() {
