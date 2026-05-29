@@ -38,9 +38,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var received = await _captureNotificationsAsync(conn, [owner], async () => {
-      await _callNotifyInstanceOwnersAsync(conn, "outbox", streamId);
-    });
+    var received = await _captureNotificationsAsync(conn, [owner], async () =>
+      await _callNotifyInstanceOwnersAsync(conn, "outbox", streamId));
 
     await Assert.That(received).Count().IsEqualTo(1);
     await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{owner}");
@@ -59,9 +58,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _upsertActiveStreamAsync(conn, stream1, partitionNumber: 0, owner);
     await _upsertActiveStreamAsync(conn, stream2, partitionNumber: 0, owner);
 
-    var received = await _captureNotificationsAsync(conn, [owner], async () => {
-      await _callNotifyInstanceOwnersAsync(conn, "outbox", stream1, stream2);
-    });
+    var received = await _captureNotificationsAsync(conn, [owner], async () =>
+      await _callNotifyInstanceOwnersAsync(conn, "outbox", stream1, stream2));
 
     await Assert.That(received).Count().IsEqualTo(1)
       .Because("multiple streams owned by the same instance must collapse to one NOTIFY");
@@ -84,9 +82,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _upsertActiveStreamAsync(conn, streamA2, partitionNumber: 0, ownerA);
     await _upsertActiveStreamAsync(conn, streamB1, partitionNumber: 0, ownerB);
 
-    var received = await _captureNotificationsAsync(conn, [ownerA, ownerB], async () => {
-      await _callNotifyInstanceOwnersAsync(conn, "perspective", streamA1, streamA2, streamB1);
-    });
+    var received = await _captureNotificationsAsync(conn, [ownerA, ownerB], async () =>
+      await _callNotifyInstanceOwnersAsync(conn, "perspective", streamA1, streamA2, streamB1));
 
     await Assert.That(received).Count().IsEqualTo(2)
       .Because("3 streams × 2 unique owners must produce exactly 2 NOTIFYs (deduped per owner)");
@@ -105,9 +102,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     // unknownStream is NOT in wh_active_streams.
 
-    var received = await _captureNotificationsAsync(conn, [owner], async () => {
-      await _callNotifyInstanceOwnersAsync(conn, "inbox", unknownStream);
-    });
+    var received = await _captureNotificationsAsync(conn, [owner], async () =>
+      await _callNotifyInstanceOwnersAsync(conn, "inbox", unknownStream));
 
     await Assert.That(received).Count().IsEqualTo(0)
       .Because("a stream missing from wh_active_streams has no known owner → no NOTIFY");
@@ -125,9 +121,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     // (post-cleanup_stale_instances state — pre-slice-6-fix a consumer baseline).
     await _upsertActiveStreamAsync(conn, orphanStream, partitionNumber: 0, ownerInstanceId: null);
 
-    var received = await _captureNotificationsAsync(conn, [owner], async () => {
-      await _callNotifyInstanceOwnersAsync(conn, "outbox", orphanStream);
-    });
+    var received = await _captureNotificationsAsync(conn, [owner], async () =>
+      await _callNotifyInstanceOwnersAsync(conn, "outbox", orphanStream));
 
     await Assert.That(received).Count().IsEqualTo(0)
       .Because("a stream with NULL owner has no routing target — polling backstop must catch it");
@@ -146,9 +141,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, owner);
     await _upsertActiveStreamAsync(conn, streamId, partitionNumber: 0, owner);
 
-    var received = await _captureNotificationsAsync(conn, [owner], async () => {
-      await _callNotifyInstanceOwnersAsync(conn, "inbox", streamId);
-    });
+    var received = await _captureNotificationsAsync(conn, [owner], async () =>
+      await _callNotifyInstanceOwnersAsync(conn, "inbox", streamId));
 
     await Assert.That(received).Count().IsEqualTo(1);
     await Assert.That(received[0].Payload).IsEqualTo("inbox");

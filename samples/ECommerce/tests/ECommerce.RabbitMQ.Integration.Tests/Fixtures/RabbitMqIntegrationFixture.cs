@@ -1037,6 +1037,55 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
   }
 
+  /// <summary>
+  /// Truly signal-based completion wait: uses
+  /// <see cref="Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter.WaitForStreamAsync"/>
+  /// to wait until ALL pending perspective_events for the given (perspective, stream) have
+  /// been processed. No event counting, no progress watchdog — the worker's cursor catching
+  /// up IS the completion signal. The TUnit test [Timeout(N)] attribute is the only upper
+  /// bound; if the cursor never catches up the test fails at that ceiling with the worker's
+  /// own structured diagnostic.
+  /// </summary>
+  /// <remarks>
+  /// Caller passes the perspective types they expect to apply events for the stream. The
+  /// helper resolves <see cref="Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter"/>
+  /// from the inventory host (or BFF) and runs all per-perspective waits in parallel. Each
+  /// per-perspective wait returns when that perspective's cursor for the stream has caught
+  /// up to all currently-pending events — a real worker signal, not a polling heuristic.
+  /// </remarks>
+  public async Task WaitForStreamCaughtUpAsync(
+      Guid streamId,
+      IReadOnlyList<Type> perspectiveTypes,
+      TimeSpan timeout,
+      string? hostFilter = null) {
+    ArgumentNullException.ThrowIfNull(perspectiveTypes);
+    if (perspectiveTypes.Count == 0) {
+      return;
+    }
+
+    var hosts = new List<Microsoft.Extensions.Hosting.IHost>();
+    if (hostFilter is null or "inventory") {
+      hosts.Add(InventoryHost);
+    }
+    if (hostFilter is null or "bff") {
+      hosts.Add(BffHost);
+    }
+
+    var waits = new List<Task>();
+    foreach (var host in hosts) {
+      var awaiter = host.Services.GetService<Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>();
+      if (awaiter is null) {
+        continue;
+      }
+      foreach (var perspectiveType in perspectiveTypes) {
+        waits.Add(awaiter.WaitForStreamAsync(
+          perspectiveType, streamId, eventTypes: null, timeout: timeout));
+      }
+    }
+
+    await Task.WhenAll(waits).ConfigureAwait(false);
+  }
+
   public async ValueTask DisposeAsync() {
     // Dispose scopes first
     _inventoryScope?.Dispose();

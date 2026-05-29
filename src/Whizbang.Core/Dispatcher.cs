@@ -982,7 +982,7 @@ public abstract partial class Dispatcher(
     // Fallback to sync receptor - wrap as async and route through tracing path
     var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
-      ValueTask<TResult> wrappedInvoker(object msg) => new ValueTask<TResult>(syncInvoker(msg));
+      ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
       return _localInvokeWithCastFallbackAsync(wrappedInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
@@ -1859,7 +1859,7 @@ public abstract partial class Dispatcher(
       var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
       if (syncInvoker != null) {
         // Wrap sync invoker as async and route through tracing path
-        ValueTask<TResult> wrappedInvoker(object msg) => new ValueTask<TResult>(syncInvoker(msg));
+        ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
         result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, caller);
       } else {
         throw new ReceptorNotFoundException(messageType);
@@ -2146,7 +2146,7 @@ public abstract partial class Dispatcher(
     // Fallback to sync receptor
     var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
-      ValueTask<TResult> wrappedInvoker(object msg) => new ValueTask<TResult>(syncInvoker(msg));
+      ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
       return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, wrappedInvoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
@@ -2187,7 +2187,7 @@ public abstract partial class Dispatcher(
 
     var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
-      ValueTask<TResult> wrappedInvoker(object msg) => new ValueTask<TResult>(syncInvoker(msg));
+      ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
       var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, wrappedInvoker, options);
       await _waitForPerspectivesIfNeededAsync(options);
       return invokeResult;

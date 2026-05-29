@@ -168,8 +168,12 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/price-test.png",
       InitialStock = 15
     };
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Deterministic wait — fails fast (~10 s) if no matching-stream perspective event
+    // arrives, with diagnostic info (matched count vs expected, cross-stream fires
+    // seen). Stream-id filter also eliminates cross-test contamination.
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
+      expectedCompletions: 3, streamId: _testProdUpdatePrice.Value,
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -182,10 +186,11 @@ public class UpdateProductWorkflowTests {
       Price = 35.00m,
       ImageUrl = null
     };
-    perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    var updateTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
+      expectedCompletions: 1, streamId: _testProdUpdatePrice.Value,
+      noProgressIdleMs: 30000, absoluteTimeoutMs: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await perspectiveTask;
+    await updateTask;
     await fixture.WaitForWorkersIdleAsync();
 
 

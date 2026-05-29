@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Notifications;
 
@@ -54,7 +55,21 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
       using var scope = _serviceProvider.CreateScope();
       var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
       try {
-        _cached = dbContext.Database.GetConnectionString();
+        // IMPORTANT: read from RelationalOptionsExtension, NOT from Database.GetConnectionString().
+        //
+        // Database.GetConnectionString() returns RelationalConnection.ConnectionString, which
+        // after the first connection has been opened comes from the live NpgsqlConnection. For
+        // security, Npgsql strips the password from NpgsqlConnection.ConnectionString as soon
+        // as the connection opens — so any caller asking Database.GetConnectionString() AFTER
+        // the database initializer or any prior DbContext use gets back a string with
+        // "Password=" missing. The LISTEN/NOTIFY worker then opens with no password and Azure
+        // rejects the handshake with SASL/SCRAM-SHA-256.
+        //
+        // RelationalOptionsExtension holds the original options-supplied connection string,
+        // password intact, regardless of whether any connection has been opened.
+        var ext = dbContext.GetService<IDbContextOptions>()
+          .Extensions.OfType<RelationalOptionsExtension>().FirstOrDefault();
+        _cached = ext?.ConnectionString ?? dbContext.Database.GetConnectionString();
       } catch (InvalidOperationException) {
         // Non-relational provider (e.g., InMemory) — GetConnectionString throws. Treat as
         // "no fallback available" so the listener/stamper falls back to disabled rather than

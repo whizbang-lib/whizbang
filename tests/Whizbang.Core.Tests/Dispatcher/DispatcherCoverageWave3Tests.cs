@@ -12,6 +12,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
+#pragma warning disable RCS1163 // Unused parameter — fake receptor/handler delegates intentionally match interface signatures even when the test body doesn't use every arg.
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

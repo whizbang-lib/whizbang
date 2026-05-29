@@ -65,6 +65,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
 
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0290:Use primary constructor", Justification = "Explicit constructor required because dotnet format's IDE0290 rewrite collided with the leading [SuppressMessage] attribute + multi-paragraph XML doc, producing CS1587. Keeping explicit form.")]
   public OutboxDrainWorker(
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
