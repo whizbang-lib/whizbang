@@ -585,9 +585,19 @@ function Invoke-CoverageReport {
     $reportDir = Join-Path $RepoRoot "coverage-report"
     $reports = ($CoberturaFiles | ForEach-Object { $_.FullName }) -join ";"
 
-    # Generate HTML, TextSummary, and JsonSummary reports
-    # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
-    reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
+    # Generate HTML, TextSummary, and JsonSummary reports.
+    # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell).
+    #
+    # -filefilters excludes Whizbang source-generator output from the rendered
+    # report so the summary reflects only hand-written production code:
+    #   - *.g.cs                 — Roslyn source-generator output
+    #   - *.Generated.cs         — hand-emitted generated files (e.g., WhizbangBanner.Generated.cs)
+    #   - */.whizbang-generated/*— per-project generator output directory
+    # The underlying cobertura XMLs still include those lines, so external
+    # consumers (Sonar, Codecov) see the raw numbers until generator emitters
+    # are tagged with [System.CodeDom.Compiler.GeneratedCodeAttribute].
+    $fileFilters = '-filefilters:-*.g.cs;-*.Generated.cs;-*/.whizbang-generated/*'
+    reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" $fileFilters 2>&1 | Out-Null
 
     # Read coverage totals from TextSummary (instant — no XML parsing needed)
     $summaryFile = Join-Path $reportDir "Summary.txt"
