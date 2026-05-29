@@ -209,8 +209,12 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait briefly for background task to complete
-    await Task.Delay(100);
+    // Signal-based wait: detached + inline together produce ≥2 invocations.
+    // Wait until both land so the background detached invocation has actually
+    // run before we assert on it (replaces a pre-existing Task.Delay(100) that
+    // was flaking under CI Release-mode load — per feedback_no_timing_tests,
+    // tests must use completion signals, not wall-clock delays).
+    await invoker.WaitForInvocationsAsync(count: 2, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked in background
     var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
@@ -289,8 +293,8 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — Task.Delay(100) was flaking under CI Release load.
+    await invoker.WaitForInvocationsAsync(count: 1, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked
     var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeDetached).ToList();
@@ -311,8 +315,8 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeDetached,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — Task.Delay(100) was flaking under CI Release load.
+    await invoker.WaitForInvocationsAsync(count: 1, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked
     var invocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.DistributeDetached).ToList();
@@ -449,8 +453,8 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — 3 inline + 3 detached = 6 invocations expected.
+    await invoker.WaitForInvocationsAsync(count: 6, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - inline should have 3, async should have 3
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();
@@ -476,8 +480,9 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait for background task
-    await Task.Delay(100);
+    // Signal-based wait — 2 inline + 2 detached = 4 invocations expected.
+    // (The same Task.Delay(100) flaked under CI Release load on PR 215.)
+    await invoker.WaitForInvocationsAsync(count: 4, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - inline should have 2, async should have 2
     var inlineInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeInline).ToList();

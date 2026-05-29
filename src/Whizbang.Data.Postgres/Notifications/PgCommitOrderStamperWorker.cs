@@ -88,6 +88,18 @@ public sealed partial class PgCommitOrderStamperWorker(
 
     LogStarted(_logger, resolution.Source);
 
+    // Production triage: Azure SCRAM-SHA-256 failures look identical regardless of which
+    // resolution branch produced the password-less string. Log the source + which
+    // credential markers we DID get, so operators can tell at a glance whether the
+    // problem is:
+    //   - config (the configured ConnectionStrings:<key>{-direct} entry lacks a password)
+    //   - fallback (DbContext path returned a password-less string — e.g., Whizbang
+    //     version pre-dates the RelationalOptionsExtension fix, or the DbContext was
+    //     configured with NpgsqlDataSource which doesn't expose the original string)
+    //   - explicit option (WhizbangNotificationOptions.DirectConnectionString missing password)
+    var summary = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
+    LogConnectionDiagnostics(_logger, resolution.Source, summary.HasUsername, summary.HasSecret);
+
     // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
     // worker lifetime. Even when this pod is not the leader, the subscription is harmless:
     // the wake semaphore saturates at maxCount of 1 and the stamping loop never starts,
@@ -214,6 +226,14 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker iteration failed: {Reason}")]
   static partial void LogIterationError(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information,
+    Message = "PgCommitOrderStamperWorker connection diagnostics — Source={Source}, has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
+  static partial void LogConnectionDiagnostics(
+    ILogger logger,
+    NotificationConnectionStringResolver.ResolutionSource source,
+    bool hasUsername,
+    bool hasSecret);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker stopped")]
   static partial void LogStopped(ILogger logger);
