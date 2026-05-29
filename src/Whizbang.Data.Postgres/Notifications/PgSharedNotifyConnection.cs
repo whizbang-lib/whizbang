@@ -280,8 +280,8 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     // whether an Azure SCRAM-SHA-256 disconnect comes from a missing-password
     // resolution vs. a transient network/auth issue. Same diagnostic as
     // PgCommitOrderStamperWorker.
-    var (hasUsername, hasPassword) = _summarizeCredentialMarkers(resolution.ConnectionString);
-    LogConnectionDiagnostics(_logger, resolution.Source, hasUsername, hasPassword);
+    var (hasUsername, hasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
+    LogConnectionDiagnostics(_logger, resolution.Source, hasUsername, hasSecret);
 
     var connectionString = resolution.ConnectionString;
     var attempt = 0;
@@ -514,30 +514,10 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   static partial void LogSubscriberCallbackFailed(ILogger logger, string channel, Exception ex);
 
   [LoggerMessage(EventId = 12, Level = LogLevel.Information,
-    Message = "PgSharedNotifyConnection connection diagnostics — Source={Source}, has Username={HasUsername}, has Password={HasPassword}. If HasPassword=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a password — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
+    Message = "PgSharedNotifyConnection connection diagnostics — Source={Source}, has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
   static partial void LogConnectionDiagnostics(
     ILogger logger,
     NotificationConnectionStringResolver.ResolutionSource source,
     bool hasUsername,
-    bool hasPassword);
-
-  /// <summary>
-  /// Reports which credential markers are present in <paramref name="connectionString"/>
-  /// — used purely for the startup diagnostic; never logs the values themselves.
-  /// </summary>
-  private static (bool HasUsername, bool HasPassword) _summarizeCredentialMarkers(string? connectionString) {
-    if (string.IsNullOrEmpty(connectionString)) {
-      return (HasUsername: false, HasPassword: false);
-    }
-    var s = connectionString.AsSpan();
-    var hasUsername =
-      s.Contains("Username=", StringComparison.OrdinalIgnoreCase) ||
-      s.Contains("User Id=", StringComparison.OrdinalIgnoreCase) ||
-      s.Contains("UserId=", StringComparison.OrdinalIgnoreCase) ||
-      s.Contains("User ID=", StringComparison.OrdinalIgnoreCase);
-    var hasPassword =
-      s.Contains("Password=", StringComparison.OrdinalIgnoreCase) ||
-      s.Contains("Pwd=", StringComparison.OrdinalIgnoreCase);
-    return (hasUsername, hasPassword);
-  }
+    bool hasSecret);
 }
