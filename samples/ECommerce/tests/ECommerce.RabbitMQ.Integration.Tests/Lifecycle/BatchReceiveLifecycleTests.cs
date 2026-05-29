@@ -71,16 +71,23 @@ public class BatchReceiveLifecycleTests {
     // Deterministic helper: fails fast if no progress for 10s rather than waiting the full
     // ceiling; logs observed stream id + cross-stream count to distinguish flake from
     // genuine pipeline breakage.
-    // noProgressIdleMs raised to 30 s: rabbit CI legitimately takes 15-25 s between the
-    // synchronous receptor-emit (ProductCreated → 2 perspective applies, ~2 s) and the
-    // cascaded InventoryRestocked apply hitting the worker. 10 s was too aggressive and
-    // caught a normal-but-slow path as if it were a stall. 30 s still fails fast on real
-    // breakage with the same structured diagnostic; the absolute ceiling stays at 90 s.
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
-      expectedCompletions: 3, streamId: productId.Value,
-      noProgressIdleMs: 30000, absoluteTimeoutMs: 90000, hostFilter: "inventory");
+    // Signal-based deterministic wait — IPerspectiveSyncAwaiter.WaitForStreamAsync()
+    // returns when each perspective's cursor has caught up to all events that
+    // SyncEventTracker recorded for this stream during dispatch. No event counts, no
+    // progress watchdogs, no inter-event timing thresholds — the tracker holds the
+    // pending event ids, the worker calls MarkProcessed when it applies, and the wait
+    // task completes via TaskCompletionSource. The 90 s timeout is purely an upper bound
+    // so a genuine pipeline stall surfaces; under normal CI load the wait returns
+    // immediately once the cursor signals advance.
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await fixture.WaitForStreamCaughtUpAsync(
+      streamId: productId.Value,
+      perspectiveTypes: [
+        typeof(ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective),
+        typeof(ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective),
+      ],
+      timeout: TimeSpan.FromSeconds(90),
+      hostFilter: "inventory");
 
     // Assert — perspectives completed = message was received via batch, processed, and persisted
     // If perspectives didn't fire, WaitForPerspectiveProcessingAsync would have timed out
