@@ -15,7 +15,7 @@ namespace Whizbang.SignalR.Tests.DependencyInjection;
 public class SignalRTagExtensionsTests {
 
   /// <summary>A stand-in SignalR hub for type parameter binding.</summary>
-  public class TestHub : Hub { }
+  public class TestHub : Hub;
 
   [Test]
   public async Task UseSignalR_DefaultPriority_ReturnsSameOptionsAsync() {

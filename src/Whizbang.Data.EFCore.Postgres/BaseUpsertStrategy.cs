@@ -191,11 +191,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       return false;
     }
 
-    // Atomic UPSERT is `INSERT … ON CONFLICT DO UPDATE` issued via raw Npgsql commands;
-    // it cannot run against any other EF Core provider (InMemoryDatabase, Sqlite test
-    // doubles, etc.). Bail out so the SELECT-then-UPDATE fallback path takes over for
-    // those providers. Without this guard the path triggers whenever the
-    // ModuleInitializer-set static `PathOnePersistenceOptionsProvider` is non-null,
+    // The atomic upsert path runs raw Postgres-specific SQL via Npgsql commands —
+    // it cannot execute against any other EF Core provider (InMemoryDatabase, Sqlite
+    // test doubles, etc.). Bail out so the SELECT-then-UPDATE fallback path takes over
+    // for those providers. Without this guard the path triggers whenever the
+    // ModuleInitializer-set static PathOnePersistenceOptionsProvider is non-null,
     // making cross-test state leak into non-Postgres unit tests (Postgres-specific
     // perspective store wired against InMemoryDb fixtures fails on the JSONB raw SQL).
     if (!_isNpgsqlProvider(context)) {
@@ -213,8 +213,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     if (!_isValidSqlIdentifier(args.TableName)) {
       return false;
     }
-    if (args.PhysicalFieldValues is not null
-        && args.PhysicalFieldValues.Keys.Any(k => !_isValidSqlIdentifier(k))) {
+    if (args.PhysicalFieldValues?.Keys.Any(k => !_isValidSqlIdentifier(k)) == true) {
       return false;
     }
 
@@ -348,9 +347,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// matches the assembly name of the active provider package.
   /// </summary>
   private static bool _isNpgsqlProvider(DbContext context) {
-    var providerName = context.Database.ProviderName;
-    return providerName is not null
-      && providerName.Contains("Npgsql", StringComparison.Ordinal);
+    return context.Database.ProviderName?.Contains("Npgsql", StringComparison.Ordinal) == true;
   }
 
   private static bool _isValidSqlIdentifier(string s) {

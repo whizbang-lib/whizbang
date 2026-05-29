@@ -71,10 +71,23 @@ public class BatchReceiveLifecycleTests {
     // Deterministic helper: fails fast if no progress for 10s rather than waiting the full
     // ceiling; logs observed stream id + cross-stream count to distinguish flake from
     // genuine pipeline breakage.
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingDeterministicAsync(
-      expectedCompletions: 3, streamId: productId.Value, absoluteTimeoutMs: 90000, hostFilter: "inventory");
+    // Signal-based deterministic wait — IPerspectiveSyncAwaiter.WaitForStreamAsync()
+    // returns when each perspective's cursor has caught up to all events that
+    // SyncEventTracker recorded for this stream during dispatch. No event counts, no
+    // progress watchdogs, no inter-event timing thresholds — the tracker holds the
+    // pending event ids, the worker calls MarkProcessed when it applies, and the wait
+    // task completes via TaskCompletionSource. The 90 s timeout is purely an upper bound
+    // so a genuine pipeline stall surfaces; under normal CI load the wait returns
+    // immediately once the cursor signals advance.
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await fixture.WaitForStreamCaughtUpAsync(
+      streamId: productId.Value,
+      perspectiveTypes: [
+        typeof(ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective),
+        typeof(ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective),
+      ],
+      timeout: TimeSpan.FromSeconds(90),
+      hostFilter: "inventory");
 
     // Assert — perspectives completed = message was received via batch, processed, and persisted
     // If perspectives didn't fire, WaitForPerspectiveProcessingAsync would have timed out

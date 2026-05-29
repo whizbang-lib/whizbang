@@ -32,6 +32,7 @@ namespace Whizbang.Core.Workers;
 /// When the strategy is null, <see cref="ExecuteAsync"/> logs a warning and exits — equivalent
 /// to <see cref="OutboxPublishWorkerOptions.Enabled"/> being false.
 /// </remarks>
+[method: System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Legacy publisher worker has many cooperating DI-injected dependencies by design; bundling would obscure DI registration intent.")]
 public sealed partial class OutboxPublishWorker(
   IServiceScopeFactory scopeFactory,
   IWorkChannelWriter workChannelWriter,
