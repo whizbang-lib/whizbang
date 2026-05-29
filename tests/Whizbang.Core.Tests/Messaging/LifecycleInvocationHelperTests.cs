@@ -209,8 +209,12 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       new DistributeLifecycleContext(outboxMessages, inboxMessages, _createScopeFactory(invoker), deserializer, null));
 
-    // Wait briefly for background task to complete
-    await Task.Delay(100);
+    // Signal-based wait: detached + inline together produce ≥2 invocations.
+    // Wait until both land so the background detached invocation has actually
+    // run before we assert on it (replaces a pre-existing Task.Delay(100) that
+    // was flaking under CI Release-mode load — per feedback_no_timing_tests,
+    // tests must use completion signals, not wall-clock delays).
+    await invoker.WaitForInvocationsAsync(count: 2, timeout: TimeSpan.FromSeconds(5));
 
     // Assert - async stage should be invoked in background
     var asyncInvocations = invoker.Invocations.Where(i => i.Stage == LifecycleStage.PostDistributeDetached).ToList();
