@@ -119,11 +119,21 @@ public static class PostgresNotificationsServiceCollectionExtensions {
         // Nothing usable found — return a wrapper with DataSource=null so the
         // workers fall back to their string-based path AND surface the
         // operator-actionable startup diagnostic.
-        return new NotificationDataSource(dataSource: null, _unusedSentinelTag: true);
+        return new NotificationDataSource(dataSource: null, ownsDataSource: false);
       }
       var builder = new NpgsqlDataSourceBuilder(connectionString);
-      builder.ConnectionStringBuilder.MaxPoolSize = 4;
-      return new NotificationDataSource(builder.Build());
+      // Pool sizing for notification workers:
+      //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
+      //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
+      //   - Both also issue short-lived stamp + probe + LISTEN-resync commands
+      // 8 gives the long-held pair plus headroom for the burst connections under
+      // contention. A smaller pool (we tried 4) starved test runs that drove
+      // multiple parallel hosts.
+      builder.ConnectionStringBuilder.MaxPoolSize = 8;
+      // ownsDataSource: true means the wrapper's DI-driven disposal will dispose
+      // the data source. Critical for tests that spin many hosts in sequence —
+      // without this, every host leaks an Npgsql connection pool.
+      return new NotificationDataSource(builder.Build(), ownsDataSource: true);
     });
 
     return services;
@@ -194,7 +204,14 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       // one for the commit-order stamper's advisory-lock holder, plus headroom
       // for the leader-election retry and probe paths.
       var builder = new NpgsqlDataSourceBuilder(connectionString);
-      builder.ConnectionStringBuilder.MaxPoolSize = 4;
+      // Pool sizing for notification workers:
+      //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
+      //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
+      //   - Both also issue short-lived stamp + probe + LISTEN-resync commands
+      // 8 gives the long-held pair plus headroom for the burst connections under
+      // contention. A smaller pool (we tried 4) starved test runs that drove
+      // multiple parallel hosts.
+      builder.ConnectionStringBuilder.MaxPoolSize = 8;
       return new NotificationDataSource(builder.Build());
     });
 
