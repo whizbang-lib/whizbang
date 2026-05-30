@@ -147,8 +147,48 @@ public static class PostgresDriverExtensions {
         // at startup if no connection string can be resolved.
         selector.Services.AddWhizbangPostgresNotifications();
 
+        // TURNKEY: Apply the same connection-string-name convention to the
+        // notification options that .WithDriver.Postgres already uses for EF
+        // Core (derived from TDbContext via WithEFCore<T>(...) — e.g.,
+        // BffServiceDbContext → "appservice-db"). The resolver will then try
+        // ConnectionStrings:{name}-direct first (the bypass-pgbouncer variant
+        // that a consumer-style deployments already configure) and fall back to
+        // ConnectionStrings:{name}. Operators only need to override this in
+        // config when they want a different key per-environment.
+        //
+        // Late-binding via PostConfigure so an explicit
+        // Whizbang:Database:ConnectionStringKey in appsettings still wins.
+        var derivedConnectionStringName = selector.ConnectionStringName
+          ?? _deriveConnectionStringName(selector.DbContextType.Name);
+        if (!string.IsNullOrWhiteSpace(derivedConnectionStringName)) {
+          selector.Services.PostConfigure<WhizbangNotificationOptions>(options => {
+            if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
+              options.ConnectionStringKey = derivedConnectionStringName;
+            }
+          });
+        }
+
         return new WhizbangPerspectiveBuilder(selector.Services);
       }
     }
+  }
+
+  /// <summary>
+  /// Mirrors the source generator's connection-string-name convention
+  /// (<c>EFCoreServiceRegistrationGenerator._deriveConnectionStringName</c>):
+  /// strip the <c>DbContext</c> suffix, lowercase, append <c>-db</c>.
+  /// Example: <c>BffServiceDbContext</c> → <c>appservice-db</c>.
+  /// </summary>
+  /// <remarks>
+  /// Duplicated rather than referenced so this assembly doesn't take a runtime
+  /// dependency on the source generator project. Tests in
+  /// <c>PostgresDriverExtensionsTests</c> assert the two implementations stay in
+  /// sync.
+  /// </remarks>
+  internal static string _deriveConnectionStringName(string dbContextClassName) {
+    var name = dbContextClassName.EndsWith("DbContext", StringComparison.Ordinal)
+      ? dbContextClassName[..^9]
+      : dbContextClassName;
+    return name.ToLowerInvariant() + "-db";
   }
 }
