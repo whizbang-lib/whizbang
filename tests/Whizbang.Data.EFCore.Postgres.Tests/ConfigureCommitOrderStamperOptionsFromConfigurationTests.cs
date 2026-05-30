@@ -73,4 +73,43 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
     });
     await Assert.That(bound.AdvisoryLockKey).IsEqualTo(9223372036854775000L);
   }
+
+  [Test]
+  public async Task Constructor_NullConfiguration_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => new ConfigureCommitOrderStamperOptionsFromConfiguration(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Configure_NullOptions_ThrowsArgumentNullExceptionAsync() {
+    var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var configurator = new ConfigureCommitOrderStamperOptionsFromConfiguration(config);
+    await Assert.That(() => configurator.Configure(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  /// <summary>
+  /// Each <c>TryParse</c> branch in <c>Configure</c> has a fail path:
+  /// when the configured string doesn't parse, the option should stay at
+  /// its default. Locks all five parse-failure branches in one test so a
+  /// future refactor that swaps a TryParse for a Parse (which would throw)
+  /// fails here instead of in production.
+  /// </summary>
+  [Test]
+  public async Task UnparseableValues_LeaveDefaultsUntouchedAsync() {
+    var defaults = new CommitOrderStamperOptions();
+    var bound = _bind(new Dictionary<string, string?> {
+      ["Whizbang:Database:Stamper:PollingInterval"] = "not-a-timespan",
+      ["Whizbang:Database:Stamper:LeaderElectionRetry"] = "not-a-timespan",
+      ["Whizbang:Database:Stamper:BatchSize"] = "not-a-number",
+      ["Whizbang:Database:Stamper:DisableStamper"] = "not-a-bool",
+      ["Whizbang:Database:Stamper:AdvisoryLockKey"] = "not-a-long",
+    });
+
+    await Assert.That(bound.PollingInterval).IsEqualTo(defaults.PollingInterval);
+    await Assert.That(bound.LeaderElectionRetry).IsEqualTo(defaults.LeaderElectionRetry);
+    await Assert.That(bound.BatchSize).IsEqualTo(defaults.BatchSize);
+    await Assert.That(bound.DisableStamper).IsEqualTo(defaults.DisableStamper);
+    await Assert.That(bound.AdvisoryLockKey).IsEqualTo(defaults.AdvisoryLockKey);
+  }
 }
