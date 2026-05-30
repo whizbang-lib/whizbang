@@ -86,13 +86,68 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<CommitOrderStamperOptions>,
       ConfigureCommitOrderStamperOptionsFromConfiguration>());
-    services.AddHostedService<PgCommitOrderStamperWorker>();
+    // Register as singleton AND as a hosted service so the worker is also
+    // resolvable directly (tests and diagnostics rely on this).
+    services.TryAddSingleton<PgCommitOrderStamperWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
 
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
 
+    // Default-on auto-discovery: when no INotificationDataSource has been
+    // explicitly registered (the caller didn't call
+    // AddWhizbangNotificationDataSource), and no explicit
+    // WhizbangNotificationOptions.{DirectConnectionString,ConnectionStringKey}
+    // is set, walk IConfiguration:ConnectionStrings for the first
+    // credential-bearing entry and build a dedicated data source from it.
+    // This makes the SCRAM-SHA-256 / UseNpgsql(NpgsqlDataSource) failure
+    // mode fix work out of the box — consumers don't have to know about it.
+    services.TryAddSingleton<INotificationDataSource>(sp => {
+      var configuration = sp.GetRequiredService<IConfiguration>();
+      var options = sp.GetService<IOptions<WhizbangNotificationOptions>>()?.Value
+        ?? new WhizbangNotificationOptions();
+
+      // If the explicit-options path will resolve a credential-bearing string,
+      // the workers can use it directly — no auto-discovery needed. Same
+      // precedence as NotificationConnectionStringResolver.
+      var resolution = NotificationConnectionStringResolver.Resolve(options, configuration, fallback: null);
+      var connectionString = resolution.ConnectionString;
+      if (string.IsNullOrEmpty(connectionString)) {
+        connectionString = _findFirstCredentialBearingConnectionString(configuration);
+      }
+      if (string.IsNullOrEmpty(connectionString)) {
+        // Nothing usable found — return a wrapper with DataSource=null so the
+        // workers fall back to their string-based path AND surface the
+        // operator-actionable startup diagnostic.
+        return new NotificationDataSource(dataSource: null, _unusedSentinelTag: true);
+      }
+      var builder = new NpgsqlDataSourceBuilder(connectionString);
+      builder.ConnectionStringBuilder.MaxPoolSize = 4;
+      return new NotificationDataSource(builder.Build());
+    });
+
     return services;
   }
+
+  /// <summary>
+  /// Walks <see cref="IConfiguration"/>'s <c>ConnectionStrings</c> section for
+  /// the first entry whose string carries a Postgres credential marker.
+  /// Returns null when none qualify.
+  /// </summary>
+  private static string? _findFirstCredentialBearingConnectionString(IConfiguration configuration) {
+    foreach (var child in configuration.GetSection("ConnectionStrings").GetChildren()) {
+      var value = child.Value;
+      if (string.IsNullOrEmpty(value)) {
+        continue;
+      }
+      var (_, hasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(value);
+      if (hasSecret) {
+        return value;
+      }
+    }
+    return null;
+  }
+
 
   /// <summary>
   /// Registers a dedicated <see cref="NpgsqlDataSource"/> for the notification

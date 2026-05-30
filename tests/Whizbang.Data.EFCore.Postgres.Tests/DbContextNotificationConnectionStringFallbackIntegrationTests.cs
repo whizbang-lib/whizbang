@@ -170,7 +170,7 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
     // Open a connection through the wrapped data source — same call path the
     // workers take. Pre-fix, the worker would have built an NpgsqlConnection
     // from a credential-stripped string and OpenAsync would fail with SCRAM.
-    await using var conn = await notificationDataSource.DataSource.OpenConnectionAsync();
+    await using var conn = await notificationDataSource.DataSource!.OpenConnectionAsync();
     await Assert.That(conn.State).IsEqualTo(System.Data.ConnectionState.Open);
 
     await using var probe = new NpgsqlCommand("SELECT 1", conn);

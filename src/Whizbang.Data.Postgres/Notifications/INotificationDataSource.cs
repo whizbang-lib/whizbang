@@ -28,8 +28,13 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public interface INotificationDataSource {
-  /// <summary>The data source the notification workers will open connections on.</summary>
-  NpgsqlDataSource DataSource { get; }
+  /// <summary>
+  /// The data source the notification workers will open connections on, or
+  /// <c>null</c> when auto-discovery did not find a usable connection string.
+  /// The workers treat a null data source the same as no registration at all —
+  /// they fall back to the string-based resolution path.
+  /// </summary>
+  NpgsqlDataSource? DataSource { get; }
 }
 
 /// <summary>
@@ -38,11 +43,21 @@ public interface INotificationDataSource {
 /// </summary>
 public sealed class NotificationDataSource : INotificationDataSource {
   /// <inheritdoc/>
-  public NpgsqlDataSource DataSource { get; }
+  public NpgsqlDataSource? DataSource { get; }
 
   /// <summary>Wraps an existing <see cref="NpgsqlDataSource"/>.</summary>
   public NotificationDataSource(NpgsqlDataSource dataSource) {
     ArgumentNullException.ThrowIfNull(dataSource);
+    DataSource = dataSource;
+  }
+
+  /// <summary>
+  /// Wraps a possibly-null data source. The auto-discovery code path uses this
+  /// to register a sentinel when no credential-bearing connection string was
+  /// found in configuration; consumers should prefer the
+  /// non-nullable-arg constructor.
+  /// </summary>
+  internal NotificationDataSource(NpgsqlDataSource? dataSource, bool _unusedSentinelTag) {
     DataSource = dataSource;
   }
 }
