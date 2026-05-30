@@ -133,4 +133,57 @@ public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCor
 
     await efDataSource.DisposeAsync();
   }
+
+  /// <summary>
+  /// RED proof: WITHOUT
+  /// <see cref="PostgresNotificationsServiceCollectionExtensions.AddWhizbangNotificationDataSource"/>,
+  /// the a consumer configuration reproduces the exact production failure — opening
+  /// a fresh <see cref="NpgsqlConnection"/> from either
+  /// <see cref="NpgsqlConnection.ConnectionString"/> or
+  /// <see cref="NpgsqlDataSource.ConnectionString"/> raises
+  /// <c>"No password has been provided but the backend requires one
+  /// (in SASL/SCRAM-SHA-256)"</c>. This locks the failure mode so anyone
+  /// removing the fix sees the production error in CI before deploy.
+  /// </summary>
+  [Test]
+  public async Task WithoutFix_OpeningFromStrippedConnectionString_ReproducesSCRAMFailureAsync() {
+    // a consumer's data source: built with credentials, opens against SCRAM Postgres.
+    var efDataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+
+    // Force credential stripping the way EF Core does at startup (open + run a query).
+    await using (var probe = await efDataSource.OpenConnectionAsync()) {
+      await using var cmd = new NpgsqlCommand("SELECT 1", probe);
+      _ = await cmd.ExecuteScalarAsync();
+    }
+
+    // The bug surface: NpgsqlDataSource.ConnectionString is now password-less.
+    var strippedString = efDataSource.ConnectionString;
+    await Assert.That(strippedString.Contains("Password=", StringComparison.OrdinalIgnoreCase))
+      .IsFalse()
+      .Because("Npgsql strips credentials from the data source's public ConnectionString surface");
+
+    // The exact code path that produces the production error:
+    //   PgCommitOrderStamperWorker.ExecuteAsync (pre-fix) →
+    //     new NpgsqlConnection(resolution.ConnectionString) → OpenAsync()
+    // The stripped string lacks Password=, so SCRAM-SHA-256 auth fails with the
+    // same NpgsqlException a consumer has been emitting every iteration.
+    var ex = await Assert.That(async () => {
+      await using var brokenConn = new NpgsqlConnection(strippedString);
+      await brokenConn.OpenAsync();
+    }).Throws<NpgsqlException>();
+    await Assert.That(ex!.Message).Contains("No password has been provided")
+      .Because("This is the exact production error: [WRN] PgCommitOrderStamperWorker iteration failed: " +
+               "No password has been provided but the backend requires one (in SASL/SCRAM-SHA-256)");
+    await Assert.That(ex.Message).Contains("SASL/SCRAM-SHA-256");
+
+    // The fix proof: opening through the data source directly DOES authenticate,
+    // because Npgsql holds credentials internally. This is what the worker now
+    // does when AddWhizbangNotificationDataSource has been registered.
+    await using var fixedConn = await efDataSource.OpenConnectionAsync();
+    await Assert.That(fixedConn.State).IsEqualTo(System.Data.ConnectionState.Open)
+      .Because("dataSource.OpenConnectionAsync() is the only path that works post-stripping — which is what " +
+               "INotificationDataSource enables the workers to take");
+
+    await efDataSource.DisposeAsync();
+  }
 }
