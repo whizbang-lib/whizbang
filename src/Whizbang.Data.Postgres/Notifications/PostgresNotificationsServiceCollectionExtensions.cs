@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
 
@@ -89,6 +90,58 @@ public static class PostgresNotificationsServiceCollectionExtensions {
 
     // App-signal channel (publishes pg_notify on wh_app_<topic>).
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
+
+    return services;
+  }
+
+  /// <summary>
+  /// Registers a dedicated <see cref="NpgsqlDataSource"/> for the notification
+  /// workers and wires it through <see cref="INotificationDataSource"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// JDX-style production deployments configure their EF Core DbContext via
+  /// <c>UseNpgsql(NpgsqlDataSource)</c>. In that configuration Npgsql strips
+  /// credentials from every public ConnectionString surface — including
+  /// <c>NpgsqlDataSource.ConnectionString</c> — and there is no string-based
+  /// recovery path. The notification workers <em>must</em> hold a real
+  /// data source they can ask to open authenticated connections.
+  /// </para>
+  /// <para>
+  /// This helper builds an <strong>independent</strong> data source for
+  /// notifications (small pool, sized for the LISTEN/NOTIFY + leader-lock
+  /// workload) so the notification workers don't compete with EF Core's
+  /// connection pool. Calling this is the single line of glue JDX needs:
+  /// </para>
+  /// <code>
+  /// services.AddWhizbangPostgresNotifications();
+  /// services.AddWhizbangNotificationDataSource(connectionString);
+  /// </code>
+  /// </remarks>
+  /// <param name="services">The service collection.</param>
+  /// <param name="connectionString">
+  /// The credential-bearing connection string the data source should use.
+  /// Typically read from <c>IConfiguration.GetConnectionString(...)</c>.
+  /// </param>
+  /// <returns>The service collection for chaining.</returns>
+  /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+  public static IServiceCollection AddWhizbangNotificationDataSource(
+      this IServiceCollection services,
+      string connectionString) {
+    ArgumentNullException.ThrowIfNull(services);
+    if (string.IsNullOrWhiteSpace(connectionString)) {
+      throw new ArgumentException("connectionString must be non-empty", nameof(connectionString));
+    }
+
+    services.AddSingleton<INotificationDataSource>(_ => {
+      // Independent data source — its pool is NOT shared with EF Core.
+      // 4 connections is plenty: one for the LISTEN/NOTIFY shared connection,
+      // one for the commit-order stamper's advisory-lock holder, plus headroom
+      // for the leader-election retry and probe paths.
+      var builder = new NpgsqlDataSourceBuilder(connectionString);
+      builder.ConnectionStringBuilder.MaxPoolSize = 4;
+      return new NotificationDataSource(builder.Build());
+    });
 
     return services;
   }
