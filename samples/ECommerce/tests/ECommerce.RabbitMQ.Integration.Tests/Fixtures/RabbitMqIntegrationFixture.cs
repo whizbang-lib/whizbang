@@ -180,6 +180,22 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _bffHost.StartAsync(ct);
     Console.WriteLine("[RabbitMqFixture] BFF host started");
 
+    // Deterministic readiness gate — BackgroundService.StartAsync returns
+    // before ExecuteAsync has actually issued any LISTEN/SubscribeBatchAsync
+    // calls. Tests that dispatch immediately after the host starts can land
+    // their first messages before the BFF RabbitMQ consumer is bound, so
+    // the message is delivered to an unbound exchange and lost — the
+    // receptor never sees it and the lifecycle TCS never signals.
+    //
+    // TransportConsumerWorker.SubscriptionsReady is a public API that
+    // completes after every destination's SubscribeBatchAsync has returned.
+    // Wait on both hosts here so every test body starts with the certainty
+    // that the consumer is actually receiving.
+    Console.WriteLine("[RabbitMqFixture] Awaiting transport consumer readiness...");
+    await _waitForTransportConsumersReadyAsync(_inventoryHost, ct);
+    await _waitForTransportConsumersReadyAsync(_bffHost, ct);
+    Console.WriteLine("[RabbitMqFixture] Transport consumers ready");
+
     // Wait for workers to complete startup (initial checkpoints, rewind scan, registry reconciliation).
     // The BFF PerspectiveWorker may not reach idle during startup due to background work
     // (e.g. perspective registry reconciliation, table statistics collection).
@@ -693,6 +709,24 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// their first polling cycle. Uses OnWorkProcessingIdle completion signals instead of
   /// Task.Delay, making the wait deterministic and fast.
   /// </summary>
+  /// <summary>
+  /// Awaits <see cref="Whizbang.Core.Workers.TransportConsumerWorker.SubscriptionsReady"/>
+  /// on every transport consumer hosted by <paramref name="host"/>. Once
+  /// this returns, the host is actually receiving on its destinations —
+  /// dispatches issued after this point are guaranteed to be observable by
+  /// the lifecycle receptors instead of being dropped on the floor by an
+  /// unbound exchange.
+  /// </summary>
+  private static async Task _waitForTransportConsumersReadyAsync(Microsoft.Extensions.Hosting.IHost host, CancellationToken ct) {
+    var consumers = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
+      .ToList();
+    if (consumers.Count == 0) {
+      return;
+    }
+    await Task.WhenAll(consumers.Select(c => c.WaitForSubscriptionsReadyAsync(ct))).ConfigureAwait(false);
+  }
+
   private async Task _waitForWorkersReadyAsync(CancellationToken ct) {
     var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
