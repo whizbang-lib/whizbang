@@ -59,6 +59,38 @@ public partial class TransportConsumerWorker : BackgroundService {
   private readonly IReceptorRegistryQuery? _receptorRegistry;
   private readonly IReceptorRegistry? _runtimeReceptorRegistry;
 
+  // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
+  // is ACTUALLY bound to its transport destinations. Completes regardless of
+  // per-subscription success/failure — the health monitor handles retries.
+  private readonly TaskCompletionSource _subscriptionsReadyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  /// <summary>
+  /// A task that completes once the worker has finished its initial
+  /// subscription pass against every configured destination. Production
+  /// callers can <c>await</c> this to know the consumer is operational
+  /// (for example, to gate a readiness probe or to delay the first
+  /// downstream dispatch until inbound traffic can actually be received).
+  /// Tests can await it to eliminate the start-vs-subscribe race that
+  /// otherwise drops the first messages on the floor.
+  /// </summary>
+  /// <remarks>
+  /// <para>This signals subscription <em>completion</em>, not health —
+  /// failed destinations still resolve this task. Use
+  /// <see cref="SubscriptionStatus"/> on individual states for granular
+  /// health.</para>
+  /// <para>The task completes exactly once per worker lifetime.</para>
+  /// </remarks>
+  /// <docs>messaging/transports/transport-consumer-readiness</docs>
+  public Task SubscriptionsReady => _subscriptionsReadyTcs.Task;
+
+  /// <summary>
+  /// Convenience wrapper around <see cref="SubscriptionsReady"/> that respects
+  /// a cancellation token. Equivalent to
+  /// <c>await SubscriptionsReady.WaitAsync(cancellationToken)</c>.
+  /// </summary>
+  public Task WaitForSubscriptionsReadyAsync(CancellationToken cancellationToken = default)
+    => SubscriptionsReady.WaitAsync(cancellationToken);
+
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
   private HashSet<string>? _knownEventTypeNames;
@@ -184,38 +216,55 @@ public partial class TransportConsumerWorker : BackgroundService {
 
     _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
-    // Wait for transport readiness if readiness check is configured
-    using (var scope = _scopeFactory.CreateScope()) {
-      var readinessCheck = scope.ServiceProvider.GetService<ITransportReadinessCheck>();
-      if (readinessCheck != null) {
-        _logger.LogDebug("Waiting for transport readiness");
-        var isReady = await readinessCheck.IsReadyAsync(stoppingToken);
-        if (!isReady) {
-          _logger.LogWarning("Transport readiness check returned false");
-          return;
-        }
-        _logger.LogDebug("Transport is ready");
-      }
-
-      // Provision infrastructure for owned domains before creating subscriptions
-      var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
-      var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
-      if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          var ownedDomainsCount = routingOptions.OwnedDomains.Count;
-          _logger.LogDebug(
-            "Provisioning infrastructure for {Count} owned domains",
-            ownedDomainsCount);
+    try {
+      // Wait for transport readiness if readiness check is configured
+      using (var scope = _scopeFactory.CreateScope()) {
+        var readinessCheck = scope.ServiceProvider.GetService<ITransportReadinessCheck>();
+        if (readinessCheck != null) {
+          _logger.LogDebug("Waiting for transport readiness");
+          var isReady = await readinessCheck.IsReadyAsync(stoppingToken);
+          if (!isReady) {
+            _logger.LogWarning("Transport readiness check returned false");
+            // No subscriptions will be issued — release readiness waiters so
+            // they don't hang forever.
+            _subscriptionsReadyTcs.TrySetResult();
+            return;
+          }
+          _logger.LogDebug("Transport is ready");
         }
 
-        await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
+        // Provision infrastructure for owned domains before creating subscriptions
+        var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
+        var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
+        if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var ownedDomainsCount = routingOptions.OwnedDomains.Count;
+            _logger.LogDebug(
+              "Provisioning infrastructure for {Count} owned domains",
+              ownedDomainsCount);
+          }
 
-        _logger.LogDebug("Infrastructure provisioning completed");
+          await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
+
+          _logger.LogDebug("Infrastructure provisioning completed");
+        }
       }
+
+      // Subscribe to all destinations with retry
+      await _subscribeToAllDestinationsAsync(stoppingToken);
+
+      // Signal subscription readiness — public SubscriptionsReady consumers
+      // (production readiness probes, tests) unblock at this point. Health
+      // status (vs subscription completion) is reported separately via the
+      // per-destination SubscriptionStatus.
+      _subscriptionsReadyTcs.TrySetResult();
+    } catch (Exception ex) {
+      // Startup failed — surface the exception to readiness waiters so they
+      // observe the failure instead of hanging forever waiting for a signal
+      // that will never come.
+      _subscriptionsReadyTcs.TrySetException(ex);
+      throw;
     }
-
-    // Subscribe to all destinations with retry
-    await _subscribeToAllDestinationsAsync(stoppingToken);
 
     if (_logger.IsEnabled(LogLevel.Information)) {
       var healthyCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Healthy);
