@@ -62,14 +62,22 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     IServiceInstanceProvider instanceProvider,
     ILogger<PgSharedNotifyConnection>? logger = null,
     INotificationConnectionStringFallback? connectionStringFallback = null,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null,
+    INotificationDataSource? notificationDataSource = null) {
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _logger = logger ?? NullLogger<PgSharedNotifyConnection>.Instance;
     _connectionStringFallback = connectionStringFallback;
     _timeProvider = timeProvider ?? TimeProvider.System;
+    _dataSource = notificationDataSource?.DataSource;
   }
+
+  // Opt-in via INotificationDataSource (not bare NpgsqlDataSource — that
+  // would catch EF Core's own data source and exhaust its small pool).
+  // Only path that works under UseNpgsql(NpgsqlDataSource) since Npgsql strips
+  // credentials from every public ConnectionString surface.
+  private readonly NpgsqlDataSource? _dataSource;
 
   /// <inheritdoc />
   public bool IsAvailable => _isAvailable;
@@ -95,17 +103,25 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
     cancellationToken.ThrowIfCancellationRequested();
     var resolution = NotificationConnectionStringResolver.Resolve(
       _options, _configuration, _connectionStringFallback);
-    if (resolution.ConnectionString is null) {
+    if (resolution.ConnectionString is null && _dataSource is null) {
       _setAvailable(false, "no connection string resolvable");
       return false;
     }
     try {
-      await using var conn = new NpgsqlConnection(resolution.ConnectionString);
-      await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+      // Prefer the DI-registered NpgsqlDataSource — only path that survives
+      // UseNpgsql(NpgsqlDataSource) configurations where Npgsql has stripped
+      // credentials from every public ConnectionString surface.
+      await using var conn = _dataSource is not null
+        ? await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false)
+        : new NpgsqlConnection(resolution.ConnectionString);
+      if (_dataSource is null) {
+        await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+      }
       // Pass the original resolved string (not conn.ConnectionString — Npgsql strips the
       // password from that after Open for security, so a second connection built from it
-      // can't authenticate).
-      var ok = await _runProbeAsync(conn, resolution.ConnectionString, cancellationToken).ConfigureAwait(false);
+      // can't authenticate). When the data source path is used the probe doesn't open a
+      // second connection itself, so this argument is unused.
+      var ok = await _runProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
       _setAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
       return ok;
     } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
@@ -150,9 +166,14 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
       // its own pre-commit NOTIFY on the same backend (would require the emitting tx to
       // commit first, which is a chicken-and-egg for a long-lived LISTEN session). The
       // original connection string carries credentials; conn.ConnectionString strips the
-      // password after Open and would fail SASL/SCRAM auth.
-      await using (var notifyConn = new NpgsqlConnection(connectionString)) {
-        await notifyConn.OpenAsync(ct).ConfigureAwait(false);
+      // password after Open and would fail SASL/SCRAM auth — so use the data source
+      // when present (the only path that survives UseNpgsql(NpgsqlDataSource)).
+      await using (var notifyConn = _dataSource is not null
+          ? await _dataSource.OpenConnectionAsync(ct).ConfigureAwait(false)
+          : new NpgsqlConnection(connectionString)) {
+        if (_dataSource is null) {
+          await notifyConn.OpenAsync(ct).ConfigureAwait(false);
+        }
         await using var notifyCmd = new NpgsqlCommand("SELECT pg_notify(@channel, 'ping')", notifyConn);
         notifyCmd.Parameters.AddWithValue("@channel", channelName);
         _ = await notifyCmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
@@ -264,11 +285,12 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
 
     var resolution = NotificationConnectionStringResolver.Resolve(
       _options, _configuration, _connectionStringFallback);
-    if (resolution.ConnectionString is null) {
+    if (resolution.ConnectionString is null && _dataSource is null) {
       if (_options.SignalingMode == WorkSignalingMode.ListenNotify) {
         throw new InvalidOperationException(
           "WorkSignalingMode.ListenNotify is set but no direct connection string could be resolved. " +
-          "Configure WhizbangNotificationOptions.ConnectionStringKey or set DirectConnectionString.");
+          "Configure WhizbangNotificationOptions.ConnectionStringKey or set DirectConnectionString, " +
+          "or register an NpgsqlDataSource singleton in DI.");
       }
       LogDisabledNoConnection(_logger);
       return;
@@ -288,7 +310,12 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
-        await using var conn = new NpgsqlConnection(connectionString);
+        // Prefer NpgsqlDataSource.OpenConnectionAsync — only path that works
+        // with UseNpgsql(NpgsqlDataSource) since Npgsql strips credentials
+        // from every public ConnectionString surface in that configuration.
+        await using var conn = _dataSource is not null
+          ? await _dataSource.OpenConnectionAsync(stoppingToken).ConfigureAwait(false)
+          : new NpgsqlConnection(connectionString);
         // Slice 33.3 — attach the persistent dispatch handler BEFORE opening so any
         // notifications that arrive immediately after LISTEN issue are observed. The
         // handler routes by channel name into the subscription registry; the probe's
@@ -296,7 +323,9 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
         // interferes (the dispatch handler no-ops on probe channels since they're not
         // in the registry).
         conn.Notification += _dispatchNotification;
-        await conn.OpenAsync(stoppingToken).ConfigureAwait(false);
+        if (_dataSource is null) {
+          await conn.OpenAsync(stoppingToken).ConfigureAwait(false);
+        }
 
         lock (_connectionGate) {
           _connection = conn;
@@ -318,7 +347,7 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
         // NOTIFYs aren't actually flowing — could be pgbouncer in tx-pooling mode, broken
         // producer SQL, or a network partition affecting NOTIFY traffic. Treat as a failure
         // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
-        var probeOk = await _runProbeAsync(conn, connectionString, stoppingToken).ConfigureAwait(false);
+        var probeOk = await _runProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
         if (!probeOk) {
           _setAvailable(false, "self-test probe round-trip failed");
           throw new InvalidOperationException(

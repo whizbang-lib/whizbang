@@ -112,15 +112,27 @@ public class BatchReceiveLifecycleTests {
       InitialStock = i + 1
     }).ToList();
 
-    // Act — send 3 commands with brief gaps to avoid overwhelming CI runners
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 9, timeoutMilliseconds: 120000, hostFilter: "inventory");
-
+    // Act — dispatch all three first, then wait per stream so the wait can
+    // observe the full set of events the tracker recorded across all streams.
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    await perspectiveTask;
+    // Signal-based wait — one IPerspectiveSyncAwaiter wait per stream covers
+    // both perspectives (InventoryLevels + ProductCatalog) per command, which
+    // is what the old WaitForPerspectiveProcessingAsync(9) was approximating.
+    // The 120s ceiling is upper-bound only; under normal CI load each wait
+    // returns immediately once SyncEventTracker signals completion.
+    var perspectiveTypes = new[] {
+      typeof(ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective),
+      typeof(ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective),
+    };
+    var waits = productIds.Select(id => fixture.WaitForStreamCaughtUpAsync(
+      streamId: id.Value,
+      perspectiveTypes: perspectiveTypes,
+      timeout: TimeSpan.FromSeconds(120),
+      hostFilter: "inventory"));
+    await Task.WhenAll(waits);
 
     // Assert — all perspectives completed = all 3 messages batch-received and processed
   }

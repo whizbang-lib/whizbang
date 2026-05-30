@@ -46,7 +46,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   IConfiguration configuration,
   ISharedNotifyConnection sharedConnection,
   ILogger<PgCommitOrderStamperWorker> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
@@ -54,6 +55,13 @@ public sealed partial class PgCommitOrderStamperWorker(
   private readonly ISharedNotifyConnection _sharedConnection = sharedConnection ?? throw new ArgumentNullException(nameof(sharedConnection));
   private readonly ILogger<PgCommitOrderStamperWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  // Opt-in: register an INotificationDataSource via DI when the DbContext is
+  // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
+  // works because Npgsql strips credentials from both NpgsqlConnection.
+  // ConnectionString and NpgsqlDataSource.ConnectionString. Marker-interface
+  // wrap so we don't accidentally grab EF Core's own NpgsqlDataSource and
+  // exhaust its small connection pool.
+  private readonly NpgsqlDataSource? _dataSource = notificationDataSource?.DataSource;
 
   private const string CHANNEL_NAME = "wh_committed";
   private readonly SemaphoreSlim _wake = new(initialCount: 1, maxCount: 1);
@@ -81,12 +89,19 @@ public sealed partial class PgCommitOrderStamperWorker(
     }
 
     var resolution = NotificationConnectionStringResolver.Resolve(_notificationOptions, _configuration, _connectionStringFallback);
-    if (resolution.ConnectionString is null) {
+    // Prefer a DI-registered NpgsqlDataSource: when the DbContext is configured
+    // via UseNpgsql(NpgsqlDataSource), neither the connection string nor the
+    // data source's public ConnectionString carry the password (Npgsql strips
+    // them eagerly), so the only way to authenticate is to ask the data source
+    // to open the connection itself.
+    if (resolution.ConnectionString is null && _dataSource is null) {
       LogDisabledNoConnection(_logger);
       return;
     }
 
-    LogStarted(_logger, resolution.Source);
+    LogStarted(_logger, _dataSource is not null
+      ? NotificationConnectionStringResolver.ResolutionSource.DbContextFallback
+      : resolution.Source);
 
     // Production triage: Azure SCRAM-SHA-256 failures look identical regardless of which
     // resolution branch produced the password-less string. Log the source + which
@@ -111,8 +126,16 @@ public sealed partial class PgCommitOrderStamperWorker(
     while (!stoppingToken.IsCancellationRequested) {
       NpgsqlConnection? lockConn = null;
       try {
-        lockConn = new NpgsqlConnection(resolution.ConnectionString);
-        await lockConn.OpenAsync(stoppingToken);
+        // Prefer NpgsqlDataSource.OpenConnectionAsync — it carries the
+        // credentials internally and is the only path that works with the
+        // UseNpgsql(NpgsqlDataSource) DbContext configuration. Falls back to
+        // the resolved connection string when no data source is registered.
+        lockConn = _dataSource is not null
+          ? await _dataSource.OpenConnectionAsync(stoppingToken)
+          : new NpgsqlConnection(resolution.ConnectionString);
+        if (_dataSource is null) {
+          await lockConn.OpenAsync(stoppingToken);
+        }
 
         var gotLock = await _tryAcquireLeaderLockAsync(lockConn, stoppingToken);
         if (!gotLock) {
