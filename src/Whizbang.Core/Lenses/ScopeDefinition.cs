@@ -29,6 +29,7 @@ namespace Whizbang.Core.Lenses;
 /// </example>
 /// <docs>fundamentals/lenses/scoped-lenses#scope-definition</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
+/// <tests>Whizbang.Core.Tests/Lenses/ScopeDefinitionTests.cs</tests>
 /// <remarks>
 /// Creates a new scope definition with the specified name.
 /// </remarks>
