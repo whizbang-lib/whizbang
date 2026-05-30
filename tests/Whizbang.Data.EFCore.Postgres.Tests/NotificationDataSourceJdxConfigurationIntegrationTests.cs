@@ -135,6 +135,82 @@ public class NotificationDataSourceConsumerConfigurationIntegrationTests : EFCor
   }
 
   /// <summary>
+  /// **Zero-config proof**: with just <c>AddWhizbangPostgresNotifications()</c> and
+  /// no manual <c>AddWhizbangNotificationDataSource</c> call — the platform auto-
+  /// discovers a credential-bearing connection string from
+  /// <c>IConfiguration:ConnectionStrings</c> and builds the notification data
+  /// source itself. This is the "a consumer makes no Whizbang-specific code changes"
+  /// path: products configure their connection string in appsettings.json like
+  /// they always have, Whizbang figures the rest out.
+  /// </summary>
+  [Test]
+  public async Task ZeroConfig_AutoDiscoversFromConnectionStrings_AcquiresLeaderAsync() {
+    // Product-style config: a connection string with credentials registered
+    // under any key in IConfiguration:ConnectionStrings — no Whizbang-specific
+    // settings needed.
+    var config = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:appservice-db"] = ConnectionString,
+      })
+      .Build();
+
+    var efDataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(config);
+    services.AddDbContext<WorkCoordinationDbContext>(o => o.UseNpgsql(efDataSource));
+
+    // Notice: NO AddWhizbangNotificationDataSource call here. The platform
+    // should figure it out from IConfiguration.
+    services.AddWhizbangPostgresNotifications();
+
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(config));
+    services.AddOptions<WhizbangNotificationOptions>().Configure(o => {
+      o.SignalingMode = WorkSignalingMode.ListenNotify;
+    });
+    services.AddOptions<CommitOrderStamperOptions>().Configure(o => {
+      o.PollingInterval = TimeSpan.FromMilliseconds(100);
+      o.LeaderElectionRetry = TimeSpan.FromMilliseconds(100);
+    });
+
+    await using var sp = services.BuildServiceProvider();
+
+    // Same pre-condition: open DbContext, strip credentials.
+    await using (var probeScope = sp.CreateAsyncScope()) {
+      var ctx = probeScope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
+      await ctx.Database.OpenConnectionAsync();
+      _ = await new NpgsqlCommand("SELECT 1", (NpgsqlConnection)ctx.Database.GetDbConnection()).ExecuteScalarAsync();
+    }
+
+    // Auto-discovered INotificationDataSource should be available.
+    var discovered = sp.GetRequiredService<INotificationDataSource>();
+    await Assert.That(discovered.DataSource).IsNotNull()
+      .Because("auto-discovery must find the credential-bearing string in ConnectionStrings:appservice-db");
+
+    // And the stamper should acquire leader through it.
+    var stamper = sp.GetRequiredService<PgCommitOrderStamperWorker>();
+    var leaderTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    stamper.OnBecameLeader += () => leaderTcs.TrySetResult();
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    var shared = sp.GetRequiredService<PgSharedNotifyConnection>();
+    await shared.StartAsync(cts.Token);
+    await stamper.StartAsync(cts.Token);
+
+    try {
+      await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+      await Assert.That(stamper.IsLeader).IsTrue()
+        .Because("auto-discovered notification data source must let the stamper authenticate");
+    } finally {
+      await stamper.StopAsync(CancellationToken.None);
+      await shared.StopAsync(CancellationToken.None);
+    }
+
+    await efDataSource.DisposeAsync();
+  }
+
+  /// <summary>
   /// RED proof: WITHOUT
   /// <see cref="PostgresNotificationsServiceCollectionExtensions.AddWhizbangNotificationDataSource"/>,
   /// the a consumer configuration reproduces the exact production failure — opening
