@@ -1,3 +1,5 @@
+using System;
+using System.Threading.Tasks;
 using Npgsql;
 
 namespace Whizbang.Data.Postgres.Notifications;
@@ -41,23 +43,45 @@ public interface INotificationDataSource {
 /// Concrete <see cref="INotificationDataSource"/> wrapper. Use this when
 /// registering a dedicated data source for notification workers.
 /// </summary>
-public sealed class NotificationDataSource : INotificationDataSource {
+/// <remarks>
+/// Owns the wrapped <see cref="NpgsqlDataSource"/>'s lifetime when constructed
+/// by Whizbang's auto-discovery factory (the typical path) — disposing this
+/// wrapper closes the data source's pool. Consumers that pass in their own
+/// <see cref="NpgsqlDataSource"/> via the public constructor retain ownership
+/// and dispose it themselves.
+/// </remarks>
+public sealed class NotificationDataSource : INotificationDataSource, IAsyncDisposable {
+  private readonly bool _ownsDataSource;
   /// <inheritdoc/>
   public NpgsqlDataSource? DataSource { get; }
 
-  /// <summary>Wraps an existing <see cref="NpgsqlDataSource"/>.</summary>
+  /// <summary>
+  /// Wraps an existing <see cref="NpgsqlDataSource"/>. The wrapper does NOT
+  /// take ownership of the data source — the caller is responsible for
+  /// disposing it.
+  /// </summary>
   public NotificationDataSource(NpgsqlDataSource dataSource) {
     ArgumentNullException.ThrowIfNull(dataSource);
     DataSource = dataSource;
+    _ownsDataSource = false;
   }
 
   /// <summary>
   /// Wraps a possibly-null data source. The auto-discovery code path uses this
   /// to register a sentinel when no credential-bearing connection string was
-  /// found in configuration; consumers should prefer the
-  /// non-nullable-arg constructor.
+  /// found in configuration; the wrapper takes ownership of the data source
+  /// (when non-null) so the DI container's shutdown can dispose it.
   /// </summary>
-  internal NotificationDataSource(NpgsqlDataSource? dataSource, bool _unusedSentinelTag) {
+  internal NotificationDataSource(NpgsqlDataSource? dataSource, bool ownsDataSource) {
     DataSource = dataSource;
+    _ownsDataSource = ownsDataSource;
+  }
+
+  /// <inheritdoc/>
+  public ValueTask DisposeAsync() {
+    if (_ownsDataSource && DataSource is not null) {
+      return DataSource.DisposeAsync();
+    }
+    return ValueTask.CompletedTask;
   }
 }
