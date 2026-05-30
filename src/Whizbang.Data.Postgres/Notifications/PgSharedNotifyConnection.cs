@@ -33,13 +33,27 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
-public sealed partial class PgSharedNotifyConnection : BackgroundService, ISharedNotifyConnection, INotifySignalingGate {
-  private readonly WhizbangNotificationOptions _options;
-  private readonly IConfiguration _configuration;
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly INotificationConnectionStringFallback? _connectionStringFallback;
-  private readonly ILogger<PgSharedNotifyConnection> _logger;
-  private readonly TimeProvider _timeProvider;
+public sealed partial class PgSharedNotifyConnection(
+  IOptions<WhizbangNotificationOptions> options,
+  IConfiguration configuration,
+  IServiceInstanceProvider instanceProvider,
+  ILogger<PgSharedNotifyConnection>? logger = null,
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  TimeProvider? timeProvider = null,
+  INotificationDataSource? notificationDataSource = null
+) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate {
+  private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly ILogger<PgSharedNotifyConnection> _logger = logger ?? NullLogger<PgSharedNotifyConnection>.Instance;
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  // Opt-in via INotificationDataSource (not bare NpgsqlDataSource — that
+  // would catch EF Core's own data source and exhaust its small pool).
+  // Only path that works under UseNpgsql(NpgsqlDataSource) since Npgsql strips
+  // credentials from every public ConnectionString surface.
+  private readonly NpgsqlDataSource? _dataSource = notificationDataSource?.DataSource;
+
   private readonly NotifySubscriptionRegistry _registry = new();
   private readonly Lock _connectionGate = new();
   private readonly Lock _availabilityGate = new();
@@ -54,30 +68,6 @@ public sealed partial class PgSharedNotifyConnection : BackgroundService, IShare
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
   private string? _lastFailureReason;
-
-  /// <summary>Constructor used by DI.</summary>
-  public PgSharedNotifyConnection(
-    IOptions<WhizbangNotificationOptions> options,
-    IConfiguration configuration,
-    IServiceInstanceProvider instanceProvider,
-    ILogger<PgSharedNotifyConnection>? logger = null,
-    INotificationConnectionStringFallback? connectionStringFallback = null,
-    TimeProvider? timeProvider = null,
-    INotificationDataSource? notificationDataSource = null) {
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _logger = logger ?? NullLogger<PgSharedNotifyConnection>.Instance;
-    _connectionStringFallback = connectionStringFallback;
-    _timeProvider = timeProvider ?? TimeProvider.System;
-    _dataSource = notificationDataSource?.DataSource;
-  }
-
-  // Opt-in via INotificationDataSource (not bare NpgsqlDataSource — that
-  // would catch EF Core's own data source and exhaust its small pool).
-  // Only path that works under UseNpgsql(NpgsqlDataSource) since Npgsql strips
-  // credentials from every public ConnectionString surface.
-  private readonly NpgsqlDataSource? _dataSource;
 
   /// <inheritdoc />
   public bool IsAvailable => _isAvailable;
