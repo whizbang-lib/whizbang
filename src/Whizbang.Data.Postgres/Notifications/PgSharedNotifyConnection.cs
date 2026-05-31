@@ -393,7 +393,7 @@ public sealed partial class PgSharedNotifyConnection(
         attempt++;
         _setAvailable(false, failureReason: ex.Message);
         var delay = _computeBackoff(attempt);
-        LogReconnect(_logger, ex.Message, delay.TotalSeconds);
+        LogReconnect(_logger, ex.Message, resolution.Source, _options.ConnectionStringKey ?? "(unset)", delay.TotalSeconds);
         try {
           await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
         } catch (OperationCanceledException) {
@@ -505,8 +505,10 @@ public sealed partial class PgSharedNotifyConnection(
     Message = "PgSharedNotifyConnection connected; LISTENing on {ChannelCount} registered channel(s)")]
   static partial void LogConnected(ILogger logger, int channelCount);
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
-    Message = "PgSharedNotifyConnection disconnected ({Reason}); reconnecting in {DelaySeconds}s")]
-  static partial void LogReconnect(ILogger logger, string reason, double delaySeconds);
+    Message = "PgSharedNotifyConnection disconnected ({Reason}); reconnecting in {DelaySeconds}s. Resolved connection from {ResolutionSource} for key '{ConnectionStringKey}'. " +
+              "If Source=PooledKeyFallback, the connection is routed through pgbouncer and LISTEN/NOTIFY round-trips will fail — configure ConnectionStrings:{ConnectionStringKey}-direct " +
+              "with a direct (non-pgbouncer) Postgres connection string.")]
+  static partial void LogReconnect(ILogger logger, string reason, NotificationConnectionStringResolver.ResolutionSource resolutionSource, string connectionStringKey, double delaySeconds);
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "PgSharedNotifyConnection stopped")]
   static partial void LogStopped(ILogger logger);

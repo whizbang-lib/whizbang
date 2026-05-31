@@ -165,7 +165,7 @@ public sealed partial class PgCommitOrderStamperWorker(
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
-        LogIterationError(_logger, ex.Message);
+        LogIterationError(_logger, ex.Message, resolution.Source, _notificationOptions.ConnectionStringKey ?? "(unset)");
         // Fall through to retry loop; lockConn finally below will release.
       } finally {
         _setLeader(false);
@@ -247,8 +247,9 @@ public sealed partial class PgCommitOrderStamperWorker(
   [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker released leader role")]
   static partial void LogReleasedLeader(ILogger logger);
 
-  [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker iteration failed: {Reason}")]
-  static partial void LogIterationError(ILogger logger, string reason);
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker iteration failed: {Reason}. Resolved connection from {ResolutionSource} for key '{ConnectionStringKey}'. " +
+    "If Source=PooledKeyFallback, the connection routes through pgbouncer — set ConnectionStrings:{ConnectionStringKey}-direct with a direct (non-pgbouncer) Postgres string.")]
+  static partial void LogIterationError(ILogger logger, string reason, NotificationConnectionStringResolver.ResolutionSource resolutionSource, string connectionStringKey);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Information,
     Message = "PgCommitOrderStamperWorker connection diagnostics — Source={Source}, has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
