@@ -99,9 +99,11 @@ public sealed partial class PgCommitOrderStamperWorker(
       return;
     }
 
-    LogStarted(_logger, _dataSource is not null
+    var keyForDiagnostics = _notificationOptions.ConnectionStringKey ?? "(unset)";
+    var effectiveSource = _dataSource is not null
       ? NotificationConnectionStringResolver.ResolutionSource.DbContextFallback
-      : resolution.Source);
+      : resolution.Source;
+    LogStarted(_logger, effectiveSource, keyForDiagnostics);
 
     // Production triage: Azure SCRAM-SHA-256 failures look identical regardless of which
     // resolution branch produced the password-less string. Log the source + which
@@ -113,7 +115,16 @@ public sealed partial class PgCommitOrderStamperWorker(
     //     configured with NpgsqlDataSource which doesn't expose the original string)
     //   - explicit option (WhizbangNotificationOptions.DirectConnectionString missing password)
     var summary = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
-    LogConnectionDiagnostics(_logger, resolution.Source, summary.HasUsername, summary.HasSecret);
+    LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, summary.HasUsername, summary.HasSecret);
+
+    // Loud-and-early warning mirroring PgSharedNotifyConnection: PooledKeyFallback
+    // means the leader-lock connection routes through pgbouncer in tx-pooling mode.
+    // pg_try_advisory_lock is session-scoped, so a tx-pool front-end will not preserve
+    // the lock across the leader's tenure — operators MUST switch to `-direct` for the
+    // stamper to function.
+    if (effectiveSource == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
+      LogPooledFallbackWarning(_logger, keyForDiagnostics);
+    }
 
     // Slice 33.5 — subscribe to wh_committed via the shared connection for the entire
     // worker lifetime. Even when this pod is not the leader, the subscription is harmless:
@@ -238,8 +249,14 @@ public sealed partial class PgCommitOrderStamperWorker(
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker disabled — no connection string resolved (set WhizbangNotificationOptions.ConnectionStringKey or DirectConnectionString)")]
   static partial void LogDisabledNoConnection(ILogger logger);
 
-  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker started with connection from {Source}")]
-  static partial void LogStarted(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source);
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker started with connection from {Source} for key '{ConnectionStringKey}'")]
+  static partial void LogStarted(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source, string connectionStringKey);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "PgCommitOrderStamperWorker resolved the POOLED connection (key '{ConnectionStringKey}') — pg_try_advisory_lock cannot be held " +
+              "through pgbouncer in transaction-pooling mode. Add ConnectionStrings:{ConnectionStringKey}-direct pointing to a direct " +
+              "(non-pgbouncer) Postgres connection. Until then, leader election fails and commit-order stamping stalls.")]
+  static partial void LogPooledFallbackWarning(ILogger logger, string connectionStringKey);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker became leader — actively stamping")]
   static partial void LogBecameLeader(ILogger logger);
@@ -252,10 +269,11 @@ public sealed partial class PgCommitOrderStamperWorker(
   static partial void LogIterationError(ILogger logger, string reason, NotificationConnectionStringResolver.ResolutionSource resolutionSource, string connectionStringKey);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Information,
-    Message = "PgCommitOrderStamperWorker connection diagnostics — Source={Source}, has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
+    Message = "PgCommitOrderStamperWorker connection diagnostics — Source={Source}, key='{ConnectionStringKey}', has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:{ConnectionStringKey}(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
   static partial void LogConnectionDiagnostics(
     ILogger logger,
     NotificationConnectionStringResolver.ResolutionSource source,
+    string connectionStringKey,
     bool hasUsername,
     bool hasSecret);
 

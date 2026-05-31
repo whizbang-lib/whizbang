@@ -121,9 +121,81 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     await Assert.That(msg!).Contains("test-db-direct");
   }
 
+  [Test]
+  public async Task Startup_LogResolvedConnection_NamesSourceAndKeyAsync() {
+    var goodDirect = "Host=__whizbang-nonexistent-host__;Database=x;Username=u;Password=p;Timeout=2;Command Timeout=2";
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:test-db-direct"] = goodDirect,
+    }).Build();
+    var options = new WhizbangNotificationOptions {
+      ConnectionStringKey = "test-db",
+      SignalingMode = WorkSignalingMode.Auto,
+      ListenReconnectInitialDelay = TimeSpan.FromMilliseconds(50),
+      ListenReconnectMaxDelay = TimeSpan.FromMilliseconds(50),
+      SelfTestTimeout = TimeSpan.FromMilliseconds(200),
+    };
+
+    var logger = new _CapturingLogger();
+    var worker = new PgSharedNotifyConnection(
+      Options.Create(options),
+      cfg,
+      new ServiceInstanceProvider(cfg),
+      logger,
+      connectionStringFallback: null);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await worker.StartAsync(cts.Token);
+    await logger.ResolvedConnectionLoggedTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
+
+    await Assert.That(logger.LastResolvedConnectionMessage).IsNotNull();
+    await Assert.That(logger.LastResolvedConnectionMessage!).Contains("DirectKey");
+    await Assert.That(logger.LastResolvedConnectionMessage!).Contains("test-db");
+  }
+
+  [Test]
+  public async Task Startup_PooledFallback_LogsLoudPooledWarningWithRemediationAsync() {
+    // Only the pooled key is present — at startup we should already warn loudly
+    // (don't wait for the first probe failure to surface the misconfiguration).
+    var badPooled = "Host=__whizbang-nonexistent-host__;Database=x;Username=u;Password=p;Timeout=2;Command Timeout=2";
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:test-db"] = badPooled,
+    }).Build();
+    var options = new WhizbangNotificationOptions {
+      ConnectionStringKey = "test-db",
+      SignalingMode = WorkSignalingMode.Auto,
+      ListenReconnectInitialDelay = TimeSpan.FromMilliseconds(50),
+      ListenReconnectMaxDelay = TimeSpan.FromMilliseconds(50),
+      SelfTestTimeout = TimeSpan.FromMilliseconds(200),
+    };
+
+    var logger = new _CapturingLogger();
+    var worker = new PgSharedNotifyConnection(
+      Options.Create(options),
+      cfg,
+      new ServiceInstanceProvider(cfg),
+      logger,
+      connectionStringFallback: null);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await worker.StartAsync(cts.Token);
+    await logger.PooledFallbackWarningTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
+
+    await Assert.That(logger.LastPooledFallbackMessage).IsNotNull();
+    await Assert.That(logger.LastPooledFallbackMessage!).Contains("pgbouncer");
+    await Assert.That(logger.LastPooledFallbackMessage!).Contains("test-db-direct");
+    await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
+  }
+
   private sealed class _CapturingLogger : ILogger<PgSharedNotifyConnection> {
     public TaskCompletionSource DisconnectLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ResolvedConnectionLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource PooledFallbackWarningTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public string? LastDisconnectMessage { get; private set; }
+    public string? LastResolvedConnectionMessage { get; private set; }
+    public string? LastPooledFallbackMessage { get; private set; }
+    public LogLevel? LastPooledFallbackWarningLevel { get; private set; }
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -134,10 +206,22 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       TState state,
       Exception? exception,
       Func<TState, Exception?, string> formatter) {
-      if (eventId.Id == 3) {
-        // EventId 3 is the disconnect warning. Capture and signal.
-        LastDisconnectMessage = formatter(state, exception);
-        _ = DisconnectLoggedTcs.TrySetResult();
+      switch (eventId.Id) {
+        case 3:
+          LastDisconnectMessage = formatter(state, exception);
+          _ = DisconnectLoggedTcs.TrySetResult();
+          break;
+        case 6:
+          // EventId 6 is LogResolvedConnection (startup).
+          LastResolvedConnectionMessage = formatter(state, exception);
+          _ = ResolvedConnectionLoggedTcs.TrySetResult();
+          break;
+        case 13:
+          // EventId 13 is LogPooledFallbackWarning (startup).
+          LastPooledFallbackMessage = formatter(state, exception);
+          LastPooledFallbackWarningLevel = logLevel;
+          _ = PooledFallbackWarningTcs.TrySetResult();
+          break;
       }
     }
   }
