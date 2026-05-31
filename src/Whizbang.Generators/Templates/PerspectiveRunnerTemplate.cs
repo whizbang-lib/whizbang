@@ -61,6 +61,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IPerspectiveSnapshotStore? _snapshotStore;
   private readonly IOptions<PerspectiveSnapshotOptions>? _snapshotOptions;
+  // Closes the rewind-vs-live race window where same-pod Apply paths race on
+  // wh_per_* row writes. See IPerspectiveApplyCoordinator for the full rationale
+  // and the JDX bulk-import 4-lost-increments incident that motivated it.
+  private readonly global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? _applyCoordinator;
   private int _eventsSinceLastSnapshot;
 
   public __RUNNER_CLASS_NAME__(
@@ -71,7 +75,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IServiceScopeFactory scopeFactory,
       IOptionsMonitor<TracingOptions>? tracingOptions = null,
       IPerspectiveSnapshotStore? snapshotStore = null,
-      IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null) {
+      IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
+      global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
@@ -80,6 +85,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     _tracingOptions = tracingOptions;
     _snapshotStore = snapshotStore;
     _snapshotOptions = snapshotOptions;
+    _applyCoordinator = applyCoordinator;
   }
 
   public async Task<PerspectiveCursorCompletion> RunAsync(
@@ -112,6 +118,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid? lastProcessedEventId,
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       CancellationToken cancellationToken = default) {
+
+    // Same-pod Apply serialization (rewind-vs-live race fix). The await-using
+    // null-pattern is no-op when the coordinator isn't registered — preserves
+    // the existing optional-DI contract for hosts that haven't wired Whizbang's
+    // core registrations yet.
+    await using IAsyncDisposable? __applyLock = _applyCoordinator is null
+        ? null
+        : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
     // Ordering invariant: sort by MessageId (UUIDv7 = chronological) before any processing.
     // Defensive — callers should already pass sorted, but this is the apply boundary.
@@ -719,6 +733,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid triggeringEventId,
       long? triggeringCommitSequence,
       CancellationToken cancellationToken = default) {
+
+    // Same-pod Apply serialization (rewind-vs-live race fix). Acquired BEFORE
+    // the snapshot read so the in-memory replay window cannot interleave with
+    // a live drain Apply on the same (streamId, perspectiveName).
+    await using IAsyncDisposable? __applyLock = _applyCoordinator is null
+        ? null
+        : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
     Guid? replayFromEventId = null;
     __MODEL_TYPE_NAME__? snapshotModel = null;
