@@ -1525,50 +1525,48 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Waits for all workers on both hosts to become idle using deterministic OnWorkProcessingIdle signals.
   /// </summary>
   public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
-    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Phase H step 4b: the drain workers are the active outbox/inbox path; the legacy
+    // publisher defaults to disabled and reports IsIdle=true instantly. Polling only it
+    // (and PerspectiveWorker) made the fixture truncate while real drain work was
+    // still in flight. Wait on every idle-capable worker per host.
+    var waits = new List<Task>();
 
-    var inventoryPub = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<OutboxPublishWorker>().FirstOrDefault();
-    var bffPub = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<OutboxPublishWorker>().FirstOrDefault();
-    var inventoryPersp = _inventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<PerspectiveWorker>().FirstOrDefault();
-    var bffPersp = _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<PerspectiveWorker>().FirstOrDefault();
-
-    void WireOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
-      if (w is null) { tcs.TrySetResult(true); return; }
-      if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
-
-      w.OnWorkProcessingIdle += h;
-      if (w.IsIdle) { tcs.TrySetResult(true); }
+    void WireOnce<TWorker>(
+        TWorker? w,
+        Func<TWorker, bool> idleGetter,
+        Action<TWorker, WorkProcessingIdleHandler> subscribe,
+        Action<TWorker, WorkProcessingIdleHandler> unsubscribe)
+      where TWorker : class {
+      if (w is null) { return; }
+      var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+      waits.Add(tcs.Task);
+      if (idleGetter(w)) { tcs.TrySetResult(true); return; }
+      void Handler() { tcs.TrySetResult(true); unsubscribe(w, Handler); }
+      subscribe(w, Handler);
+      if (idleGetter(w)) { tcs.TrySetResult(true); }
     }
 
-    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
-      if (w is null) { tcs.TrySetResult(true); return; }
-      if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+    void WireOutboxPublish(OutboxPublishWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireOutboxDrain(OutboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-      w.OnWorkProcessingIdle += h;
-      if (w.IsIdle) { tcs.TrySetResult(true); }
-    }
+    var inventoryHostedServices = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var bffHostedServices = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
 
-    WireOnce(inventoryPub, tcsInventoryPub);
-    WireOnce(bffPub, tcsBffPub);
-    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
-    WirePerspOnce(bffPersp, tcsBffPersp);
+    WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxDrain(inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireOutboxDrain(bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain(inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain(bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WirePerspective(inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WirePerspective(bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+
+    if (waits.Count == 0) { return; }
 
     var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-    await Task.WhenAll(
-      tcsInventoryPub.Task,
-      tcsBffPub.Task,
-      tcsInventoryPersp.Task,
-      tcsBffPersp.Task
-    ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    await Task.WhenAll(waits).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
   }
 
   /// <summary>

@@ -728,49 +728,56 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   }
 
   private async Task _waitForWorkersReadyAsync(CancellationToken ct) {
-    var tcsInventoryPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var tcsBffPub = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var tcsInventoryPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var tcsBffPersp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Phase H step 4b made the drain workers the active path; the legacy publisher
+    // defaults to disabled and reports IsIdle=true instantly. Polling only it (and
+    // PerspectiveWorker) made the fixture truncate tables while the real drain
+    // workers were still mid-flight. Wait on the actual active workers per host:
+    //   - OutboxDrainWorker  → outbox publish path
+    //   - InboxDrainWorker   → inbox payload-fetch + dispatch handoff
+    //   - PerspectiveWorker  → perspective projection
+    // Legacy OutboxPublishWorker is still polled for backwards-compat with hosts
+    // that have the rollback flag enabled; it instantly succeeds when disabled.
+    var waits = new List<Task>();
 
-    var inventoryPub = _inventoryHost!.Services.GetServices<IHostedService>().OfType<OutboxPublishWorker>().FirstOrDefault();
-    var bffPub = _bffHost!.Services.GetServices<IHostedService>().OfType<OutboxPublishWorker>().FirstOrDefault();
-    var inventoryPersp = _inventoryHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
-    var bffPersp = _bffHost.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().FirstOrDefault();
-
-    void WireOutboxOnce(OutboxPublishWorker? w, TaskCompletionSource<bool> tcs) {
-      if (w is null) { tcs.TrySetResult(true); return; }
-      if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
-
-      w.OnWorkProcessingIdle += h;
-      if (w.IsIdle) { tcs.TrySetResult(true); } // re-check after subscribe (race window)
+    void WireOnce<TWorker>(TWorker? w, Func<TWorker, bool> idleGetter, Action<TWorker, WorkProcessingIdleHandler> subscribe, Action<TWorker, WorkProcessingIdleHandler> unsubscribe)
+      where TWorker : class {
+      if (w is null) { return; }
+      var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+      waits.Add(tcs.Task);
+      if (idleGetter(w)) { tcs.TrySetResult(true); return; }
+      void Handler() { tcs.TrySetResult(true); unsubscribe(w, Handler); }
+      subscribe(w, Handler);
+      // Re-check after subscribe to close the race window.
+      if (idleGetter(w)) { tcs.TrySetResult(true); }
     }
 
-    void WirePerspOnce(PerspectiveWorker? w, TaskCompletionSource<bool> tcs) {
-      if (w is null) { tcs.TrySetResult(true); return; }
-      if (w.IsIdle) { tcs.TrySetResult(true); return; }
-      void h() { tcs.TrySetResult(true); w.OnWorkProcessingIdle -= h; }
+    void WireOutboxPublish(OutboxPublishWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireOutboxDrain(OutboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
+    void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-      w.OnWorkProcessingIdle += h;
-      if (w.IsIdle) { tcs.TrySetResult(true); }
+    var inventoryHostedServices = _inventoryHost!.Services.GetServices<IHostedService>().ToList();
+    var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
+
+    WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
+    WireOutboxDrain(inventoryHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireOutboxDrain(bffHostedServices.OfType<OutboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain(inventoryHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WireInboxDrain(bffHostedServices.OfType<InboxDrainWorker>().FirstOrDefault());
+    WirePerspective(inventoryHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+    WirePerspective(bffHostedServices.OfType<PerspectiveWorker>().FirstOrDefault());
+
+    if (waits.Count == 0) {
+      Console.WriteLine("[RabbitMqFixture] No idle-capable workers found — proceeding");
+      return;
     }
 
-    WireOutboxOnce(inventoryPub, tcsInventoryPub);
-    WireOutboxOnce(bffPub, tcsBffPub);
-    WirePerspOnce(inventoryPersp, tcsInventoryPersp);
-    WirePerspOnce(bffPersp, tcsBffPersp);
-
-    // Wait for all 4 workers to signal idle (safety-net timeout prevents hang)
+    // Safety-net timeout prevents hang if a worker never drains.
     var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(30000);
-    await Task.WhenAll(
-      tcsInventoryPub.Task,
-      tcsBffPub.Task,
-      tcsInventoryPersp.Task,
-      tcsBffPersp.Task
-    ).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout), ct);
+    await Task.WhenAll(waits).WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout), ct);
 
-    Console.WriteLine("[RabbitMqFixture] All workers idle");
+    Console.WriteLine($"[RabbitMqFixture] All workers idle ({waits.Count} signals)");
   }
 
   /// <summary>
