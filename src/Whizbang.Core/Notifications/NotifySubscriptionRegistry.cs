@@ -23,12 +23,27 @@ public sealed class NotifySubscriptionRegistry {
   /// </summary>
   public bool Add(INotifySubscription subscription) {
     ArgumentNullException.ThrowIfNull(subscription);
-    var wasFirst = false;
-    _byChannel.AddOrUpdate(
-      subscription.ChannelName,
-      _ => { wasFirst = true; return [subscription]; },
-      (_, existing) => existing.Add(subscription));
-    return wasFirst;
+    // CAS-loop, NOT AddOrUpdate. ConcurrentDictionary.AddOrUpdate may invoke
+    // addValueFactory multiple times under contention — see
+    // https://learn.microsoft.com/dotnet/api/system.collections.concurrent.concurrentdictionary-2.addorupdate
+    // — which would cause multiple concurrent Adds for the same channel to all
+    // see wasFirst=true, breaking the "first subscribe issues LISTEN exactly once"
+    // contract this method exists to provide.
+    var channel = subscription.ChannelName;
+    while (true) {
+      if (_byChannel.TryGetValue(channel, out var existing)) {
+        var updated = existing.Add(subscription);
+        if (_byChannel.TryUpdate(channel, updated, existing)) {
+          return false;  // Channel already had subscribers — not a transition.
+        }
+        // Lost the CAS — another writer mutated the slot; retry.
+      } else {
+        if (_byChannel.TryAdd(channel, [subscription])) {
+          return true;  // We installed the slot — this caller MUST issue LISTEN.
+        }
+        // Lost the race — someone else installed the slot first; retry as an update.
+      }
+    }
   }
 
   /// <summary>
