@@ -174,21 +174,12 @@ public static class PostgresDriverExtensions {
   }
 
   /// <summary>
-  /// Mirrors the source generator's connection-string-name convention
-  /// (<c>EFCoreServiceRegistrationGenerator._deriveConnectionStringName</c>):
-  /// strip the <c>DbContext</c> suffix, lowercase, append <c>-db</c>.
-  /// Example: <c>BffServiceDbContext</c> → <c>bffservice-db</c>.
+  /// Thin shim around <see cref="Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName"/>
+  /// so existing call sites and tests don't need to change. The actual convention
+  /// lives in <c>Whizbang.Core</c> so it can be referenced from any consumer code
+  /// (and re-used by the source generator's regression test) without taking a
+  /// runtime dependency on this assembly.
   /// </summary>
-  /// <remarks>
-  /// Duplicated rather than referenced so this assembly doesn't take a runtime
-  /// dependency on the source generator project. Tests in
-  /// <c>PostgresDriverExtensionsTests</c> assert the two implementations stay in
-  /// sync.
-  /// </remarks>
-  internal static string _deriveConnectionStringName(string dbContextClassName) {
-    var name = dbContextClassName.EndsWith("DbContext", StringComparison.Ordinal)
-      ? dbContextClassName[..^9]
-      : dbContextClassName;
-    return name.ToLowerInvariant() + "-db";
-  }
+  internal static string _deriveConnectionStringName(string dbContextClassName)
+    => Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName(dbContextClassName);
 }
