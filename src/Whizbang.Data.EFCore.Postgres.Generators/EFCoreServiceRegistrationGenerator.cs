@@ -333,9 +333,23 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return null;
   }
 
+  /// <summary>
+  /// Generator-side mirror of
+  /// <c>Whizbang.Core.Naming.WhizbangNamingConvention.DeriveConnectionStringName</c>.
+  /// </summary>
+  /// <remarks>
+  /// The source generator runs in the Roslyn process and cannot reference
+  /// <c>Whizbang.Core</c> at compile time, so the convention is intentionally
+  /// duplicated here. The companion
+  /// <c>SourceGeneratorConnectionStringNameConventionTests</c> in
+  /// <c>Whizbang.Data.EFCore.Postgres.Tests</c> asserts that this private mirror
+  /// and the public <c>WhizbangNamingConvention.DeriveConnectionStringName</c>
+  /// agree on every fixture — drift between the two becomes a failing build
+  /// instead of a silent production divergence.
+  /// </remarks>
   private static string _deriveConnectionStringName(string className) {
-    // Derive connection string name from DbContext name by convention:
-    // "ChatDbContext" -> "chat-db" (remove DbContext suffix, lowercase, add -db)
+    // Convention: strip a trailing "DbContext" suffix, lowercase, append "-db".
+    // "ChatDbContext" → "chat-db", "BffServiceDbContext" → "appservice-db".
     var name = className.EndsWith("DbContext", StringComparison.Ordinal)
         ? className[..^9]
         : className;
@@ -1489,6 +1503,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
       sb.AppendLine($"    var connectionStringKey = connectionStringName ?? \"{dbContext.ConnectionStringName}\";");
       sb.AppendLine();
+      sb.AppendLine("    // Funnel the resolved key through to Whizbang notification options so the");
+      sb.AppendLine("    // LISTEN/NOTIFY + commit-order stamper resolver looks up the same");
+      sb.AppendLine("    // ConnectionStrings:{Key}-direct / ConnectionStrings:{Key} entries EF Core uses.");
+      sb.AppendLine("    // Mirrors the same emit in the DbContextRegistrationRegistry callback so both");
+      sb.AppendLine("    // wiring paths land at the SAME key. Guarded so an explicit");
+      sb.AppendLine("    // Whizbang:Database:ConnectionStringKey in appsettings still wins.");
+      sb.AppendLine("    services.PostConfigure<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>(opts => {");
+      sb.AppendLine("      if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
+      sb.AppendLine("        opts.ConnectionStringKey = connectionStringKey;");
+      sb.AppendLine("      }");
+      sb.AppendLine("    });");
+      sb.AppendLine();
       sb.AppendLine("    // Build temporary service provider to resolve IConfiguration");
       sb.AppendLine("    // This allows us to get connection string at registration time");
       sb.AppendLine("    using var tempProvider = services.BuildServiceProvider(new ServiceProviderOptions {");
@@ -1611,6 +1637,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("      // Use override if provided, otherwise fall back to attribute/derived default");
     sb.AppendLine($"      var connectionStringKey = connectionStringNameOverride ?? \"{defaultConnectionStringKey}\";");
+    sb.AppendLine();
+    sb.AppendLine("      // Funnel the resolved key through to Whizbang notification options so the");
+    sb.AppendLine("      // LISTEN/NOTIFY + commit-order stamper resolver looks up the same");
+    sb.AppendLine("      // ConnectionStrings:{Key}-direct / ConnectionStrings:{Key} entries EF Core uses.");
+    sb.AppendLine("      // Without this, the EF wiring and the notification wiring can derive different");
+    sb.AppendLine("      // names (e.g., when [WhizbangDbContext(ConnectionStringName=...)] disagrees with");
+    sb.AppendLine("      // the class-name convention), and notifications silently fall back to the pooled");
+    sb.AppendLine("      // (pgbouncer) connection. Guarded so an explicit Whizbang:Database:ConnectionStringKey");
+    sb.AppendLine("      // in appsettings still wins.");
+    sb.AppendLine("      services.PostConfigure<global::Whizbang.Core.Notifications.WhizbangNotificationOptions>(opts => {");
+    sb.AppendLine("        if (string.IsNullOrWhiteSpace(opts.ConnectionStringKey)) {");
+    sb.AppendLine("          opts.ConnectionStringKey = connectionStringKey;");
+    sb.AppendLine("        }");
+    sb.AppendLine("      });");
     sb.AppendLine();
     sb.AppendLine("      // Build temporary service provider to resolve IConfiguration");
     sb.AppendLine("      // This allows us to get connection string at registration time");
