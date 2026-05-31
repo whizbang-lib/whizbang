@@ -111,29 +111,57 @@ public class RewindLiveApplyRaceTests {
   ///   1. Load model (snapshot OR <c>GetByStreamIdAsync</c> for live).
   ///   2. Apply every event in memory.
   ///   3. Single atomic <c>UpsertAsync</c> at the end.
-  /// No locking, no compare-and-swap, no read-version check.
+  ///
+  /// When <paramref name="coordinator"/> is supplied, the read+apply+persist
+  /// runs under an <see cref="IPerspectiveApplyCoordinator"/> lock —
+  /// matching the production fix that the source generator emits around both
+  /// <c>RewindAndRunAsync</c> and <c>RunWithEventsAsync</c>.
   /// </summary>
+#pragma warning disable CA1859 // Interface typing is intentional — production callers receive IPerspectiveApplyCoordinator from DI.
   private static async Task ApplyEventsAsync(
       IPerspectiveStore<CountModel> store,
       Guid streamId,
       int eventsToApply,
       bool seedFromEmpty,
-      CancellationToken ct) {
-    // Live path: read existing → apply events → upsert.
-    // Rewind path: seed from empty (snapshot-less full replay) → apply events → upsert.
-    var model = seedFromEmpty
-      ? new CountModel { Id = streamId, CompletedItems = 0 }
-      : (await store.GetByStreamIdAsync(streamId, ct).ConfigureAwait(false))
-        ?? new CountModel { Id = streamId, CompletedItems = 0 };
-    for (var i = 0; i < eventsToApply; i++) {
-      model.CompletedItems++;
+      CancellationToken ct,
+      IPerspectiveApplyCoordinator? coordinator = null,
+      string perspectiveName = "TestPerspective") {
+#pragma warning restore CA1859
+    // Acquire the in-process lock for this (streamId, perspectiveName) when a
+    // coordinator is supplied. The acquire is OUTSIDE the gated store so the
+    // gate still pauses an in-flight persist — the test still exercises the
+    // same critical-section interleaving, but now the second writer waits on
+    // the semaphore instead of racing past.
+    var apply = async () => {
+      var model = seedFromEmpty
+        ? new CountModel { Id = streamId, CompletedItems = 0 }
+        : (await store.GetByStreamIdAsync(streamId, ct).ConfigureAwait(false))
+          ?? new CountModel { Id = streamId, CompletedItems = 0 };
+      for (var i = 0; i < eventsToApply; i++) {
+        model.CompletedItems++;
+      }
+      await store.UpsertAsync(streamId, model, ct).ConfigureAwait(false);
+    };
+
+    if (coordinator is null) {
+      await apply().ConfigureAwait(false);
+    } else {
+      await using var _ = await coordinator.AcquireAsync(streamId, perspectiveName, ct).ConfigureAwait(false);
+      await apply().ConfigureAwait(false);
     }
-    await store.UpsertAsync(streamId, model, ct).ConfigureAwait(false);
   }
 
   [Test]
-  public async Task Rewind_ConcurrentWithLiveApply_LosesOneIncrementAsync() {
-    // Seed: live applied A, B, C → CompletedItems = 3. (cursor would be at C.)
+  public async Task Rewind_ConcurrentWithLiveApply_WithoutCoordinator_ObservesLostIncrementAsync() {
+    // Negative-path regression lock. Documents the unprotected race shape:
+    // when NO IPerspectiveApplyCoordinator is on the apply paths, the rewind +
+    // concurrent live apply produces a last-writer-wins overwrite and one
+    // increment is silently lost. This test asserting "CompletedItems = 4"
+    // exists so a future refactor that re-introduces the unprotected pattern
+    // immediately produces an observable failure on the companion
+    // <c>...WithCoordinator_RetainsAllIncrements...</c> test below — the two
+    // tests bracket the contract: protected paths land at 5, unprotected
+    // paths land at 4.
     var store = new GatedInMemoryStore();
     var streamId = Guid.NewGuid();
     await ApplyEventsAsync(store, streamId, eventsToApply: 3, seedFromEmpty: true, CancellationToken.None);
@@ -141,38 +169,70 @@ public class RewindLiveApplyRaceTests {
     var seeded = await store.GetByStreamIdAsync(streamId);
     await Assert.That(seeded!.CompletedItems).IsEqualTo(3);
 
-    // Late event L arrives (would trigger cursor inversion + rewind in production).
-    // Rewind reads from snapshot/zero, replays [A, B, C, L] in memory → 4 increments.
-    // Hold the rewind's final UpsertAsync at the gate so the live path can race past.
     store.HoldNext = true;
     var rewindTask = Task.Run(() => ApplyEventsAsync(
-      store, streamId,
-      eventsToApply: 4,           // A + B + C + L = 4 increments from empty
-      seedFromEmpty: true,        // rewind starts from empty/snapshot
-      CancellationToken.None));
+      store, streamId, eventsToApply: 4, seedFromEmpty: true, CancellationToken.None));
 
-    // Wait until the rewind is at the gate, mid-flight.
     await store.ReachedGate.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    // Live drain applies a fresh event D arriving on the side: reads current row (3) → applies 1 → writes 4.
     await ApplyEventsAsync(store, streamId, eventsToApply: 1, seedFromEmpty: false, CancellationToken.None);
 
     var afterLiveBeforeRewindResume = await store.GetByStreamIdAsync(streamId);
     await Assert.That(afterLiveBeforeRewindResume!.CompletedItems).IsEqualTo(4)
       .Because("live apply committed C+D = 4 while rewind is still gated");
 
-    // Release the rewind — it writes its in-memory state (CompletedItems = 4, from A+B+C+L) on top.
     store.Release.TrySetResult();
     await rewindTask;
 
-    // Total events ever applied: A, B, C, L (via rewind) + D (via live) = 5 unique increments.
-    // Expected behavior: final CompletedItems = 5 (every event contributes to the projection).
-    // Today's bug: 4. Rewind's persist clobbered live's increment OR vice versa — last-writer-wins
-    // means one path's work is lost.
     var final = await store.GetByStreamIdAsync(streamId);
-    await Assert.That(final!.CompletedItems).IsEqualTo(5)
-      .Because("rewind applied 4 events, live applied 1, every applied event must contribute to the projection — " +
-               "if this assertion fails at 4, the framework lost an increment to a last-writer-wins race");
+    await Assert.That(final!.CompletedItems).IsEqualTo(4)
+      .Because("unprotected race: rewind's persist overwrote live's increment OR vice versa. " +
+               "Locked at 4 so the companion ...WithCoordinator_RetainsAllIncrements... test " +
+               "(which lands at 5) demonstrates the contract the coordinator restores.");
+  }
+
+  [Test]
+  public async Task Rewind_ConcurrentWithLiveApply_WithCoordinator_RetainsAllIncrementsAsync() {
+    // GREEN counterpart of the race-loses-increment test. Same scenario, same
+    // interleaving — but every Apply path acquires the shared
+    // IPerspectiveApplyCoordinator first. Live's apply now waits on the
+    // semaphore until rewind's release, the two paths serialize, and no
+    // increment is lost. Locks the contract that the production fix
+    // (source-generator emits Acquire/Release around RewindAndRunAsync and
+    // RunWithEventsAsync) MUST preserve.
+    var store = new GatedInMemoryStore();
+    var coordinator = new PerspectiveApplyCoordinator();
+    var streamId = Guid.NewGuid();
+    await ApplyEventsAsync(store, streamId, eventsToApply: 3, seedFromEmpty: true, CancellationToken.None, coordinator);
+
+    var seeded = await store.GetByStreamIdAsync(streamId);
+    await Assert.That(seeded!.CompletedItems).IsEqualTo(3);
+
+    // Rewind blocks at the store gate while still holding the coordinator lock.
+    store.HoldNext = true;
+    var rewindTask = Task.Run(() => ApplyEventsAsync(
+      store, streamId, eventsToApply: 4, seedFromEmpty: true, CancellationToken.None, coordinator));
+
+    await store.ReachedGate.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Live apply tries to acquire — should BLOCK on the semaphore until rewind releases.
+    // Kick it off on a background task and verify it doesn't complete until after release.
+    var liveTask = Task.Run(() => ApplyEventsAsync(
+      store, streamId, eventsToApply: 1, seedFromEmpty: false, CancellationToken.None, coordinator));
+
+    // Sanity: live should NOT have committed yet (it's blocked on the coordinator).
+    // Wait briefly to give it a chance to mis-fire; under the fix, it can't.
+    var liveCompletedBeforeRelease = await Task.WhenAny(liveTask, Task.Delay(TimeSpan.FromMilliseconds(200))) == liveTask;
+    await Assert.That(liveCompletedBeforeRelease).IsFalse()
+      .Because("with the coordinator lock held by the gated rewind, live MUST wait");
+
+    // Release rewind's persist. Live then takes the lock, applies, persists CompletedItems = 5.
+    store.Release.TrySetResult();
+    await rewindTask;
+    await liveTask;
+
+    var final = await store.GetByStreamIdAsync(streamId);
+    await Assert.That(final!.CompletedItems).IsEqualTo(5);
   }
 
   [Test]

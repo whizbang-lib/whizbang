@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -60,6 +61,14 @@ public static class PerspectiveRegistrationExtensions {
   /// <param name="services">The service collection to add registrations to</param>
   /// <returns>A WhizbangPerspectiveBuilder for configuring storage providers</returns>
   public static WhizbangPerspectiveBuilder AddWhizbangPerspectives(this IServiceCollection services) {
+    // In-process per-(streamId, perspectiveName) Apply serializer. Closes the
+    // rewind-vs-live race window that produced a consumer's 4-lost-increment bulk-import
+    // bug. Idempotent via TryAddSingleton so multiple AddWhizbangPerspectives
+    // calls (multiple assemblies) collapse to one shared coordinator.
+    services.TryAddSingleton<
+        global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator,
+        global::Whizbang.Core.Perspectives.PerspectiveApplyCoordinator>();
+
     #region PERSPECTIVE_REGISTRATIONS
     // This region gets replaced with generated registration code
     #endregion
