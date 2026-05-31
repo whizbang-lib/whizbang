@@ -1295,21 +1295,39 @@ public partial class PerspectiveWorker(
       return;
     }
 
-    Guid? lastProcessedEventId = null;
-    if (_cursorCache.TryGet(streamId, perspectiveName, out var cachedEventId)) {
-      lastProcessedEventId = cachedEventId;
-    }
+    // JDX 2026-05-31 fix: when the cursor cache is cold (process start,
+    // post-rewind invalidate, eviction), TryGet returns false and the
+    // inversion detector below sees null cursors. Late events would then slip
+    // past detection into the runner's forward-apply path, where the runner's
+    // own idempotency filter (which DOES see the persisted metadata.EventId)
+    // silently drops them — JDX's "5 lost events, 0 rewinds" symptom.
+    //
+    // Cold-cache fallback: read persisted wh_perspective_cursors via the
+    // already-scoped IWorkCoordinator and warm the cache. Subsequent
+    // in-process readers (incl. PerspectiveCursorCache.TryGet callers
+    // elsewhere) now see the same truth source the runner filter uses.
+    // Contract is also locked at PerspectiveCursorResolver for any other
+    // component that needs the same cold-fallback semantics.
+    var eventIdInCache = _cursorCache.TryGet(streamId, perspectiveName, out var cachedEventId);
+    var commitSeqInCache = _cursorCache.TryGetCommitSequence(streamId, perspectiveName, out var cachedCommitSeq);
 
-    // Slice 26.10: prefer commit_sequence comparison for inversion detection when both
-    // the cached cursor and the incoming events have commit_sequence stamped. This is
-    // the architectural fix for the JDX run-8 commit-order race — stamped values reflect
-    // commit-completion order (stable, never re-orders), unlike UUIDv7 event_ids which
-    // are stamped at generation-time and can invert under concurrent saga writers.
-    // Fall through to event_id comparison when either side lacks commit_sequence (stamper
-    // hasn't caught up, or row pre-dates slice 26).
-    long? lastProcessedCommitSequence = null;
-    if (_cursorCache.TryGetCommitSequence(streamId, perspectiveName, out var cachedSeq)) {
-      lastProcessedCommitSequence = cachedSeq;
+    Guid? lastProcessedEventId;
+    long? lastProcessedCommitSequence;
+    if (eventIdInCache && commitSeqInCache) {
+      lastProcessedEventId = cachedEventId;
+      lastProcessedCommitSequence = cachedCommitSeq;
+    } else {
+      var persisted = await groupWorkCoordinator
+        .GetPerspectiveCursorAsync(streamId, perspectiveName, ct)
+        .ConfigureAwait(false);
+      lastProcessedEventId = persisted?.LastEventId;
+      lastProcessedCommitSequence = persisted?.LastCommitSequence;
+      if (persisted is not null) {
+        // Warm the cache so subsequent calls in this and other code paths see
+        // the same cursor without paying for another round-trip.
+        _cursorCache.Set(streamId, perspectiveName, persisted.LastEventId);
+        _cursorCache.SetCommitSequence(streamId, perspectiveName, persisted.LastCommitSequence);
+      }
     }
 
     // Slice 26.15: partition cooled vs fresh BEFORE the inversion check. The cursor-flush
