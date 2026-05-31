@@ -51,6 +51,31 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // on first drain (after schema-ready gate) and reused for envelope publish-time
   // injection. Guid.Empty until resolved.
   private Guid _localServiceId;
+  // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
+  // OutboxPublishWorker / PerspectiveWorker contract so fixtures can wait deterministically
+  // for the drain pipeline to quiesce before truncating tables.
+  private volatile bool _isIdle = true;
+
+  /// <summary>
+  /// True when the worker is currently between batches with no pending stream_ids to drain.
+  /// Mirrors <see cref="OutboxPublishWorker.IsIdle"/> so fixtures that previously polled the
+  /// legacy publisher keep working against the drain-worker path.
+  /// </summary>
+  /// <docs>operations/workers/publisher-worker</docs>
+  public bool IsIdle => _isIdle;
+
+  /// <summary>
+  /// Fires on the idle → active transition (a non-empty batch starts processing).
+  /// </summary>
+  public event WorkProcessingStartedHandler? OnWorkProcessingStarted;
+
+  /// <summary>
+  /// Fires on the active → idle transition (a batch finishes and no more stream_ids are
+  /// immediately pending in the drain channel). Use this in test fixtures to wait
+  /// deterministically for the drain pipeline to quiesce.
+  /// </summary>
+  /// <docs>operations/workers/publisher-worker</docs>
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   /// <summary>
   /// Fired once per successful transport publish (after <see cref="IMessagePublishStrategy.PublishAsync"/>
@@ -132,25 +157,54 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
     try {
       await foreach (var batch in batcher.ReadBatchesAsync(stoppingToken)) {
-        // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
-        // one window (rapid heartbeats during burst load). Each unique stream is drained once;
-        // FetchOutboxBatchAsync returns all pending rows for it in stream-FIFO order.
-        var distinctStreams = new HashSet<Guid>(batch);
-        foreach (var streamId in distinctStreams) {
-          try {
-            await _drainStreamAsync(streamId, stoppingToken);
-          } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-            throw;
-          } catch (Exception ex) {
-            LogDrainError(_logger, streamId, ex);
+        // Idle → active: each non-empty batch represents work.
+        _setIdleState(active: true);
+        try {
+          // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
+          // one window (rapid heartbeats during burst load). Each unique stream is drained once;
+          // FetchOutboxBatchAsync returns all pending rows for it in stream-FIFO order.
+          var distinctStreams = new HashSet<Guid>(batch);
+          foreach (var streamId in distinctStreams) {
+            try {
+              await _drainStreamAsync(streamId, stoppingToken);
+            } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+              throw;
+            } catch (Exception ex) {
+              LogDrainError(_logger, streamId, ex);
+            }
           }
+        } finally {
+          // Active → idle: batch done. If more stream_ids arrived during processing the
+          // next batcher iteration will rapidly flip us back to active — the fixture's
+          // race-aware idle-handler subscribe pattern handles that.
+          _setIdleState(active: false);
         }
       }
     } catch (OperationCanceledException) {
       // expected on shutdown
+    } finally {
+      _setIdleState(active: false);
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Idempotent transition helper. Fires the matching event ONLY on the actual
+  /// transition, not on repeated same-state calls — so a test fixture's handler is
+  /// invoked exactly once per state change.
+  /// </summary>
+  private void _setIdleState(bool active) {
+    var nextIdle = !active;
+    if (_isIdle == nextIdle) {
+      return;
+    }
+    _isIdle = nextIdle;
+    if (nextIdle) {
+      OnWorkProcessingIdle?.Invoke();
+    } else {
+      OnWorkProcessingStarted?.Invoke();
+    }
   }
 
   private async Task _drainStreamAsync(Guid streamId, CancellationToken ct) {

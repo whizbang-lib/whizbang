@@ -286,14 +286,23 @@ public sealed partial class PgSharedNotifyConnection(
       return;
     }
 
-    LogResolvedConnection(_logger, resolution.Source);
+    var keyForDiagnostics = _options.ConnectionStringKey ?? "(unset)";
+    LogResolvedConnection(_logger, resolution.Source, keyForDiagnostics);
 
     // Production triage: log credential markers so operators can tell at a glance
     // whether an Azure SCRAM-SHA-256 disconnect comes from a missing-password
     // resolution vs. a transient network/auth issue. Same diagnostic as
     // PgCommitOrderStamperWorker.
     var (hasUsername, hasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
-    LogConnectionDiagnostics(_logger, resolution.Source, hasUsername, hasSecret);
+    LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, hasUsername, hasSecret);
+
+    // Loud-and-early warning: PooledKeyFallback means we're going through the
+    // pgbouncer-pooled connection, which breaks LISTEN/NOTIFY in transaction-
+    // pooling mode. Surface this AT STARTUP so operators don't have to wait for
+    // the first self-test probe to fail before realizing the misconfiguration.
+    if (resolution.Source == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
+      LogPooledFallbackWarning(_logger, keyForDiagnostics);
+    }
 
     var connectionString = resolution.ConnectionString;
     var attempt = 0;
@@ -393,7 +402,7 @@ public sealed partial class PgSharedNotifyConnection(
         attempt++;
         _setAvailable(false, failureReason: ex.Message);
         var delay = _computeBackoff(attempt);
-        LogReconnect(_logger, ex.Message, delay.TotalSeconds);
+        LogReconnect(_logger, ex.Message, resolution.Source, _options.ConnectionStringKey ?? "(unset)", delay.TotalSeconds);
         try {
           await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
         } catch (OperationCanceledException) {
@@ -505,8 +514,10 @@ public sealed partial class PgSharedNotifyConnection(
     Message = "PgSharedNotifyConnection connected; LISTENing on {ChannelCount} registered channel(s)")]
   static partial void LogConnected(ILogger logger, int channelCount);
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
-    Message = "PgSharedNotifyConnection disconnected ({Reason}); reconnecting in {DelaySeconds}s")]
-  static partial void LogReconnect(ILogger logger, string reason, double delaySeconds);
+    Message = "PgSharedNotifyConnection disconnected ({Reason}); reconnecting in {DelaySeconds}s. Resolved connection from {ResolutionSource} for key '{ConnectionStringKey}'. " +
+              "If Source=PooledKeyFallback, the connection is routed through pgbouncer and LISTEN/NOTIFY round-trips will fail — configure ConnectionStrings:{ConnectionStringKey}-direct " +
+              "with a direct (non-pgbouncer) Postgres connection string.")]
+  static partial void LogReconnect(ILogger logger, string reason, NotificationConnectionStringResolver.ResolutionSource resolutionSource, string connectionStringKey, double delaySeconds);
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "PgSharedNotifyConnection stopped")]
   static partial void LogStopped(ILogger logger);
@@ -514,8 +525,14 @@ public sealed partial class PgSharedNotifyConnection(
     Message = "PgSharedNotifyConnection disabled — no connection string resolved; running polling-only (set WhizbangNotificationOptions.ConnectionStringKey to enable)")]
   static partial void LogDisabledNoConnection(ILogger logger);
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
-    Message = "PgSharedNotifyConnection resolved connection string from {Source}")]
-  static partial void LogResolvedConnection(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source);
+    Message = "PgSharedNotifyConnection resolved connection string from {Source} for key '{ConnectionStringKey}'")]
+  static partial void LogResolvedConnection(ILogger logger, NotificationConnectionStringResolver.ResolutionSource source, string connectionStringKey);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "PgSharedNotifyConnection resolved the POOLED connection (key '{ConnectionStringKey}') — LISTEN/NOTIFY will not work " +
+              "through pgbouncer in transaction-pooling mode. Add ConnectionStrings:{ConnectionStringKey}-direct pointing to a direct " +
+              "(non-pgbouncer) Postgres connection. Until then, the self-test probe will keep failing and notifications fall back to polling.")]
+  static partial void LogPooledFallbackWarning(ILogger logger, string connectionStringKey);
   [LoggerMessage(EventId = 7, Level = LogLevel.Debug,
     Message = "PgSharedNotifyConnection LISTEN issued for {ChannelName}")]
   static partial void LogChannelListened(ILogger logger, string channelName);
@@ -533,10 +550,11 @@ public sealed partial class PgSharedNotifyConnection(
   static partial void LogSubscriberCallbackFailed(ILogger logger, string channel, Exception ex);
 
   [LoggerMessage(EventId = 12, Level = LogLevel.Information,
-    Message = "PgSharedNotifyConnection connection diagnostics — Source={Source}, has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:<key>(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
+    Message = "PgSharedNotifyConnection connection diagnostics — Source={Source}, key='{ConnectionStringKey}', has user-id marker={HasUsername}, has secret marker={HasSecret}. If HasSecret=false and Azure rejects with SCRAM-SHA-256, the resolved string is missing a credential — check ConnectionStrings:{ConnectionStringKey}(-direct) config or upgrade Whizbang for the RelationalOptionsExtension fallback fix.")]
   static partial void LogConnectionDiagnostics(
     ILogger logger,
     NotificationConnectionStringResolver.ResolutionSource source,
+    string connectionStringKey,
     bool hasUsername,
     bool hasSecret);
 }

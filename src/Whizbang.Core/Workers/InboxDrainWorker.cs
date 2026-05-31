@@ -45,6 +45,28 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   private readonly InboxDrainWorkerOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<InboxDrainWorker> _logger;
+  // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
+  // sibling OutboxDrainWorker contract so fixtures can wait deterministically for the
+  // inbox drain pipeline to quiesce before truncating tables.
+  private volatile bool _isIdle = true;
+
+  /// <summary>
+  /// True when the worker is currently between batches with no pending stream_ids to drain.
+  /// </summary>
+  /// <docs>operations/workers/inbox-dispatch-worker</docs>
+  public bool IsIdle => _isIdle;
+
+  /// <summary>
+  /// Fires on the idle → active transition (a non-empty batch starts processing).
+  /// </summary>
+  public event WorkProcessingStartedHandler? OnWorkProcessingStarted;
+
+  /// <summary>
+  /// Fires on the active → idle transition (a batch finishes). Use this in test
+  /// fixtures to wait deterministically for the inbox drain pipeline to quiesce.
+  /// </summary>
+  /// <docs>operations/workers/inbox-dispatch-worker</docs>
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   /// <summary>Constructor.</summary>
   public InboxDrainWorker(
@@ -86,25 +108,48 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
     try {
       await foreach (var batch in batcher.ReadBatchesAsync(stoppingToken)) {
-        // Dedupe within the batch — multiple ClaimWorker ticks during the sliding window can
-        // emit the same stream_id repeatedly. Each unique stream is drained once;
-        // FetchInboxBatchAsync returns all pending rows for it in stream-FIFO order.
-        var distinctStreams = new HashSet<Guid>(batch);
-        foreach (var streamId in distinctStreams) {
-          try {
-            await _drainStreamAsync(streamId, stoppingToken);
-          } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-            throw;
-          } catch (Exception ex) {
-            LogDrainError(_logger, streamId, ex);
+        _setIdleState(active: true);
+        try {
+          // Dedupe within the batch — multiple ClaimWorker ticks during the sliding window can
+          // emit the same stream_id repeatedly. Each unique stream is drained once;
+          // FetchInboxBatchAsync returns all pending rows for it in stream-FIFO order.
+          var distinctStreams = new HashSet<Guid>(batch);
+          foreach (var streamId in distinctStreams) {
+            try {
+              await _drainStreamAsync(streamId, stoppingToken);
+            } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+              throw;
+            } catch (Exception ex) {
+              LogDrainError(_logger, streamId, ex);
+            }
           }
+        } finally {
+          _setIdleState(active: false);
         }
       }
     } catch (OperationCanceledException) {
       // expected on shutdown
+    } finally {
+      _setIdleState(active: false);
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Idempotent transition helper. Fires the matching event only on actual state changes.
+  /// </summary>
+  private void _setIdleState(bool active) {
+    var nextIdle = !active;
+    if (_isIdle == nextIdle) {
+      return;
+    }
+    _isIdle = nextIdle;
+    if (nextIdle) {
+      OnWorkProcessingIdle?.Invoke();
+    } else {
+      OnWorkProcessingStarted?.Invoke();
+    }
   }
 
   private async Task _drainStreamAsync(Guid streamId, CancellationToken ct) {
