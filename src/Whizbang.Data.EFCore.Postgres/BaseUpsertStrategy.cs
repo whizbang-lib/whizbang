@@ -465,7 +465,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       EventId = metadata.EventId,
       Timestamp = metadata.Timestamp,
       CorrelationId = metadata.CorrelationId,
-      CausationId = metadata.CausationId
+      CausationId = metadata.CausationId,
+      CommitSequence = metadata.CommitSequence
     };
   }
 
@@ -495,6 +496,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     target.Timestamp = source.Timestamp;
     target.CorrelationId = source.CorrelationId;
     target.CausationId = source.CausationId;
+    target.CommitSequence = source.CommitSequence;
   }
 
   /// <summary>
