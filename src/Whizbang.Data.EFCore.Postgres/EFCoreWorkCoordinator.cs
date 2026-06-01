@@ -1597,7 +1597,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new PendingPerspectiveEvent(
         EventWorkId: reader.GetGuid(0),
-        EventId: reader.GetGuid(1)));
+        EventId: reader.GetGuid(1),
+        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetInt64(2)));
     }
     return results;
   }
@@ -1638,7 +1639,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new PendingPerspectiveEvent(
         EventWorkId: reader.GetGuid(0),
-        EventId: reader.GetGuid(1)));
+        EventId: reader.GetGuid(1),
+        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetInt64(2)));
     }
     return results;
   }

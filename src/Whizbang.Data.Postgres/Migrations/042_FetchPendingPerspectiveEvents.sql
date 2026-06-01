@@ -19,14 +19,21 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_pending_perspective_events(
   p_instance_id UUID
 ) RETURNS TABLE(
   out_event_work_id UUID,
-  out_event_id UUID
+  out_event_id UUID,
+  -- production G6: JOIN wh_event_store and project commit_sequence so the drainer's
+  -- inversion detector and the cooldown gate can compare against the cached cursor's
+  -- commit_sequence directly. NULL when the stamper hasn't caught up to this row yet
+  -- (caller falls back to event_id compare in that case).
+  out_commit_sequence BIGINT
 ) AS $$
 BEGIN
   RETURN QUERY
   SELECT
     pe.event_work_id,
-    pe.event_id
+    pe.event_id,
+    es.commit_sequence
   FROM wh_perspective_events pe
+  LEFT JOIN wh_event_store es ON es.event_id = pe.event_id
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = p_perspective_name
     AND pe.instance_id = p_instance_id
@@ -80,7 +87,11 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_and_fetch_pending_perspective_events
   p_now TIMESTAMPTZ
 ) RETURNS TABLE(
   out_event_work_id UUID,
-  out_event_id UUID
+  out_event_id UUID,
+  -- production G6: same projection as fetch_pending_perspective_events — JOIN to
+  -- wh_event_store and surface commit_sequence so callers don't need a separate
+  -- GetCommitSequenceAsync round-trip per event.
+  out_commit_sequence BIGINT
 ) AS $$
 BEGIN
   -- Step 1: atomic claim. Lease every eligible row (orphaned, expired, or already
@@ -122,8 +133,10 @@ BEGIN
   RETURN QUERY
   SELECT
     pe.event_work_id,
-    pe.event_id
+    pe.event_id,
+    es.commit_sequence
   FROM wh_perspective_events pe
+  LEFT JOIN wh_event_store es ON es.event_id = pe.event_id
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = p_perspective_name
     AND pe.instance_id = p_instance_id

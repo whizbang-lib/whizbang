@@ -287,6 +287,68 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       .Because("expired-then-re-claimed bumps attempts");
   }
 
+  /// <summary>
+  /// production regression (G6): the prefetch tuple must carry <c>wh_event_store.commit_sequence</c>
+  /// so the drainer's inversion detector can compare against the cached cursor's commit_sequence
+  /// directly, with no separate round-trip. Without this column, the detector either falls back
+  /// to event_id (the same UUIDv7 inversion that production hit) or pays N extra GetCommitSequence
+  /// queries per drain cycle.
+  /// </summary>
+  [Test]
+  public async Task FetchPendingPerspectiveEvents_ReturnsCommitSequenceFromEventStoreAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    await _registerInstanceAsync(connection, instanceId);
+
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    const long stampedCommitSequence = 234500L;
+    await _insertEventStoreRowAsync(connection, eventId, streamId, stampedCommitSequence);
+    await _insertPerspectiveEventAsync(connection, workId, streamId, perspectiveName, eventId, instanceId);
+
+    var fetched = await _fetchAsync(connection, streamId, perspectiveName, instanceId);
+
+    await Assert.That(fetched.Count).IsEqualTo(1);
+    await Assert.That(fetched[0].EventId).IsEqualTo(eventId);
+    await Assert.That(fetched[0].CommitSequence)
+      .IsEqualTo(stampedCommitSequence)
+      .Because("the prefetch must JOIN wh_event_store and project commit_sequence so the drainer's inversion detector has it without an extra round-trip");
+  }
+
+  /// <summary>Companion to the test above for the atomic claim variant.</summary>
+  [Test]
+  public async Task ClaimAndFetchPendingPerspectiveEvents_ReturnsCommitSequenceFromEventStoreAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    await _registerInstanceAsync(connection, instanceId);
+
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    const long stampedCommitSequence = 571800L;
+    await _insertEventStoreRowAsync(connection, eventId, streamId, stampedCommitSequence);
+    // Unowned so the atomic variant claims it before returning.
+    await _insertUnownedPerspectiveEventAsync(connection, workId, streamId, perspectiveName, eventId);
+
+    var fetched = await _claimAndFetchAsync(connection, streamId, perspectiveName, instanceId);
+
+    await Assert.That(fetched.Count).IsEqualTo(1);
+    await Assert.That(fetched[0].CommitSequence).IsEqualTo(stampedCommitSequence);
+  }
+
   [Test]
   public async Task FetchPendingPerspectiveEvents_EmptyResult_WhenNoPendingAsync() {
     await using var dbContext = CreateDbContext();
@@ -314,12 +376,33 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
     cmd.Parameters.AddWithValue("p_instance_id", instanceId);
 
+    return await _readRowsAsync(cmd);
+  }
+
+  private static async Task<List<PendingRow>> _claimAndFetchAsync(
+      NpgsqlConnection connection, Guid streamId, string perspectiveName, Guid instanceId) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT * FROM claim_and_fetch_pending_perspective_events(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, @p_now)";
+    cmd.Parameters.AddWithValue("p_stream_id", streamId);
+    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue("p_instance_id", instanceId);
+    cmd.Parameters.AddWithValue("p_lease_expiry", DateTime.UtcNow.AddMinutes(5));
+    cmd.Parameters.AddWithValue("p_now", DateTime.UtcNow);
+
+    return await _readRowsAsync(cmd);
+  }
+
+  private static async Task<List<PendingRow>> _readRowsAsync(NpgsqlCommand cmd) {
     var rows = new List<PendingRow>();
     await using var reader = await cmd.ExecuteReaderAsync();
+    var hasCommitSeqColumn = reader.FieldCount >= 3;
     while (await reader.ReadAsync()) {
       rows.Add(new PendingRow {
         EventWorkId = reader.GetGuid(0),
-        EventId = reader.GetGuid(1)
+        EventId = reader.GetGuid(1),
+        CommitSequence = hasCommitSeqColumn && !await reader.IsDBNullAsync(2)
+          ? reader.GetInt64(2)
+          : null
       });
     }
     return rows;
@@ -328,6 +411,41 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   private sealed class PendingRow {
     public Guid EventWorkId { get; init; }
     public Guid EventId { get; init; }
+    public long? CommitSequence { get; init; }
+  }
+
+  private static async Task _insertEventStoreRowAsync(
+      NpgsqlConnection connection, Guid eventId, Guid streamId, long commitSequence) {
+    await using var ins = connection.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
+         event_data, metadata, created_at, commit_sequence)
+      VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
+              '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
+    ins.Parameters.AddWithValue("id", eventId);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("cs", commitSequence);
+    await ins.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _insertUnownedPerspectiveEventAsync(
+      NpgsqlConnection connection,
+      Guid eventWorkId,
+      Guid streamId,
+      string perspectiveName,
+      Guid eventId) {
+    await using var ins = connection.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry,
+         partition_number, status, attempts, created_at)
+      VALUES (@work, @stream, @persp, @event, NULL, NULL, 0, 0, 0, NOW())";
+    ins.Parameters.AddWithValue("work", eventWorkId);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("persp", perspectiveName);
+    ins.Parameters.AddWithValue("event", eventId);
+    await ins.ExecuteNonQueryAsync();
   }
 
   private static async Task _insertPerspectiveEventAsync(
