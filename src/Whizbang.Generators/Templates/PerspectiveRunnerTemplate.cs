@@ -162,12 +162,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // get re-claimed and would re-apply to a populated model — duplicating list-style
     // projection rows.
     //
-    // production fix (G5): UUIDv7 event_ids can invert under concurrent emission — two events
-    // committed close together may have event_ids that don't reflect actual commit order.
-    // commit_sequence is the monotonic-per-database stamp that DOES reflect actual order.
-    // When both sides carry it (metadata.CommitSequence + envelope.LocalCommitSequence),
-    // compare commit_sequence; otherwise fall back to the canonical "D" event_id lex compare.
-    // Fallback preserves the existing single-source/no-stamper path.
+    // Idempotency filter — 3-way branch on what ordering info is available.
+    //
+    // Background: UUIDv7 event_ids can invert under concurrent emission (two events
+    // committed close together may have event_ids whose lex order doesn't reflect commit
+    // order). commit_sequence is the monotonic-per-database post-commit stamp that DOES
+    // reflect commit order. The filter compares whichever signal is reliable.
+    //
+    // 1) Both metadata.CommitSequence AND envelope.LocalCommitSequence present →
+    //    compare commit_sequence (authoritative).
+    // 2) Metadata has commit_sequence but envelope's is null (stamper hadn't caught up
+    //    when the drainer fetched this event) → DO NOT FILTER. event_id lex compare is
+    //    unreliable in commit_sequence mode (the UUIDv7 inversion this filter exists to
+    //    avoid), and dropping a never-applied event is silently lossy. Let Apply's
+    //    natural idempotency guards handle real duplicates.
+    // 3) Neither side has commit_sequence (single-source / no stamper world) → event_id
+    //    lex compare is sufficient because monotonic ordering holds without concurrent
+    //    emission.
     var existingMetadata = modelLoadedFromDb
         ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
         : null;
@@ -179,6 +190,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         bool isAlreadyApplied;
         if (lastAppliedCommitSequence.HasValue && e.LocalCommitSequence.HasValue) {
           isAlreadyApplied = e.LocalCommitSequence.Value <= lastAppliedCommitSequence.Value;
+        } else if (lastAppliedCommitSequence.HasValue) {
+          // Stamper-lag mixed mode: defer to Apply.
+          isAlreadyApplied = false;
         } else {
           isAlreadyApplied = string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) <= 0;
         }
