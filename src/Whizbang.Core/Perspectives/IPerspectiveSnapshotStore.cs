@@ -46,6 +46,20 @@ public interface IPerspectiveSnapshotStore {
   Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default);
 
   /// <summary>
+  /// Slot-3 G7 — commit-sequence-aware variant of <see cref="GetLatestSnapshotAsync"/>.
+  /// Returns the latest snapshot along with its stamped <c>snapshot_commit_sequence</c>.
+  /// Mirrors the slice 26.11 pattern (kept original + added commit-sequence variant) for the
+  /// anchored lookup. Default implementation falls through to the legacy method, surfacing
+  /// null for <c>SnapshotCommitSequence</c> on stores that don't track it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  async Task<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?> GetLatestSnapshotWithCommitSequenceAsync(
+      Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    var legacy = await GetLatestSnapshotAsync(streamId, perspectiveName, ct).ConfigureAwait(false);
+    return legacy.HasValue ? (legacy.Value.SnapshotEventId, (long?)null, legacy.Value.SnapshotData) : null;
+  }
+
+  /// <summary>
   /// Gets the latest snapshot that was taken BEFORE the specified event ID.
   /// Used during rewind to find a safe restore point before the late event.
   /// Returns null if no qualifying snapshot exists.
