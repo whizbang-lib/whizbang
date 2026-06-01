@@ -54,7 +54,8 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
       sp.GetRequiredService<IServiceScopeFactory>(),
       null, // tracingOptions
       null, // snapshotStore
-      null  // snapshotOptions
+      null, // snapshotOptions
+      null  // applyCoordinator
     ]);
   }
 
