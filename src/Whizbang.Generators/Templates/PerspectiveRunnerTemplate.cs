@@ -160,16 +160,29 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // The cursor advances in a separate transaction (PerspectiveCompletionFlushWorker) than
     // the row upsert (this method). When the worker dies between commits, the same events
     // get re-claimed and would re-apply to a populated model — duplicating list-style
-    // projection rows. UUIDv7 ids are time-ordered AND lex-ordered, so a string compare on
-    // the canonical "D" form is sufficient to detect "already applied".
+    // projection rows.
+    //
+    // Slot-3 fix (G5): UUIDv7 event_ids can invert under concurrent emission — two events
+    // committed close together may have event_ids that don't reflect actual commit order.
+    // commit_sequence is the monotonic-per-database stamp that DOES reflect actual order.
+    // When both sides carry it (metadata.CommitSequence + envelope.LocalCommitSequence),
+    // compare commit_sequence; otherwise fall back to the canonical "D" event_id lex compare.
+    // Fallback preserves the existing single-source/no-stamper path.
     var existingMetadata = modelLoadedFromDb
         ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
         : null;
     var lastAppliedEventId = existingMetadata?.EventId;
+    var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
       var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
       foreach (var e in events) {
-        if (string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) > 0) {
+        bool isAlreadyApplied;
+        if (lastAppliedCommitSequence.HasValue && e.LocalCommitSequence.HasValue) {
+          isAlreadyApplied = e.LocalCommitSequence.Value <= lastAppliedCommitSequence.Value;
+        } else {
+          isAlreadyApplied = string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) <= 0;
+        }
+        if (!isAlreadyApplied) {
           filtered.Add(e);
         }
       }
