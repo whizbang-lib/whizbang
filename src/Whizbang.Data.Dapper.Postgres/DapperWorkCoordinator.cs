@@ -538,6 +538,11 @@ public partial class DapperWorkCoordinator(
   private sealed class PendingPerspectiveEventDto {
     public Guid out_event_work_id { get; set; }
     public Guid out_event_id { get; set; }
+    // Dapper hydrates this from the LEFT-JOINed wh_event_store.commit_sequence column at
+    // runtime via name-based mapping; Sonar's S3459 can't see that and flags it as
+    // "unassigned auto-property". Suppressing the false positive here.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+      Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
     public long? out_commit_sequence { get; set; }
   }
 

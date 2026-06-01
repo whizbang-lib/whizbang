@@ -134,6 +134,67 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     await Assert.That(rows.Count).IsEqualTo(0);
   }
 
+  /// <summary>
+  /// production G6: Dapper-side coverage for the <c>out_commit_sequence</c> projection. Without
+  /// this test the Dapper reader's commit_sequence path was uncovered by CI (the EFCore
+  /// tests don't exercise the Dapper coordinator).
+  /// </summary>
+  [Test]
+  public async Task FetchPendingPerspectiveEventsAsync_StampedRow_SurfacesCommitSequenceAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    const string perspectiveName = "MyApp.Test+Projection";
+    var workId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    const long stampedCommitSequence = 234500L;
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+        VALUES (@id, 'test-svc', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)
+        ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()";
+      ins.Parameters.AddWithValue("id", instanceId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
+           event_data, metadata, created_at, commit_sequence)
+        VALUES (@id, @stream, @stream, 'TestAgg', 1, 'TestEvt',
+                '{}'::jsonb, '{}'::jsonb, NOW(), @cs)";
+      ins.Parameters.AddWithValue("id", eventId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      ins.Parameters.AddWithValue("cs", stampedCommitSequence);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry,
+           partition_number, status, attempts, created_at, claimed_at, processed_at)
+        VALUES (@work, @stream, @persp, @event, @inst, NOW() + INTERVAL '5 minutes',
+                0, 0, 0, NOW(), NOW(), NULL)";
+      ins.Parameters.AddWithValue("work", workId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      ins.Parameters.AddWithValue("persp", perspectiveName);
+      ins.Parameters.AddWithValue("event", eventId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var rows = await c.FetchPendingPerspectiveEventsAsync(streamId, perspectiveName, instanceId);
+
+    await Assert.That(rows.Count).IsEqualTo(1);
+    await Assert.That(rows[0].CommitSequence).IsEqualTo(stampedCommitSequence);
+  }
+
   [Test]
   public async Task FetchEventsByIdsAsync_NoIds_ReturnsEmptyAsync() {
     var c = _build();

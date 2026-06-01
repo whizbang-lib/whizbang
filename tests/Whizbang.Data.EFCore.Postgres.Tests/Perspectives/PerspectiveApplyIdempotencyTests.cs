@@ -363,20 +363,19 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       };
       var lateResult = await runner.RunWithEventsAsync(
         streamId, "action_test", firstId.Value,
-        new[] { lateEnvelopePoly }, CancellationToken.None);
+        [lateEnvelopePoly], CancellationToken.None);
       await Assert.That(lateResult.EventsProcessed)
         .IsEqualTo(1)
         .Because("late event with larger commit_sequence must be applied even though its event_id is lex-smaller");
     }
 
-    await using (var verifyData = CreateDbContext()) {
-      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
-          .AsNoTracking()
-          .FirstAsync(r => r.Id == streamId);
-      await Assert.That(row.Data.Value)
-        .IsEqualTo(999)
-        .Because("ActionTestUpdatedEvent must have been Apply-ed to mutate Value to 999");
-    }
+    await using var verifyData = CreateDbContext();
+    var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value)
+      .IsEqualTo(999)
+      .Because("ActionTestUpdatedEvent must have been Apply-ed to mutate Value to 999");
   }
 
   /// <summary>

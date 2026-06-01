@@ -322,6 +322,37 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
       .Because("the prefetch must JOIN wh_event_store and project commit_sequence so the drainer's inversion detector has it without an extra round-trip");
   }
 
+  /// <summary>
+  /// Null-branch coverage for G6: when the stamper hasn't caught up to the row (or there's
+  /// no matching wh_event_store entry for the perspective_event yet), the LEFT JOIN yields
+  /// NULL and the C# reader must surface that as <c>CommitSequence = null</c>. Callers fall
+  /// back to event_id compare in that case.
+  /// </summary>
+  [Test]
+  public async Task FetchPendingPerspectiveEvents_NoEventStoreRow_ReturnsNullCommitSequenceAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(connection, instanceId);
+
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    // No wh_event_store row inserted — LEFT JOIN yields NULL.
+    await _insertPerspectiveEventAsync(connection, workId, streamId, "MyApp.Test+Projection", eventId, instanceId);
+
+    var fetched = await _fetchAsync(connection, streamId, "MyApp.Test+Projection", instanceId);
+
+    await Assert.That(fetched.Count).IsEqualTo(1);
+    await Assert.That(fetched[0].CommitSequence)
+      .IsNull()
+      .Because("missing event_store row → LEFT JOIN NULL → reader's IsDBNullAsync branch must surface null");
+  }
+
   /// <summary>Companion to the test above for the atomic claim variant.</summary>
   [Test]
   public async Task ClaimAndFetchPendingPerspectiveEvents_ReturnsCommitSequenceFromEventStoreAsync() {
