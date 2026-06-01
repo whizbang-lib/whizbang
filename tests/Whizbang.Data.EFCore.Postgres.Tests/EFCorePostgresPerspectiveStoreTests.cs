@@ -628,6 +628,67 @@ public class EFCorePostgresPerspectiveStoreTests {
     await Assert.That(metadata!.EventId).IsEqualTo(secondEventId.ToString("D"));
     await Assert.That(metadata.EventType).IsEqualTo("ev.Second");
   }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_PersistsCommitSequenceForOrderedIdempotencyAsync() {
+    // production regression: late-delivered events with smaller event_id but larger commit_sequence
+    // were being dropped by the runner's filter because metadata.CommitSequence didn't exist.
+    // Locks the invariant: commit_sequence roundtrips through the perspective row's JSON metadata
+    // column so the runner can compare incoming commit_sequence vs. the persisted floor.
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid eventId = _idProvider.NewGuid();
+    const long expectedCommitSequence = 234198L;
+
+    var metadata = new PerspectiveMetadata {
+      EventId = eventId.ToString("D"),
+      EventType = "TestNamespace.OrderCreatedEvent",
+      Timestamp = DateTime.UtcNow,
+      CommitSequence = expectedCommitSequence,
+    };
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "WithCommitSeq", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        metadata);
+
+    var roundtripped = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(roundtripped).IsNotNull();
+    await Assert.That(roundtripped!.CommitSequence).IsEqualTo(expectedCommitSequence);
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithMetadata_NullCommitSequence_RoundtripsAsNullAsync() {
+    // First-ever apply for a stream may have no commit_sequence yet (cursor not stamped).
+    // Locks the invariant: null commit_sequence persists and reads back as null (NOT 0L).
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    Guid testId = _idProvider.NewGuid();
+    Guid eventId = _idProvider.NewGuid();
+
+    var metadata = new PerspectiveMetadata {
+      EventId = eventId.ToString("D"),
+      EventType = "TestNamespace.OrderCreatedEvent",
+      Timestamp = DateTime.UtcNow,
+      CommitSequence = null,
+    };
+
+    await store.UpsertAsync(
+        testId,
+        new StoreTestModel { Name = "NullCS", Value = 1 },
+        new PerspectiveScope(),
+        forceUpdateScope: false,
+        metadata);
+
+    var roundtripped = await store.GetMetadataByStreamIdAsync(testId);
+    await Assert.That(roundtripped).IsNotNull();
+    await Assert.That(roundtripped!.CommitSequence).IsNull();
+  }
 }
 
 /// <summary>

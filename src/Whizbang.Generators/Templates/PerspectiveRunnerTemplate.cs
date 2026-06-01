@@ -160,16 +160,29 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // The cursor advances in a separate transaction (PerspectiveCompletionFlushWorker) than
     // the row upsert (this method). When the worker dies between commits, the same events
     // get re-claimed and would re-apply to a populated model — duplicating list-style
-    // projection rows. UUIDv7 ids are time-ordered AND lex-ordered, so a string compare on
-    // the canonical "D" form is sufficient to detect "already applied".
+    // projection rows.
+    //
+    // production fix (G5): UUIDv7 event_ids can invert under concurrent emission — two events
+    // committed close together may have event_ids that don't reflect actual commit order.
+    // commit_sequence is the monotonic-per-database stamp that DOES reflect actual order.
+    // When both sides carry it (metadata.CommitSequence + envelope.LocalCommitSequence),
+    // compare commit_sequence; otherwise fall back to the canonical "D" event_id lex compare.
+    // Fallback preserves the existing single-source/no-stamper path.
     var existingMetadata = modelLoadedFromDb
         ? await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken)
         : null;
     var lastAppliedEventId = existingMetadata?.EventId;
+    var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
       var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
       foreach (var e in events) {
-        if (string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) > 0) {
+        bool isAlreadyApplied;
+        if (lastAppliedCommitSequence.HasValue && e.LocalCommitSequence.HasValue) {
+          isAlreadyApplied = e.LocalCommitSequence.Value <= lastAppliedCommitSequence.Value;
+        } else {
+          isAlreadyApplied = string.Compare(e.MessageId.Value.ToString("D"), lastAppliedEventId, StringComparison.Ordinal) <= 0;
+        }
+        if (!isAlreadyApplied) {
           filtered.Add(e);
         }
       }
@@ -447,11 +460,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId
           );
         } else if (updatedModel != null && hasWrittenUpdate) {
+          var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
+              lastSuccessfulEventId!.Value, cancellationToken);
           await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
               lastSuccessfulEventType ?? string.Empty,
+              checkpointCommitSequence,
               cancellationToken,
               lastScope?.FilterByFields(_inheritScopeOnCreate),
               scopeChanged
@@ -588,11 +604,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Only save if we have a model AND Apply has produced one (skip if purge was pending
           // or the only events were ApplyResult.None() on a new stream)
           if (updatedModel != null && hasWrittenUpdate) {
+            var partialCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
+                lastSuccessfulEventId.Value, cancellationToken);
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
                 lastSuccessfulEventId.Value,
                 lastSuccessfulEventType ?? string.Empty,
+                partialCheckpointCommitSequence,
                 cancellationToken,
                 lastScope?.FilterByFields(_inheritScopeOnCreate),
                 scopeChanged
@@ -682,17 +701,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
       string checkpointEventType,
+      long? checkpointCommitSequence,
       CancellationToken cancellationToken,
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false) {
 
-    // Build metadata that captures the last applied event id. The runner reads this back
-    // on the next run via GetMetadataByStreamIdAsync to filter out already-applied events,
-    // making projections idempotent across worker crashes between row upsert and cursor advance.
+    // Build metadata that captures the last applied event's identity AND commit_sequence.
+    // The runner reads metadata back on the next run via GetMetadataByStreamIdAsync to filter
+    // out already-applied events (idempotency across worker crashes between row upsert and
+    // cursor advance). CommitSequence is the load-bearing field for that filter: UUIDv7
+    // event_ids can invert under concurrent emission, so event_id-only comparison silently
+    // drops late-delivered events with smaller event_id but larger commit_sequence (production
+    // bug). When commit_sequence is available on both sides, the filter prefers it.
     var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
       EventId = checkpointEventId.ToString("D"),
       EventType = checkpointEventType,
-      Timestamp = DateTime.UtcNow
+      Timestamp = DateTime.UtcNow,
+      CommitSequence = checkpointCommitSequence
     };
 
     #region UPSERT_CALL
@@ -970,8 +995,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (pendingPurge) {
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
       } else if (updatedModel != null) {
+        var replayCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
+            lastSuccessfulEventId!.Value, cancellationToken);
         await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            streamId, updatedModel, lastSuccessfulEventId!.Value, lastSuccessfulEventType ?? string.Empty,
+            replayCheckpointCommitSequence, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
       }
 
       await _perspectiveStore.FlushAsync(cancellationToken);
@@ -980,11 +1008,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           "Replay completed: {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
           eventsProcessed, perspectiveName, streamId, lastSuccessfulEventId);
 
-      // Create snapshot after replay if configured
+      // Create snapshot after replay if configured.
+      // Slice 26.11 / production G3: resolve commit_sequence so the snapshot row carries it.
+      // Without this, GetLatestSnapshotBeforeCommitSequenceAsync (which filters
+      // snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
+      // rewinds — defeating the deterministic-replay invariant the column was added for.
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
           && !pendingPurge && updatedModel is not null && lastSuccessfulEventId.HasValue) {
+        var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
+            lastSuccessfulEventId.Value, cancellationToken);
         await _snapshotStore.CreateSnapshotAsync(
             streamId, perspectiveName, lastSuccessfulEventId.Value,
+            afterReplayCommitSequence,
             ToSnapshotJson(updatedModel), cancellationToken);
         await _snapshotStore.PruneOldSnapshotsAsync(
             streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
@@ -1020,8 +1055,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
 
     var snapshotData = ToSnapshotJson(model);
+    // Slice 26.11 / production G4: bootstrap must stamp commit_sequence so the bootstrap snapshot
+    // participates in commit-sequence-anchored rewind lookups. Without this, every late event
+    // would force a full replay because GetLatestSnapshotBeforeCommitSequenceAsync skips the
+    // NULL-commit_sequence rows the legacy overload produced.
+    var bootstrapCommitSequence = await _eventStore.GetCommitSequenceAsync(
+        lastProcessedEventId, cancellationToken);
     await _snapshotStore.CreateSnapshotAsync(
-        streamId, perspectiveName, lastProcessedEventId, snapshotData, cancellationToken);
+        streamId, perspectiveName, lastProcessedEventId, bootstrapCommitSequence, snapshotData, cancellationToken);
 
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} at event {EventId}",

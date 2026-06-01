@@ -120,6 +120,20 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public long? CausedByCommitSequence { get; init; }
 
   /// <summary>
+  /// The <c>wh_event_store.commit_sequence</c> value stamped by THIS database's stamper when
+  /// the event was written locally. Distinct from <see cref="SourceCommitSequence"/>, which
+  /// belongs to the originating service; <c>LocalCommitSequence</c> is the consuming database's
+  /// own monotonic stamp and is what the perspective runner's idempotency filter compares
+  /// against <see cref="Lenses.PerspectiveMetadata.CommitSequence"/>. Populated by event-store
+  /// reads (<c>ReadPolymorphicAsync</c>, <c>DeserializeStreamEvents</c>) when the row's
+  /// <c>commit_sequence</c> column is non-null; null for in-memory stores or rows the
+  /// stamper hasn't caught up to. NOT serialized — derived from the local row at read time.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  [System.Text.Json.Serialization.JsonIgnore]
+  public long? LocalCommitSequence { get; set; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {

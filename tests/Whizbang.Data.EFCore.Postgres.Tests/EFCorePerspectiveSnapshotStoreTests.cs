@@ -25,6 +25,31 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
 
   #region CreateSnapshotAsync Tests
 
+  /// <summary>
+  /// production G7: GetLatestSnapshotWithCommitSequenceAsync surfaces snapshot_commit_sequence
+  /// (the production G3/G4 stamp) so callers don't have to do a separate lookup. Symmetric with
+  /// the slice 26.11 BeforeCommitSequence anchored variant.
+  /// </summary>
+  [Test]
+  public async Task GetLatestSnapshotWithCommitSequenceAsync_ReturnsSnapshotCommitSequenceAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "OrderPerspective";
+    var snapshotEventId = Guid.CreateVersion7();
+    const long expectedCommitSequence = 571800L;
+    using var snapshotData = JsonDocument.Parse("""{"k":"v"}""");
+
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, expectedCommitSequence, snapshotData);
+
+    var result = await _store.GetLatestSnapshotWithCommitSequenceAsync(streamId, perspectiveName);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
+    await Assert.That(result.Value.SnapshotCommitSequence)
+      .IsEqualTo(expectedCommitSequence)
+      .Because("the commit-sequence-aware no-anchor variant must surface what the production G3/G4 stamps wrote");
+    result.Value.SnapshotData.Dispose();
+  }
+
   [Test]
   public async Task CreateSnapshotAsync_NewSnapshot_InsertsSuccessfullyAsync() {
     var streamId = Guid.CreateVersion7();

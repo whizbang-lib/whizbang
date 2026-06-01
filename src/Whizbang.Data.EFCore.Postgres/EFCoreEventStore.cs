@@ -292,12 +292,17 @@ public sealed class EFCoreEventStore<TDbContext>(
 
       var hops = _restoreScopeInHops(record);
 
-      // Reconstruct the message envelope with the polymorphic payload cast to IEvent
+      // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
+      // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
+      // perspective runner's idempotency filter can compare against
+      // metadata.CommitSequence — required to keep UUIDv7 generation-time inversions
+      // from silently dropping late events (production G5).
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
         Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        LocalCommitSequence = record.CommitSequence
       };
 
       yield return envelope;
@@ -583,7 +588,11 @@ public sealed class EFCoreEventStore<TDbContext>(
         MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
         Payload = (IEvent)eventData,
         Hops = hops,
-        DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+        DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+        // Drain-mode parity with ReadPolymorphicAsync — carry the local commit_sequence stamp
+        // through to the perspective runner so the idempotency filter can compare commit_sequence
+        // when both sides have it (production G5).
+        LocalCommitSequence = raw.CommitSequence
       };
     } catch (Exception) {
       // Skip events that fail deserialization (type not in JSON context,
