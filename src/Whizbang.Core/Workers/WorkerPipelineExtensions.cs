@@ -102,6 +102,11 @@ public static class WorkerPipelineExtensions {
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
     // to both the hosted-service collection and the channel-surface registrations.
+    //
+    // WhizbangVersionLogger registers FIRST so the assembly version lands in the log
+    // before any worker-startup chatter — gives operators a deterministic anchor for
+    // "which build is running in this pod" via `kubectl logs | grep "Whizbang loaded"`.
+    services.AddHostedService<WhizbangVersionLogger>();
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<ClaimWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
