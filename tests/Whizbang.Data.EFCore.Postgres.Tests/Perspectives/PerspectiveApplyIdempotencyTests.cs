@@ -291,6 +291,93 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// production regression (G5): events with smaller event_id but larger commit_sequence than
+  /// metadata.CommitSequence MUST be applied, not silently dropped. Concretely reproduces the
+  /// a consumer bulk-import miss: pre-populate metadata with (EventId = X-large, CommitSequence = Y-small);
+  /// then run with an event whose MessageId sorts lex-smaller than X but whose LocalCommitSequence
+  /// is &gt; Y. Without G5, the runner's event_id-only string.Compare filter drops it.
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_LateEventSmallerEventIdLargerCommitSequence_IsAppliedAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+
+    // First apply: small event_id, small commit_sequence — establishes a metadata floor.
+    // (lex-large event_id chosen deliberately to mimic the production inversion shape.)
+    var firstId = MessageId.From(Guid.Parse("019e80de-59c0-7000-8000-000000000000"));
+    var firstEnvelope = new MessageEnvelope<ActionTestCreatedEvent> {
+      MessageId = firstId,
+      Payload = new ActionTestCreatedEvent { StreamId = streamId, Name = "First", Value = 1 },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await innerStore.AppendAsync(streamId, firstEnvelope);
+
+    var stamping = new Dictionary<Guid, long?> {
+      [firstId.Value] = 234000L
+    };
+    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stamping);
+
+    await using (var ctx = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
+      var runner = await CreateRunnerAsync(stampingStore, ps);
+      var firstResult = await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+      await Assert.That(firstResult.EventsProcessed).IsEqualTo(1);
+    }
+
+    // Confirm floor: metadata advanced to EventId=large, CommitSequence=234000.
+    await using (var verify1 = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(verify1, "action_test");
+      var meta = await ps.GetMetadataByStreamIdAsync(streamId);
+      await Assert.That(meta!.EventId).IsEqualTo(firstId.Value.ToString("D"));
+      await Assert.That(meta.CommitSequence).IsEqualTo(234000L);
+    }
+
+    // Late-arriving event: lex-smaller event_id (would be filtered out by event_id compare),
+    // commit_sequence STRICTLY larger than the persisted floor (should be applied).
+    var lateId = MessageId.From(Guid.Parse("019e80dd-80c0-7000-8000-000000000000"));
+    var lateEnvelope = new MessageEnvelope<ActionTestUpdatedEvent> {
+      MessageId = lateId,
+      Payload = new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 },
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await innerStore.AppendAsync(streamId, lateEnvelope);
+    stamping[lateId.Value] = 234500L;
+
+    await using (var ctx2 = CreateDbContext()) {
+      var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx2, "action_test");
+      var runner = await CreateRunnerAsync(stampingStore, ps);
+      // Use RunWithEventsAsync — the worker's drain-mode path. The drainer pre-fetches
+      // events (worker already saw them in the DB) and hands them straight to the runner,
+      // bypassing ReadPolymorphicAsync's event_id-based filter. This is the exact code
+      // path that produced the production miss in a consumer bulk-import.
+      var lateEnvelopePoly = new MessageEnvelope<IEvent> {
+        MessageId = lateId,
+        Payload = lateEnvelope.Payload,
+        DispatchContext = lateEnvelope.DispatchContext,
+        Hops = lateEnvelope.Hops,
+        LocalCommitSequence = 234500L
+      };
+      var lateResult = await runner.RunWithEventsAsync(
+        streamId, "action_test", firstId.Value,
+        new[] { lateEnvelopePoly }, CancellationToken.None);
+      await Assert.That(lateResult.EventsProcessed)
+        .IsEqualTo(1)
+        .Because("late event with larger commit_sequence must be applied even though its event_id is lex-smaller");
+    }
+
+    await using (var verifyData = CreateDbContext()) {
+      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+          .AsNoTracking()
+          .FirstAsync(r => r.Id == streamId);
+      await Assert.That(row.Data.Value)
+        .IsEqualTo(999)
+        .Because("ActionTestUpdatedEvent must have been Apply-ed to mutate Value to 999");
+    }
+  }
+
+  /// <summary>
   /// <see cref="IPerspectiveStore{TModel}.GetMetadataByStreamIdAsync"/> on a non-existent stream
   /// returns null — required so the runner's filter path knows it has never run for this stream
   /// and applies every event.
@@ -323,8 +410,16 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
     public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
       inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
-    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
-      inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct);
+    public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+        Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
+      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct)) {
+        if (stamps.TryGetValue(envelope.MessageId.Value, out var seq)) {
+          envelope.LocalCommitSequence = seq;
+        }
+        yield return envelope;
+      }
+    }
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
       inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
     public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
