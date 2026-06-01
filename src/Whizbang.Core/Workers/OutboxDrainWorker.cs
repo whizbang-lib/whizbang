@@ -163,16 +163,26 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
           // one window (rapid heartbeats during burst load). Each unique stream is drained once;
           // FetchOutboxBatchAsync returns all pending rows for it in stream-FIFO order.
+          //
+          // production throughput fix: cross-stream draining is parallelized via Parallel.ForEachAsync
+          // capped by MaxConcurrentStreams. Per-stream FIFO is preserved inside _drainStreamAsync
+          // (one task per stream); different streams have no ordering relationship and benefit
+          // from N-wide concurrent draining. The pre-fix serial foreach + await collapsed
+          // throughput to ~5 msg/sec on a consumer production 350-job import (1,578 streams pending).
           var distinctStreams = new HashSet<Guid>(batch);
-          foreach (var streamId in distinctStreams) {
+          var parallelOpts = new ParallelOptions {
+            MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
+            CancellationToken = stoppingToken,
+          };
+          await Parallel.ForEachAsync(distinctStreams, parallelOpts, async (streamId, ct) => {
             try {
-              await _drainStreamAsync(streamId, stoppingToken);
-            } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+              await _drainStreamAsync(streamId, ct);
+            } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
               throw;
             } catch (Exception ex) {
               LogDrainError(_logger, streamId, ex);
             }
-          }
+          });
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the
           // next batcher iteration will rapidly flip us back to active — the fixture's
@@ -250,18 +260,37 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // See plans/ordered-stream-invariant.md.
       var rows = rowsRaw.OrderByMessageId().ToList();
 
-      var newRows = 0;
+      var newRowList = new List<OutboxBatchRow>(rows.Count);
       foreach (var row in rows) {
         if (!seen.Add(row.MessageId)) {
           // Already published this session — completion flush lagging. Skip.
           continue;
         }
-        newRows++;
+        newRowList.Add(row);
+      }
+      var newRows = newRowList.Count;
+
+      // production throughput fix: bulk publish path. When the transport reports
+      // SupportsBulkPublish, ship the stream's newly-claimed rows as one PublishBatchAsync
+      // round-trip instead of looping PublishAsync per row. Azure Service Bus's
+      // SenderClient.SendMessagesAsync packs up to ~1 MB / ~100 messages per network call,
+      // so a 49-message stream becomes 1 round-trip instead of 49. Per-stream FIFO is
+      // preserved by the within-stream ordering above; per-row lifecycle hooks fire inside
+      // the bulk helper around the batched publish call.
+      if (_publishStrategy!.SupportsBulkPublish && newRowList.Count > 0) {
         var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        await _publishOneAsync(row, ct);
+        await _publishBulkAsync(newRowList, ct);
         totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
           * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        publishedCount++;
+        publishedCount += newRowList.Count;
+      } else {
+        foreach (var row in newRowList) {
+          var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
+          await _publishOneAsync(row, ct);
+          totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
+            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+          publishedCount++;
+        }
       }
 
       // If every row in this fetch was a dup of what we already published, completion flush
@@ -298,6 +327,111 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         "PERF OutboxDrain stream {StreamId}: published={Published} fetches={Fetches} total={TotalMs:F0}ms publish={PublishMs:F0}ms fetch+other={OtherMs:F0}ms",
         streamId, published, fetches, totalMs, publishMs, totalMs - publishMs);
 #pragma warning restore CA1848
+    }
+  }
+
+  /// <summary>
+  /// production throughput fix: bulk publish path. Serializes each row's <see cref="OutboxWork"/>
+  /// up front (deserialization failures are routed to the failure channel and excluded from
+  /// the batch), fires Pre-Outbox lifecycle per row, sends the surviving works as one
+  /// <see cref="IMessagePublishStrategy.PublishBatchAsync"/> call, then fans the per-row
+  /// results out to Post-Outbox lifecycle + the completion / failure channels.
+  /// </summary>
+  private async Task _publishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
+    var works = new List<OutboxWork>(rows.Count);
+    var rowsByMessageId = new Dictionary<Guid, OutboxBatchRow>(rows.Count);
+    var typedEnvelopes = new Dictionary<Guid, IMessageEnvelope?>(rows.Count);
+    var receptorInvokers = new Dictionary<Guid, IReceptorInvoker?>(rows.Count);
+    var lifecycleScopes = new List<IAsyncDisposable>(rows.Count);
+    try {
+      foreach (var row in rows) {
+        OutboxWork work;
+        try {
+          work = _toOutboxWork(row);
+        } catch (Exception ex) {
+          LogDeserializeFailed(_logger, row.MessageId, ex);
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+            MessageId = row.MessageId,
+            CompletedStatus = (MessageProcessingStatus)row.Status,
+            Error = ex.Message,
+            Reason = MessageFailureReason.Unknown,
+          }, ct);
+          continue;
+        }
+
+        var scope = _scopeFactory.CreateAsyncScope();
+        lifecycleScopes.Add(scope);
+        var typedEnvelope = _tryResolveTypedEnvelope(work);
+        IReceptorInvoker? receptorInvoker = null;
+        if (typedEnvelope is not null && !string.IsNullOrEmpty(work.Destination)) {
+          await SecurityContextHelper.EstablishFullContextAsync(work.Envelope, scope.ServiceProvider, ct);
+          receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        }
+
+        await _invokeOutboxLifecycleStageAsync(
+          work, typedEnvelope, receptorInvoker,
+          LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
+          "PreOutbox", ct);
+
+        works.Add(work);
+        rowsByMessageId[work.MessageId] = row;
+        typedEnvelopes[work.MessageId] = typedEnvelope;
+        receptorInvokers[work.MessageId] = receptorInvoker;
+      }
+
+      if (works.Count == 0) {
+        return;
+      }
+
+      IReadOnlyList<MessagePublishResult> results;
+      try {
+        results = await _publishStrategy!.PublishBatchAsync(works, ct);
+      } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+        throw;
+      } catch (Exception ex) {
+        // Whole-batch failure: route every row to the failure channel so the next
+        // claim_orphaned_* cycle re-leases them. Lifecycle scopes are disposed in finally.
+        foreach (var work in works) {
+          LogPublishFailed(_logger, work.MessageId, ex);
+          var row = rowsByMessageId[work.MessageId];
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+            MessageId = work.MessageId,
+            CompletedStatus = (MessageProcessingStatus)row.Status,
+            Error = ex.Message,
+            Reason = MessageFailureReason.Unknown,
+          }, ct);
+        }
+        return;
+      }
+
+      foreach (var result in results) {
+        var row = rowsByMessageId[result.MessageId];
+        if (result.Success) {
+          await _invokeOutboxLifecycleStageAsync(
+            works.First(w => w.MessageId == result.MessageId),
+            typedEnvelopes[result.MessageId],
+            receptorInvokers[result.MessageId],
+            LifecycleStage.PostOutboxDetached, LifecycleStage.PostOutboxInline,
+            "PostOutbox", ct);
+
+          OnOutboxMessagePublished?.Invoke(new OutboxMessagePublishedEvent {
+            MessageId = result.MessageId,
+            Destination = row.Destination
+          });
+          await _completionChannel.EnqueueAsync(result.MessageId, ct);
+        } else {
+          await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
+            MessageId = result.MessageId,
+            CompletedStatus = result.CompletedStatus,
+            Error = result.Error ?? "publish failed",
+            Reason = result.Reason,
+          }, ct);
+        }
+      }
+    } finally {
+      foreach (var scope in lifecycleScopes) {
+        try { await scope.DisposeAsync(); } catch { /* best-effort scope cleanup */ }
+      }
     }
   }
 
@@ -578,6 +712,16 @@ public sealed class OutboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Cap on how many distinct streams to drain concurrently within a single batch from the
+  /// drain channel. Per-stream FIFO is preserved (rows within a stream still publish in
+  /// order); ONLY cross-stream draining parallelizes. Default 16 — tuned for a single
+  /// publisher pod against Azure Service Bus where round-trips dominate per-message cost.
+  /// Set to 1 to restore the pre-production serial behavior.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain#cross-stream-parallelism</docs>
+  public int MaxConcurrentStreams { get; set; } = 16;
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from <see cref="IOutboxDrainChannel"/>.

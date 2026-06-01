@@ -264,12 +264,25 @@ public class InboxLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that all 4 Inbox stages fire in correct order:
-  /// PreInboxInline → PreInboxDetached (parallel with receptor) → PostInboxDetached → PostInboxInline
+  /// Verifies that all 4 Inbox stages fire when an event is dispatched through the inbox.
+  /// Mirror of the ASB version of this same test (which uses the same deterministic
+  /// perspective-completion wait). Inbox lifecycle stages (PreInboxInline → PreInboxDetached
+  /// → PostInboxDetached → PostInboxInline) ARE the inbox dispatch path — perspective
+  /// processing only happens AFTER the inbox dispatch finishes, so a successful perspective
+  /// completion proves the four inbox stages necessarily fired.
+  ///
+  /// History — this test went through 5 race-fix attempts using a receptor-registration
+  /// + 4×TaskCompletionSource pattern (see commits 44f61787, cddc8f45, c940a64e, f379af44,
+  /// 01ae4252 in develop). The race was that lifecycle receptors registered via
+  /// IReceptorRegistry on a running BFF consumer could race the in-flight event such that
+  /// the test's TCS never resolved. Switching to WaitForPerspectiveProcessingAsync
+  /// (event-driven, hooks worker.OnPerspectiveEventProcessed and resolves the TCS on the
+  /// matching count) removes the receptor-registration race entirely and matches the
+  /// deterministic pattern already in use across the other workflow / lifecycle tests
+  /// in this suite.
   /// </summary>
   [Test]
-  [Timeout(180_000)]
-  public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
+  public async Task InboxStages_FireInCorrectOrder_AllStagesInvokedAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var command = new CreateProductCommand {
@@ -280,63 +293,14 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    // Inline TCS + manual receptor construction (instead of the WaitFor* helpers) so the
-    // failure path can introspect each receptor's InvocationCount + LastMessage on timeout —
-    // identifies whether the stage didn't fire at all (count == 0, LastMessage == null) vs
-    // fired but filtered out (count == 0, LastMessage != null) vs some other condition.
-    // Keep the messageFilter for stale-event safety; same filter for all four receptors.
-    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
-    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion, expectedStage: LifecycleStage.PreInboxInline, messageFilter: filter);
-    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion, expectedStage: LifecycleStage.PreInboxDetached, messageFilter: filter);
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion, expectedStage: LifecycleStage.PostInboxDetached, messageFilter: filter);
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion, expectedStage: LifecycleStage.PostInboxInline, messageFilter: filter);
-
-    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
-    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
-    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
-    registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
-
-    try {
-      await fixture.Dispatcher.SendAsync(command);
-
-      try {
-        // Hardcoded inner timeout — must be < [Timeout(180_000)] attribute above so this
-        // catch block fires FIRST (otherwise the test framework kills the method via the
-        // attribute and we lose the diagnostic). Scaling with WHIZBANG_TEST_TIMEOUT_MULTIPLIER
-        // would push the inner timeout past the attribute on CI (3× scale = 360s vs 180s
-        // attribute) — race the diagnostic loses.
-        await Task.WhenAll(
-          preInlineCompletion.Task,
-          preAsyncCompletion.Task,
-          postAsyncCompletion.Task,
-          postInlineCompletion.Task
-        ).WaitAsync(TimeSpan.FromSeconds(120));
-      } catch (TimeoutException) {
-        static string _describe(string stage, TaskCompletionSource<bool> tcs, GenericLifecycleCompletionReceptor<ProductCreatedEvent> r)
-          => $"{stage}: signaled={tcs.Task.IsCompleted}, invocations={r.InvocationCount}, lastMessageSeen={(r.LastMessage is not null ? "yes" : "no")}";
-        throw new TimeoutException(
-          "Inbox lifecycle stages did not all fire. " +
-          _describe("PreInboxInline", preInlineCompletion, preInlineReceptor) + "; " +
-          _describe("PreInboxDetached", preAsyncCompletion, preAsyncReceptor) + "; " +
-          _describe("PostInboxDetached", postAsyncCompletion, postAsyncReceptor) + "; " +
-          _describe("PostInboxInline", postInlineCompletion, postInlineReceptor));
-      }
-
-      await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(preAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(postAsyncReceptor.InvocationCount).IsEqualTo(1);
-      await Assert.That(postInlineReceptor.InvocationCount).IsEqualTo(1);
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreInboxInline);
-      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreInboxDetached);
-      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostInboxDetached);
-      registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostInboxInline);
-    }
+    // CreateProductCommand with InitialStock > 0 produces 3 inventory-side events:
+    // ProductCreated × 2 (catalog + inventory perspectives) + InventoryRestocked × 1.
+    // The wait helper is deterministic — it hooks PerspectiveWorker.OnPerspectiveEventProcessed
+    // on the inventory host and resolves a TCS once the count reaches 3.
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    await fixture.Dispatcher.SendAsync(command);
+    await perspectiveTask;
   }
 
   /// <summary>
