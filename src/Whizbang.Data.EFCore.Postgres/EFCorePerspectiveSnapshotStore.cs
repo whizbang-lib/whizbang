@@ -121,6 +121,39 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
     return (snapshotEventId, JsonDocument.Parse(snapshotJson));
   }
 
+  /// <summary>
+  /// Slot-3 G7: commit-sequence-aware sibling of <see cref="GetLatestSnapshotAsync"/>. Surfaces
+  /// <c>snapshot_commit_sequence</c> so any future caller (drainer cooldown, rewind anchor
+  /// resolver, etc.) doesn't need a separate JOIN. Null when the snapshot was written via the
+  /// legacy 4-arg <c>CreateSnapshotAsync</c> overload before slice 26.11 + slot-3 G3/G4 shipped.
+  /// </summary>
+  public async Task<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?> GetLatestSnapshotWithCommitSequenceAsync(
+      Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    await using var connection = await dataSource.OpenConnectionAsync(ct);
+
+    const string sql = """
+      SELECT snapshot_event_id, snapshot_commit_sequence, snapshot_data
+      FROM wh_perspective_snapshots
+      WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name
+      ORDER BY sequence_number DESC
+      LIMIT 1
+      """;
+
+    await using var cmd = new NpgsqlCommand(sql, connection);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    if (!await reader.ReadAsync(ct)) {
+      return null;
+    }
+
+    var snapshotEventId = reader.GetGuid(0);
+    long? snapshotCommitSequence = await reader.IsDBNullAsync(1, ct) ? null : reader.GetInt64(1);
+    var snapshotJson = reader.GetString(2);
+    return (snapshotEventId, snapshotCommitSequence, JsonDocument.Parse(snapshotJson));
+  }
+
   public async Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
     await using var connection = await dataSource.OpenConnectionAsync(ct);
 
