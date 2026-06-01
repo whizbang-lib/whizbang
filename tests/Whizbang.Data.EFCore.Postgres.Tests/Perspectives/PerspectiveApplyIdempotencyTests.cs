@@ -59,9 +59,10 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       (IEventStore)eventStore,
       (IPerspectiveStore<ActionTestModel>)perspectiveStore,
       sp.GetRequiredService<IServiceScopeFactory>(),
-      null,
-      null,
-      null
+      null, // tracingOptions
+      null, // snapshotStore
+      null, // snapshotOptions
+      null  // applyCoordinator
     ]);
   }
 
